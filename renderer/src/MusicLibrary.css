@@ -163,6 +163,15 @@
   outline-offset: -1px;
 }
 
+.row--playing {
+  background: #1a2e1a !important;
+  border-left: 3px solid #1db954;
+}
+
+.row--playing.row--selected {
+  background: #1a3a1a !important;
+}
+
 /* BPM overridden indicator */
 .bpm--overridden {
   color: #7eb8f7;

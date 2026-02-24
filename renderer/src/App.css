@@ -1,12 +1,19 @@
 html, body {
   font-size: 14px;
-  margin:0;
+  margin: 0;
 }
 
-#root{
+#root {
   display: flex;
+  flex-direction: column;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
   background-color: #0f0f0f;
+}
+
+.app-main {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
 }

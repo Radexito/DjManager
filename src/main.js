@@ -1,6 +1,8 @@
 import path from 'path';
+import fs from 'fs';
+import { Readable } from 'stream';
 import { fileURLToPath } from 'url';
-import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, protocol } from 'electron';
 import { initDB } from './db/migrations.js';
 import { createPlaylist, getPlaylists, getPlaylist, renamePlaylist, updatePlaylistColor, deletePlaylist, addTrackToPlaylist, addTracksToPlaylist, removeTrackFromPlaylist, reorderPlaylistTracks, getPlaylistsForTrack } from './db/playlistRepository.js';
 import { addTrack, getTracks, getTrackIds, getTrackById, removeTrack, updateTrack, normalizeLibrary } from './db/trackRepository.js';
@@ -13,7 +15,67 @@ const __dirname = path.dirname(__filename);
 const isDev = process.env.NODE_ENV !== 'production';
 let mainWindow;
 
+// Register media:// protocol to serve local audio files from the renderer.
+// Must be called before app is ready.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'media', privileges: { secure: true, supportFetchAPI: true, bypassCSP: true, stream: true } },
+]);
+
 function createWindow() {
+  // Handle media:// scheme with Range request support so seeking works.
+  const MIME = { '.mp3':'audio/mpeg', '.flac':'audio/flac', '.wav':'audio/wav',
+                 '.ogg':'audio/ogg',  '.m4a':'audio/mp4',  '.aac':'audio/aac' };
+  protocol.handle('media', async (request) => {
+    try {
+      const filePath = decodeURIComponent(new URL(request.url).pathname);
+      const stat     = await fs.promises.stat(filePath);
+      const total    = stat.size;
+      const ext      = path.extname(filePath).toLowerCase();
+      const mime     = MIME[ext] || 'audio/mpeg';
+      const range    = request.headers.get('Range');
+
+      const makeStream = (opts) => {
+        const nodeStream = fs.createReadStream(filePath, opts);
+        // Suppress abort errors when Chromium cancels a request mid-stream
+        nodeStream.on('error', (err) => {
+          // Suppress normal abort errors from Chromium cancelling requests on track switch
+          const expected = ['ERR_STREAM_DESTROYED', 'ECONNRESET', 'ABORT_ERR', 'ERR_ABORTED'];
+          if (!expected.includes(err.code)) {
+            console.error('media:// stream error:', err.code, filePath);
+          }
+        });
+        return Readable.toWeb(nodeStream);
+      };
+
+      if (range) {
+        const [, s, e] = range.match(/bytes=(\d+)-(\d*)/) || [];
+        const start    = parseInt(s, 10);
+        const end      = e ? Math.min(parseInt(e, 10), total - 1) : total - 1;
+        return new Response(makeStream({ start, end }), {
+          status: 206,
+          headers: {
+            'Content-Type':   mime,
+            'Content-Range':  `bytes ${start}-${end}/${total}`,
+            'Accept-Ranges':  'bytes',
+            'Content-Length': String(end - start + 1),
+          },
+        });
+      }
+
+      return new Response(makeStream({}), {
+        status: 200,
+        headers: {
+          'Content-Type':   mime,
+          'Accept-Ranges':  'bytes',
+          'Content-Length': String(total),
+        },
+      });
+    } catch (err) {
+      if (err.code !== 'ENOENT') console.error('media:// error:', err.code, err.message);
+      return new Response('Not found', { status: 404 });
+    }
+  });
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,

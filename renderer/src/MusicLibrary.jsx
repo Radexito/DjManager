@@ -7,14 +7,44 @@ import {
   SortableContext, verticalListSortingStrategy, useSortable, arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { usePlayer } from './PlayerContext.jsx';
 import './MusicLibrary.css';
 
 const PAGE_SIZE = 50;
 const ROW_HEIGHT = 50;
 const PRELOAD_TRIGGER = 3;
 
+// ── LibraryRow — outside MusicLibrary so react-window doesn't remount on re-render ──
+function LibraryRow({ index, style, data }) {
+  const { tracks, selectedIds, currentTrackId, onRowClick, onDoubleClick, onContextMenu } = data;
+  const t = tracks[index];
+  if (!t) {
+    return <div style={style} className="row row-loading">Loading more tracks...</div>;
+  }
+  const isSelected  = selectedIds.has(t.id);
+  const isPlaying   = currentTrackId === t.id;
+  const bpmValue    = t.bpm_override ?? t.bpm;
+  return (
+    <div
+      style={style}
+      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}`}
+      title={`${t.title} - ${t.artist || 'Unknown'}`}
+      onClick={(e) => onRowClick(e, t, index)}
+      onDoubleClick={() => onDoubleClick(t, index)}
+      onContextMenu={(e) => onContextMenu(e, t, index)}
+    >
+      <div className="cell index">{index + 1}</div>
+      <div className="cell title">{t.title}</div>
+      <div className="cell artist">{t.artist || 'Unknown'}</div>
+      <div className={`cell numeric${t.bpm_override != null ? ' bpm--overridden' : ''}`}>{bpmValue ?? '...'}</div>
+      <div className="cell numeric">{t.key_camelot ?? '...'}</div>
+      <div className="cell numeric">{t.loudness != null ? t.loudness : '...'}</div>
+    </div>
+  );
+}
+
 // ── SortableRow — must be defined outside MusicLibrary to avoid remount ────
-function SortableRow({ t, index, isSelected, onRowClick, onContextMenu }) {
+function SortableRow({ t, index, isSelected, isPlaying, onRowClick, onDoubleClick, onContextMenu }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: t.id });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
   const bpmValue = t.bpm_override ?? t.bpm;
@@ -22,9 +52,10 @@ function SortableRow({ t, index, isSelected, onRowClick, onContextMenu }) {
     <div
       ref={setNodeRef}
       style={style}
-      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}`}
+      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}`}
       title={`${t.title} - ${t.artist || 'Unknown'}`}
       onClick={(e) => onRowClick(e, t, index)}
+      onDoubleClick={() => onDoubleClick(t, index)}
       onContextMenu={(e) => onContextMenu(e, t, index)}
     >
       <div className="cell index drag-handle" {...attributes} {...listeners}>⠿</div>
@@ -39,6 +70,14 @@ function SortableRow({ t, index, isSelected, onRowClick, onContextMenu }) {
 
 function MusicLibrary({ selectedPlaylist }) {
   const isPlaylistView = selectedPlaylist !== 'music';
+  const { play, currentTrack, currentPlaylistId } = usePlayer();
+
+  // Only highlight a track as "playing" when the source context matches this view.
+  // Library view: only highlight when played from library (currentPlaylistId === null).
+  // Playlist view: only highlight when played from this specific playlist.
+  const playingTrackId = isPlaylistView
+    ? (String(currentPlaylistId) === String(selectedPlaylist) ? currentTrack?.id : null)
+    : (currentPlaylistId === null ? currentTrack?.id : null);
 
   const [tracks, setTracks] = useState([]);
   const [hasMore, setHasMore] = useState(true);
@@ -214,6 +253,10 @@ function MusicLibrary({ selectedPlaylist }) {
     }
   }, []);
 
+  const handleDoubleClick = useCallback((track, index) => {
+    play(track, sortedTracksRef.current, index, isPlaylistView ? selectedPlaylist : null);
+  }, [play, isPlaylistView, selectedPlaylist]);
+
   // ── Context menu ───────────────────────────────────────────────────────────
 
   const handleContextMenu = useCallback(async (e, track, index) => {
@@ -333,41 +376,7 @@ function MusicLibrary({ selectedPlaylist }) {
     });
   }, [isPlaylistView]);
 
-  // ── Row (library view) ──────────────────────────────────────────────────────
-
-  const Row = ({ index, style }) => {
-    const t = sortedTracksRef.current[index];
-
-    if (!t) {
-      return (
-        <div style={style} className="row row-loading">
-          Loading more tracks...
-        </div>
-      );
-    }
-
-    const isSelected = selectedIds.has(t.id);
-    const bpmValue   = t.bpm_override ?? t.bpm;
-
-    return (
-      <div
-        style={style}
-        className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}`}
-        title={`${t.title} - ${t.artist || 'Unknown'}`}
-        onClick={(e) => handleRowClick(e, t, index)}
-        onContextMenu={(e) => handleContextMenu(e, t, index)}
-      >
-        <div className="cell index">{index + 1}</div>
-        <div className="cell title">{t.title}</div>
-        <div className="cell artist">{t.artist || 'Unknown'}</div>
-        <div className={`cell numeric${t.bpm_override != null ? ' bpm--overridden' : ''}`}>
-          {bpmValue ?? '...'}
-        </div>
-        <div className="cell numeric">{t.key_camelot ?? '...'}</div>
-        <div className="cell numeric">{t.loudness != null ? t.loudness : '...'}</div>
-      </div>
-    );
-  };
+  // ── Row (library view) — handled by LibraryRow above via itemData ─────────
 
   const selectionLabel = contextMenu?.targetIds?.length > 1
     ? ` (${contextMenu.targetIds.length} tracks)`
@@ -439,7 +448,9 @@ function MusicLibrary({ selectedPlaylist }) {
                     t={t}
                     index={index}
                     isSelected={selectedIds.has(t.id)}
+                    isPlaying={playingTrackId === t.id}
                     onRowClick={handleRowClick}
+                    onDoubleClick={handleDoubleClick}
                     onContextMenu={handleContextMenu}
                   />
                 ))}
@@ -466,8 +477,16 @@ function MusicLibrary({ selectedPlaylist }) {
           width="100%"
           onItemsRendered={handleItemsRendered}
           className="track-list"
+          itemData={{
+            tracks: sortedTracks,
+            selectedIds,
+            currentTrackId: playingTrackId,
+            onRowClick: handleRowClick,
+            onDoubleClick: handleDoubleClick,
+            onContextMenu: handleContextMenu,
+          }}
         >
-          {Row}
+          {LibraryRow}
         </List>
       )}
 

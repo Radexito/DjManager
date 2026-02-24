@@ -1,250 +1,178 @@
-# DJ-Oriented Music Library Manager
+# DJ Manager
 
-## Overview
+A **DJ-focused music library manager** built for real DJ workflows — not a consumer music player. Prioritises efficient library management, playlist curation, audio analysis, and fast navigation, while remaining fully offline.
 
-This project aims to build a **DJ-focused music library manager** designed around real DJ workflows rather than consumer music players. The application prioritizes **efficient library management**, **playlist curation**, **USB export**, **advanced filtering**, and **future-ready audio analysis**, while remaining fast, portable, and fully offline.
+**Stack:** Electron · React · SQLite · Python (`mixxx-analyzer`) · FFmpeg
 
-The core philosophy is:
-
-* **One canonical music storage pool**
-* **Playlists as views or exports, not duplicated files**
-* **Metadata and analysis as first-class citizens**
-* **Designed for DJs who actively prepare, organize, and play music**
-
-The app will be cross-platform, dark-themed, and capable of handling **very large libraries** (tens or hundreds of thousands of tracks).
+![DJ Manager screenshot](screenshot.png)
 
 ---
 
-# Installing FFmpeg for DJ Manager
-
-Linux (Arch/Ubuntu):
+## Installing
 
 ```bash
+# Install FFmpeg (Linux)
 chmod +x scripts/install-ffmpeg.sh
 ./scripts/install-ffmpeg.sh
+
+# Install dependencies
+npm install
+cd renderer && npm install && cd ..
+
+# Install Python analyser
+pip install mixxx-analyzer
+
+# Run
+npm start
 ```
 
 ---
 
-## Main Goals
+## Core Philosophy
 
-* Provide a **robust, offline DJ music library manager**
-* Enable **fast searching, filtering, and sorting** by DJ-relevant attributes
-* Allow **manual playlist curation** with precise control over track order
-* Support **advanced metadata** such as BPM, key, energy, loudness, and cue points
-* Lay the groundwork for **AI-assisted similarity, radio, and set-building features**
-* Make **USB export and portability** simple and reliable
+* **One canonical storage pool** — files are imported once, referenced everywhere
+* **Playlists as views, not copies** — tracks live in the library; playlists are ordered references
+* **Metadata as a first-class citizen** — BPM, key, loudness, cue points drive every workflow
+* **Built for DJs, not listeners** — every feature decision reflects real preparation and performance needs
 
 ---
 
+## Progress
 
-## Core Architectural Decisions
+### ✅ Stage 1 — Foundation & Import Pipeline
+> *Commits: `tech skeleton` → `feat: add SQLite database` → `feat: switch to persistent music library` → `feat: integrate react-window`*
 
-### Application Framework
-
-* **Electron** for cross-platform desktop support
-* **React** for UI rendering
-* **State management** (e.g. Zustand or similar)
-
-### Database
-
-* **SQLite** (embedded, shippable, single-file database)
-* WAL mode enabled for performance
-* Indexed numeric fields (BPM, key, rating, energy)
-* FTS5 for fast full-text search
-
-SQLite is chosen because it:
-
-* Ships with the app
-* Scales to very large datasets
-* Requires no external services
-* Is proven in professional DJ software
-
-### Audio & Analysis
-
-* **FFmpeg** for decoding and format support
-* Audio analysis libraries (e.g. Essentia, Aubio, KeyFinder)
-* Worker threads for background analysis
-
-### File Storage Strategy
-
-* All imported audio files are stored **once** in a single managed folder
-* Supported formats: MP3, FLAC, WAV, M4A
-* Playlists are represented internally via database ordering
-* Playlist export uses **symlinks or file copies**, depending on target
+- Electron + React + SQLite application skeleton
+- SQLite database with WAL mode; schema migrations system
+- Import audio files into a managed storage folder (`~/.config/dj_manager/audio/`)
+- FFmpeg-based metadata extraction (duration, bitrate, format, sample rate, channels, codec)
+- Virtualized track list with infinite scroll (`react-window`)
+- Dark-themed UI with sortable columns
 
 ---
 
-## Stage 1 – Core Library & Playlists (MVP)
+### ✅ Stage 2 — Audio Analysis
+> *Commits: `3aed511` — Switch to mixxx-analyzer, add track context menu*
 
-### Features
-
-* Dark-themed UI
-* Import audio files into a managed storage folder
-* Automatic metadata extraction
-* Audio analysis:
-
-  * BPM detection
-  * Key detection (Camelot notation)
-  * Duration
-  * Bitrate & format
-
-### Metadata Support
-
-* Artist
-* Title
-* Album
-* Genre (multi-value)
-* Year
-* Label
-* BPM
-* Musical key (Camelot + raw)
-* Energy
-* Loudness (LUFS)
-* Duration
-* Rating (stars)
-* Comments / notes
-
-### Playlist System
-
-* Manual playlists with explicit ordering
-* Tracks stored once, referenced many times
-* Playlist ordering stored via numeric positions
-* Sorting by BPM, key, or other fields
-* Manual drag-and-drop reordering
-* Save & renumber playlist order
-
-### UI Layout
-
-* Left sidebar: playlist list
-* Main panel: track table with sortable columns
-* Inline metadata editing
-* Keyboard-friendly navigation
+- Replaced custom analyser with [`mixxx-analyzer`](https://pypi.org/project/mixxx-analyzer/) Python package
+- Per-track analysis: **BPM**, **musical key** (raw + Camelot notation), **loudness (LUFS)**, **replay gain**, **intro start**, **outro start**
+- Analysis runs in the background; results written back to SQLite
+- Track context menu: **Re-analyze**, **Remove**, *(Add to playlist — placeholder)*
+- `bpm_override` column allows manual BPM correction (halve / double) without losing the original detected value; cleared automatically on re-analysis
 
 ---
 
-## Stage 2 – Advanced Search & Smart Playlists
+### ✅ Stage 3 — Library Management & UI Polish
+> *Commits: `feat: multi-select` → `fix+feat: resolve track loading bugs` → `chore: rename menu` → `fix: address PR review comments`*
 
-### Search System
-
-* Query builder UI (inspired by YouTrack)
-* Combined text + numeric filtering
-* Example queries:
-
-  * Genre = Techno AND BPM 124–128
-  * Key compatible with 8A
-  * Energy > 7 AND Rating ≥ 4
-
-### Query Capabilities
-
-* Boolean logic (AND / OR)
-* Ranges (BPM, energy, year)
-* Key compatibility rules
-* Saved searches
-
-### Smart Playlists
-
-* Playlists generated from saved queries
-* Automatically update when library changes
-
-### Similarity Search
-
-* "Find similar tracks" based on:
-
-  * BPM proximity
-  * Key compatibility
-  * Genre overlap
-* Audio feature vectors prepared for future AI use
+- Multi-select tracks (click, Shift+click, Ctrl+click, Ctrl+A select-all)
+- BPM double / halve submenu per track or selection
+- Settings modal (music folder path, analysis preferences)
+- Refactored into `Sidebar` + `MusicLibrary` components
+- Auto-refresh library on import completion
+- Dropped unused columns (status, gain); surfaced `replay_gain` in track table
+- Full-text search and numeric sort on all columns
 
 ---
 
-## Stage 3 – Radio & Discovery Mode
+### ✅ Stage 4 — Playlists
+> *Commits: `feat: implement full playlist feature` (PR #6)*
 
-### Radio Mode
-
-* Continuous playback of tracks based on rules
-* Modes:
-
-  * Crate-based radio
-  * Genre-based radio
-  * Energy-flow radio
-
-### Playback Logic
-
-* Avoid recently played tracks
-* Maintain BPM and key flow
-* Track playback history
-
-### User Actions
-
-* Add currently playing track to playlist
-* Rate tracks during playback
-* Mark tracks as ignored or excluded
-
-This stage doubles as a **discovery and curation tool**.
+- Create, rename, delete, and colour-code playlists from the sidebar
+- Add tracks to playlists via right-click context menu (multi-select supported)
+- Remove tracks from a playlist
+- Drag-and-drop reorder within a playlist (`@dnd-kit`)
+- **Save Order** button to persist manual ordering to the database
+- Sort by any column (BPM, title, …) within a playlist; sorting auto-resets to position order on DnD
+- BPM sort respects `bpm_override`
+- Playlist track count and total duration shown in header
 
 ---
 
-## Stage 4 – Downloads & External Sources
+### ✅ Stage 5 — Audio Player
+> *Commits: `5a935a3` + `109550b` on `player` branch*
 
-### Integrated Downloads
-
-* Integration with `tidal-dl-ng-For-DJ`
-* Additional sources considered later (Bandcamp, others)
-
-### Ingestion Pipeline
-
-* Downloads placed into an incoming folder
-* Automatic analysis and metadata extraction
-* User review before final library import
-
-### Source Tracking
-
-* Store download source and quality
-* Track original format and bitrate
-
----
-
-## Future / Extended Features
-
-### Cue Points & DJ Data
-
-* Hot cues and memory cues
-* Loop markers
-* Stored internally, optional export later
-
-### Set History
-
-* Track when and where songs were played
-* Store sets with ordered track lists
-* Export setlists
-
-### AI-Assisted Features
-
-* Advanced similarity detection
-* Auto set-building suggestions
-* Warm-up vs peak-time classification
-
-### Performance Mode
-
-* Minimal UI
-* Large fonts
-* Reduced risk of accidental edits
+- **Player bar** (Spotify / Tidal style) pinned to the bottom of the window
+  - Left: album art placeholder, track title, artist
+  - Centre: Shuffle · Previous · Play/Pause · Next · Repeat, with seekbar below
+  - Right: audio output device picker, "go to playlist" hamburger button
+- Playback via a custom `media://` Electron protocol with **Range / 206 partial-content** support — enables true seeking on large files
+- Path encoding for files with spaces or Unicode characters
+- Rapid track switching is safe: `audio.pause()` before src swap + per-generation counter to drop stale `AbortError` rejections; `?t=gen` cache-bust prevents Chromium pipeline errors when revisiting a file
+- **Seekbar intro/outro zones** — amber gradient regions derived from `intro_secs` / `outro_secs` stored by the analyser
+- **Hardware media key support** via `navigator.mediaSession` (play/pause/next/prev/seek)
+- **Spacebar** toggles play/pause unless focus is in a text field
+- Double-click any track in library or playlist to play
+- Playing-track highlight is view-scoped: green row shows only in the view (library vs playlist) that triggered playback; preserved through next/prev/ended navigation
+- Audio output device selection via `setSinkId`
 
 ---
 
-## Non-Goals (Initial Scope)
+## Planned
 
-* Real-time DJ mixing or beatmatching
-* Live controller integration
-* Streaming-only playback
+### Stage 6 — Advanced Search & Smart Playlists
+- Query builder UI (text + numeric filters, Boolean logic)
+- Key compatibility rules (Camelot wheel)
+- Saved searches / smart playlists that auto-update
+- Track context menu: **Find similar** (by BPM range, key compatibility, genre)
+- **"Play unheard"** mode — continuous playback of tracks never played, for library discovery
 
-These may be considered later but are **explicitly out of scope** for early stages.
+### Stage 7 — Player & Library Enhancements
+- **"Playing from: \<playlist name\>"** label in the player bar
+- **Volume control** on the speaker icon in the player bar
+- **Playback history** — recall what was playing N tracks ago (ring buffer of recent plays)
+- **Track thumbnails** (waveform preview or album art)
+- **User ratings** (star rating per track)
+- **User tagging** — freeform tags per track for custom organisation
+- **ID3 tag read/write** — full read of embedded tags on import; write-back of analysed metadata (BPM, key, replay gain) to ID3v2/Vorbis/MP4 tags
+- **Loudness equalisation** across playlists — auto-adjust gain so every track plays at a consistent LUFS target
+
+### Stage 8 — Playlist Export & DJ Software Interop
+- **M3U / M3U8 export** for universal player compatibility
+- **Rekordbox XML export** — playlists, cue points, hot cues, memory cues, beatgrid, colour tags; compatible with Pioneer CDJ / XDJ
+- **Serato export** — write Serato ID3 frames (`GEOB` tags) so cues and loops appear in Serato DJ
+- **Traktor NML export** — generate Traktor collection XML with cue points and playlist structure
+- **Hot cues, memory cues, loop markers** stored in DB and round-tripped to/from all three formats
+
+### Stage 9 — Downloads & Ingestion
+- **yt-dlp integration** — download audio from YouTube/SoundCloud/etc. directly into the library
+- Incoming folder watcher with automatic analysis and review queue before final import
+- Source tracking (URL, platform, original quality)
+
+### Stage 10 — Distribution & CI/CD
+- **GitHub Actions workflow** to build and package for Windows, Linux (AppImage/deb), and macOS
+- Signed releases served via GitHub Releases on every version tag
+- Auto-update mechanism inside the app
+
+### Stage 11 — Radio & Discovery Mode
+- Continuous playback driven by rules (genre, BPM range, energy flow)
+- Avoid recently played tracks; maintain harmonic flow
+- Rate tracks and add to playlists during playback
+
+### Stage 12 — AI-Assisted Discovery
+- Similarity search (BPM proximity, key compatibility, genre overlap)
+- Auto set-building suggestions
+- Warm-up vs peak-time classification
 
 ---
 
-## Summary
+## Architecture
 
-This application is designed to be a **serious DJ library tool**, not a general-purpose music player. By focusing on metadata integrity, playlist control, and scalable architecture from the start, the project creates a strong foundation for advanced DJ workflows, AI-assisted discovery, and long-term library management.
+| Layer | Technology |
+|---|---|
+| Desktop shell | Electron |
+| UI | React + Vite |
+| Database | SQLite (better-sqlite3, WAL mode) |
+| Audio decode / metadata | FFmpeg |
+| Audio analysis | `mixxx-analyzer` (Python) |
+| Drag and drop | `@dnd-kit` |
+| Virtualised lists | `react-window` |
+| Playback | HTML5 Audio + custom `media://` protocol |
 
-The staged approach allows the app to be usable early while remaining extensible for future professional-grade features.
+### File Storage
+All imported audio is stored once at `~/.config/dj_manager/audio/<xx>/<hash>.<ext>` (two-char hash prefix for filesystem performance). Playlists reference tracks by ID; no files are duplicated.
+
+### Database Schema (key tables)
+- `tracks` — file path, metadata, analysis results (`bpm`, `bpm_override`, `key_camelot`, `loudness`, `replay_gain`, `intro_secs`, `outro_secs`, …)
+- `playlists` — id, name, color
+- `playlist_tracks` — playlist_id, track_id, position
