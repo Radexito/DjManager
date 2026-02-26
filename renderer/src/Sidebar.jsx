@@ -32,6 +32,7 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadPlaylists();
     const unsub = window.api.onPlaylistsUpdated(loadPlaylists);
     return unsub;
@@ -107,13 +108,6 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
   const handleColorPick = async (id, color) => {
     setPlaylistMenu(null);
     await window.api.updatePlaylistColor(id, color);
-  };
-
-  const formatDuration = (secs) => {
-    const h = Math.floor(secs / 3600);
-    const m = Math.floor((secs % 3600) / 60);
-    if (h > 0) return `${h}h ${m}m`;
-    return `${m}m`;
   };
 
   return (

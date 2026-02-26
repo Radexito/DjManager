@@ -86,8 +86,6 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
     return () => document.removeEventListener('mousedown', handler);
   }, [showDevices]);
 
-  const repeatLabel = repeat === 'one' ? '🔂' : '🔁';
-
   return (
     <div className="player-bar">
       {/* Left: current track info */}

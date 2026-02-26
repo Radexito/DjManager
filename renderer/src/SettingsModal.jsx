@@ -84,7 +84,7 @@ function SettingsModal({ onClose }) {
     setMoveProgress({ moved: 0, total: 0, pct: 0 });
     const unsub = window.api.onMoveLibraryProgress((data) => setMoveProgress(data));
     try {
-      const result = await window.api.moveLibrary(newDir);
+      await window.api.moveLibrary(newDir);
       setLibraryPath(newDir);
       setMoveProgress(null);
     } finally {

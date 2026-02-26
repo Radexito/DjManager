@@ -1,10 +1,19 @@
-import { createContext, useContext, useRef, useState, useCallback, useEffect } from 'react';
+import {
+  createContext,
+  useContext,
+  useRef,
+  useState,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+} from 'react';
 
 const PlayerContext = createContext(null);
 
 export function PlayerProvider({ children }) {
   const audioRef = useRef(null);
-  if (!audioRef.current) audioRef.current = new Audio();
+  if (audioRef.current == null) audioRef.current = new Audio();
+  // eslint-disable-next-line react-hooks/refs
   const audio = audioRef.current;
 
   const [currentTrack, setCurrentTrack] = useState(null);
@@ -70,7 +79,9 @@ export function PlayerProvider({ children }) {
     },
     [audio]
   );
-  playAtIndexRef.current = playAtIndex;
+  useLayoutEffect(() => {
+    playAtIndexRef.current = playAtIndex;
+  });
 
   // Register audio event listeners once
   useEffect(() => {
@@ -194,6 +205,7 @@ export function PlayerProvider({ children }) {
     navigator.mediaSession.setActionHandler('seekto', (d) => {
       audio.currentTime = d.seekTime;
     });
+    // eslint-disable-next-line react-hooks/refs
   }, [audio, next, prev]);
 
   useEffect(() => {
@@ -251,6 +263,7 @@ export function PlayerProvider({ children }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function usePlayer() {
   return useContext(PlayerContext);
 }
