@@ -15,7 +15,7 @@
   border: 1px solid #3a3a3a;
   border-radius: 10px;
   width: 580px;
-  min-height: 340px;
+  max-height: 80vh;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.75);
   overflow: hidden;
 }
@@ -229,4 +229,22 @@
   color: #a6e3a1;
   font-size: 11px;
   font-weight: 600;
+}
+.settings-path-display {
+  flex: 1;
+  font-size: 11px;
+  font-family: monospace;
+  color: #6c7086;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 0;
+}
+.move-progress {
+  margin-top: 0.5rem;
+}
+.move-progress-label {
+  font-size: 12px;
+  color: #a6adc8;
+  margin-bottom: 4px;
 }

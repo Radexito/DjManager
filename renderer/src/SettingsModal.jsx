@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import './SettingsModal.css';
 
 const DEFAULT_TARGET = -14;
@@ -8,9 +8,22 @@ function SettingsModal({ onClose }) {
   const [targetInput, setTargetInput] = useState(String(DEFAULT_TARGET));
   const [confirmClear, setConfirmClear] = useState(null); // 'library' | 'userdata'
   const [depVersions, setDepVersions] = useState(null);
-  const [updateInfo, setUpdateInfo] = useState(null);
-  const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [updatingAll, setUpdatingAll] = useState(false);
+
+  // Library location
+  const [libraryPath, setLibraryPath] = useState('');
+  const [moveProgress, setMoveProgress] = useState(null); // { moved, total, pct } | null
+  const [confirmMove, setConfirmMove] = useState(null); // pending new dir path
+
+  // Escape key closes dialog
+  const handleKeyDown = useCallback((e) => {
+    if (e.key === 'Escape') onClose();
+  }, [onClose]);
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
 
   useEffect(() => {
     window.api.getSetting('normalize_target_lufs', String(DEFAULT_TARGET))
@@ -18,18 +31,13 @@ function SettingsModal({ onClose }) {
   }, []);
 
   useEffect(() => {
+    if (activeSection === 'library') {
+      window.api.getLibraryPath().then(setLibraryPath);
+    }
     if (activeSection === 'updates') {
       window.api.getDepVersions().then(setDepVersions);
     }
   }, [activeSection]);
-
-  const handleCheckUpdates = async () => {
-    setCheckingUpdates(true);
-    setUpdateInfo(null);
-    const info = await window.api.checkDepUpdates();
-    setUpdateInfo(info);
-    setCheckingUpdates(false);
-  };
 
   const handleUpdateAll = async () => {
     setUpdatingAll(true);
@@ -37,7 +45,6 @@ function SettingsModal({ onClose }) {
     const versions = await window.api.getDepVersions();
     setDepVersions(versions);
     setUpdatingAll(false);
-    setUpdateInfo(null);
   };
 
   const handleTargetChange = (raw) => {
@@ -62,9 +69,28 @@ function SettingsModal({ onClose }) {
     await window.api.openLogDir();
   };
 
+  const handleBrowseLibrary = async () => {
+    const dir = await window.api.openDirDialog();
+    if (dir) setConfirmMove(dir);
+  };
+
+  const handleConfirmMove = async () => {
+    const newDir = confirmMove;
+    setConfirmMove(null);
+    setMoveProgress({ moved: 0, total: 0, pct: 0 });
+    const unsub = window.api.onMoveLibraryProgress((data) => setMoveProgress(data));
+    try {
+      const result = await window.api.moveLibrary(newDir);
+      setLibraryPath(newDir);
+      setMoveProgress(null);
+    } finally {
+      unsub?.();
+    }
+  };
+
   const sections = [
     { id: 'library', label: 'Library' },
-    { id: 'updates', label: 'Updates' },
+    { id: 'updates', label: 'Dependencies' },
     { id: 'advanced', label: 'Advanced' },
   ];
 
@@ -111,15 +137,48 @@ function SettingsModal({ onClose }) {
                   </div>
                 </div>
               </div>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Library Location</div>
+                <p className="settings-group-desc">
+                  Where imported audio files are stored. Moving the library copies all files to the new location and updates the database.
+                </p>
+                <div className="settings-row settings-row-action">
+                  <div className="settings-path-display" title={libraryPath}>{libraryPath || '…'}</div>
+                  <button className="btn-secondary" onClick={handleBrowseLibrary} disabled={!!moveProgress}>
+                    Change…
+                  </button>
+                </div>
+                {moveProgress && (
+                  <div className="move-progress">
+                    <div className="move-progress-label">
+                      Moving files… {moveProgress.moved}/{moveProgress.total} ({moveProgress.pct}%)
+                    </div>
+                    <div className="deps-bar-track">
+                      <div className="deps-bar-fill" style={{ width: `${moveProgress.pct}%` }} />
+                    </div>
+                  </div>
+                )}
+                {confirmMove && (
+                  <div className="settings-confirm-row" style={{ marginTop: '0.75rem' }}>
+                    <span>Move library to <b>{confirmMove}</b>?</span>
+                    <button className="btn-primary" onClick={handleConfirmMove}>Move</button>
+                    <button className="btn-secondary" onClick={() => setConfirmMove(null)}>Cancel</button>
+                  </div>
+                )}
+              </div>
             </>
           )}
 
           {activeSection === 'updates' && (
             <>
-              <h3>Updates</h3>
+              <h3>Dependencies</h3>
 
               <div className="settings-group">
                 <div className="settings-group-title">Installed Versions</div>
+                <p className="settings-group-desc">
+                  FFmpeg and mixxx-analyzer are required dependencies downloaded automatically on first launch.
+                </p>
                 <div className="dep-version-list">
                   <div className="dep-version-row">
                     <span className="dep-version-name">FFmpeg</span>
@@ -133,37 +192,13 @@ function SettingsModal({ onClose }) {
               </div>
 
               <div className="settings-group">
-                <div className="settings-group-title">mixxx-analyzer</div>
-                {updateInfo?.analyzer && (
-                  <div className="dep-update-notice">
-                    {updateInfo.analyzer.hasUpdate
-                      ? <span>Update available: <b>{updateInfo.analyzer.latestTag}</b></span>
-                      : <span>Up to date.</span>}
-                  </div>
-                )}
+                <div className="settings-group-title">Update</div>
                 <div className="settings-row settings-row-action">
                   <div>
-                    <div className="settings-action-label">Check for Updates</div>
-                    <div className="settings-action-desc">Check if a newer mixxx-analyzer release is available.</div>
+                    <div className="settings-action-label">Update All Dependencies</div>
+                    <div className="settings-action-desc">Re-downloads the latest FFmpeg and mixxx-analyzer.</div>
                   </div>
-                  <button className="btn-secondary" onClick={handleCheckUpdates} disabled={checkingUpdates || updatingAll}>
-                    {checkingUpdates ? 'Checking…' : 'Check'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="settings-group">
-                <div className="settings-group-title">Update All</div>
-                <p className="settings-group-desc">
-                  Re-downloads the latest FFmpeg and mixxx-analyzer.
-                  {updateInfo?.analyzer?.hasUpdate && <span className="dep-update-badge"> New version available!</span>}
-                </p>
-                <div className="settings-row settings-row-action">
-                  <div>
-                    <div className="settings-action-label">Update Dependencies</div>
-                    <div className="settings-action-desc">Downloads and installs the latest FFmpeg and mixxx-analyzer.</div>
-                  </div>
-                  <button className="btn-primary" onClick={handleUpdateAll} disabled={updatingAll || checkingUpdates}>
+                  <button className="btn-primary" onClick={handleUpdateAll} disabled={updatingAll}>
                     {updatingAll ? 'Updating…' : 'Update All'}
                   </button>
                 </div>
