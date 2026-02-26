@@ -23,6 +23,7 @@
     "format:check": "prettier --check .",
     "pretest": "npm rebuild better-sqlite3",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "posttest": "npx @electron/rebuild -f -w better-sqlite3"
   },
@@ -103,6 +104,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.3",
+    "@vitest/coverage-v8": "^3.2.4",
     "concurrently": "^9.2.1",
     "electron": "^40.0.0",
     "electron-builder": "^26.8.1",
