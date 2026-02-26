@@ -11,6 +11,7 @@
     "build": "npm run build-renderer",
     "electron-prod": "NODE_ENV=production electron .",
     "postinstall": "electron-builder install-app-deps",
+    "postdev-rebuild": "npx @electron/rebuild -f -w better-sqlite3",
     "prepare": "husky",
     "dist": "npm run build-renderer && electron-builder",
     "dist:linux": "npm run build-renderer && electron-builder --linux",
@@ -23,7 +24,7 @@
     "pretest": "npm rebuild better-sqlite3",
     "test": "vitest run",
     "test:watch": "vitest",
-    "posttest": "electron-builder install-app-deps"
+    "posttest": "npx @electron/rebuild -f -w better-sqlite3"
   },
   "build": {
     "appId": "com.djmanager.app",

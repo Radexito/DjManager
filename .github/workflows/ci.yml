@@ -38,6 +38,8 @@ jobs:
 
       - name: Test (main process)
         run: npx vitest run
+        env:
+          DB_PATH: ':memory:'
 
       - name: Test (renderer)
         run: cd renderer && npm run test
