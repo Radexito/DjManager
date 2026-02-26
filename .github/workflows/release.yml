@@ -1,0 +1,242 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Generate shared release tag ───────────────────────────────────────────
+  setup:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Generate release tag
+        id: tag
+        run: echo "tag=build-$(date -u +%Y%m%d-%H%M%S)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+  # ── Per-platform build ────────────────────────────────────────────────────
+  build:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux
+            analyzer_asset: linux-x86_64
+            analyzer_extract: tar
+          - os: windows-latest
+            platform: win
+            analyzer_asset: windows-x86_64
+            analyzer_extract: zip
+          - os: macos-latest
+            platform: mac
+            analyzer_asset: macos-arm64
+            analyzer_extract: zip
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.platform }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # ── Download mixxx-analyzer standalone binary ─────────────────────────
+      - name: Download mixxx-analyzer (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          RELEASE_JSON=$(curl -s https://api.github.com/repos/Radexito/mixxx-analyzer/releases/latest)
+          URL=$(echo "$RELEASE_JSON" | jq -r --arg asset "${{ matrix.analyzer_asset }}" \
+            '.assets[] | select(.name | contains($asset)) | select(.name | endswith(".tar.gz") or endswith(".zip")) | .browser_download_url')
+          echo "Downloading: $URL"
+          mkdir -p build-resources
+
+          if [ "${{ matrix.analyzer_extract }}" = "tar" ]; then
+            curl -L "$URL" | tar -xz
+            find . -maxdepth 3 -name "mixxx-analyzer" -not -path "./.git/*" \
+              | head -1 | xargs -I{} cp {} build-resources/analysis
+          else
+            curl -L "$URL" -o analyzer.zip
+            unzip -q analyzer.zip -d analyzer-tmp
+            find analyzer-tmp -name "mixxx-analyzer" | head -1 | xargs -I{} cp {} build-resources/analysis
+            rm -rf analyzer-tmp analyzer.zip
+          fi
+          chmod +x build-resources/analysis
+
+      - name: Download mixxx-analyzer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $release = Invoke-RestMethod "https://api.github.com/repos/Radexito/mixxx-analyzer/releases/latest"
+          $asset = $release.assets | Where-Object { $_.name -like "*${{ matrix.analyzer_asset }}*" -and $_.name -like "*.zip" } | Select-Object -First 1
+          Write-Host "Downloading: $($asset.browser_download_url)"
+          Invoke-WebRequest $asset.browser_download_url -OutFile analyzer.zip
+          New-Item -ItemType Directory -Force build-resources | Out-Null
+          Expand-Archive analyzer.zip -DestinationPath analyzer-tmp -Force
+          $binary = Get-ChildItem -Recurse -Filter "mixxx-analyzer.exe" analyzer-tmp | Select-Object -First 1
+          if (-not $binary) { $binary = Get-ChildItem -Recurse -Filter "*.exe" analyzer-tmp | Select-Object -First 1 }
+          Copy-Item $binary.FullName build-resources/analysis.exe
+          Remove-Item -Recurse analyzer-tmp, analyzer.zip
+
+      # ── Download FFmpeg static binaries ───────────────────────────────────
+      - name: Download FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz | tar -xJ
+          mkdir -p ffmpeg
+          mv ffmpeg-*-static/ffmpeg ffmpeg/
+          mv ffmpeg-*-static/ffprobe ffmpeg/
+          chmod +x ffmpeg/ffmpeg ffmpeg/ffprobe
+          rm -rf ffmpeg-*-static
+
+      - name: Download FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ffmpeg
+          mkdir -p ffmpeg
+          cp "$(which ffmpeg)"  ffmpeg/ffmpeg
+          cp "$(which ffprobe)" ffmpeg/ffprobe
+
+      - name: Download FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          Invoke-WebRequest $url -OutFile ffmpeg-win.zip
+          Expand-Archive ffmpeg-win.zip -DestinationPath ffmpeg-tmp -Force
+          New-Item -ItemType Directory -Force ffmpeg | Out-Null
+          Copy-Item ffmpeg-tmp/*/bin/ffmpeg.exe  ffmpeg/
+          Copy-Item ffmpeg-tmp/*/bin/ffprobe.exe ffmpeg/
+          Remove-Item -Recurse ffmpeg-tmp, ffmpeg-win.zip
+
+      # ── Node deps + renderer build ────────────────────────────────────────
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install renderer dependencies
+        run: cd renderer && npm ci
+
+      - name: Build renderer
+        run: npm run build-renderer
+
+      # ── Stamp version from tag ────────────────────────────────────────────
+      - name: Set version
+        shell: bash
+        run: |
+          TAG="${{ needs.setup.outputs.tag }}"
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
+            pkg.version = '0.0.${{ github.run_number }}';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+          "
+
+      # ── Build Electron app ────────────────────────────────────────────────
+      - name: Build Electron app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --${{ matrix.platform }} --publish never
+
+      # ── Upload artifacts for release job ─────────────────────────────────
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.platform }}
+          path: |
+            dist-electron/**/*.AppImage
+            dist-electron/**/*.deb
+            dist-electron/**/*.exe
+            dist-electron/**/*.dmg
+            dist-electron/**/*.zip
+          if-no-files-found: warn
+
+  # ── Create GitHub release ─────────────────────────────────────────────────
+  create-release:
+    needs: [setup, build]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist/
+          merge-multiple: true
+
+      - name: Create versioned release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.setup.outputs.tag }}
+          name: "DJ Manager ${{ needs.setup.outputs.tag }}"
+          prerelease: false
+          body: |
+            Automated release from commit ${{ github.sha }}
+
+            ${{ github.event.head_commit.message }}
+
+            ## Downloads
+
+            | File | Platform |
+            |------|----------|
+            | `*.AppImage` / `*.deb` | Linux x86_64 |
+            | `*.dmg` | macOS Apple Silicon |
+            | `*.exe` (installer) | Windows x86_64 |
+          files: dist/**/*
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update rolling 'latest' release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "DJ Manager (latest)"
+          prerelease: true
+          body: |
+            Latest build — ${{ needs.setup.outputs.tag }} from commit ${{ github.sha }}
+
+            ${{ github.event.head_commit.message }}
+          files: dist/**/*
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Bump version on dev after release ─────────────────────────────────────
+  bump-version:
+    needs: [create-release]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Bump patch version in package.json
+        run: |
+          OLD=$(node -e "console.log(require('./package.json').version)")
+          NEW=$(node -e "const v='$OLD'.split('.'); v[2]=String(Number(v[2])+1); console.log(v.join('.'))")
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
+            pkg.version = '$NEW';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          echo "Bumped $OLD -> $NEW"
+
+      - name: Commit and push to dev
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          VERSION=$(node -e "console.log(require('./package.json').version)")
+          git add package.json
+          git commit -m "chore: bump version to $VERSION"
+          git push origin dev

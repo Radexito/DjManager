@@ -39,7 +39,7 @@ function parseTags(ffprobeData) {
 export function spawnAnalysis(trackId, filePath) {
   const worker = new Worker(
     new URL('./analysisWorker.js', import.meta.url),
-    { workerData: { filePath, trackId } }
+    { workerData: { filePath, trackId, isPackaged: app.isPackaged, resourcesPath: process.resourcesPath } }
   );
 
   worker.on('message', ({ ok, result, error }) => {
