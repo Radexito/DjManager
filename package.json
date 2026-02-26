@@ -23,8 +23,7 @@
     "pretest": "npm rebuild better-sqlite3",
     "test": "vitest run",
     "test:watch": "vitest",
-    "posttest": "electron-builder install-app-deps",
-    "prepare": "husky"
+    "posttest": "electron-builder install-app-deps"
   },
   "build": {
     "appId": "com.djmanager.app",
