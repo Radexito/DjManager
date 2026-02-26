@@ -5,9 +5,8 @@ const DEFAULT_TARGET = -14;
 
 function SettingsModal({ onClose }) {
   const [activeSection, setActiveSection] = useState('library');
-
-  // Library settings — keep as string locally to allow typing "-" or empty
   const [targetInput, setTargetInput] = useState(String(DEFAULT_TARGET));
+  const [confirmClear, setConfirmClear] = useState(null); // 'library' | 'userdata'
 
   useEffect(() => {
     window.api.getSetting('normalize_target_lufs', String(DEFAULT_TARGET))
@@ -22,8 +21,19 @@ function SettingsModal({ onClose }) {
     }
   };
 
+  const handleClearLibrary = async () => {
+    await window.api.clearLibrary();
+    setConfirmClear(null);
+    onClose();
+  };
+
+  const handleClearUserData = async () => {
+    await window.api.clearUserData();
+  };
+
   const sections = [
     { id: 'library', label: 'Library' },
+    { id: 'advanced', label: 'Advanced' },
   ];
 
   return (
@@ -47,7 +57,6 @@ function SettingsModal({ onClose }) {
           {activeSection === 'library' && (
             <>
               <h3>Library</h3>
-
               <div className="settings-group">
                 <div className="settings-group-title">Loudness Normalization</div>
                 <p className="settings-group-desc">
@@ -72,10 +81,57 @@ function SettingsModal({ onClose }) {
               </div>
             </>
           )}
+
+          {activeSection === 'advanced' && (
+            <>
+              <h3>Advanced</h3>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Danger Zone</div>
+                <p className="settings-group-desc">
+                  These actions are permanent and cannot be undone.
+                </p>
+
+                <div className="settings-row settings-row-action">
+                  <div>
+                    <div className="settings-action-label">Clear Library</div>
+                    <div className="settings-action-desc">Removes all tracks and audio files. Your playlists will also be cleared.</div>
+                  </div>
+                  {confirmClear === 'library' ? (
+                    <div className="settings-confirm-row">
+                      <span>Are you sure?</span>
+                      <button className="btn-danger" onClick={handleClearLibrary}>Yes, clear</button>
+                      <button className="btn-secondary" onClick={() => setConfirmClear(null)}>Cancel</button>
+                    </div>
+                  ) : (
+                    <button className="btn-danger" onClick={() => setConfirmClear('library')}>Clear Library</button>
+                  )}
+                </div>
+
+                <div className="settings-row settings-row-action">
+                  <div>
+                    <div className="settings-action-label">Clear All User Data</div>
+                    <div className="settings-action-desc">Deletes the entire app data folder and quits. The app will start fresh on next launch.</div>
+                  </div>
+                  {confirmClear === 'userdata' ? (
+                    <div className="settings-confirm-row">
+                      <span>Are you sure?</span>
+                      <button className="btn-danger" onClick={handleClearUserData}>Yes, delete & quit</button>
+                      <button className="btn-secondary" onClick={() => setConfirmClear(null)}>Cancel</button>
+                    </div>
+                  ) : (
+                    <button className="btn-danger" onClick={() => setConfirmClear('userdata')}>Clear All User Data</button>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         <button className="settings-close" onClick={onClose}>✕</button>
       </div>
+
+      {/* Inline confirm backdrop blocked by modal's stopPropagation */}
     </div>
   );
 }

@@ -97,8 +97,6 @@ async function findFile(dir, name) {
 
 export async function ensureDeps(onProgress) {
   if (areDepsReady()) return;
-
-  const binDir = getBinDir();
   await fs.promises.mkdir(binDir, { recursive: true });
   const tmp = path.join(app.getPath('temp'), 'djman-deps');
   await fs.promises.mkdir(tmp, { recursive: true });
@@ -106,16 +104,18 @@ export async function ensureDeps(onProgress) {
   const platform = process.platform;
   const ext = platform === 'win32' ? '.exe' : '';
 
-  onProgress?.('Downloading FFmpeg...');
+  onProgress?.('Downloading FFmpeg...', 0);
 
   try {
     if (platform === 'linux') {
       const archive = path.join(tmp, 'ffmpeg.tar.xz');
       await downloadFile(
         'https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz',
-        archive
+        archive,
+        (recv, total) => total > 0 && onProgress?.(`Downloading FFmpeg… ${Math.round(recv/total*100)}%`, Math.round(recv/total*100))
       );
       const extractDir = path.join(tmp, 'ffmpeg-extracted');
+      onProgress?.('Extracting…', 99);
       await extractTarXz(archive, extractDir);
       const ffmpeg = await findFile(extractDir, 'ffmpeg');
       const ffprobe = await findFile(extractDir, 'ffprobe');
@@ -128,7 +128,10 @@ export async function ensureDeps(onProgress) {
       const release = await getLatestRelease('BtbN', 'FFmpeg-Builds');
       const asset = release.assets.find(a => a.name.includes('win64-gpl.zip') && a.name.includes('latest'));
       const archive = path.join(tmp, 'ffmpeg-win.zip');
-      await downloadFile(asset.browser_download_url, archive);
+      await downloadFile(asset.browser_download_url, archive,
+        (recv, total) => total > 0 && onProgress?.(`Downloading FFmpeg… ${Math.round(recv/total*100)}%`, Math.round(recv/total*100))
+      );
+      onProgress?.('Extracting…', 99);
       const extractDir = path.join(tmp, 'ffmpeg-win-extracted');
       await extractZip(archive, extractDir);
       const ffmpeg = await findFile(extractDir, 'ffmpeg.exe');
@@ -142,8 +145,13 @@ export async function ensureDeps(onProgress) {
       const ffprobeUrl = 'https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip';
       const ffmpegZip  = path.join(tmp, 'ffmpeg-mac.zip');
       const ffprobeZip = path.join(tmp, 'ffprobe-mac.zip');
-      await downloadFile(ffmpegUrl, ffmpegZip);
-      await downloadFile(ffprobeUrl, ffprobeZip);
+      await downloadFile(ffmpegUrl, ffmpegZip,
+        (recv, total) => total > 0 && onProgress?.(`Downloading FFmpeg… ${Math.round(recv/total*50)}%`, Math.round(recv/total*50))
+      );
+      await downloadFile(ffprobeUrl, ffprobeZip,
+        (recv, total) => total > 0 && onProgress?.(`Downloading FFprobe… ${50 + Math.round(recv/total*49)}%`, 50 + Math.round(recv/total*49))
+      );
+      onProgress?.('Extracting…', 99);
       await extractZip(ffmpegZip,  path.join(tmp, 'ffmpeg-mac'));
       await extractZip(ffprobeZip, path.join(tmp, 'ffprobe-mac'));
       const ffmpeg  = await findFile(path.join(tmp, 'ffmpeg-mac'),  'ffmpeg');
@@ -154,7 +162,7 @@ export async function ensureDeps(onProgress) {
       fs.chmodSync(getFfprobeRuntimePath(), 0o755);
     }
 
-    onProgress?.('FFmpeg ready.');
+    onProgress?.('FFmpeg ready.', 100);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

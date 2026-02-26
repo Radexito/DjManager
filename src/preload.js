@@ -53,4 +53,11 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('open-settings', handler);
     return () => ipcRenderer.removeListener('open-settings', handler);
   },
+  clearLibrary: () => ipcRenderer.invoke('clear-library'),
+  clearUserData: () => ipcRenderer.invoke('clear-user-data'),
+  onDepsProgress: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('deps-progress', handler);
+    return () => ipcRenderer.removeListener('deps-progress', handler);
+  },
 });

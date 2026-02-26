@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { app, BrowserWindow, ipcMain, dialog, Menu, protocol } from 'electron';
 import { initDB } from './db/migrations.js';
 import { createPlaylist, getPlaylists, getPlaylist, renamePlaylist, updatePlaylistColor, deletePlaylist, addTrackToPlaylist, addTracksToPlaylist, removeTrackFromPlaylist, reorderPlaylistTracks, getPlaylistsForTrack } from './db/playlistRepository.js';
-import { addTrack, getTracks, getTrackIds, getTrackById, removeTrack, updateTrack, normalizeLibrary } from './db/trackRepository.js';
+import { addTrack, getTracks, getTrackIds, getTrackById, removeTrack, updateTrack, normalizeLibrary, clearTracks } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import { importAudioFile, spawnAnalysis } from './audio/importManager.js';
 import { ensureDeps } from './deps.js';
@@ -111,9 +111,15 @@ async function initApp() {
 
   // Download FFmpeg on first launch (packaged app only)
   if (app.isPackaged) {
-    ensureDeps((msg) => console.log('[deps]', msg)).catch((err) =>
-      console.error('[deps] Failed to download FFmpeg:', err.message)
-    );
+    ensureDeps((msg, pct) => {
+      console.log('[deps]', msg);
+      if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
+    }).then(() => {
+      if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+    }).catch((err) => {
+      console.error('[deps] Failed to download FFmpeg:', err.message);
+      if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg: `Error: ${err.message}`, pct: -1 });
+    });
   }
 
   // Application menu
@@ -247,6 +253,20 @@ ipcMain.handle('import-audio-files', async (event, filePaths) => {
   }
 
   return trackIds;
+});
+
+ipcMain.handle('clear-library', async () => {
+  const audioBase = path.join(app.getPath('userData'), 'audio');
+  clearTracks();
+  if (fs.existsSync(audioBase)) fs.rmSync(audioBase, { recursive: true, force: true });
+  if (global.mainWindow) global.mainWindow.webContents.send('library-updated');
+});
+
+ipcMain.handle('clear-user-data', async () => {
+  const dataPath = app.getPath('userData');
+  // Schedule deletion after app quits
+  app.on('quit', () => fs.rmSync(dataPath, { recursive: true, force: true }));
+  app.quit();
 });
 
 app.on('ready', initApp);

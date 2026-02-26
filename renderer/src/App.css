@@ -17,3 +17,43 @@ html, body {
   display: flex;
   overflow: hidden;
 }
+.deps-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.deps-box {
+  background: #1e1e2e;
+  border: 1px solid #3a3a5c;
+  border-radius: 10px;
+  padding: 28px 36px;
+  min-width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.deps-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #cdd6f4;
+}
+.deps-msg {
+  font-size: 13px;
+  color: #a6adc8;
+}
+.deps-bar-track {
+  height: 6px;
+  background: #313244;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.deps-bar-fill {
+  height: 100%;
+  background: #89b4fa;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
