@@ -62,7 +62,9 @@
   cursor: pointer;
   padding: 4px 6px;
   border-radius: 4px;
-  transition: color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s;
   line-height: 1;
 }
 
@@ -159,7 +161,7 @@
   border-radius: 6px;
   min-width: 220px;
   max-width: 320px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   z-index: 200;
   overflow: hidden;
 }

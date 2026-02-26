@@ -16,9 +16,12 @@ function SettingsModal({ onClose }) {
   const [confirmMove, setConfirmMove] = useState(null); // pending new dir path
 
   // Escape key closes dialog
-  const handleKeyDown = useCallback((e) => {
-    if (e.key === 'Escape') onClose();
-  }, [onClose]);
+  const handleKeyDown = useCallback(
+    (e) => {
+      if (e.key === 'Escape') onClose();
+    },
+    [onClose]
+  );
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
@@ -26,8 +29,9 @@ function SettingsModal({ onClose }) {
   }, [handleKeyDown]);
 
   useEffect(() => {
-    window.api.getSetting('normalize_target_lufs', String(DEFAULT_TARGET))
-      .then(v => setTargetInput(v));
+    window.api
+      .getSetting('normalize_target_lufs', String(DEFAULT_TARGET))
+      .then((v) => setTargetInput(v));
   }, []);
 
   useEffect(() => {
@@ -96,11 +100,10 @@ function SettingsModal({ onClose }) {
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="settings-modal" onMouseDown={e => e.stopPropagation()}>
-
+      <div className="settings-modal" onMouseDown={(e) => e.stopPropagation()}>
         <div className="settings-sidebar">
           <div className="settings-title">Settings</div>
-          {sections.map(s => (
+          {sections.map((s) => (
             <div
               key={s.id}
               className={`settings-nav-item${activeSection === s.id ? ' active' : ''}`}
@@ -118,9 +121,8 @@ function SettingsModal({ onClose }) {
               <div className="settings-group">
                 <div className="settings-group-title">Loudness Normalization</div>
                 <p className="settings-group-desc">
-                  Calculates a gain adjustment for every analyzed track so it
-                  hits the target loudness during playback. Tracks without
-                  loudness data are skipped.
+                  Calculates a gain adjustment for every analyzed track so it hits the target
+                  loudness during playback. Tracks without loudness data are skipped.
                 </p>
                 <div className="settings-row">
                   <label>Target loudness</label>
@@ -131,7 +133,7 @@ function SettingsModal({ onClose }) {
                       max="-6"
                       step="0.5"
                       value={targetInput}
-                      onChange={e => handleTargetChange(e.target.value)}
+                      onChange={(e) => handleTargetChange(e.target.value)}
                     />
                     <span className="settings-unit">LUFS</span>
                   </div>
@@ -141,11 +143,18 @@ function SettingsModal({ onClose }) {
               <div className="settings-group">
                 <div className="settings-group-title">Library Location</div>
                 <p className="settings-group-desc">
-                  Where imported audio files are stored. Moving the library copies all files to the new location and updates the database.
+                  Where imported audio files are stored. Moving the library copies all files to the
+                  new location and updates the database.
                 </p>
                 <div className="settings-row settings-row-action">
-                  <div className="settings-path-display" title={libraryPath}>{libraryPath || '…'}</div>
-                  <button className="btn-secondary" onClick={handleBrowseLibrary} disabled={!!moveProgress}>
+                  <div className="settings-path-display" title={libraryPath}>
+                    {libraryPath || '…'}
+                  </div>
+                  <button
+                    className="btn-secondary"
+                    onClick={handleBrowseLibrary}
+                    disabled={!!moveProgress}
+                  >
                     Change…
                   </button>
                 </div>
@@ -161,9 +170,15 @@ function SettingsModal({ onClose }) {
                 )}
                 {confirmMove && (
                   <div className="settings-confirm-row" style={{ marginTop: '0.75rem' }}>
-                    <span>Move library to <b>{confirmMove}</b>?</span>
-                    <button className="btn-primary" onClick={handleConfirmMove}>Move</button>
-                    <button className="btn-secondary" onClick={() => setConfirmMove(null)}>Cancel</button>
+                    <span>
+                      Move library to <b>{confirmMove}</b>?
+                    </span>
+                    <button className="btn-primary" onClick={handleConfirmMove}>
+                      Move
+                    </button>
+                    <button className="btn-secondary" onClick={() => setConfirmMove(null)}>
+                      Cancel
+                    </button>
                   </div>
                 )}
               </div>
@@ -177,7 +192,8 @@ function SettingsModal({ onClose }) {
               <div className="settings-group">
                 <div className="settings-group-title">Installed Versions</div>
                 <p className="settings-group-desc">
-                  FFmpeg and mixxx-analyzer are required dependencies downloaded automatically on first launch.
+                  FFmpeg and mixxx-analyzer are required dependencies downloaded automatically on
+                  first launch.
                 </p>
                 <div className="dep-version-list">
                   <div className="dep-version-row">
@@ -196,7 +212,9 @@ function SettingsModal({ onClose }) {
                 <div className="settings-row settings-row-action">
                   <div>
                     <div className="settings-action-label">Update All Dependencies</div>
-                    <div className="settings-action-desc">Re-downloads the latest FFmpeg and mixxx-analyzer.</div>
+                    <div className="settings-action-desc">
+                      Re-downloads the latest FFmpeg and mixxx-analyzer.
+                    </div>
                   </div>
                   <button className="btn-primary" onClick={handleUpdateAll} disabled={updatingAll}>
                     {updatingAll ? 'Updating…' : 'Update All'}
@@ -213,14 +231,19 @@ function SettingsModal({ onClose }) {
               <div className="settings-group">
                 <div className="settings-group-title">Diagnostics</div>
                 <p className="settings-group-desc">
-                  Logs are saved daily and kept for 7 days. Include the log folder when reporting bugs.
+                  Logs are saved daily and kept for 7 days. Include the log folder when reporting
+                  bugs.
                 </p>
                 <div className="settings-row settings-row-action">
                   <div>
                     <div className="settings-action-label">Log Files</div>
-                    <div className="settings-action-desc">Opens the folder containing runtime log files.</div>
+                    <div className="settings-action-desc">
+                      Opens the folder containing runtime log files.
+                    </div>
                   </div>
-                  <button className="btn-secondary" onClick={handleOpenLogs}>Open Log Folder</button>
+                  <button className="btn-secondary" onClick={handleOpenLogs}>
+                    Open Log Folder
+                  </button>
                 </div>
               </div>
 
@@ -233,32 +256,49 @@ function SettingsModal({ onClose }) {
                 <div className="settings-row settings-row-action">
                   <div>
                     <div className="settings-action-label">Clear Library</div>
-                    <div className="settings-action-desc">Removes all tracks and audio files. Your playlists will also be cleared.</div>
+                    <div className="settings-action-desc">
+                      Removes all tracks and audio files. Your playlists will also be cleared.
+                    </div>
                   </div>
                   {confirmClear === 'library' ? (
                     <div className="settings-confirm-row">
                       <span>Are you sure?</span>
-                      <button className="btn-danger" onClick={handleClearLibrary}>Yes, clear</button>
-                      <button className="btn-secondary" onClick={() => setConfirmClear(null)}>Cancel</button>
+                      <button className="btn-danger" onClick={handleClearLibrary}>
+                        Yes, clear
+                      </button>
+                      <button className="btn-secondary" onClick={() => setConfirmClear(null)}>
+                        Cancel
+                      </button>
                     </div>
                   ) : (
-                    <button className="btn-danger" onClick={() => setConfirmClear('library')}>Clear Library</button>
+                    <button className="btn-danger" onClick={() => setConfirmClear('library')}>
+                      Clear Library
+                    </button>
                   )}
                 </div>
 
                 <div className="settings-row settings-row-action">
                   <div>
                     <div className="settings-action-label">Clear All User Data</div>
-                    <div className="settings-action-desc">Deletes the entire app data folder and quits. The app will start fresh on next launch.</div>
+                    <div className="settings-action-desc">
+                      Deletes the entire app data folder and quits. The app will start fresh on next
+                      launch.
+                    </div>
                   </div>
                   {confirmClear === 'userdata' ? (
                     <div className="settings-confirm-row">
                       <span>Are you sure?</span>
-                      <button className="btn-danger" onClick={handleClearUserData}>Yes, delete & quit</button>
-                      <button className="btn-secondary" onClick={() => setConfirmClear(null)}>Cancel</button>
+                      <button className="btn-danger" onClick={handleClearUserData}>
+                        Yes, delete & quit
+                      </button>
+                      <button className="btn-secondary" onClick={() => setConfirmClear(null)}>
+                        Cancel
+                      </button>
                     </div>
                   ) : (
-                    <button className="btn-danger" onClick={() => setConfirmClear('userdata')}>Clear All User Data</button>
+                    <button className="btn-danger" onClick={() => setConfirmClear('userdata')}>
+                      Clear All User Data
+                    </button>
                   )}
                 </div>
               </div>
@@ -266,7 +306,9 @@ function SettingsModal({ onClose }) {
           )}
         </div>
 
-        <button className="settings-close" onClick={onClose}>✕</button>
+        <button className="settings-close" onClick={onClose}>
+          ✕
+        </button>
       </div>
 
       {/* Inline confirm backdrop blocked by modal's stopPropagation */}

@@ -35,32 +35,38 @@ export function updateTrack(id, data) {
   const fields = Object.keys(data);
   if (!fields.length) return;
 
-  const set = fields.map(f => `${f} = @${f}`).join(', ');
-  db.prepare(`
+  const set = fields.map((f) => `${f} = @${f}`).join(', ');
+  db.prepare(
+    `
     UPDATE tracks
     SET ${set}, analyzed = 1
     WHERE id = @id
-  `).run({ id, ...data });
+  `
+  ).run({ id, ...data });
 }
 
 export function getTracks({ limit = 50, offset = 0, search = '', playlistId } = {}) {
   if (playlistId) {
     const q = search ? `%${search}%` : null;
-    const where = search
-      ? `AND (t.title LIKE @q OR t.artist LIKE @q OR t.album LIKE @q)`
-      : '';
-    return db.prepare(`
+    const where = search ? `AND (t.title LIKE @q OR t.artist LIKE @q OR t.album LIKE @q)` : '';
+    return db
+      .prepare(
+        `
       SELECT t.*
       FROM playlist_tracks pt
       JOIN tracks t ON t.id = pt.track_id
       WHERE pt.playlist_id = @playlistId ${where}
       ORDER BY pt.position ASC
       LIMIT @limit OFFSET @offset
-    `).all({ playlistId, q, limit, offset });
+    `
+      )
+      .all({ playlistId, q, limit, offset });
   }
 
   if (search) {
-    return db.prepare(`
+    return db
+      .prepare(
+        `
       SELECT *
       FROM tracks
       WHERE title LIKE @q
@@ -68,39 +74,56 @@ export function getTracks({ limit = 50, offset = 0, search = '', playlistId } = 
          OR album LIKE @q
       ORDER BY created_at DESC
       LIMIT @limit OFFSET @offset
-    `).all({ q: `%${search}%`, limit, offset });
+    `
+      )
+      .all({ q: `%${search}%`, limit, offset });
   }
 
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT *
     FROM tracks
     ORDER BY created_at DESC
     LIMIT ? OFFSET ?
-  `).all(limit, offset);
+  `
+    )
+    .all(limit, offset);
 }
 
 export function getTrackIds({ search = '', playlistId } = {}) {
   if (playlistId) {
     const q = search ? `%${search}%` : null;
-    const where = search
-      ? `AND (t.title LIKE @q OR t.artist LIKE @q OR t.album LIKE @q)`
-      : '';
-    return db.prepare(`
+    const where = search ? `AND (t.title LIKE @q OR t.artist LIKE @q OR t.album LIKE @q)` : '';
+    return db
+      .prepare(
+        `
       SELECT t.id
       FROM playlist_tracks pt
       JOIN tracks t ON t.id = pt.track_id
       WHERE pt.playlist_id = @playlistId ${where}
       ORDER BY pt.position ASC
-    `).all({ playlistId, q }).map(r => r.id);
+    `
+      )
+      .all({ playlistId, q })
+      .map((r) => r.id);
   }
   if (search) {
-    return db.prepare(`
+    return db
+      .prepare(
+        `
       SELECT id FROM tracks
       WHERE title LIKE @q OR artist LIKE @q OR album LIKE @q
       ORDER BY created_at DESC
-    `).all({ q: `%${search}%` }).map(r => r.id);
+    `
+      )
+      .all({ q: `%${search}%` })
+      .map((r) => r.id);
   }
-  return db.prepare('SELECT id FROM tracks ORDER BY created_at DESC').all().map(r => r.id);
+  return db
+    .prepare('SELECT id FROM tracks ORDER BY created_at DESC')
+    .all()
+    .map((r) => r.id);
 }
 
 export function getTrackByHash(hash) {
@@ -116,11 +139,15 @@ export function removeTrack(id) {
 }
 
 export function normalizeLibrary(targetLufs) {
-  const info = db.prepare(`
+  const info = db
+    .prepare(
+      `
     UPDATE tracks
     SET replay_gain = ROUND((? - loudness) * 10) / 10
     WHERE loudness IS NOT NULL
-  `).run(targetLufs);
+  `
+    )
+    .run(targetLufs);
   return info.changes ?? 0;
 }
 

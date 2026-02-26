@@ -1,0 +1,6 @@
+node_modules/
+renderer/node_modules/
+renderer/dist/
+dist-electron/
+*.lock
+package-lock.json

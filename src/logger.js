@@ -32,13 +32,19 @@ function timestamp() {
 }
 
 function formatArgs(args) {
-  return args.map(a => {
-    if (a instanceof Error) return `${a.message}\n${a.stack}`;
-    if (typeof a === 'object') {
-      try { return JSON.stringify(a); } catch { return String(a); }
-    }
-    return String(a);
-  }).join(' ');
+  return args
+    .map((a) => {
+      if (a instanceof Error) return `${a.message}\n${a.stack}`;
+      if (typeof a === 'object') {
+        try {
+          return JSON.stringify(a);
+        } catch {
+          return String(a);
+        }
+      }
+      return String(a);
+    })
+    .join(' ');
 }
 
 export function log(level, ...args) {
@@ -48,8 +54,8 @@ export function log(level, ...args) {
 }
 
 function patchConsole() {
-  const origLog   = console.log.bind(console);
-  const origWarn  = console.warn.bind(console);
+  const origLog = console.log.bind(console);
+  const origWarn = console.warn.bind(console);
   const origError = console.error.bind(console);
 
   console.log = (...args) => {
@@ -78,7 +84,9 @@ function pruneOldLogs() {
       const stat = fs.statSync(full);
       if (stat.mtimeMs < cutoff) fs.unlinkSync(full);
     }
-  } catch { /* best-effort */ }
+  } catch {
+    /* best-effort */
+  }
 }
 
 export function initLogger() {
@@ -91,11 +99,15 @@ export function initLogger() {
   logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
   logStream.write(`\n${'='.repeat(60)}\n`);
-  logStream.write(`[${timestamp()}] [INFO]  DJ Manager started — version ${app.getVersion()} platform=${process.platform} arch=${process.arch}\n`);
+  logStream.write(
+    `[${timestamp()}] [INFO]  DJ Manager started — version ${app.getVersion()} platform=${process.platform} arch=${process.arch}\n`
+  );
 
   patchConsole();
 
   return logFile;
 }
 
-export function getLogDir() { return logDir; }
+export function getLogDir() {
+  return logDir;
+}

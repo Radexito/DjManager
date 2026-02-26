@@ -2,14 +2,16 @@
 import db from './database.js';
 
 export function createPlaylist(name, color = null) {
-  const info = db.prepare(
-    `INSERT INTO playlists (name, color, created_at) VALUES (?, ?, ?)`
-  ).run(name, color, Date.now());
+  const info = db
+    .prepare(`INSERT INTO playlists (name, color, created_at) VALUES (?, ?, ?)`)
+    .run(name, color, Date.now());
   return info.lastInsertRowid;
 }
 
 export function getPlaylists() {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT
       p.id,
       p.name,
@@ -22,11 +24,15 @@ export function getPlaylists() {
     LEFT JOIN tracks t ON t.id = pt.track_id
     GROUP BY p.id
     ORDER BY p.created_at ASC
-  `).all();
+  `
+    )
+    .all();
 }
 
 export function getPlaylist(id) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT
       p.id, p.name, p.color, p.created_at,
       COUNT(pt.track_id)           AS track_count,
@@ -36,7 +42,9 @@ export function getPlaylist(id) {
     LEFT JOIN tracks t ON t.id = pt.track_id
     WHERE p.id = ?
     GROUP BY p.id
-  `).get(id);
+  `
+    )
+    .get(id);
 }
 
 export function renamePlaylist(id, name) {
@@ -54,18 +62,22 @@ export function deletePlaylist(id) {
 
 // Returns the next available position in a playlist
 function nextPosition(playlistId) {
-  const row = db.prepare(
-    `SELECT COALESCE(MAX(position), -1) + 1 AS pos FROM playlist_tracks WHERE playlist_id = ?`
-  ).get(playlistId);
+  const row = db
+    .prepare(
+      `SELECT COALESCE(MAX(position), -1) + 1 AS pos FROM playlist_tracks WHERE playlist_id = ?`
+    )
+    .get(playlistId);
   return row.pos;
 }
 
 export function addTrackToPlaylist(playlistId, trackId) {
   const pos = nextPosition(playlistId);
-  db.prepare(`
+  db.prepare(
+    `
     INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id, position, date_added)
     VALUES (?, ?, ?, ?)
-  `).run(playlistId, trackId, pos, Date.now());
+  `
+  ).run(playlistId, trackId, pos, Date.now());
 }
 
 export function addTracksToPlaylist(playlistId, trackIds) {
@@ -83,17 +95,21 @@ export function addTracksToPlaylist(playlistId, trackIds) {
 
 export function removeTrackFromPlaylist(playlistId, trackId) {
   db.transaction(() => {
-    const row = db.prepare(
-      `SELECT position FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?`
-    ).get(playlistId, trackId);
+    const row = db
+      .prepare(`SELECT position FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?`)
+      .get(playlistId, trackId);
     if (!row) return;
-    db.prepare(`DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?`)
-      .run(playlistId, trackId);
+    db.prepare(`DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?`).run(
+      playlistId,
+      trackId
+    );
     // Compact positions above the removed one
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE playlist_tracks SET position = position - 1
       WHERE playlist_id = ? AND position > ?
-    `).run(playlistId, row.position);
+    `
+    ).run(playlistId, row.position);
   })();
 }
 
@@ -110,14 +126,16 @@ export function reorderPlaylistTracks(playlistId, orderedTrackIds) {
 }
 
 export function isTrackInPlaylist(playlistId, trackId) {
-  return !!db.prepare(
-    `SELECT 1 FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?`
-  ).get(playlistId, trackId);
+  return !!db
+    .prepare(`SELECT 1 FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?`)
+    .get(playlistId, trackId);
 }
 
 // Returns [{id, name, color, isMember}] for all playlists, for a given track
 export function getPlaylistsForTrack(trackId) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT
       p.id, p.name, p.color,
       EXISTS (
@@ -126,15 +144,21 @@ export function getPlaylistsForTrack(trackId) {
       ) AS is_member
     FROM playlists p
     ORDER BY p.created_at ASC
-  `).all(trackId);
+  `
+    )
+    .all(trackId);
 }
 
 export function getPlaylistTracks(playlistId) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT t.*
     FROM playlist_tracks pt
     JOIN tracks t ON t.id = pt.track_id
     WHERE pt.playlist_id = ?
     ORDER BY pt.position ASC
-  `).all(playlistId);
+  `
+    )
+    .all(playlistId);
 }

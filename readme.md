@@ -2,6 +2,12 @@
 
 Your music library, built for DJs. Import tracks, analyse BPM and key automatically, build playlists, and prepare sets — all offline, all on your machine.
 
+[![CI](https://github.com/Radexito/djman/actions/workflows/ci.yml/badge.svg)](https://github.com/Radexito/djman/actions/workflows/ci.yml)
+[![Release](https://github.com/Radexito/djman/actions/workflows/release.yml/badge.svg)](https://github.com/Radexito/djman/actions/workflows/release.yml)
+[![code style: prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg)](https://github.com/prettier/prettier)
+[![ESLint](https://img.shields.io/badge/linting-ESLint-4B32C3)](https://eslint.org/)
+[![Tested with Vitest](https://img.shields.io/badge/tested_with-Vitest-6E9F18)](https://vitest.dev/)
+
 ![DJ Manager screenshot](screenshot.png)
 
 ---
@@ -12,11 +18,11 @@ Grab the latest build for your platform from [**Releases**](https://github.com/R
 
 FFmpeg and the audio analyser download automatically on first launch — no manual setup required.
 
-| Platform | File |
-|---|---|
-| Linux | `DJ.Manager-x.x.x-Linux` (AppImage — just run it) |
-| Windows | `DJ.Manager-x.x.x-Setup.exe` |
-| macOS | `DJ.Manager-x.x.x.dmg` |
+| Platform | File                                              |
+| -------- | ------------------------------------------------- |
+| Linux    | `DJ.Manager-x.x.x-Linux` (AppImage — just run it) |
+| Windows  | `DJ.Manager-x.x.x-Setup.exe`                      |
+| macOS    | `DJ.Manager-x.x.x.dmg`                            |
 
 ---
 
@@ -50,23 +56,23 @@ FFmpeg and mixxx-analyzer are downloaded automatically to `~/.config/djman/bin/`
 
 ## What's been built
 
-| Feature | Status |
-|---|---|
-| Import + managed library storage | ✅ |
-| FFmpeg metadata extraction | ✅ |
-| BPM / key / loudness / intro+outro analysis | ✅ |
-| Re-analyse, remove, right-click context menu | ✅ |
-| Multi-select (click, Shift, Ctrl, Ctrl+A) | ✅ |
-| BPM halve / double with override | ✅ |
-| Playlists (create, colour, reorder, drag-and-drop) | ✅ |
-| Audio player with seekbar and intro/outro zones | ✅ |
-| Hardware media keys | ✅ |
-| Loudness normalisation (LUFS target) | ✅ |
-| Runtime dependency downloads (FFmpeg + analyser) | ✅ |
-| In-app dependency updates | ✅ |
-| Standalone builds for Linux / Windows / macOS | ✅ |
-| Move library to custom location | ✅ |
-| App logging to `~/.config/djman/logs/` | ✅ |
+| Feature                                            | Status |
+| -------------------------------------------------- | ------ |
+| Import + managed library storage                   | ✅     |
+| FFmpeg metadata extraction                         | ✅     |
+| BPM / key / loudness / intro+outro analysis        | ✅     |
+| Re-analyse, remove, right-click context menu       | ✅     |
+| Multi-select (click, Shift, Ctrl, Ctrl+A)          | ✅     |
+| BPM halve / double with override                   | ✅     |
+| Playlists (create, colour, reorder, drag-and-drop) | ✅     |
+| Audio player with seekbar and intro/outro zones    | ✅     |
+| Hardware media keys                                | ✅     |
+| Loudness normalisation (LUFS target)               | ✅     |
+| Runtime dependency downloads (FFmpeg + analyser)   | ✅     |
+| In-app dependency updates                          | ✅     |
+| Standalone builds for Linux / Windows / macOS      | ✅     |
+| Move library to custom location                    | ✅     |
+| App logging to `~/.config/djman/logs/`             | ✅     |
 
 Issues tracking upcoming work are on the [**Issues**](https://github.com/Radexito/djman/issues) page.
 

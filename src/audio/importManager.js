@@ -13,7 +13,7 @@ function hashFile(filePath) {
   const stream = fs.createReadStream(filePath);
 
   return new Promise((resolve, reject) => {
-    stream.on('data', d => hash.update(d));
+    stream.on('data', (d) => hash.update(d));
     stream.on('end', () => resolve(hash.digest('hex')));
     stream.on('error', reject);
   });
@@ -37,17 +37,16 @@ function parseTags(ffprobeData) {
     title: tags.title || '',
     artist: tags.artist || '',
     album: tags.album || '',
-    genre: tags.genre ? tags.genre.split(',').map(g => g.trim()) : [],
+    genre: tags.genre ? tags.genre.split(',').map((g) => g.trim()) : [],
     year: tags.date ? parseInt(tags.date.slice(0, 4)) : null,
     label: tags.label || '',
   };
 }
 
 export function spawnAnalysis(trackId, filePath) {
-  const worker = new Worker(
-    new URL('./analysisWorker.js', import.meta.url),
-    { workerData: { filePath, trackId, analyzerPath: getAnalyzerRuntimePath() } }
-  );
+  const worker = new Worker(new URL('./analysisWorker.js', import.meta.url), {
+    workerData: { filePath, trackId, analyzerPath: getAnalyzerRuntimePath() },
+  });
 
   worker.on('message', ({ ok, result, error }) => {
     if (!ok) {
@@ -59,7 +58,10 @@ export function spawnAnalysis(trackId, filePath) {
 
     // Notify renderer
     if (global.mainWindow) {
-      global.mainWindow.webContents.send('track-updated', { trackId, analysis: { ...result, bpm_override: null } });
+      global.mainWindow.webContents.send('track-updated', {
+        trackId,
+        analysis: { ...result, bpm_override: null },
+      });
     }
   });
 }

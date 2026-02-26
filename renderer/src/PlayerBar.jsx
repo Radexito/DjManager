@@ -11,16 +11,26 @@ function formatTime(s) {
 
 export default function PlayerBar({ onNavigateToPlaylist }) {
   const {
-    currentTrack, currentPlaylistId,
-    isPlaying, currentTime, duration,
-    shuffle, repeat, outputDeviceId,
-    togglePlay, next, prev, seek,
-    toggleShuffle, cycleRepeat, setDevice,
+    currentTrack,
+    currentPlaylistId,
+    isPlaying,
+    currentTime,
+    duration,
+    shuffle,
+    repeat,
+    outputDeviceId,
+    togglePlay,
+    next,
+    prev,
+    seek,
+    toggleShuffle,
+    cycleRepeat,
+    setDevice,
   } = usePlayer();
 
   const [devices, setDevices] = useState([]);
   const [showDevices, setShowDevices] = useState(false);
-  const seekbarRef = useRef();      // uncontrolled range input
+  const seekbarRef = useRef(); // uncontrolled range input
   const seekingRef = useRef(false); // true while user drags
   const deviceWrapRef = useRef();
 
@@ -28,7 +38,7 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
     async function loadDevices() {
       if (!navigator.mediaDevices?.enumerateDevices) return;
       const all = await navigator.mediaDevices.enumerateDevices();
-      setDevices(all.filter(d => d.kind === 'audiooutput'));
+      setDevices(all.filter((d) => d.kind === 'audiooutput'));
     }
     loadDevices();
   }, []);
@@ -43,8 +53,8 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
     if (!seekbarRef.current || !duration) return;
     const intro = currentTrack?.intro_secs || 0;
     const outro = currentTrack?.outro_secs || 0;
-    const introFrac    = Math.min(intro / duration, 1) * 100;
-    const outroFrac    = Math.min(outro / duration, 1) * 100;
+    const introFrac = Math.min(intro / duration, 1) * 100;
+    const outroFrac = Math.min(outro / duration, 1) * 100;
 
     // No visible zones: intro at very start, outro at very end
     if (introFrac <= 0 && outroFrac >= 100) {
@@ -70,8 +80,7 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
   useEffect(() => {
     if (!showDevices) return;
     const handler = (e) => {
-      if (deviceWrapRef.current && !deviceWrapRef.current.contains(e.target))
-        setShowDevices(false);
+      if (deviceWrapRef.current && !deviceWrapRef.current.contains(e.target)) setShowDevices(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -85,7 +94,9 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
       <div className="player-left">
         {currentTrack ? (
           <>
-            <div className="player-title" title={currentTrack.title}>{currentTrack.title}</div>
+            <div className="player-title" title={currentTrack.title}>
+              {currentTrack.title}
+            </div>
             <div className="player-artist">{currentTrack.artist || 'Unknown'}</div>
           </>
         ) : (
@@ -100,17 +111,25 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
             className={`player-btn player-btn--toggle${shuffle ? ' player-btn--active' : ''}`}
             onClick={toggleShuffle}
             title="Shuffle"
-          >⇄</button>
-          <button className="player-btn" onClick={prev} title="Previous">⏮</button>
+          >
+            ⇄
+          </button>
+          <button className="player-btn" onClick={prev} title="Previous">
+            ⏮
+          </button>
           <button className="player-btn player-btn--play" onClick={togglePlay} title="Play / Pause">
             {isPlaying ? '⏸' : '▶'}
           </button>
-          <button className="player-btn" onClick={next} title="Next">⏭</button>
+          <button className="player-btn" onClick={next} title="Next">
+            ⏭
+          </button>
           <button
             className={`player-btn player-btn--toggle${repeat !== 'none' ? ' player-btn--active' : ''}`}
             onClick={cycleRepeat}
             title={`Repeat: ${repeat}`}
-          >{repeat === 'one' ? '↺¹' : '↺'}</button>
+          >
+            {repeat === 'one' ? '↺¹' : '↺'}
+          </button>
         </div>
 
         <div className="player-seek">
@@ -123,8 +142,13 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
             max={duration || 0}
             step={0.5}
             defaultValue={0}
-            onPointerDown={() => { seekingRef.current = true; }}
-            onPointerUp={e => { seek(Number(e.target.value)); seekingRef.current = false; }}
+            onPointerDown={() => {
+              seekingRef.current = true;
+            }}
+            onPointerUp={(e) => {
+              seek(Number(e.target.value));
+              seekingRef.current = false;
+            }}
           />
           <span className="player-time">{formatTime(duration)}</span>
         </div>
@@ -135,19 +159,24 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
         <div className="player-device-wrap" ref={deviceWrapRef}>
           <button
             className="player-btn"
-            onClick={() => setShowDevices(s => !s)}
+            onClick={() => setShowDevices((s) => !s)}
             title="Audio output"
-          >🔊</button>
+          >
+            🔊
+          </button>
           {showDevices && (
             <div className="player-device-menu">
               {devices.length === 0 && (
                 <div className="player-device-item player-device-item--empty">No devices found</div>
               )}
-              {devices.map(d => (
+              {devices.map((d) => (
                 <div
                   key={d.deviceId}
                   className={`player-device-item${d.deviceId === outputDeviceId ? ' player-device-item--active' : ''}`}
-                  onClick={() => { setDevice(d.deviceId); setShowDevices(false); }}
+                  onClick={() => {
+                    setDevice(d.deviceId);
+                    setShowDevices(false);
+                  }}
                 >
                   {d.label || `Output device`}
                 </div>
@@ -161,7 +190,9 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
           onClick={() => currentPlaylistId && onNavigateToPlaylist(String(currentPlaylistId))}
           title="Go to current playlist"
           disabled={!currentPlaylistId}
-        >☰</button>
+        >
+          ☰
+        </button>
       </div>
     </div>
   );

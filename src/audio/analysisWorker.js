@@ -24,10 +24,11 @@ function runAnalysis(filePath) {
   return new Promise((resolve, reject) => {
     const { exe, args } = findAnalysisCommand();
     const p = spawn(exe, [...args, '--json', filePath]);
-    let out = '', err = '';
-    p.stdout.on('data', c => (out += c));
-    p.stderr.on('data', c => (err += c));
-    p.on('close', code => {
+    let out = '',
+      err = '';
+    p.stdout.on('data', (c) => (out += c));
+    p.stderr.on('data', (c) => (err += c));
+    p.on('close', (code) => {
       if (!out.trim() && code !== 0)
         return reject(new Error(`analysis exited ${code}: ${err.trim()}`));
       resolve(parseOutput(out, err));
@@ -40,11 +41,11 @@ function parseOutput(stdout, stderr) {
   const raw = stdout.trim() || stderr.trim();
   if (!raw) return {};
   const start = raw.indexOf('[');
-  const end   = raw.lastIndexOf(']');
-  const json  = start >= 0 && end > start ? raw.slice(start, end + 1) : raw;
+  const end = raw.lastIndexOf(']');
+  const json = start >= 0 && end > start ? raw.slice(start, end + 1) : raw;
   try {
     const arr = JSON.parse(json);
-    return Array.isArray(arr) ? arr[0] ?? {} : arr;
+    return Array.isArray(arr) ? (arr[0] ?? {}) : arr;
   } catch (e) {
     return { error: `invalid json from analysis: ${e.message}` };
   }
@@ -61,13 +62,13 @@ async function analyzeAudio(filePath) {
   if (result.error) console.error('[analysis] error:', result.error);
 
   return {
-    bpm:         result.bpm         ?? null,
-    key_raw:     result.key         ?? null,
-    key_camelot: result.camelot     ?? null,
-    loudness:    result.lufs        ?? null,
-    replay_gain: result.replayGain  ?? null,
-    intro_secs:  result.introSecs   ?? null,
-    outro_secs:  result.outroSecs   ?? null,
+    bpm: result.bpm ?? null,
+    key_raw: result.key ?? null,
+    key_camelot: result.camelot ?? null,
+    loudness: result.lufs ?? null,
+    replay_gain: result.replayGain ?? null,
+    intro_secs: result.introSecs ?? null,
+    outro_secs: result.outroSecs ?? null,
   };
 }
 
