@@ -25,10 +25,7 @@ function App() {
   return (
     <PlayerProvider>
       <div className="app-main">
-        <Sidebar
-          selectedMenuItemId={selectedPlaylistId}
-          onMenuSelect={setSelectedPlaylistId}
-        />
+        <Sidebar selectedMenuItemId={selectedPlaylistId} onMenuSelect={setSelectedPlaylistId} />
         <MusicLibrary selectedPlaylist={selectedPlaylistId} />
       </div>
       <PlayerBar onNavigateToPlaylist={setSelectedPlaylistId} />

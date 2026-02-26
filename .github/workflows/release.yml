@@ -100,7 +100,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.setup.outputs.tag }}
-          name: "DJ Manager ${{ needs.setup.outputs.tag }}"
+          name: 'DJ Manager ${{ needs.setup.outputs.tag }}'
           prerelease: false
           body: |
             Automated release from commit ${{ github.sha }}

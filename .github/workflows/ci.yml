@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [master]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install renderer dependencies
+        run: cd renderer && npm ci
+
+      - name: Build native modules for Node (tests)
+        run: npm rebuild better-sqlite3
+
+      - name: Lint (main process)
+        run: npm run lint
+
+      - name: Lint (renderer)
+        run: cd renderer && npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Test (main process)
+        run: npx vitest run
+        env:
+          DB_PATH: ':memory:'
+
+      - name: Test (renderer)
+        run: cd renderer && npm run test

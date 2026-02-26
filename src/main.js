@@ -4,38 +4,67 @@ import { Readable } from 'stream';
 import { fileURLToPath } from 'url';
 import { app, BrowserWindow, ipcMain, dialog, Menu, protocol, shell } from 'electron';
 import { initDB } from './db/migrations.js';
-import { createPlaylist, getPlaylists, getPlaylist, renamePlaylist, updatePlaylistColor, deletePlaylist, addTrackToPlaylist, addTracksToPlaylist, removeTrackFromPlaylist, reorderPlaylistTracks, getPlaylistsForTrack, getPlaylistTracks } from './db/playlistRepository.js';
-import { addTrack, getTracks, getTrackIds, getTrackById, removeTrack, updateTrack, normalizeLibrary, clearTracks } from './db/trackRepository.js';
+import {
+  createPlaylist,
+  getPlaylists,
+  getPlaylist,
+  renamePlaylist,
+  updatePlaylistColor,
+  deletePlaylist,
+  addTracksToPlaylist,
+  removeTrackFromPlaylist,
+  reorderPlaylistTracks,
+  getPlaylistsForTrack,
+  getPlaylistTracks,
+} from './db/playlistRepository.js';
+import {
+  addTrack,
+  getTracks,
+  getTrackIds,
+  getTrackById,
+  removeTrack,
+  updateTrack,
+  normalizeLibrary,
+  clearTracks,
+} from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import { importAudioFile, spawnAnalysis, getLibraryBase } from './audio/importManager.js';
 import { ensureDeps } from './deps.js';
 import { getInstalledVersions, checkForUpdates, updateAnalyzer, updateAll } from './deps.js';
-import { initLogger, log, getLogDir } from './logger.js';
+import { initLogger, getLogDir } from './logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const isDev = process.env.NODE_ENV !== 'production';
 let mainWindow;
 
 // Register media:// protocol to serve local audio files from the renderer.
 // Must be called before app is ready.
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'media', privileges: { secure: true, supportFetchAPI: true, bypassCSP: true, stream: true } },
+  {
+    scheme: 'media',
+    privileges: { secure: true, supportFetchAPI: true, bypassCSP: true, stream: true },
+  },
 ]);
 
 function createWindow() {
   // Handle media:// scheme with Range request support so seeking works.
-  const MIME = { '.mp3':'audio/mpeg', '.flac':'audio/flac', '.wav':'audio/wav',
-                 '.ogg':'audio/ogg',  '.m4a':'audio/mp4',  '.aac':'audio/aac' };
+  const MIME = {
+    '.mp3': 'audio/mpeg',
+    '.flac': 'audio/flac',
+    '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg',
+    '.m4a': 'audio/mp4',
+    '.aac': 'audio/aac',
+  };
   protocol.handle('media', async (request) => {
     try {
       const filePath = decodeURIComponent(new URL(request.url).pathname);
-      const stat     = await fs.promises.stat(filePath);
-      const total    = stat.size;
-      const ext      = path.extname(filePath).toLowerCase();
-      const mime     = MIME[ext] || 'audio/mpeg';
-      const range    = request.headers.get('Range');
+      const stat = await fs.promises.stat(filePath);
+      const total = stat.size;
+      const ext = path.extname(filePath).toLowerCase();
+      const mime = MIME[ext] || 'audio/mpeg';
+      const range = request.headers.get('Range');
 
       const makeStream = (opts) => {
         const nodeStream = fs.createReadStream(filePath, opts);
@@ -52,14 +81,14 @@ function createWindow() {
 
       if (range) {
         const [, s, e] = range.match(/bytes=(\d+)-(\d*)/) || [];
-        const start    = parseInt(s, 10);
-        const end      = e ? Math.min(parseInt(e, 10), total - 1) : total - 1;
+        const start = parseInt(s, 10);
+        const end = e ? Math.min(parseInt(e, 10), total - 1) : total - 1;
         return new Response(makeStream({ start, end }), {
           status: 206,
           headers: {
-            'Content-Type':   mime,
-            'Content-Range':  `bytes ${start}-${end}/${total}`,
-            'Accept-Ranges':  'bytes',
+            'Content-Type': mime,
+            'Content-Range': `bytes ${start}-${end}/${total}`,
+            'Accept-Ranges': 'bytes',
             'Content-Length': String(end - start + 1),
           },
         });
@@ -68,8 +97,8 @@ function createWindow() {
       return new Response(makeStream({}), {
         status: 200,
         headers: {
-          'Content-Type':   mime,
-          'Accept-Ranges':  'bytes',
+          'Content-Type': mime,
+          'Accept-Ranges': 'bytes',
           'Content-Length': String(total),
         },
       });
@@ -120,12 +149,18 @@ async function initApp() {
       console.log('[deps]', msg);
     }
     if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
-  }).then(() => {
-    if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
-  }).catch((err) => {
-    console.error('[deps] Failed to download FFmpeg:', err.message);
-    if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg: `Error: ${err.message}`, pct: -1 });
-  });
+  })
+    .then(() => {
+      if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+    })
+    .catch((err) => {
+      console.error('[deps] Failed to download FFmpeg:', err.message);
+      if (global.mainWindow)
+        global.mainWindow.webContents.send('deps-progress', {
+          msg: `Error: ${err.message}`,
+          pct: -1,
+        });
+    });
 
   // Application menu
   const menu = Menu.buildFromTemplate([
@@ -171,7 +206,10 @@ ipcMain.handle('move-library', async (event, newDir) => {
 
   for (const track of tracks) {
     const oldPath = track.file_path;
-    if (!fs.existsSync(oldPath)) { moved++; continue; }
+    if (!fs.existsSync(oldPath)) {
+      moved++;
+      continue;
+    }
 
     // Preserve shard/filename structure relative to oldBase
     const rel = path.relative(oldBase, oldPath);
@@ -182,7 +220,8 @@ ipcMain.handle('move-library', async (event, newDir) => {
     moved++;
 
     const pct = Math.round((moved / total) * 100);
-    if (global.mainWindow) global.mainWindow.webContents.send('move-library-progress', { moved, total, pct });
+    if (global.mainWindow)
+      global.mainWindow.webContents.send('move-library-progress', { moved, total, pct });
   }
 
   // Remove old empty shard dirs (best-effort)
@@ -192,7 +231,9 @@ ipcMain.handle('move-library', async (event, newDir) => {
       if (fs.statSync(d).isDirectory() && fs.readdirSync(d).length === 0) fs.rmdirSync(d);
     }
     if (fs.readdirSync(oldBase).length === 0) fs.rmdirSync(oldBase);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   setSetting('library_path', newDir);
   return { moved, total };
@@ -291,7 +332,8 @@ ipcMain.handle('export-playlist-m3u', async (_, playlistId) => {
   for (let i = 0; i < tracks.length; i++) {
     const t = tracks[i];
     const ext = path.extname(t.file_path);
-    const rawBase = [t.artist, t.title].filter(Boolean).join(' - ') || path.basename(t.file_path, ext);
+    const rawBase =
+      [t.artist, t.title].filter(Boolean).join(' - ') || path.basename(t.file_path, ext);
     const safeBase = rawBase.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
     const pad = String(i + 1).padStart(2, '0');
     let filename = `${pad} - ${safeBase}${ext}`;
@@ -310,7 +352,8 @@ ipcMain.handle('export-playlist-m3u', async (_, playlistId) => {
     m3uLines.push(filename); // relative — same folder as M3U
 
     const pct = Math.round(((i + 1) / total) * 100);
-    if (global.mainWindow) global.mainWindow.webContents.send('export-m3u-progress', { copied: i + 1, total, pct });
+    if (global.mainWindow)
+      global.mainWindow.webContents.send('export-m3u-progress', { copied: i + 1, total, pct });
   }
 
   const m3uPath = path.join(destDir, `${safeName}.m3u`);
@@ -326,9 +369,7 @@ ipcMain.handle('select-audio-files', async () => {
   console.log('Selecting audio files');
   const result = await dialog.showOpenDialog({
     properties: ['openFile', 'multiSelections'],
-    filters: [
-      { name: 'Audio', extensions: ['mp3', 'flac', 'wav', 'm4a'] },
-    ],
+    filters: [{ name: 'Audio', extensions: ['mp3', 'flac', 'wav', 'm4a'] }],
   });
 
   return result.canceled ? [] : result.filePaths;
@@ -368,7 +409,9 @@ ipcMain.handle('clear-user-data', async () => {
   const toDelete = [app.getPath('userData'), app.getPath('cache'), app.getPath('logs')];
   app.on('quit', () => {
     for (const p of toDelete) {
-      try { if (fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true }); } catch {}
+      try {
+        if (fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true });
+      } catch {}
     }
   });
   app.quit();
@@ -386,13 +429,13 @@ ipcMain.handle('get-log-dir', () => getLogDir());
 ipcMain.handle('open-log-dir', () => shell.openPath(getLogDir()));
 ipcMain.handle('get-dep-versions', () => getInstalledVersions());
 ipcMain.handle('check-dep-updates', () => checkForUpdates());
-ipcMain.handle('update-analyzer', async (event) => {
+ipcMain.handle('update-analyzer', async (_event) => {
   await updateAnalyzer((msg, pct) => {
     if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
   });
   if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
 });
-ipcMain.handle('update-all-deps', async (event) => {
+ipcMain.handle('update-all-deps', async (_event) => {
   await updateAll((msg, pct) => {
     if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
   });

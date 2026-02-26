@@ -105,7 +105,6 @@
   background-color: #1a1a1a;
 }
 
-
 /* Context Menu */
 .context-menu {
   position: fixed;
@@ -241,7 +240,10 @@
   cursor: pointer;
 }
 
-.btn-save-order:hover { border-color: #888; color: #fff; }
+.btn-save-order:hover {
+  border-color: #888;
+  color: #fff;
+}
 
 /* ── Playlist DnD list ─────────────────────────────────────────────────── */
 .playlist-dnd-list {
@@ -255,14 +257,16 @@
   font-size: 14px;
 }
 
-.drag-handle:active { cursor: grabbing; }
+.drag-handle:active {
+  cursor: grabbing;
+}
 
 .row-drag-overlay {
   background: #2a2a2a;
   border: 1px solid #444;
   border-radius: 4px;
   opacity: 0.9;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
 /* ── Playlist empty state ──────────────────────────────────────────────── */

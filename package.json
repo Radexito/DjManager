@@ -1,6 +1,6 @@
 {
   "name": "dj_manager",
-  "version": "1.0.0",
+  "version": "1.0.8",
   "description": "DJ-focused music library manager",
   "main": "src/main.js",
   "scripts": {
@@ -11,10 +11,20 @@
     "build": "npm run build-renderer",
     "electron-prod": "NODE_ENV=production electron .",
     "postinstall": "electron-builder install-app-deps",
+    "postdev-rebuild": "npx @electron/rebuild -f -w better-sqlite3",
+    "prepare": "husky",
     "dist": "npm run build-renderer && electron-builder",
     "dist:linux": "npm run build-renderer && electron-builder --linux",
     "dist:win": "npm run build-renderer && electron-builder --win",
-    "dist:mac": "npm run build-renderer && electron-builder --mac"
+    "dist:mac": "npm run build-renderer && electron-builder --mac",
+    "lint": "eslint src/",
+    "lint:all": "npm run lint && cd renderer && npm run lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "pretest": "npm rebuild better-sqlite3",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "posttest": "npx @electron/rebuild -f -w better-sqlite3"
   },
   "build": {
     "appId": "com.djmanager.app",
@@ -79,11 +89,30 @@
     "url": "https://github.com/Radexito/djman/issues"
   },
   "homepage": "https://github.com/Radexito/djman#readme",
+  "lint-staged": {
+    "src/**/*.js": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "renderer/src/**/*.{js,jsx}": [
+      "prettier --write"
+    ],
+    "*.{json,md,yml}": [
+      "prettier --write"
+    ]
+  },
   "devDependencies": {
+    "@eslint/js": "^9.39.3",
     "concurrently": "^9.2.1",
     "electron": "^40.0.0",
     "electron-builder": "^26.8.1",
     "electron-rebuild": "^3.2.9",
+    "eslint": "^9.39.3",
+    "globals": "^16.5.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
+    "prettier": "^3.8.1",
+    "vitest": "^3.2.4",
     "wait-on": "^9.0.3"
   },
   "dependencies": {

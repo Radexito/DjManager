@@ -1,11 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './Sidebar.css';
 
-const MUSIC_ITEMS = [
-  { id: 'music', name: 'Music', icon: '🎵' },
-];
+const MUSIC_ITEMS = [{ id: 'music', name: 'Music', icon: '🎵' }];
 
-const PRESET_COLORS = ['#e63946','#f4a261','#2a9d8f','#457b9d','#9b5de5','#f15bb5','#00bbf9','#adb5bd'];
+const PRESET_COLORS = [
+  '#e63946',
+  '#f4a261',
+  '#2a9d8f',
+  '#457b9d',
+  '#9b5de5',
+  '#f15bb5',
+  '#00bbf9',
+  '#adb5bd',
+];
 
 function Sidebar({ selectedMenuItemId, onMenuSelect }) {
   const [playlists, setPlaylists] = useState([]);
@@ -25,6 +32,7 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadPlaylists();
     const unsub = window.api.onPlaylistsUpdated(loadPlaylists);
     return unsub;
@@ -58,7 +66,10 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
   const handleCreatePlaylist = async (e) => {
     e.preventDefault();
     const name = newPlaylistName.trim();
-    if (!name) { setCreatingPlaylist(false); return; }
+    if (!name) {
+      setCreatingPlaylist(false);
+      return;
+    }
     await window.api.createPlaylist(name, null);
     setNewPlaylistName('');
     setCreatingPlaylist(false);
@@ -81,7 +92,9 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
     const result = await window.api.exportPlaylistAsM3U(id);
     setExportProgress(null);
     if (result && !result.canceled) {
-      alert(`Exported ${result.trackCount} track${result.trackCount !== 1 ? 's' : ''} to:\n${result.destDir}`);
+      alert(
+        `Exported ${result.trackCount} track${result.trackCount !== 1 ? 's' : ''} to:\n${result.destDir}`
+      );
     }
   };
 
@@ -97,18 +110,11 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
     await window.api.updatePlaylistColor(id, color);
   };
 
-  const formatDuration = (secs) => {
-    const h = Math.floor(secs / 3600);
-    const m = Math.floor((secs % 3600) / 60);
-    if (h > 0) return `${h}h ${m}m`;
-    return `${m}m`;
-  };
-
   return (
     <div className="sidebar">
       <div className="fixed-top-section">
         <div className="menu-section">
-          {MUSIC_ITEMS.map(item => (
+          {MUSIC_ITEMS.map((item) => (
             <div
               key={item.id}
               className={`menu-item ${selectedMenuItemId === item.id ? 'active' : ''}`}
@@ -121,8 +127,16 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
         </div>
         <div className="menu-separator" />
         <div className="playlists-header">
-          <span className="section-title" style={{ padding: 0 }}>PLAYLISTS</span>
-          <button className="new-playlist-btn" onClick={() => setCreatingPlaylist(true)} title="New playlist">＋</button>
+          <span className="section-title" style={{ padding: 0 }}>
+            PLAYLISTS
+          </span>
+          <button
+            className="new-playlist-btn"
+            onClick={() => setCreatingPlaylist(true)}
+            title="New playlist"
+          >
+            ＋
+          </button>
         </div>
       </div>
 
@@ -133,10 +147,10 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
               ref={newInputRef}
               className="playlist-rename-input"
               value={newPlaylistName}
-              onChange={e => setNewPlaylistName(e.target.value)}
+              onChange={(e) => setNewPlaylistName(e.target.value)}
               placeholder="Playlist name"
               onBlur={handleCreatePlaylist}
-              onKeyDown={e => e.key === 'Escape' && setCreatingPlaylist(false)}
+              onKeyDown={(e) => e.key === 'Escape' && setCreatingPlaylist(false)}
             />
           </form>
         )}
@@ -145,7 +159,7 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
           <div className="playlists-empty">No playlists yet</div>
         )}
 
-        {playlists.map(pl => (
+        {playlists.map((pl) => (
           <div key={pl.id}>
             {renamingId === pl.id ? (
               <form className="playlist-new-form" onSubmit={handleRenameSubmit}>
@@ -153,21 +167,23 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
                   ref={renameInputRef}
                   className="playlist-rename-input"
                   value={renameValue}
-                  onChange={e => setRenameValue(e.target.value)}
+                  onChange={(e) => setRenameValue(e.target.value)}
                   onBlur={handleRenameSubmit}
-                  onKeyDown={e => e.key === 'Escape' && setRenamingId(null)}
+                  onKeyDown={(e) => e.key === 'Escape' && setRenamingId(null)}
                 />
               </form>
             ) : (
               <div
                 className={`menu-item playlist-item ${selectedMenuItemId === String(pl.id) ? 'active' : ''}`}
                 onClick={() => onMenuSelect(String(pl.id))}
-                onContextMenu={e => {
+                onContextMenu={(e) => {
                   e.preventDefault();
                   setPlaylistMenu({ id: pl.id, x: e.clientX, y: e.clientY });
                 }}
               >
-                {pl.color && <span className="playlist-color-dot" style={{ background: pl.color }} />}
+                {pl.color && (
+                  <span className="playlist-color-dot" style={{ background: pl.color }} />
+                )}
                 <span className="menu-text playlist-name">{pl.name}</span>
                 <span className="playlist-count">{pl.track_count}</span>
               </div>
@@ -197,20 +213,23 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
         <div
           className="context-menu"
           style={{ top: playlistMenu.y, left: playlistMenu.x }}
-          onMouseDown={e => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
         >
-          <div className="context-menu-item" onClick={() => {
-            const pl = playlists.find(p => p.id === playlistMenu.id);
-            setRenameValue(pl?.name ?? '');
-            setRenamingId(playlistMenu.id);
-            setPlaylistMenu(null);
-          }}>
+          <div
+            className="context-menu-item"
+            onClick={() => {
+              const pl = playlists.find((p) => p.id === playlistMenu.id);
+              setRenameValue(pl?.name ?? '');
+              setRenamingId(playlistMenu.id);
+              setPlaylistMenu(null);
+            }}
+          >
             ✏️ Rename
           </div>
           <div className="context-menu-item context-menu-item--has-submenu">
             🎨 Color
             <div className="context-submenu">
-              {PRESET_COLORS.map(c => (
+              {PRESET_COLORS.map((c) => (
                 <div
                   key={c}
                   className="color-swatch"
@@ -221,7 +240,9 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
               <div
                 className="color-swatch color-swatch--none"
                 onClick={() => handleColorPick(playlistMenu.id, null)}
-              >✕</div>
+              >
+                ✕
+              </div>
             </div>
           </div>
           <div className="context-menu-separator" />
@@ -242,4 +263,3 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
 }
 
 export default Sidebar;
-
