@@ -296,3 +296,17 @@ export async function updateAnalyzer(onProgress) {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
+
+export async function updateAll(onProgress) {
+  const binDir = getBinDir();
+  await fs.promises.mkdir(binDir, { recursive: true });
+  const tmp = path.join(app.getPath('temp'), 'djman-deps');
+  await fs.promises.mkdir(tmp, { recursive: true });
+  try {
+    await downloadFFmpeg(tmp, (msg, pct) => onProgress?.(`[1/2] ${msg}`, pct));
+    await downloadAnalyzer(tmp, (msg, pct) => onProgress?.(`[2/2] ${msg}`, pct));
+    onProgress?.('All dependencies updated.', 100);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}

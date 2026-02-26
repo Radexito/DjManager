@@ -10,7 +10,7 @@ function SettingsModal({ onClose }) {
   const [depVersions, setDepVersions] = useState(null);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
-  const [updatingAnalyzer, setUpdatingAnalyzer] = useState(false);
+  const [updatingAll, setUpdatingAll] = useState(false);
 
   useEffect(() => {
     window.api.getSetting('normalize_target_lufs', String(DEFAULT_TARGET))
@@ -31,12 +31,12 @@ function SettingsModal({ onClose }) {
     setCheckingUpdates(false);
   };
 
-  const handleUpdateAnalyzer = async () => {
-    setUpdatingAnalyzer(true);
-    await window.api.updateAnalyzer();
+  const handleUpdateAll = async () => {
+    setUpdatingAll(true);
+    await window.api.updateAllDeps();
     const versions = await window.api.getDepVersions();
     setDepVersions(versions);
-    setUpdatingAnalyzer(false);
+    setUpdatingAll(false);
     setUpdateInfo(null);
   };
 
@@ -117,25 +117,19 @@ function SettingsModal({ onClose }) {
           {activeSection === 'updates' && (
             <>
               <h3>Updates</h3>
+
               <div className="settings-group">
                 <div className="settings-group-title">Installed Versions</div>
-                <p className="settings-group-desc">
-                  FFmpeg and mixxx-analyzer are downloaded automatically on first launch.
-                </p>
-                {depVersions ? (
-                  <div className="dep-version-list">
-                    <div className="dep-version-row">
-                      <span className="dep-version-name">FFmpeg</span>
-                      <span className="dep-version-tag">{depVersions.ffmpeg?.version ?? 'not installed'}</span>
-                    </div>
-                    <div className="dep-version-row">
-                      <span className="dep-version-name">mixxx-analyzer</span>
-                      <span className="dep-version-tag">{depVersions.analyzer?.version ?? 'not installed'}</span>
-                    </div>
+                <div className="dep-version-list">
+                  <div className="dep-version-row">
+                    <span className="dep-version-name">FFmpeg</span>
+                    <span className="dep-version-tag">{depVersions?.ffmpeg?.version ?? '…'}</span>
                   </div>
-                ) : (
-                  <p className="settings-group-desc">Loading…</p>
-                )}
+                  <div className="dep-version-row">
+                    <span className="dep-version-name">mixxx-analyzer</span>
+                    <span className="dep-version-tag">{depVersions?.analyzer?.version ?? '…'}</span>
+                  </div>
+                </div>
               </div>
 
               <div className="settings-group">
@@ -144,24 +138,34 @@ function SettingsModal({ onClose }) {
                   <div className="dep-update-notice">
                     {updateInfo.analyzer.hasUpdate
                       ? <span>Update available: <b>{updateInfo.analyzer.latestTag}</b></span>
-                      : <span>mixxx-analyzer is up to date.</span>}
+                      : <span>Up to date.</span>}
                   </div>
                 )}
                 <div className="settings-row settings-row-action">
                   <div>
                     <div className="settings-action-label">Check for Updates</div>
-                    <div className="settings-action-desc">Check if a newer mixxx-analyzer is available.</div>
+                    <div className="settings-action-desc">Check if a newer mixxx-analyzer release is available.</div>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button className="btn-secondary" onClick={handleCheckUpdates} disabled={checkingUpdates}>
-                      {checkingUpdates ? 'Checking…' : 'Check'}
-                    </button>
-                    {updateInfo?.analyzer?.hasUpdate && (
-                      <button className="btn-primary" onClick={handleUpdateAnalyzer} disabled={updatingAnalyzer}>
-                        {updatingAnalyzer ? 'Updating…' : 'Update'}
-                      </button>
-                    )}
+                  <button className="btn-secondary" onClick={handleCheckUpdates} disabled={checkingUpdates || updatingAll}>
+                    {checkingUpdates ? 'Checking…' : 'Check'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Update All</div>
+                <p className="settings-group-desc">
+                  Re-downloads the latest FFmpeg and mixxx-analyzer.
+                  {updateInfo?.analyzer?.hasUpdate && <span className="dep-update-badge"> New version available!</span>}
+                </p>
+                <div className="settings-row settings-row-action">
+                  <div>
+                    <div className="settings-action-label">Update Dependencies</div>
+                    <div className="settings-action-desc">Downloads and installs the latest FFmpeg and mixxx-analyzer.</div>
                   </div>
+                  <button className="btn-primary" onClick={handleUpdateAll} disabled={updatingAll || checkingUpdates}>
+                    {updatingAll ? 'Updating…' : 'Update All'}
+                  </button>
                 </div>
               </div>
             </>
