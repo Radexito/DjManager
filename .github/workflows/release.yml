@@ -3,17 +3,30 @@ name: Build & Release
 on:
   push:
     branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  # ── Generate shared release tag ───────────────────────────────────────────
+  setup:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Generate release tag
+        id: tag
+        run: echo "tag=build-$(date -u +%Y%m%d-%H%M%S)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+  # ── Per-platform build ────────────────────────────────────────────────────
   build:
+    needs: setup
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             platform: linux
             analyzer_asset: linux-x86_64
             analyzer_extract: tar
@@ -105,7 +118,7 @@ jobs:
           Copy-Item ffmpeg-tmp/*/bin/ffprobe.exe ffmpeg/
           Remove-Item -Recurse ffmpeg-tmp, ffmpeg-win.zip
 
-      # ── Node deps + renderer build ─────────────────────────────────────────
+      # ── Node deps + renderer build ────────────────────────────────────────
       - name: Install root dependencies
         run: npm ci
 
@@ -115,38 +128,116 @@ jobs:
       - name: Build renderer
         run: npm run build-renderer
 
-      # ── Set rolling version ───────────────────────────────────────────────
+      # ── Stamp version from tag ────────────────────────────────────────────
       - name: Set version
         shell: bash
         run: |
+          TAG="${{ needs.setup.outputs.tag }}"
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
-            pkg.version = '1.0.${{ github.run_number }}';
+            pkg.version = '0.0.${{ github.run_number }}';
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
           "
 
-      # ── Build & publish with electron-builder ────────────────────────────
+      # ── Build Electron app ────────────────────────────────────────────────
       - name: Build Electron app
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --${{ matrix.platform }} --publish never
 
-      # ── Upload artifacts to rolling "latest" release ─────────────────────
-      - name: Upload release artifacts
-        uses: softprops/action-gh-release@v2
+      # ── Upload artifacts for release job ─────────────────────────────────
+      - uses: actions/upload-artifact@v4
         with:
-          tag_name: latest
-          name: "Latest Build (1.0.${{ github.run_number }})"
-          prerelease: true
-          generate_release_notes: false
-          body: |
-            Rolling release — built from commit ${{ github.sha }} on ${{ github.event.head_commit.message }}
-          files: |
+          name: dist-${{ matrix.platform }}
+          path: |
             dist-electron/**/*.AppImage
             dist-electron/**/*.deb
             dist-electron/**/*.exe
             dist-electron/**/*.dmg
             dist-electron/**/*.zip
+          if-no-files-found: warn
+
+  # ── Create GitHub release ─────────────────────────────────────────────────
+  create-release:
+    needs: [setup, build]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist/
+          merge-multiple: true
+
+      - name: Create versioned release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.setup.outputs.tag }}
+          name: "DJ Manager ${{ needs.setup.outputs.tag }}"
+          prerelease: false
+          body: |
+            Automated release from commit ${{ github.sha }}
+
+            ${{ github.event.head_commit.message }}
+
+            ## Downloads
+
+            | File | Platform |
+            |------|----------|
+            | `*.AppImage` / `*.deb` | Linux x86_64 |
+            | `*.dmg` | macOS Apple Silicon |
+            | `*.exe` (installer) | Windows x86_64 |
+          files: dist/**/*
+          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update rolling 'latest' release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "DJ Manager (latest)"
+          prerelease: true
+          body: |
+            Latest build — ${{ needs.setup.outputs.tag }} from commit ${{ github.sha }}
+
+            ${{ github.event.head_commit.message }}
+          files: dist/**/*
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Bump version on dev after release ─────────────────────────────────────
+  bump-version:
+    needs: [create-release]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Bump patch version in package.json
+        run: |
+          OLD=$(node -e "console.log(require('./package.json').version)")
+          NEW=$(node -e "const v='$OLD'.split('.'); v[2]=String(Number(v[2])+1); console.log(v.join('.'))")
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
+            pkg.version = '$NEW';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          echo "Bumped $OLD -> $NEW"
+
+      - name: Commit and push to dev
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          VERSION=$(node -e "console.log(require('./package.json').version)")
+          git add package.json
+          git commit -m "chore: bump version to $VERSION"
+          git push origin dev
