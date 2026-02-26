@@ -93,7 +93,7 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, 'renderer/dist/index.html'));
+    mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'));
     // Block DevTools keyboard shortcut in production
     mainWindow.webContents.on('before-input-event', (event, input) => {
       if (input.key === 'F12' || (input.control && input.shift && input.key === 'I')) {
