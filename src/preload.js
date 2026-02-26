@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('api', {
   getDepVersions: () => ipcRenderer.invoke('get-dep-versions'),
   checkDepUpdates: () => ipcRenderer.invoke('check-dep-updates'),
   updateAnalyzer: () => ipcRenderer.invoke('update-analyzer'),
+  updateAllDeps: () => ipcRenderer.invoke('update-all-deps'),
   onDepsProgress: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('deps-progress', handler);

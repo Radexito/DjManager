@@ -9,7 +9,7 @@ import { addTrack, getTracks, getTrackIds, getTrackById, removeTrack, updateTrac
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import { importAudioFile, spawnAnalysis } from './audio/importManager.js';
 import { ensureDeps } from './deps.js';
-import { getInstalledVersions, checkForUpdates, updateAnalyzer } from './deps.js';
+import { getInstalledVersions, checkForUpdates, updateAnalyzer, updateAll } from './deps.js';
 import { initLogger, log, getLogDir } from './logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -291,6 +291,12 @@ ipcMain.handle('get-dep-versions', () => getInstalledVersions());
 ipcMain.handle('check-dep-updates', () => checkForUpdates());
 ipcMain.handle('update-analyzer', async (event) => {
   await updateAnalyzer((msg, pct) => {
+    if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
+  });
+  if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+});
+ipcMain.handle('update-all-deps', async (event) => {
+  await updateAll((msg, pct) => {
     if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
   });
   if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
