@@ -1,69 +1,52 @@
 import { parentPort, workerData } from 'worker_threads';
 import path from 'path';
-import { spawn, execFileSync } from 'child_process';
+import { spawn } from 'child_process';
 import fs from 'fs';
 
-/**
- * In production (isPackaged=true): spawn the bundled standalone analysis binary
- * (built by PyInstaller in CI — no Python runtime needed on the user's machine).
- *
- * In development: spawn python3 + analysis.py, preferring .venv if present.
- */
 function findAnalysisCommand() {
   const ext = process.platform === 'win32' ? '.exe' : '';
 
-  if (workerData.isPackaged) {
-    // Packaged app: binary is in resources/ — no Python needed on user machine
-    const bin = path.join(workerData.resourcesPath, `analysis${ext}`);
-    if (!fs.existsSync(bin)) throw new Error(`Bundled analysis binary not found at: ${bin}`);
-    return { exe: bin, args: [] };
+  // Runtime-downloaded binary (userData/bin/analysis)
+  if (workerData.analyzerPath && fs.existsSync(workerData.analyzerPath)) {
+    return { exe: workerData.analyzerPath, args: [] };
   }
 
-  // Dev: use pre-downloaded binary in build-resources/ if available
+  // Dev convenience: build-resources/
   const devBin = path.resolve(process.cwd(), 'build-resources', `analysis${ext}`);
   if (fs.existsSync(devBin)) return { exe: devBin, args: [] };
 
-  // Dev fallback: Python + analysis.py (requires .venv or system python3 with mixxx-analyzer)
-  const venvPy = path.resolve(process.cwd(), '.venv', 'bin', 'python3');
-  const py     = process.env.PYTHON || (fs.existsSync(venvPy) ? venvPy : 'python3');
-  const script = path.resolve(process.cwd(), 'python', 'analysis.py');
-  return { exe: py, args: [script] };
+  throw new Error(
+    `mixxx-analyzer binary not found. Expected: ${workerData.analyzerPath ?? '(analyzerPath not set)'}`
+  );
 }
 
 function runAnalysis(filePath) {
   return new Promise((resolve, reject) => {
     const { exe, args } = findAnalysisCommand();
-
-    try {
-      const out = execFileSync(exe, [...args, filePath], { encoding: 'utf8', timeout: 120_000 });
-      return resolve(parseOutput(out, ''));
-    } catch (syncErr) {
-      // execFileSync throws on non-zero exit — fall back to async spawn
-      const p = spawn(exe, [...args, filePath]);
-      let out = '', err = '';
-      p.stdout.on('data', c => (out += c));
-      p.stderr.on('data', c => (err += c));
-      p.on('close', code => {
-        const candidate = out.trim() || err.trim();
-        if (!candidate && code !== 0)
-          return reject(new Error(`analysis exited ${code}: ${err}`));
-        resolve(parseOutput(out, err));
-      });
-      p.on('error', reject);
-    }
+    const p = spawn(exe, [...args, '--json', filePath]);
+    let out = '', err = '';
+    p.stdout.on('data', c => (out += c));
+    p.stderr.on('data', c => (err += c));
+    p.on('close', code => {
+      if (!out.trim() && code !== 0)
+        return reject(new Error(`analysis exited ${code}: ${err.trim()}`));
+      resolve(parseOutput(out, err));
+    });
+    p.on('error', reject);
   });
 }
 
 function parseOutput(stdout, stderr) {
   const raw = stdout.trim() || stderr.trim();
   if (!raw) return {};
-  const start = raw.indexOf('{');
-  const end   = raw.lastIndexOf('}');
+  const start = raw.indexOf('[');
+  const end   = raw.lastIndexOf(']');
   const json  = start >= 0 && end > start ? raw.slice(start, end + 1) : raw;
   try {
-    return JSON.parse(json);
+    const arr = JSON.parse(json);
+    return Array.isArray(arr) ? arr[0] ?? {} : arr;
   } catch (e) {
-    return { py_error: `invalid json from analysis: ${e.message}` };
+    return { error: `invalid json from analysis: ${e.message}` };
   }
 }
 
@@ -72,19 +55,19 @@ async function analyzeAudio(filePath) {
   try {
     result = await runAnalysis(filePath);
   } catch (e) {
-    result = { py_error: e.message };
+    result = { error: e.message };
   }
 
-  if (result.py_error) console.error('[analysis] error:', result.py_error);
+  if (result.error) console.error('[analysis] error:', result.error);
 
   return {
     bpm:         result.bpm         ?? null,
-    key_raw:     result.key_raw     ?? null,
-    key_camelot: result.key_camelot ?? null,
+    key_raw:     result.key         ?? null,
+    key_camelot: result.camelot     ?? null,
     loudness:    result.lufs        ?? null,
-    replay_gain: result.replay_gain ?? null,
-    intro_secs:  result.intro_secs  ?? null,
-    outro_secs:  result.outro_secs  ?? null,
+    replay_gain: result.replayGain  ?? null,
+    intro_secs:  result.introSecs   ?? null,
+    outro_secs:  result.outroSecs   ?? null,
   };
 }
 

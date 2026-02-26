@@ -2,13 +2,15 @@ import path from 'path';
 import fs from 'fs';
 import { Readable } from 'stream';
 import { fileURLToPath } from 'url';
-import { app, BrowserWindow, ipcMain, dialog, Menu, protocol } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, protocol, shell } from 'electron';
 import { initDB } from './db/migrations.js';
 import { createPlaylist, getPlaylists, getPlaylist, renamePlaylist, updatePlaylistColor, deletePlaylist, addTrackToPlaylist, addTracksToPlaylist, removeTrackFromPlaylist, reorderPlaylistTracks, getPlaylistsForTrack } from './db/playlistRepository.js';
 import { addTrack, getTracks, getTrackIds, getTrackById, removeTrack, updateTrack, normalizeLibrary, clearTracks } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import { importAudioFile, spawnAnalysis } from './audio/importManager.js';
 import { ensureDeps } from './deps.js';
+import { getInstalledVersions, checkForUpdates, updateAnalyzer } from './deps.js';
+import { initLogger, log, getLogDir } from './logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -104,23 +106,26 @@ function createWindow() {
 }
 
 async function initApp() {
+  initLogger();
   console.log('Initializing database...');
   initDB();
   console.log('Creating window.');
   createWindow();
 
-  // Download FFmpeg on first launch (packaged app only)
-  if (app.isPackaged) {
-    ensureDeps((msg, pct) => {
+  // Download deps if not already present
+  let _lastDepLog = '';
+  ensureDeps((msg, pct) => {
+    if ((pct === 0 || pct === 100 || pct === undefined) && msg !== _lastDepLog) {
+      _lastDepLog = msg;
       console.log('[deps]', msg);
-      if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
-    }).then(() => {
-      if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
-    }).catch((err) => {
-      console.error('[deps] Failed to download FFmpeg:', err.message);
-      if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg: `Error: ${err.message}`, pct: -1 });
-    });
-  }
+    }
+    if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
+  }).then(() => {
+    if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+  }).catch((err) => {
+    console.error('[deps] Failed to download FFmpeg:', err.message);
+    if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg: `Error: ${err.message}`, pct: -1 });
+  });
 
   // Application menu
   const menu = Menu.buildFromTemplate([
@@ -263,10 +268,32 @@ ipcMain.handle('clear-library', async () => {
 });
 
 ipcMain.handle('clear-user-data', async () => {
-  const dataPath = app.getPath('userData');
-  // Schedule deletion after app quits
-  app.on('quit', () => fs.rmSync(dataPath, { recursive: true, force: true }));
+  const toDelete = [app.getPath('userData'), app.getPath('cache'), app.getPath('logs')];
+  app.on('quit', () => {
+    for (const p of toDelete) {
+      try { if (fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true }); } catch {}
+    }
+  });
   app.quit();
+});
+
+// IPC: renderer → log file
+ipcMain.on('renderer-log', (_, { level, msg }) => {
+  const line = `[renderer] ${msg}`;
+  if (level === 'error') console.error(line);
+  else if (level === 'warn') console.warn(line);
+  else console.log(line);
+});
+
+ipcMain.handle('get-log-dir', () => getLogDir());
+ipcMain.handle('open-log-dir', () => shell.openPath(getLogDir()));
+ipcMain.handle('get-dep-versions', () => getInstalledVersions());
+ipcMain.handle('check-dep-updates', () => checkForUpdates());
+ipcMain.handle('update-analyzer', async (event) => {
+  await updateAnalyzer((msg, pct) => {
+    if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
+  });
+  if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
 });
 
 app.on('ready', initApp);

@@ -55,6 +55,12 @@ contextBridge.exposeInMainWorld('api', {
   },
   clearLibrary: () => ipcRenderer.invoke('clear-library'),
   clearUserData: () => ipcRenderer.invoke('clear-user-data'),
+  getLogDir: () => ipcRenderer.invoke('get-log-dir'),
+  openLogDir: () => ipcRenderer.invoke('open-log-dir'),
+  log: (level, ...args) => ipcRenderer.send('renderer-log', { level, msg: args.join(' ') }),
+  getDepVersions: () => ipcRenderer.invoke('get-dep-versions'),
+  checkDepUpdates: () => ipcRenderer.invoke('check-dep-updates'),
+  updateAnalyzer: () => ipcRenderer.invoke('update-analyzer'),
   onDepsProgress: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('deps-progress', handler);
