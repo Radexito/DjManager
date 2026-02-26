@@ -26,6 +26,12 @@ contextBridge.exposeInMainWorld('api', {
   reorderPlaylist: (playlistId, orderedTrackIds) =>
     ipcRenderer.invoke('reorder-playlist', { playlistId, orderedTrackIds }),
   getPlaylistsForTrack: (trackId) => ipcRenderer.invoke('get-playlists-for-track', trackId),
+  exportPlaylistAsM3U: (playlistId) => ipcRenderer.invoke('export-playlist-m3u', playlistId),
+  onExportM3UProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('export-m3u-progress', handler);
+    return () => ipcRenderer.removeListener('export-m3u-progress', handler);
+  },
 
   // Settings
   getSetting: (key, def) => ipcRenderer.invoke('get-setting', key, def),
