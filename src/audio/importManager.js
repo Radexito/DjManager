@@ -5,6 +5,7 @@ import { app } from 'electron';
 import { Worker } from 'worker_threads';
 import { ffprobe } from './ffmpeg.js';
 import { addTrack, updateTrack } from '../db/trackRepository.js';
+import { getAnalyzerRuntimePath } from '../deps.js';
 
 function hashFile(filePath) {
   const hash = crypto.createHash('sha1');
@@ -39,7 +40,7 @@ function parseTags(ffprobeData) {
 export function spawnAnalysis(trackId, filePath) {
   const worker = new Worker(
     new URL('./analysisWorker.js', import.meta.url),
-    { workerData: { filePath, trackId, isPackaged: app.isPackaged, resourcesPath: process.resourcesPath } }
+    { workerData: { filePath, trackId, analyzerPath: getAnalyzerRuntimePath() } }
   );
 
   worker.on('message', ({ ok, result, error }) => {

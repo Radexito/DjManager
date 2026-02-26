@@ -188,3 +188,34 @@
   color: #a6adc8;
 }
 .btn-secondary:hover { background: rgba(255,255,255,0.05); }
+.btn-secondary:disabled { opacity: 0.45; cursor: default; }
+.btn-primary {
+  padding: 6px 14px;
+  border-radius: 5px;
+  border: 1px solid #89b4fa;
+  font-size: 12px;
+  cursor: pointer;
+  background: transparent;
+  color: #89b4fa;
+}
+.btn-primary:hover { background: rgba(137,180,250,0.12); }
+.btn-primary:disabled { opacity: 0.45; cursor: default; }
+.dep-version-list { margin-bottom: 0.75rem; }
+.dep-version-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 12px;
+  border-bottom: 1px solid #2a2a2a;
+}
+.dep-version-name { color: #cdd6f4; }
+.dep-version-tag { color: #a6adc8; font-family: monospace; }
+.dep-update-notice {
+  font-size: 12px;
+  color: #a6e3a1;
+  margin-bottom: 0.5rem;
+  padding: 6px 8px;
+  background: rgba(166,227,161,0.08);
+  border-radius: 4px;
+}

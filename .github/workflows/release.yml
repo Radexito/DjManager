@@ -27,16 +27,10 @@ jobs:
         include:
           - os: ubuntu-22.04
             platform: linux
-            analyzer_asset: linux-x86_64
-            analyzer_extract: tar
           - os: windows-latest
             platform: win
-            analyzer_asset: windows-x86_64
-            analyzer_extract: zip
           - os: macos-latest
             platform: mac
-            analyzer_asset: macos-arm64
-            analyzer_extract: zip
 
     runs-on: ${{ matrix.os }}
     name: Build (${{ matrix.platform }})
@@ -48,43 +42,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-
-      # ── Download mixxx-analyzer standalone binary ─────────────────────────
-      - name: Download mixxx-analyzer (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: |
-          RELEASE_JSON=$(curl -s https://api.github.com/repos/Radexito/mixxx-analyzer/releases/latest)
-          URL=$(echo "$RELEASE_JSON" | jq -r --arg asset "${{ matrix.analyzer_asset }}" \
-            '.assets[] | select(.name | contains($asset)) | select(.name | endswith(".tar.gz") or endswith(".zip")) | .browser_download_url')
-          echo "Downloading: $URL"
-          mkdir -p build-resources
-
-          if [ "${{ matrix.analyzer_extract }}" = "tar" ]; then
-            curl -L "$URL" | tar -xz
-            find . -maxdepth 3 -name "mixxx-analyzer" -not -path "./.git/*" \
-              | head -1 | xargs -I{} cp {} build-resources/analysis
-          else
-            curl -L "$URL" -o analyzer.zip
-            unzip -q analyzer.zip -d analyzer-tmp
-            find analyzer-tmp -name "mixxx-analyzer" | head -1 | xargs -I{} cp {} build-resources/analysis
-            rm -rf analyzer-tmp analyzer.zip
-          fi
-          chmod +x build-resources/analysis
-
-      - name: Download mixxx-analyzer (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $release = Invoke-RestMethod "https://api.github.com/repos/Radexito/mixxx-analyzer/releases/latest"
-          $asset = $release.assets | Where-Object { $_.name -like "*${{ matrix.analyzer_asset }}*" -and $_.name -like "*.zip" } | Select-Object -First 1
-          Write-Host "Downloading: $($asset.browser_download_url)"
-          Invoke-WebRequest $asset.browser_download_url -OutFile analyzer.zip
-          New-Item -ItemType Directory -Force build-resources | Out-Null
-          Expand-Archive analyzer.zip -DestinationPath analyzer-tmp -Force
-          $binary = Get-ChildItem -Recurse -Filter "mixxx-analyzer.exe" analyzer-tmp | Select-Object -First 1
-          if (-not $binary) { $binary = Get-ChildItem -Recurse -Filter "*.exe" analyzer-tmp | Select-Object -First 1 }
-          Copy-Item $binary.FullName build-resources/analysis.exe
-          Remove-Item -Recurse analyzer-tmp, analyzer.zip
 
       # ── Node deps + renderer build ────────────────────────────────────────
       - name: Install root dependencies

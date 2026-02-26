@@ -25,7 +25,6 @@
     },
     "files": [
       "src/**/*",
-      "python/**/*",
       "renderer/dist/**/*",
       "node_modules/**/*",
       "!node_modules/.cache/**/*",
@@ -41,12 +40,7 @@
         }
       ],
       "category": "Audio",
-      "extraResources": [
-        {
-          "from": "build-resources/analysis",
-          "to": "analysis"
-        }
-      ],
+      "extraResources": [],
       "artifactName": "${productName}-${version}-Linux.${ext}"
     },
     "mac": {
@@ -59,21 +53,11 @@
         }
       ],
       "category": "public.app-category.music",
-      "extraResources": [
-        {
-          "from": "build-resources/analysis",
-          "to": "analysis"
-        }
-      ]
+      "extraResources": []
     },
     "win": {
       "target": "nsis",
-      "extraResources": [
-        {
-          "from": "build-resources/analysis.exe",
-          "to": "analysis.exe"
-        }
-      ]
+      "extraResources": []
     },
     "publish": {
       "provider": "github",

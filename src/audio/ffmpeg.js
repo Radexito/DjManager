@@ -4,34 +4,15 @@ import { app } from 'electron';
 import fs from 'fs';
 import { getFfmpegRuntimePath, getFfprobeRuntimePath } from '../deps.js';
 
-const ext = process.platform === 'win32' ? '.exe' : '';
-
-function resolveFFmpeg() {
-  // Dev: prefer project-local ffmpeg/ dir
-  if (!app.isPackaged) {
-    const dev = path.join(process.cwd(), 'ffmpeg', `ffmpeg${ext}`);
-    if (fs.existsSync(dev)) return dev;
-  }
-  return getFfmpegRuntimePath();
-}
-
-function resolveFFprobe() {
-  if (!app.isPackaged) {
-    const dev = path.join(process.cwd(), 'ffmpeg', `ffprobe${ext}`);
-    if (fs.existsSync(dev)) return dev;
-  }
-  return getFfprobeRuntimePath();
-}
-
 export function getFfmpegPath() {
-  const p = resolveFFmpeg();
-  if (!fs.existsSync(p)) throw new Error(`FFmpeg not found at ${p}`);
+  const p = getFfmpegRuntimePath();
+  if (!fs.existsSync(p)) throw new Error(`FFmpeg not found at ${p} — still downloading?`);
   return p;
 }
 
 export function ffprobe(filePath) {
-  const ffprobePath = resolveFFprobe();
-  if (!fs.existsSync(ffprobePath)) throw new Error(`ffprobe not found at ${ffprobePath}`);
+  const ffprobePath = getFfprobeRuntimePath();
+  if (!fs.existsSync(ffprobePath)) throw new Error(`ffprobe not found at ${ffprobePath} — still downloading?`);
   return new Promise((resolve, reject) => {
     const proc = spawn(ffprobePath, [
       '-v', 'error',
