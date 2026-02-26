@@ -4,7 +4,7 @@ import { Readable } from 'stream';
 import { fileURLToPath } from 'url';
 import { app, BrowserWindow, ipcMain, dialog, Menu, protocol, shell } from 'electron';
 import { initDB } from './db/migrations.js';
-import { createPlaylist, getPlaylists, getPlaylist, renamePlaylist, updatePlaylistColor, deletePlaylist, addTrackToPlaylist, addTracksToPlaylist, removeTrackFromPlaylist, reorderPlaylistTracks, getPlaylistsForTrack } from './db/playlistRepository.js';
+import { createPlaylist, getPlaylists, getPlaylist, renamePlaylist, updatePlaylistColor, deletePlaylist, addTrackToPlaylist, addTracksToPlaylist, removeTrackFromPlaylist, reorderPlaylistTracks, getPlaylistsForTrack, getPlaylistTracks } from './db/playlistRepository.js';
 import { addTrack, getTracks, getTrackIds, getTrackById, removeTrack, updateTrack, normalizeLibrary, clearTracks } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import { importAudioFile, spawnAnalysis, getLibraryBase } from './audio/importManager.js';
@@ -267,6 +267,57 @@ ipcMain.handle('reorder-playlist', (_, { playlistId, orderedTrackIds }) => {
 });
 ipcMain.handle('get-playlists-for-track', (_, trackId) => getPlaylistsForTrack(trackId));
 ipcMain.handle('get-playlist', (_, id) => getPlaylist(id));
+
+ipcMain.handle('export-playlist-m3u', async (_, playlistId) => {
+  const playlist = getPlaylist(playlistId);
+  if (!playlist) throw new Error(`Playlist ${playlistId} not found`);
+
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: 'Choose export destination folder',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (canceled || !filePaths[0]) return { canceled: true };
+
+  // Sanitize playlist name for use as a folder/file name
+  const safeName = playlist.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+  const destDir = path.join(filePaths[0], safeName);
+  fs.mkdirSync(destDir, { recursive: true });
+
+  const tracks = getPlaylistTracks(playlistId);
+  const total = tracks.length;
+  const m3uLines = ['#EXTM3U'];
+  const usedNames = new Set();
+
+  for (let i = 0; i < tracks.length; i++) {
+    const t = tracks[i];
+    const ext = path.extname(t.file_path);
+    const rawBase = [t.artist, t.title].filter(Boolean).join(' - ') || path.basename(t.file_path, ext);
+    const safeBase = rawBase.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+    const pad = String(i + 1).padStart(2, '0');
+    let filename = `${pad} - ${safeBase}${ext}`;
+    // Resolve any collisions
+    let n = 1;
+    while (usedNames.has(filename)) filename = `${pad} - ${safeBase} (${n++})${ext}`;
+    usedNames.add(filename);
+
+    if (fs.existsSync(t.file_path)) {
+      fs.copyFileSync(t.file_path, path.join(destDir, filename));
+    }
+
+    const duration = Math.floor(t.duration ?? -1);
+    const label = [t.artist, t.title].filter(Boolean).join(' - ') || safeBase;
+    m3uLines.push(`#EXTINF:${duration},${label}`);
+    m3uLines.push(filename); // relative — same folder as M3U
+
+    const pct = Math.round(((i + 1) / total) * 100);
+    if (global.mainWindow) global.mainWindow.webContents.send('export-m3u-progress', { copied: i + 1, total, pct });
+  }
+
+  const m3uPath = path.join(destDir, `${safeName}.m3u`);
+  await fs.promises.writeFile(m3uPath, m3uLines.join('\n') + '\n', 'utf8');
+  if (global.mainWindow) global.mainWindow.webContents.send('export-m3u-progress', null);
+  return { destDir, trackCount: tracks.length };
+});
 
 ipcMain.handle('add-track', (event, track) => addTrack(track));
 // Remove old commented-out stubs

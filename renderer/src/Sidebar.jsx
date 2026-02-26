@@ -10,6 +10,7 @@ const PRESET_COLORS = ['#e63946','#f4a261','#2a9d8f','#457b9d','#9b5de5','#f15bb
 function Sidebar({ selectedMenuItemId, onMenuSelect }) {
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
+  const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
   const [playlistMenu, setPlaylistMenu] = useState(null); // { id, x, y }
@@ -68,6 +69,20 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
     const name = renameValue.trim();
     if (name) await window.api.renamePlaylist(renamingId, name);
     setRenamingId(null);
+  };
+
+  useEffect(() => {
+    const unsub = window.api.onExportM3UProgress((data) => setExportProgress(data));
+    return unsub;
+  }, []);
+
+  const handleExportM3U = async (id) => {
+    setPlaylistMenu(null);
+    const result = await window.api.exportPlaylistAsM3U(id);
+    setExportProgress(null);
+    if (result && !result.canceled) {
+      alert(`Exported ${result.trackCount} track${result.trackCount !== 1 ? 's' : ''} to:\n${result.destDir}`);
+    }
   };
 
   const handleDeletePlaylist = async (id) => {
@@ -167,6 +182,11 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
             Importing {importProgress.completed} / {importProgress.total}…
           </div>
         )}
+        {exportProgress && (
+          <div className="import-progress">
+            Exporting {exportProgress.copied} / {exportProgress.total}… ({exportProgress.pct}%)
+          </div>
+        )}
         <button className="import-button" onClick={handleImport}>
           Import Audio Files
         </button>
@@ -203,6 +223,10 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
                 onClick={() => handleColorPick(playlistMenu.id, null)}
               >✕</div>
             </div>
+          </div>
+          <div className="context-menu-separator" />
+          <div className="context-menu-item" onClick={() => handleExportM3U(playlistMenu.id)}>
+            📤 Export as M3U…
           </div>
           <div className="context-menu-separator" />
           <div
