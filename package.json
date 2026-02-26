@@ -39,10 +39,6 @@
       "category": "Audio",
       "extraResources": [
         {
-          "from": "ffmpeg/",
-          "to": "ffmpeg"
-        },
-        {
           "from": "build-resources/analysis",
           "to": "analysis"
         }
@@ -66,10 +62,6 @@
       "category": "public.app-category.music",
       "extraResources": [
         {
-          "from": "ffmpeg/",
-          "to": "ffmpeg"
-        },
-        {
           "from": "build-resources/analysis",
           "to": "analysis"
         }
@@ -78,10 +70,6 @@
     "win": {
       "target": "nsis",
       "extraResources": [
-        {
-          "from": "ffmpeg/",
-          "to": "ffmpeg"
-        },
         {
           "from": "build-resources/analysis.exe",
           "to": "analysis.exe"

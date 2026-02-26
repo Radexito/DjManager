@@ -2,40 +2,38 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { app } from 'electron';
 import fs from 'fs';
+import { getFfmpegRuntimePath, getFfprobeRuntimePath } from '../deps.js';
 
-export function getFfmpegPath() {
-  let ffmpegPath;
+const ext = process.platform === 'win32' ? '.exe' : '';
 
-  if (app.isPackaged) {
-    // When bundled
-    ffmpegPath = path.join(process.resourcesPath, 'ffmpeg', getBinaryName());
-  } else {
-    // DEV mode (project root)
-    ffmpegPath = path.join(process.cwd(), 'ffmpeg', getBinaryName());
+function resolveFFmpeg() {
+  // Dev: prefer project-local ffmpeg/ dir
+  if (!app.isPackaged) {
+    const dev = path.join(process.cwd(), 'ffmpeg', `ffmpeg${ext}`);
+    if (fs.existsSync(dev)) return dev;
   }
-
-  if (!fs.existsSync(ffmpegPath)) {
-    throw new Error(`FFmpeg binary not found at ${ffmpegPath}`);
-  }
-
-  return ffmpegPath;
+  return getFfmpegRuntimePath();
 }
 
-function getFfprobePath() {
-  const base = app.isPackaged
-    ? path.join(process.resourcesPath, 'ffmpeg')
-    : path.join(process.cwd(), 'ffmpeg');
+function resolveFFprobe() {
+  if (!app.isPackaged) {
+    const dev = path.join(process.cwd(), 'ffmpeg', `ffprobe${ext}`);
+    if (fs.existsSync(dev)) return dev;
+  }
+  return getFfprobeRuntimePath();
+}
 
-  const name = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
-  const fullPath = path.join(base, name);
-
-  if (!fs.existsSync(fullPath)) throw new Error(`ffprobe not found at ${fullPath}`);
-  return fullPath;
+export function getFfmpegPath() {
+  const p = resolveFFmpeg();
+  if (!fs.existsSync(p)) throw new Error(`FFmpeg not found at ${p}`);
+  return p;
 }
 
 export function ffprobe(filePath) {
+  const ffprobePath = resolveFFprobe();
+  if (!fs.existsSync(ffprobePath)) throw new Error(`ffprobe not found at ${ffprobePath}`);
   return new Promise((resolve, reject) => {
-    const proc = spawn(getFfprobePath(), [
+    const proc = spawn(ffprobePath, [
       '-v', 'error',
       '-print_format', 'json',
       '-show_format',
@@ -52,9 +50,4 @@ export function ffprobe(filePath) {
       else resolve(JSON.parse(out));
     });
   });
-}
-
-function getBinaryName() {
-  if (process.platform === 'win32') return 'ffmpeg.exe';
-  return 'ffmpeg';
 }
