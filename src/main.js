@@ -269,7 +269,7 @@ ipcMain.handle('clear-user-data', async () => {
   app.quit();
 });
 
-
+app.on('ready', initApp);
 app.on('window-all-closed', () => {
   console.log('All windows closed.');
   if (process.platform !== 'darwin') app.quit();
