@@ -19,10 +19,10 @@ jobs:
           cache: 'npm'
 
       - name: Install root dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --legacy-peer-deps
 
       - name: Install renderer dependencies
-        run: cd renderer && npm ci
+        run: cd renderer && npm ci --legacy-peer-deps
 
       - name: Build native modules for Node (tests)
         run: npm rebuild better-sqlite3
@@ -37,9 +37,9 @@ jobs:
         run: npm run format:check
 
       - name: Test (main process)
-        run: npx vitest run
+        run: npx vitest run --coverage
         env:
           DB_PATH: ':memory:'
 
       - name: Test (renderer)
-        run: cd renderer && npm run test
+        run: cd renderer && npm run test:coverage

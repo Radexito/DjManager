@@ -13,5 +13,18 @@ export default defineConfig({
     globals: true,
     setupFiles: [resolve(__dirname, 'src/__tests__/setup.js')],
     include: ['src/**/*.test.{js,jsx}'],
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{js,jsx}'],
+      exclude: ['src/__tests__/**', 'src/main.jsx'],
+      reporter: ['text', 'html', 'lcov'],
+      reportsDirectory: './coverage',
+      thresholds: {
+        statements: 10,
+        branches: 60,
+        functions: 15,
+        lines: 10,
+      },
+    },
   },
 });
