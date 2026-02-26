@@ -6,6 +6,7 @@ import { Worker } from 'worker_threads';
 import { ffprobe } from './ffmpeg.js';
 import { addTrack, updateTrack } from '../db/trackRepository.js';
 import { getAnalyzerRuntimePath } from '../deps.js';
+import { getSetting } from '../db/settingsRepository.js';
 
 function hashFile(filePath) {
   const hash = crypto.createHash('sha1');
@@ -18,8 +19,13 @@ function hashFile(filePath) {
   });
 }
 
+export function getLibraryBase() {
+  const custom = getSetting('library_path');
+  return custom || path.join(app.getPath('userData'), 'audio');
+}
+
 function getAudioStoragePath(hash, ext) {
-  const base = path.join(app.getPath('userData'), 'audio');
+  const base = getLibraryBase();
   const shard = hash.slice(0, 2);
   fs.mkdirSync(path.join(base, shard), { recursive: true });
   return path.join(base, shard, `${hash}${ext}`);

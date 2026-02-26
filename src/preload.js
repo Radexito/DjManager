@@ -30,6 +30,13 @@ contextBridge.exposeInMainWorld('api', {
   // Settings
   getSetting: (key, def) => ipcRenderer.invoke('get-setting', key, def),
   setSetting: (key, value) => ipcRenderer.invoke('set-setting', key, value),
+  getLibraryPath: () => ipcRenderer.invoke('get-library-path'),
+  moveLibrary: (newDir) => ipcRenderer.invoke('move-library', newDir),
+  openDirDialog: () => ipcRenderer.invoke('open-dir-dialog'),
+  onMoveLibraryProgress: (cb) => {
+    ipcRenderer.on('move-library-progress', (_, data) => cb(data));
+    return () => ipcRenderer.removeAllListeners('move-library-progress');
+  },
   normalizeLibrary: (payload) => ipcRenderer.invoke('normalize-library', payload),
 
   // Events

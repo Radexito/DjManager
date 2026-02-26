@@ -7,7 +7,7 @@ import { initDB } from './db/migrations.js';
 import { createPlaylist, getPlaylists, getPlaylist, renamePlaylist, updatePlaylistColor, deletePlaylist, addTrackToPlaylist, addTracksToPlaylist, removeTrackFromPlaylist, reorderPlaylistTracks, getPlaylistsForTrack } from './db/playlistRepository.js';
 import { addTrack, getTracks, getTrackIds, getTrackById, removeTrack, updateTrack, normalizeLibrary, clearTracks } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
-import { importAudioFile, spawnAnalysis } from './audio/importManager.js';
+import { importAudioFile, spawnAnalysis, getLibraryBase } from './audio/importManager.js';
 import { ensureDeps } from './deps.js';
 import { getInstalledVersions, checkForUpdates, updateAnalyzer, updateAll } from './deps.js';
 import { initLogger, log, getLogDir } from './logger.js';
@@ -155,6 +155,48 @@ ipcMain.handle('get-tracks', (_, params) => getTracks(params));
 ipcMain.handle('get-track-ids', (_, params) => getTrackIds(params));
 ipcMain.handle('get-setting', (_, key, def) => getSetting(key, def));
 ipcMain.handle('set-setting', (_, key, value) => setSetting(key, value));
+ipcMain.handle('get-library-path', () => getLibraryBase());
+ipcMain.handle('move-library', async (event, newDir) => {
+  const oldBase = getLibraryBase();
+
+  if (!newDir || newDir === oldBase) throw new Error('Same directory selected.');
+
+  // Ensure destination exists
+  fs.mkdirSync(newDir, { recursive: true });
+
+  // Gather all tracks
+  const tracks = getTracks({ limit: 999999 });
+  const total = tracks.length;
+  let moved = 0;
+
+  for (const track of tracks) {
+    const oldPath = track.file_path;
+    if (!fs.existsSync(oldPath)) { moved++; continue; }
+
+    // Preserve shard/filename structure relative to oldBase
+    const rel = path.relative(oldBase, oldPath);
+    const newPath = path.join(newDir, rel);
+    fs.mkdirSync(path.dirname(newPath), { recursive: true });
+    fs.renameSync(oldPath, newPath);
+    updateTrack(track.id, { file_path: newPath });
+    moved++;
+
+    const pct = Math.round((moved / total) * 100);
+    if (global.mainWindow) global.mainWindow.webContents.send('move-library-progress', { moved, total, pct });
+  }
+
+  // Remove old empty shard dirs (best-effort)
+  try {
+    for (const entry of fs.readdirSync(oldBase)) {
+      const d = path.join(oldBase, entry);
+      if (fs.statSync(d).isDirectory() && fs.readdirSync(d).length === 0) fs.rmdirSync(d);
+    }
+    if (fs.readdirSync(oldBase).length === 0) fs.rmdirSync(oldBase);
+  } catch { /* ignore */ }
+
+  setSetting('library_path', newDir);
+  return { moved, total };
+});
 ipcMain.handle('normalize-library', (_, { targetLufs }) => {
   const parsed = Number(targetLufs);
   if (!Number.isFinite(parsed) || parsed < -60 || parsed > 0) {
@@ -239,6 +281,10 @@ ipcMain.handle('select-audio-files', async () => {
   });
 
   return result.canceled ? [] : result.filePaths;
+});
+ipcMain.handle('open-dir-dialog', async () => {
+  const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+  return result.canceled ? null : result.filePaths[0];
 });
 ipcMain.handle('import-audio-files', async (event, filePaths) => {
   console.log('Importing audio files:', filePaths);
