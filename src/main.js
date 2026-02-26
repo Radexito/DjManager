@@ -8,6 +8,7 @@ import { createPlaylist, getPlaylists, getPlaylist, renamePlaylist, updatePlayli
 import { addTrack, getTracks, getTrackIds, getTrackById, removeTrack, updateTrack, normalizeLibrary } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import { importAudioFile, spawnAnalysis } from './audio/importManager.js';
+import { ensureDeps } from './deps.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -88,11 +89,17 @@ function createWindow() {
 
   global.mainWindow = mainWindow; // make accessible to workers
 
-  if (isDev) {
+  if (!app.isPackaged) {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, 'renderer/dist/index.html'));
+    // Block DevTools keyboard shortcut in production
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.key === 'F12' || (input.control && input.shift && input.key === 'I')) {
+        event.preventDefault();
+      }
+    });
   }
 }
 
@@ -101,6 +108,13 @@ async function initApp() {
   initDB();
   console.log('Creating window.');
   createWindow();
+
+  // Download FFmpeg on first launch (packaged app only)
+  if (app.isPackaged) {
+    ensureDeps((msg) => console.log('[deps]', msg)).catch((err) =>
+      console.error('[deps] Failed to download FFmpeg:', err.message)
+    );
+  }
 
   // Application menu
   const menu = Menu.buildFromTemplate([
