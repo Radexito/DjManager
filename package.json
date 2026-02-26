@@ -33,8 +33,12 @@
     ],
     "linux": {
       "target": [
-        "AppImage",
-        "deb"
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "category": "Audio",
       "extraResources": [
@@ -42,18 +46,13 @@
           "from": "build-resources/analysis",
           "to": "analysis"
         }
-      ]
+      ],
+      "artifactName": "${productName}-${version}-Linux.${ext}"
     },
     "mac": {
       "target": [
         {
           "target": "dmg",
-          "arch": [
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
           "arch": [
             "arm64"
           ]

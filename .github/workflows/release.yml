@@ -154,24 +154,9 @@ jobs:
 
             | File | Platform |
             |------|----------|
-            | `*.AppImage` / `*.deb` | Linux x86_64 |
+            | `*-Linux.AppImage` | Linux x86_64 |
             | `*.dmg` | macOS Apple Silicon |
             | `*.exe` (installer) | Windows x86_64 |
-          files: dist/**/*
-          fail_on_unmatched_files: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update rolling 'latest' release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: "DJ Manager (latest)"
-          prerelease: true
-          body: |
-            Latest build — ${{ needs.setup.outputs.tag }} from commit ${{ github.sha }}
-
-            ${{ github.event.head_commit.message }}
           files: dist/**/*
           fail_on_unmatched_files: false
         env:
