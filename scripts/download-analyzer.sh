@@ -17,11 +17,10 @@ case "$OS" in
 esac
 
 RELEASE_JSON=$(curl -s https://api.github.com/repos/Radexito/mixxx-analyzer/releases/latest)
-URL=$(echo "$RELEASE_JSON" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-assets = [a for a in data['assets'] if '${ASSET}' in a['name']]
-print(assets[0]['browser_download_url'])
+URL=$(echo "$RELEASE_JSON" | node -e "
+const data = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+const asset = data.assets.find(a => a.name.includes('${ASSET}'));
+process.stdout.write(asset.browser_download_url);
 ")
 
 echo "Downloading mixxx-analyzer for ${OS}/${ARCH}: $URL"
