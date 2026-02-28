@@ -17,9 +17,6 @@ npm run build
 
 # Run in production mode (after build)
 npm run electron-prod
-
-# Python audio analysis (standalone test)
-cd python && python3 analysis.py <audiofile>
 ```
 
 There is no automated test suite.
@@ -32,7 +29,7 @@ This is an **Electron desktop app** with three distinct execution contexts:
 
 2. **Renderer process** (`renderer/`) — React 19 + Vite. Runs in a sandboxed browser context with no direct Node access. Communicates with main exclusively through `window.api` (exposed by preload).
 
-3. **Worker threads** (`src/audio/analysisWorker.js`) — Spawned per-import by main. Runs ffprobe (metadata), ffmpeg (loudness via EBU R128), and the Python script (BPM/key/energy via Essentia) in parallel with the main process. Results are sent back via `parentPort.postMessage` and written to DB, then pushed to the renderer via `mainWindow.webContents.send('track-updated', ...)`.
+3. **Worker threads** (`src/audio/analysisWorker.js`) — Spawned per-import by main. Runs the `mixxx-analyzer` binary (BPM, key, loudness, intro/outro) in parallel with the main process. Results are sent back via `parentPort.postMessage` and written to DB, then pushed to the renderer via `mainWindow.webContents.send('track-updated', ...)`.
 
 ### IPC Pattern
 
@@ -51,7 +48,7 @@ importAudioFiles(filePaths) →
     2. ffprobe → extract tags + format metadata
     3. addTrack() → insert row into SQLite (analyzed = 0)
     4. spawn Worker(analysisWorker.js, { filePath, trackId })
-       → ffprobe + ffmpeg loudness + python3 analysis.py
+       → mixxx-analyzer binary (BPM, key, loudness, intro/outro)
        → parentPort.postMessage(result)
     5. updateTrack(trackId, analysis) → sets analyzed = 1
     6. send 'track-updated' IPC → renderer updates row in-place
@@ -77,7 +74,7 @@ importAudioFiles(filePaths) →
 
 - **ESM throughout**: root `package.json` has `"type": "module"`; `src/` uses `import/export`. Preload uses `require()` (CommonJS, Electron requirement).
 - **FFmpeg binaries**: `analysisWorker.js` and `src/audio/ffmpeg.js` check `./ffmpeg/<binary>` first, then fall back to system PATH. Local binaries installed via `scripts/install-ffmpeg.sh`.
-- **Python analysis**: invoked via `execFileSync(python3, ['python/analysis.py', filePath])`. Output must be valid JSON printed to stdout. The Python venv is at `.venv/`; activate with `source .venv/bin/activate`. Dependencies: `essentia`, `numpy`.
+- **mixxx-analyzer binary**: located via `workerData.analyzerPath` (runtime-downloaded) or `build-resources/analysis` (dev). Called with `--json <filePath>`, outputs a JSON array. Source lives in the [mixxx-analyzer](https://github.com/Radexito/mixxx-analyzer) repo.
 - **Genres** stored as JSON-stringified array in the `genres TEXT` column.
 - **Playlist tables** exist in the schema (`playlists`, `playlist_tracks`) but all related IPC handlers and repository calls are commented out — they are not yet active.
 - **`global.mainWindow`** is set in `main.js` so the analysis worker result handler can push IPC events to the renderer without importing BrowserWindow directly.
