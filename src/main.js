@@ -143,6 +143,10 @@ async function initApp() {
   console.log('Creating window.');
   createWindow();
 
+  // Skip dep download in E2E tests — binary not needed for UI tests and the
+  // pending download blocks app.close(), causing afterEach timeouts.
+  if (process.env.E2E_TEST === '1') return;
+
   // Download deps if not already present
   let _lastDepLog = '';
   ensureDeps((msg, pct) => {

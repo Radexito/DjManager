@@ -14,7 +14,7 @@ test.describe('App launch', () => {
 
   test('window is visible', async () => {
     expect(await app.windows()).toHaveLength(1);
-    expect(await window.isVisible('body')).toBe(true);
+    await expect(window.locator('body')).toBeVisible();
   });
 
   test('sidebar is rendered', async () => {
