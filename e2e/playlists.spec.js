@@ -11,7 +11,7 @@ test.describe('Playlist management', () => {
   });
 
   test.afterEach(async () => {
-    await app.close();
+    await app?.close();
   });
 
   test('can create a playlist', async () => {

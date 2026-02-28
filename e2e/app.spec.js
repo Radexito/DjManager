@@ -9,7 +9,7 @@ test.describe('App launch', () => {
   });
 
   test.afterEach(async () => {
-    await app.close();
+    await app?.close();
   });
 
   test('window is visible', async () => {

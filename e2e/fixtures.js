@@ -11,7 +11,10 @@ const appRoot = path.join(__dirname, '..');
  */
 export async function launchApp() {
   const app = await electron.launch({
-    args: [appRoot],
+    args: [
+      '--no-sandbox', // required on Linux CI (no user namespace / GPU support)
+      appRoot,
+    ],
     env: {
       ...process.env,
       E2E_TEST: '1',
