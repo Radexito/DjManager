@@ -120,7 +120,9 @@ function createWindow() {
 
   global.mainWindow = mainWindow; // make accessible to workers
 
-  if (!app.isPackaged) {
+  if (process.env.E2E_TEST === '1') {
+    mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'));
+  } else if (!app.isPackaged) {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools();
   } else {
