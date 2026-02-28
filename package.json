@@ -127,7 +127,7 @@
     "electron-builder": "^26.8.1",
     "electron-rebuild": "^3.2.9",
     "eslint": "^10.0.2",
-    "globals": "^16.5.0",
+    "globals": "^17.3.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.3.0",
     "prettier": "^3.8.1",
