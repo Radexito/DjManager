@@ -7,6 +7,7 @@ Your music library, built for DJs. Import tracks, analyse BPM and key automatica
 [![code style: prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg)](https://github.com/prettier/prettier)
 [![ESLint](https://img.shields.io/badge/linting-ESLint-4B32C3)](https://eslint.org/)
 [![Tested with Vitest](https://img.shields.io/badge/tested_with-Vitest-6E9F18)](https://vitest.dev/)
+[![E2E with Playwright](https://img.shields.io/badge/e2e-Playwright-45ba4b)](https://playwright.dev/)
 
 ![DJ Manager screenshot](screenshot.png)
 
