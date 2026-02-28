@@ -43,3 +43,37 @@ jobs:
 
       - name: Test (renderer)
         run: cd renderer && npm run test:coverage
+
+  e2e:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts --legacy-peer-deps
+
+      - name: Install Electron binary
+        run: node node_modules/electron/install.js
+
+      - name: Install renderer dependencies
+        run: cd renderer && npm ci --legacy-peer-deps
+
+      - name: Build native modules for Electron
+        run: npx @electron/rebuild -f -w better-sqlite3
+
+      - name: Build renderer
+        run: npm run build-renderer
+
+      - name: Install Playwright system dependencies
+        run: npx playwright install-deps chromium
+
+      - name: Run E2E tests
+        run: xvfb-run --auto-servernum npm run test:e2e
+        env:
+          DB_PATH: ':memory:'

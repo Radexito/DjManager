@@ -24,6 +24,7 @@
     "pretest": "npm rebuild better-sqlite3",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
     "test:watch": "vitest",
     "posttest": "npx @electron/rebuild -f -w better-sqlite3"
   },
@@ -79,7 +80,22 @@
     "type": "git",
     "url": "git+https://github.com/Radexito/djman.git"
   },
-  "keywords": [],
+  "keywords": [
+    "music",
+    "music-player",
+    "music-library",
+    "dj",
+    "mixxx",
+    "library-management-system",
+    "traktor",
+    "music-player-application",
+    "organizing-tools",
+    "dj-tools",
+    "electron",
+    "rekordbox",
+    "bpm",
+    "audio-analysis"
+  ],
   "author": {
     "name": "Radexito",
     "email": "ceo@rwtechworks.pl"
@@ -104,6 +120,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.3",
+    "@playwright/test": "^1.58.2",
     "@vitest/coverage-v8": "^3.2.4",
     "concurrently": "^9.2.1",
     "electron": "^40.0.0",
