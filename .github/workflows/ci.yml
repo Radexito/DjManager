@@ -64,8 +64,8 @@ jobs:
       - name: Install renderer dependencies
         run: cd renderer && npm ci --legacy-peer-deps
 
-      - name: Build native modules
-        run: npm rebuild better-sqlite3
+      - name: Build native modules for Electron
+        run: npx @electron/rebuild -f -w better-sqlite3
 
       - name: Build renderer
         run: npm run build-renderer
