@@ -132,7 +132,7 @@
     "lint-staged": "^16.2.7",
     "prettier": "^3.8.1",
     "vitest": "^3.2.4",
-    "wait-on": "^9.0.3"
+    "wait-on": "^9.0.4"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
