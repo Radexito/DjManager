@@ -23,8 +23,16 @@ const ROW_HEIGHT = 50;
 const PRELOAD_TRIGGER = 3;
 
 // ── LibraryRow — outside MusicLibrary so react-window doesn't remount on re-render ──
-function LibraryRow({ index, style, data }) {
-  const { tracks, selectedIds, currentTrackId, onRowClick, onDoubleClick, onContextMenu } = data;
+function LibraryRow({
+  index,
+  style,
+  tracks,
+  selectedIds,
+  currentTrackId,
+  onRowClick,
+  onDoubleClick,
+  onContextMenu,
+}) {
   const t = tracks[index];
   if (!t) {
     return (
@@ -535,14 +543,15 @@ function MusicLibrary({ selectedPlaylist }) {
       ) : (
         /* Library view: virtualised list */
         <List
-          ref={listRef}
-          height={600}
-          itemCount={sortedTracks.length + (hasMore ? 1 : 0)}
-          itemSize={ROW_HEIGHT}
+          listRef={listRef}
+          defaultHeight={600}
+          rowCount={sortedTracks.length + (hasMore ? 1 : 0)}
+          rowHeight={ROW_HEIGHT}
           width="100%"
-          onItemsRendered={handleItemsRendered}
+          onRowsRendered={handleItemsRendered}
           className="track-list"
-          itemData={{
+          rowComponent={LibraryRow}
+          rowProps={{
             tracks: sortedTracks,
             selectedIds,
             currentTrackId: playingTrackId,
@@ -550,9 +559,7 @@ function MusicLibrary({ selectedPlaylist }) {
             onDoubleClick: handleDoubleClick,
             onContextMenu: handleContextMenu,
           }}
-        >
-          {LibraryRow}
-        </List>
+        />
       )}
 
       {contextMenu && (
