@@ -1,0 +1,44 @@
+version: 2
+updates:
+  # Root package (Electron main + build tooling)
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 5
+    groups:
+      electron:
+        patterns:
+          - 'electron*'
+      build-tools:
+        patterns:
+          - 'vite'
+          - 'vitest'
+          - 'eslint*'
+          - 'prettier*'
+          - 'concurrently'
+          - 'lint-staged'
+          - 'husky'
+
+  # Renderer package (React UI)
+  - package-ecosystem: 'npm'
+    directory: '/renderer'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 5
+    groups:
+      react:
+        patterns:
+          - 'react'
+          - 'react-dom'
+          - '@types/react*'
+
+  # GitHub Actions
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 5

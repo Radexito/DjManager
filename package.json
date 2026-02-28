@@ -79,7 +79,22 @@
     "type": "git",
     "url": "git+https://github.com/Radexito/djman.git"
   },
-  "keywords": [],
+  "keywords": [
+    "music",
+    "music-player",
+    "music-library",
+    "dj",
+    "mixxx",
+    "library-management-system",
+    "traktor",
+    "music-player-application",
+    "organizing-tools",
+    "dj-tools",
+    "electron",
+    "rekordbox",
+    "bpm",
+    "audio-analysis"
+  ],
   "author": {
     "name": "Radexito",
     "email": "ceo@rwtechworks.pl"
