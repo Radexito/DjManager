@@ -1,12 +1,5 @@
 import { useState, useRef } from 'react';
-import {
-  parseQuery,
-  getSuggestions,
-  filterToText,
-  removeFilter,
-  FIELDS,
-  CAMELOT_KEYS,
-} from './searchParser.js';
+import { parseQuery, getSuggestions, removeFilter, FIELDS, CAMELOT_KEYS } from './searchParser.js';
 import './SearchBar.css';
 
 const OP_LABELS = {
@@ -118,7 +111,7 @@ export default function SearchBar({ value, onChange }) {
       <div className="search-bar__input-row">
         <input
           ref={inputRef}
-          className="search-bar__input"
+          className="search-bar__input search-input"
           placeholder="Search… or try: GENRE is Techno AND BPM in range 130-140 AND KEY adjacent 8A"
           value={value}
           onChange={handleChange}

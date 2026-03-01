@@ -227,7 +227,7 @@ export function getSuggestions(queryText) {
   // ── Suggest field names ───────────────────────────────────────────────────
   return Object.entries(FIELDS)
     .filter(([, def]) => currentTrimUp === '' || def.label.startsWith(currentTrimUp))
-    .map(([key, def]) => ({
+    .map(([, def]) => ({
       type: 'field',
       text: def.label,
       insertText: full(def.label + ' '),
