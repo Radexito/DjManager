@@ -11,8 +11,9 @@ import {
   reorderPlaylistTracks,
   getPlaylistTracks,
   getPlaylistsForTrack,
+  clearPlaylists,
 } from '../db/playlistRepository.js';
-import { addTrack } from '../db/trackRepository.js';
+import { addTrack, getTracks, clearTracks } from '../db/trackRepository.js';
 
 const TRACK = {
   title: 'Track A',
@@ -139,6 +140,42 @@ describe('playlistRepository', () => {
 
       expect(getPlaylist(plId)).toBeUndefined();
       expect(getPlaylistTracks(plId)).toHaveLength(0);
+    });
+  });
+
+  describe('clearPlaylists + clearTracks (clear-library behaviour)', () => {
+    it('clearPlaylists removes all playlists', () => {
+      createPlaylist('Set A', null);
+      createPlaylist('Set B', '#ff0000');
+      expect(getPlaylists()).toHaveLength(2);
+      clearPlaylists();
+      expect(getPlaylists()).toHaveLength(0);
+    });
+
+    it('clearTracks then clearPlaylists leaves both tables empty', () => {
+      const plId = createPlaylist('DJ Set', null);
+      const tId = addTrack(TRACK);
+      addTracksToPlaylist(plId, [tId]);
+
+      clearTracks();
+      clearPlaylists();
+
+      expect(getTracks({ limit: 100 })).toHaveLength(0);
+      expect(getPlaylists()).toHaveLength(0);
+    });
+
+    it('clearPlaylists cascades to playlist_tracks', () => {
+      const plId = createPlaylist('Set', null);
+      const tId = addTrack(TRACK);
+      addTracksToPlaylist(plId, [tId]);
+
+      clearPlaylists();
+
+      // Playlist is gone; its tracks association is gone too
+      expect(getPlaylist(plId)).toBeUndefined();
+      expect(getPlaylistTracks(plId)).toHaveLength(0);
+      // But the track itself still exists
+      expect(getTracks({ limit: 100 })).toHaveLength(1);
     });
   });
 });
