@@ -29,7 +29,7 @@ FFmpeg and the audio analyser download automatically on first launch — no manu
 
 ## What it does
 
-**Library** — Import audio files once; DJ Manager manages storage and keeps everything organised. Search, sort, and filter by BPM, key, title, duration, and more.
+**Library** — Import audio files once; DJ Manager manages storage and keeps everything organised. Search, sort, and filter by BPM, key, title, duration, and more. Use the advanced query syntax to stack filters — e.g. `GENRE is Psytrance AND BPM IN RANGE 140-145` or `KEY matches 8A AND BPM > 130`.
 
 **Analysis** — Every track is analysed automatically for BPM, musical key (displayed in Camelot notation for harmonic mixing), loudness (LUFS), replay gain, and intro/outro markers. Re-analyse any track with a right-click.
 
@@ -57,23 +57,24 @@ FFmpeg and mixxx-analyzer are downloaded automatically to `~/.config/djman/bin/`
 
 ## What's been built
 
-| Feature                                            | Status |
-| -------------------------------------------------- | ------ |
-| Import + managed library storage                   | ✅     |
-| FFmpeg metadata extraction                         | ✅     |
-| BPM / key / loudness / intro+outro analysis        | ✅     |
-| Re-analyse, remove, right-click context menu       | ✅     |
-| Multi-select (click, Shift, Ctrl, Ctrl+A)          | ✅     |
-| BPM halve / double with override                   | ✅     |
-| Playlists (create, colour, reorder, drag-and-drop) | ✅     |
-| Audio player with seekbar and intro/outro zones    | ✅     |
-| Hardware media keys                                | ✅     |
-| Loudness normalisation (LUFS target)               | ✅     |
-| Runtime dependency downloads (FFmpeg + analyser)   | ✅     |
-| In-app dependency updates                          | ✅     |
-| Standalone builds for Linux / Windows / macOS      | ✅     |
-| Move library to custom location                    | ✅     |
-| App logging to `~/.config/djman/logs/`             | ✅     |
+| Feature                                                    | Status |
+| ---------------------------------------------------------- | ------ |
+| Import + managed library storage                           | ✅     |
+| FFmpeg metadata extraction                                 | ✅     |
+| BPM / key / loudness / intro+outro analysis                | ✅     |
+| Advanced query search (field filters, ranges, Camelot key) | ✅     |
+| Re-analyse, BPM halve/double via right-click Analysis menu | ✅     |
+| Find Similar tracks by key or BPM via context menu         | ✅     |
+| Multi-select (click, Shift, Ctrl, Ctrl+A)                  | ✅     |
+| Playlists (create, colour, reorder, drag-and-drop)         | ✅     |
+| Audio player with seekbar and intro/outro zones            | ✅     |
+| Hardware media keys                                        | ✅     |
+| Loudness normalisation (LUFS target)                       | ✅     |
+| Runtime dependency downloads (FFmpeg + analyser)           | ✅     |
+| In-app dependency updates                                  | ✅     |
+| Standalone builds for Linux / Windows / macOS              | ✅     |
+| Move library to custom location                            | ✅     |
+| App logging to `~/.config/djman/logs/`                     | ✅     |
 
 Issues tracking upcoming work are on the [**Issues**](https://github.com/Radexito/djman/issues) page.
 
