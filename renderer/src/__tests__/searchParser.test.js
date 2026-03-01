@@ -224,10 +224,12 @@ describe('removeFilter', () => {
 // ─── getSuggestions ──────────────────────────────────────────────────────────
 
 describe('getSuggestions', () => {
-  it('returns field suggestions for uppercase prefix', () => {
-    const suggestions = getSuggestions('BPM');
+  it('returns operator suggestions for a matched field', () => {
+    const suggestions = getSuggestions('BPM ');
     expect(suggestions.length).toBeGreaterThan(0);
-    expect(suggestions.some((s) => s.text.includes('BPM'))).toBe(true);
+    expect(suggestions.some((s) => s.text.includes('in range') || s.text.includes('is'))).toBe(
+      true
+    );
   });
 
   it('returns operator suggestions after field', () => {
@@ -239,7 +241,7 @@ describe('getSuggestions', () => {
 
   it('returns Camelot key suggestions for KEY op', () => {
     const suggestions = getSuggestions('KEY is 8');
-    expect(suggestions.some((s) => s.text.includes('8a') || s.text.includes('8b'))).toBe(true);
+    expect(suggestions.some((s) => s.text.includes('8A') || s.text.includes('8B'))).toBe(true);
   });
 
   it('returns field suggestions for empty input', () => {
