@@ -116,6 +116,9 @@
     ],
     "*.{json,md,yml}": [
       "prettier --write"
+    ],
+    "**/*.css": [
+      "prettier --write"
     ]
   },
   "devDependencies": {

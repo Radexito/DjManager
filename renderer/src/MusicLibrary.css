@@ -116,6 +116,8 @@
   min-width: 170px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
   user-select: none;
+  max-height: calc(100vh - 16px);
+  overflow: visible;
 }
 
 .context-menu-item {
@@ -293,4 +295,107 @@
   border-radius: 50%;
   margin-right: 5px;
   vertical-align: middle;
+}
+
+.context-menu-item--header {
+  padding: 5px 16px 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: default;
+}
+.context-menu-item--header:hover {
+  background: transparent;
+}
+
+/* Wider submenu for "Find similar" which has longer labels */
+.context-submenu--wide {
+  min-width: 220px;
+}
+
+/* ── Smart positioning ──────────────────────────────────────────────────── */
+
+/* Submenus flip to the left when the menu is in the right half of the screen */
+.context-menu--flip-left .context-submenu {
+  left: auto;
+  right: 100%;
+}
+
+/* Submenus grow upward when the menu is in the lower half of the screen */
+.context-menu--flip-up .context-submenu {
+  top: auto;
+  bottom: -4px;
+}
+
+/* Submenus scroll rather than overflow vertically */
+.context-submenu {
+  max-height: var(--submenu-max-h, 70vh);
+  overflow-y: auto;
+}
+
+/* ── Overlay / bottom-sheet mode ────────────────────────────────────────── */
+
+.context-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.context-menu--overlay {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  top: auto;
+  border-radius: 14px 14px 0 0;
+  border: none;
+  border-top: 1px solid #444;
+  max-height: 80vh;
+  overflow-y: auto;
+  z-index: 1000;
+  padding: 8px 0 env(safe-area-inset-bottom, 8px);
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.7);
+}
+
+/* Larger tap targets in overlay mode */
+.context-menu--overlay .context-menu-item {
+  padding: 12px 20px;
+  font-size: 14px;
+}
+
+/* No hover highlight in overlay — interactions are touch/click only */
+.context-menu--overlay .context-menu-item:hover {
+  background: transparent;
+}
+.context-menu--overlay .context-menu-item:active {
+  background: #3a3a3a;
+}
+
+/* Submenus inside overlay are hidden — drill-down handled by React state */
+.context-menu--overlay .context-menu-item--has-submenu::after {
+  content: '›';
+  font-size: 16px;
+  color: #888;
+}
+.context-menu--overlay .context-submenu {
+  display: none;
+}
+
+.context-menu__back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #7ecf7e;
+  cursor: pointer;
+  border-bottom: 1px solid #333;
+  margin-bottom: 4px;
+}
+.context-menu__back:active {
+  background: #3a3a3a;
 }
