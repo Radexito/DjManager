@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { app } from 'electron';
 import { Worker } from 'worker_threads';
 import { ffprobe } from './ffmpeg.js';
-import { addTrack, updateTrack } from '../db/trackRepository.js';
+import { addTrack, updateTrack, getTrackById } from '../db/trackRepository.js';
 import { getAnalyzerRuntimePath } from '../deps.js';
 import { getSetting } from '../db/settingsRepository.js';
 
@@ -54,14 +54,26 @@ export function spawnAnalysis(trackId, filePath) {
       return;
     }
     console.log(`Analysis finished for track ID ${trackId}:`, result);
-    updateTrack(trackId, { ...result, bpm_override: null }); // clear any manual BPM override
+
+    const { tagFallbacks, ...analysisFields } = result;
+
+    // Apply tag fallbacks — only fill fields that ffprobe left null/empty
+    const mergedTags = {};
+    if (tagFallbacks) {
+      const existing = getTrackById(trackId);
+      for (const [key, val] of Object.entries(tagFallbacks)) {
+        if (val != null && val !== '' && (existing?.[key] == null || existing[key] === '')) {
+          mergedTags[key] = val;
+        }
+      }
+    }
+
+    const update = { ...analysisFields, bpm_override: null, ...mergedTags };
+    updateTrack(trackId, update);
 
     // Notify renderer
     if (global.mainWindow) {
-      global.mainWindow.webContents.send('track-updated', {
-        trackId,
-        analysis: { ...result, bpm_override: null },
-      });
+      global.mainWindow.webContents.send('track-updated', { trackId, analysis: update });
     }
   });
 }

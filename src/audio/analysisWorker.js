@@ -61,6 +61,8 @@ async function analyzeAudio(filePath) {
 
   if (result.error) console.error('[analysis] error:', result.error);
 
+  const tags = result.tags ?? {};
+
   return {
     bpm: result.bpm ?? null,
     key_raw: result.key ?? null,
@@ -69,6 +71,16 @@ async function analyzeAudio(filePath) {
     replay_gain: result.replayGain ?? null,
     intro_secs: result.introSecs ?? null,
     outro_secs: result.outroSecs ?? null,
+    beatgrid: result.beatgrid ? JSON.stringify(result.beatgrid) : null,
+    // Nested — NOT spread into DB directly; importManager applies these as fallbacks
+    tagFallbacks: {
+      title: tags.title ?? null,
+      artist: tags.artist ?? null,
+      album: tags.album ?? null,
+      year: tags.year ?? null,
+      label: tags.label ?? null,
+      comments: tags.comment ?? null,
+    },
   };
 }
 
