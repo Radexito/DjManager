@@ -18,74 +18,100 @@ import { CSS } from '@dnd-kit/utilities';
 import { usePlayer } from './PlayerContext.jsx';
 import SearchBar from './SearchBar.jsx';
 import { parseQuery } from './searchParser.js';
+import TrackDetails from './TrackDetails.jsx';
 import './MusicLibrary.css';
 
 const PAGE_SIZE = 50;
 const ROW_HEIGHT = 50;
 const PRELOAD_TRIGGER = 3;
 
+const LS_COL_KEY = 'djman_column_visibility';
+
+// All possible columns. toggleable:false = always visible.
+const ALL_COLUMNS = [
+  { key: 'index',       label: '#',        width: '44px', toggleable: false },
+  { key: 'title',       label: 'Title',    width: '2fr',  toggleable: false },
+  { key: 'artist',      label: 'Artist',   width: '1.5fr',toggleable: false },
+  { key: 'bpm',         label: 'BPM',      width: '70px', toggleable: true  },
+  { key: 'key_camelot', label: 'Key',      width: '60px', toggleable: true  },
+  { key: 'loudness',    label: 'Loudness', width: '100px',toggleable: true  },
+  { key: 'album',       label: 'Album',    width: '1fr',  toggleable: true  },
+  { key: 'year',        label: 'Year',     width: '55px', toggleable: true  },
+  { key: 'label',       label: 'Label',    width: '100px',toggleable: true  },
+  { key: 'genres',      label: 'Genres',   width: '120px',toggleable: true  },
+  { key: 'duration',    label: 'Duration', width: '70px', toggleable: true  },
+];
+
+const DEFAULT_COL_VIS = { bpm: true, key_camelot: true, loudness: true, album: false, year: false, label: false, genres: false, duration: false };
+
+function loadColVis() {
+  try { return { ...DEFAULT_COL_VIS, ...JSON.parse(localStorage.getItem(LS_COL_KEY) ?? '{}') }; }
+  catch { return { ...DEFAULT_COL_VIS }; }
+}
+
+function fmtDuration(secs) {
+  if (secs == null) return '—';
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function renderCell(t, colKey) {
+  const bpmValue = t.bpm_override ?? t.bpm;
+  switch (colKey) {
+    case 'title':       return t.title;
+    case 'artist':      return t.artist || 'Unknown';
+    case 'bpm':         return bpmValue ?? '...';
+    case 'key_camelot': return t.key_camelot ?? '...';
+    case 'loudness':    return t.loudness != null ? t.loudness : '...';
+    case 'album':       return t.album || '—';
+    case 'year':        return t.year ?? '—';
+    case 'label':       return t.label || '—';
+    case 'genres': {
+      try { return JSON.parse(t.genres ?? '[]').join(', ') || '—'; } catch { return '—'; }
+    }
+    case 'duration':    return fmtDuration(t.duration);
+    default:            return t[colKey] ?? '—';
+  }
+}
+
+function cellClass(colKey, t) {
+  const numeric = ['bpm','key_camelot','loudness','year','duration'].includes(colKey);
+  const over    = colKey === 'bpm' && t.bpm_override != null;
+  return `cell ${colKey}${numeric ? ' numeric' : ''}${over ? ' bpm--overridden' : ''}`;
+}
+
 // ── LibraryRow — outside MusicLibrary so react-window doesn't remount on re-render ──
-function LibraryRow({
-  index,
-  style,
-  tracks,
-  selectedIds,
-  currentTrackId,
-  onRowClick,
-  onDoubleClick,
-  onContextMenu,
-}) {
+function LibraryRow({ index, style, data }) {
+  const { tracks, selectedIds, currentTrackId, onRowClick, onDoubleClick, onContextMenu, visibleColumns, gridTemplate } = data;
   const t = tracks[index];
   if (!t) {
-    return (
-      <div style={style} className="row row-loading">
-        Loading more tracks...
-      </div>
-    );
+    return <div style={{ ...style, gridTemplateColumns: gridTemplate }} className="row row-loading">Loading more tracks...</div>;
   }
   const isSelected = selectedIds.has(t.id);
-  const isPlaying = currentTrackId === t.id;
-  const bpmValue = t.bpm_override ?? t.bpm;
+  const isPlaying  = currentTrackId === t.id;
   return (
     <div
-      style={style}
+      style={{ ...style, gridTemplateColumns: gridTemplate }}
       className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}`}
       title={`${t.title} - ${t.artist || 'Unknown'}`}
       onClick={(e) => onRowClick(e, t, index)}
       onDoubleClick={() => onDoubleClick(t, index)}
       onContextMenu={(e) => onContextMenu(e, t, index)}
     >
-      <div className="cell index">{index + 1}</div>
-      <div className="cell title">{t.title}</div>
-      <div className="cell artist">{t.artist || 'Unknown'}</div>
-      <div className={`cell numeric${t.bpm_override != null ? ' bpm--overridden' : ''}`}>
-        {bpmValue ?? '...'}
-      </div>
-      <div className="cell numeric">{t.key_camelot ?? '...'}</div>
-      <div className="cell numeric">{t.loudness != null ? t.loudness : '...'}</div>
+      {visibleColumns.map(col => (
+        col.key === 'index'
+          ? <div key="index" className="cell index">{index + 1}</div>
+          : <div key={col.key} className={cellClass(col.key, t)}>{renderCell(t, col.key)}</div>
+      ))}
     </div>
   );
 }
 
 // ── SortableRow — must be defined outside MusicLibrary to avoid remount ────
-function SortableRow({
-  t,
-  index,
-  isSelected,
-  isPlaying,
-  onRowClick,
-  onDoubleClick,
-  onContextMenu,
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: t.id,
-  });
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.4 : 1,
-  };
-  const bpmValue = t.bpm_override ?? t.bpm;
+function SortableRow({ t, index, isSelected, isPlaying, onRowClick, onDoubleClick, onContextMenu, visibleColumns, gridTemplate }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: t.id });
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1, gridTemplateColumns: gridTemplate };
   return (
     <div
       ref={setNodeRef}
@@ -96,16 +122,11 @@ function SortableRow({
       onDoubleClick={() => onDoubleClick(t, index)}
       onContextMenu={(e) => onContextMenu(e, t, index)}
     >
-      <div className="cell index drag-handle" {...attributes} {...listeners}>
-        ⠿
-      </div>
-      <div className="cell title">{t.title}</div>
-      <div className="cell artist">{t.artist || 'Unknown'}</div>
-      <div className={`cell numeric${t.bpm_override != null ? ' bpm--overridden' : ''}`}>
-        {bpmValue ?? '...'}
-      </div>
-      <div className="cell numeric">{t.key_camelot ?? '...'}</div>
-      <div className="cell numeric">{t.loudness != null ? t.loudness : '...'}</div>
+      {visibleColumns.map(col => (
+        col.key === 'index'
+          ? <div key="index" className="cell index drag-handle" {...attributes} {...listeners}>⠿</div>
+          : <div key={col.key} className={cellClass(col.key, t)}>{renderCell(t, col.key)}</div>
+      ))}
     </div>
   );
 }
@@ -136,6 +157,9 @@ function MusicLibrary({ selectedPlaylist }) {
   const [playlistInfo, setPlaylistInfo] = useState(null); // { name, total_duration, track_count }
   const [activeId, setActiveId] = useState(null); // DnD active drag id
   const [sortSaved, setSortSaved] = useState(true); // false when sorted away from position order
+  const [colVis, setColVis] = useState(loadColVis);
+  const [colsOpen, setColsOpen] = useState(false);
+  const [detailsTrack, setDetailsTrack] = useState(null);
 
   const offsetRef = useRef(0);
   const loadingRef = useRef(false);
@@ -145,14 +169,14 @@ function MusicLibrary({ selectedPlaylist }) {
   const sortedTracksRef = useRef([]);
   const lastSelectedIndexRef = useRef(null);
 
-  const columns = [
-    { key: 'index', label: '#', width: '5%' },
-    { key: 'title', label: 'Title', width: '35%' },
-    { key: 'artist', label: 'Artist', width: '28%' },
-    { key: 'bpm', label: 'BPM', width: '10%' },
-    { key: 'key_camelot', label: 'Key', width: '8%' },
-    { key: 'loudness', label: 'Loudness (LUFS)', width: '14%' },
-  ];
+  const visibleColumns = useMemo(
+    () => ALL_COLUMNS.filter(c => !c.toggleable || colVis[c.key]),
+    [colVis]
+  );
+  const gridTemplate = useMemo(
+    () => visibleColumns.map(c => c.width).join(' '),
+    [visibleColumns]
+  );
 
   const [sortBy, setSortBy] = useState({ key: 'index', asc: true });
 
@@ -262,9 +286,10 @@ function MusicLibrary({ selectedPlaylist }) {
   // DnD sensors
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
-  // Ctrl+A — select all tracks including unloaded ones
+  // Keyboard shortcuts
   useEffect(() => {
     const onKeyDown = async (e) => {
+      // Ctrl+A — select all tracks including unloaded ones
       if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
         e.preventDefault();
         const { filters, remaining } = parseQuery(search);
@@ -276,6 +301,26 @@ function MusicLibrary({ selectedPlaylist }) {
           playlistId: selectedPlaylist !== 'music' ? selectedPlaylist : undefined,
         });
         setSelectedIds(new Set(ids));
+        return;
+      }
+      // Enter or E — open details for single selected track
+      if ((e.key === 'Enter' || e.key === 'e') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const target = e.target;
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+        setSelectedIds(prev => {
+          if (prev.size === 1) {
+            const id = [...prev][0];
+            const track = sortedTracksRef.current.find(t => t.id === id);
+            if (track) setDetailsTrack(track);
+          }
+          return prev;
+        });
+        return;
+      }
+      // Escape — close details or context menu
+      if (e.key === 'Escape') {
+        setDetailsTrack(null);
+        setContextMenu(null);
       }
     };
     document.addEventListener('keydown', onKeyDown);
@@ -310,7 +355,13 @@ function MusicLibrary({ selectedPlaylist }) {
       const rangeIds = sortedTracksRef.current.slice(start, end + 1).map((t) => t.id);
       setSelectedIds(new Set(rangeIds));
     } else {
-      setSelectedIds(new Set([track.id]));
+      setSelectedIds(prev => {
+        // Re-clicking the sole selected track opens the details panel
+        if (prev.size === 1 && prev.has(track.id)) {
+          setDetailsTrack(track);
+        }
+        return new Set([track.id]);
+      });
       lastSelectedIndexRef.current = index;
     }
   }, []);
@@ -322,7 +373,44 @@ function MusicLibrary({ selectedPlaylist }) {
     [play, isPlaylistView, selectedPlaylist]
   );
 
-  // ── Context menu ───────────────────────────────────────────────────────────
+  // ── Details panel ──────────────────────────────────────────────────────────
+
+  const handleDetailsClose = useCallback(() => setDetailsTrack(null), []);
+
+  const handleDetailsSave = useCallback((updatedTrack) => {
+    setTracks(prev => prev.map(t => t.id === updatedTrack.id ? { ...t, ...updatedTrack } : t));
+    setDetailsTrack(updatedTrack);
+  }, []);
+
+  const handleDetailsPrev = useCallback(() => {
+    const tracks = sortedTracksRef.current;
+    if (!detailsTrack) return;
+    const idx = tracks.findIndex(t => t.id === detailsTrack.id);
+    if (idx > 0) {
+      setDetailsTrack(tracks[idx - 1]);
+      setSelectedIds(new Set([tracks[idx - 1].id]));
+    }
+  }, [detailsTrack]);
+
+  const handleDetailsNext = useCallback(() => {
+    const tracks = sortedTracksRef.current;
+    if (!detailsTrack) return;
+    const idx = tracks.findIndex(t => t.id === detailsTrack.id);
+    if (idx >= 0 && idx < tracks.length - 1) {
+      setDetailsTrack(tracks[idx + 1]);
+      setSelectedIds(new Set([tracks[idx + 1].id]));
+    }
+  }, [detailsTrack]);
+
+  // ── Column visibility ──────────────────────────────────────────────────────
+
+  const toggleCol = useCallback((key) => {
+    setColVis(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      localStorage.setItem(LS_COL_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
 
   const handleContextMenu = useCallback(
     async (e, track, index) => {
@@ -545,7 +633,8 @@ function MusicLibrary({ selectedPlaylist }) {
   };
 
   return (
-    <div className="music-library">
+    <div className={`music-library${detailsTrack ? ' music-library--with-panel' : ''}`}>
+      <div className="music-library__main">
       <SearchBar value={search} onChange={setSearch} />
 
       {/* Playlist header bar */}
@@ -563,16 +652,40 @@ function MusicLibrary({ selectedPlaylist }) {
         </div>
       )}
 
-      <div className="header">
-        {columns.map((col) => (
+      <div className="header" style={{ gridTemplateColumns: gridTemplate }}>
+        {visibleColumns.map(col => (
           <div
             key={col.key}
-            className={`header-cell ${['bpm', 'key_camelot', 'loudness'].includes(col.key) ? 'right' : ''}`}
+            className={`header-cell ${['bpm','key_camelot','loudness','year','duration'].includes(col.key) ? 'right' : ''}`}
             onClick={() => handleSort(col.key)}
           >
             {col.label} {sortBy.key === col.key ? (sortBy.asc ? '▲' : '▼') : ''}
           </div>
         ))}
+        {/* Columns toggle button — sits outside the grid flow */}
+        <div className="header-col-toggle-wrap">
+          <button
+            className="btn-cols"
+            onClick={e => { e.stopPropagation(); setColsOpen(o => !o); }}
+            title="Show/hide columns"
+          >
+            ⊞
+          </button>
+          {colsOpen && (
+            <div className="col-dropdown" onMouseDown={e => e.stopPropagation()}>
+              {ALL_COLUMNS.filter(c => c.toggleable).map(col => (
+                <label key={col.key} className="col-dropdown__item">
+                  <input
+                    type="checkbox"
+                    checked={!!colVis[col.key]}
+                    onChange={() => toggleCol(col.key)}
+                  />
+                  {col.label}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Playlist view: full DnD list */}
@@ -605,13 +718,15 @@ function MusicLibrary({ selectedPlaylist }) {
                     onRowClick={handleRowClick}
                     onDoubleClick={handleDoubleClick}
                     onContextMenu={handleContextMenu}
+                    visibleColumns={visibleColumns}
+                    gridTemplate={gridTemplate}
                   />
                 ))}
               </div>
             </SortableContext>
             <DragOverlay>
               {activeTrack && (
-                <div className="row row-drag-overlay">
+                <div className="row row-drag-overlay" style={{ gridTemplateColumns: gridTemplate }}>
                   <div className="cell index">⠿</div>
                   <div className="cell title">{activeTrack.title}</div>
                   <div className="cell artist">{activeTrack.artist || 'Unknown'}</div>
@@ -638,6 +753,8 @@ function MusicLibrary({ selectedPlaylist }) {
             onRowClick: handleRowClick,
             onDoubleClick: handleDoubleClick,
             onContextMenu: handleContextMenu,
+            visibleColumns,
+            gridTemplate,
           }}
         />
       )}
@@ -997,6 +1114,22 @@ function MusicLibrary({ selectedPlaylist }) {
           </div>
         </>
       )}
+      </div>{/* end .music-library__main */}
+
+      {detailsTrack && (() => {
+        const idx = sortedTracksRef.current.findIndex(t => t.id === detailsTrack.id);
+        return (
+          <TrackDetails
+            track={detailsTrack}
+            onSave={handleDetailsSave}
+            onCancel={handleDetailsClose}
+            onPrev={handleDetailsPrev}
+            onNext={handleDetailsNext}
+            hasPrev={idx > 0}
+            hasNext={idx >= 0 && idx < sortedTracksRef.current.length - 1}
+          />
+        );
+      })()}
     </div>
   );
 }
