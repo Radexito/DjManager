@@ -116,6 +116,8 @@
   min-width: 170px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
   user-select: none;
+  max-height: calc(100vh - 16px);
+  overflow: visible;
 }
 
 .context-menu-item {
@@ -321,9 +323,15 @@
   right: 100%;
 }
 
+/* Submenus grow upward when the menu is in the lower half of the screen */
+.context-menu--flip-up .context-submenu {
+  top: auto;
+  bottom: -4px;
+}
+
 /* Submenus scroll rather than overflow vertically */
 .context-submenu {
-  max-height: 70vh;
+  max-height: var(--submenu-max-h, 70vh);
   overflow-y: auto;
 }
 
