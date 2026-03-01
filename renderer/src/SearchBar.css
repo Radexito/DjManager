@@ -46,14 +46,18 @@
   border-color: #5a4a7a;
   background: #1e1a2e;
 }
-.search-chip--key .search-chip__field { color: #b07ecf; }
+.search-chip--key .search-chip__field {
+  color: #b07ecf;
+}
 
 /* bpm chips */
 .search-chip--bpm {
   border-color: #5a3a1a;
   background: #2e1e0e;
 }
-.search-chip--bpm .search-chip__field { color: #cf9e5e; }
+.search-chip--bpm .search-chip__field {
+  color: #cf9e5e;
+}
 
 .search-chip__remove {
   background: none;
@@ -65,7 +69,9 @@
   line-height: 1;
   margin-left: 2px;
 }
-.search-chip__remove:hover { color: #fff; }
+.search-chip__remove:hover {
+  color: #fff;
+}
 
 /* ── input row ──────────────────────────────────────────────────────────────── */
 
@@ -103,7 +109,9 @@
   padding: 0;
   line-height: 1;
 }
-.search-bar__clear:hover { color: #fff; }
+.search-bar__clear:hover {
+  color: #fff;
+}
 
 /* ── autocomplete dropdown ──────────────────────────────────────────────────── */
 
