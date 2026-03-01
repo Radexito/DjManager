@@ -51,7 +51,6 @@ export default function SearchBar({ value, onChange }) {
     setActiveIndex(0);
     setShowDropdown(true);
   };
-
   const applySuggestion = (s) => {
     onChange(s.insertText);
     setActiveIndex(0);
@@ -124,7 +123,9 @@ export default function SearchBar({ value, onChange }) {
           value={value}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
-          onFocus={() => setShowDropdown(true)}
+          onFocus={() => {
+            if (value) setShowDropdown(true);
+          }}
           onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
           spellCheck={false}
           autoComplete="off"

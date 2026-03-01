@@ -207,8 +207,9 @@ export function getSuggestions(queryText) {
     );
 
     if (matchedOp) {
+      const afterOp = afterField.slice(matchedOp.length).trim(); // partial value typed so far
       const clauseBase = `${fieldDef.label} ${matchedOp} `;
-      return getValueHints(fieldKey, matchedOp, full(clauseBase));
+      return getValueHints(fieldKey, matchedOp, full(clauseBase), afterOp);
     }
 
     // Suggest operators filtered by what's been typed so far
@@ -247,15 +248,18 @@ function opDescription(fieldKey, op) {
   return undefined;
 }
 
-function getValueHints(fieldKey, op, base) {
+function getValueHints(fieldKey, op, base, partialValue = '') {
   if (fieldKey === 'key') {
+    // Don't flood with all 24 keys — wait until the user starts typing
+    if (!partialValue) return [];
+    const partial = partialValue.toLowerCase();
     const desc = {
       is: 'exact — e.g. 8A',
       adjacent: 'energy shift — e.g. 8A',
       'mode switch': 'atmosphere — e.g. 8A',
       matches: 'all compatible — e.g. 8A',
     };
-    return CAMELOT_KEYS.map((k) => ({
+    return CAMELOT_KEYS.filter((k) => k.startsWith(partial)).map((k) => ({
       type: 'value',
       text: k.toUpperCase(),
       insertText: base + k.toUpperCase(),

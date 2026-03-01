@@ -294,3 +294,21 @@
   margin-right: 5px;
   vertical-align: middle;
 }
+
+.context-menu-item--header {
+  padding: 5px 16px 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: default;
+}
+.context-menu-item--header:hover {
+  background: transparent;
+}
+
+/* Wider submenu for "Find similar" which has longer labels */
+.context-submenu--wide {
+  min-width: 220px;
+}
