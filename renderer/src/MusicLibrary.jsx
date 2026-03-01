@@ -16,6 +16,8 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { usePlayer } from './PlayerContext.jsx';
+import SearchBar from './SearchBar.jsx';
+import { parseQuery } from './searchParser.js';
 import './MusicLibrary.css';
 
 const PAGE_SIZE = 50;
@@ -160,10 +162,15 @@ function MusicLibrary({ selectedPlaylist }) {
     const token = resetTokenRef.current;
 
     try {
+      const { filters, remaining } = parseQuery(search);
+      const structuredFilters = filters.filter((f) => f.field !== '_text');
+      const textSearch = remaining || filters.find((f) => f.field === '_text')?.value || '';
+
       const rows = await window.api.getTracks({
         limit: PAGE_SIZE,
         offset: offsetRef.current,
-        search,
+        search: textSearch,
+        filters: structuredFilters,
         playlistId: selectedPlaylist !== 'music' ? selectedPlaylist : undefined,
       });
 
@@ -259,8 +266,12 @@ function MusicLibrary({ selectedPlaylist }) {
     const onKeyDown = async (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
         e.preventDefault();
+        const { filters, remaining } = parseQuery(search);
+        const structuredFilters = filters.filter((f) => f.field !== '_text');
+        const textSearch = remaining || filters.find((f) => f.field === '_text')?.value || '';
         const ids = await window.api.getTrackIds({
-          search,
+          search: textSearch,
+          filters: structuredFilters,
           playlistId: selectedPlaylist !== 'music' ? selectedPlaylist : undefined,
         });
         setSelectedIds(new Set(ids));
@@ -461,12 +472,7 @@ function MusicLibrary({ selectedPlaylist }) {
 
   return (
     <div className="music-library">
-      <input
-        className="search-input"
-        placeholder="Search title / artist / album"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-      />
+      <SearchBar value={search} onChange={setSearch} />
 
       {/* Playlist header bar */}
       {isPlaylistView && playlistInfo && (

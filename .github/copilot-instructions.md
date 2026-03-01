@@ -17,9 +17,21 @@ npm run build
 
 # Run in production mode (after build)
 npm run electron-prod
+
+# Unit tests (Vitest) — covers src/db/**
+npm test
+
+# Run a single test file
+npx vitest run src/__tests__/trackRepository.test.js
+
+# Renderer unit tests (React Testing Library)
+cd renderer && npm test
+
+# E2E tests (Playwright) — not yet in CI
+npm run test:e2e
 ```
 
-There is no automated test suite.
+Coverage thresholds (v8): 65% statements/lines, 44% branches, 70% functions. Only `src/db/**` is included in coverage.
 
 ## Architecture
 
@@ -69,10 +81,21 @@ importAudioFiles(filePaths) →
 - Pagination is scroll-triggered: loads next page when within `PRELOAD_TRIGGER = 3` rows of the end
 - Sorting is client-side (on the loaded `tracks` array), not a DB query
 - `window.api.onTrackUpdated(callback)` listens for background analysis results and updates rows in-place
+- Drag-and-drop via `@dnd-kit` — `SortableRow` is defined outside `MusicLibrary` to prevent remounts
+- Player state (queue, playback, shuffle/repeat) lives in `PlayerContext.jsx` using React Context + `Audio` element
+- Local audio files are served via a custom `media://` protocol registered in main — supports HTTP Range requests for seeking
+
+### Dependencies & Auto-download
+
+- On first launch, `src/deps.js` downloads FFmpeg and the mixxx-analyzer binary
+- Progress is pushed to renderer via `onDepsProgress` IPC events (shown as overlay in `App.jsx`)
+- `src/logger.js` writes daily logs to `~/.config/djman/logs/app-YYYY-MM-DD.log`
 
 ## Key Conventions
 
 - **ESM throughout**: root `package.json` has `"type": "module"`; `src/` uses `import/export`. Preload uses `require()` (CommonJS, Electron requirement).
+- **Code style**: Prettier (100-char width, 2-space indent, single quotes) enforced via Husky pre-commit hook with lint-staged.
+- **IPC listeners return unsubscribers**: all `window.api.on*()` methods return a cleanup function — call it in `useEffect` cleanup.
 - **FFmpeg binaries**: `analysisWorker.js` and `src/audio/ffmpeg.js` check `./ffmpeg/<binary>` first, then fall back to system PATH. Local binaries installed via `scripts/install-ffmpeg.sh`.
 - **mixxx-analyzer binary**: located via `workerData.analyzerPath` (runtime-downloaded) or `build-resources/analysis` (dev). Called with `--json <filePath>`, outputs a JSON array. Source lives in the [mixxx-analyzer](https://github.com/Radexito/mixxx-analyzer) repo.
 - **Genres** stored as JSON-stringified array in the `genres TEXT` column.

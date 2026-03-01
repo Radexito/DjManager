@@ -1,0 +1,166 @@
+.search-bar {
+  position: relative;
+  margin-bottom: 20px;
+}
+
+/* ── chips ─────────────────────────────────────────────────────────────────── */
+
+.search-bar__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+
+.search-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: #1e2e1e;
+  border: 1px solid #3a5a3a;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.search-chip__field {
+  color: #7ecf7e;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.search-chip__op {
+  color: #7ab;
+  font-style: italic;
+  margin: 0 1px;
+}
+
+.search-chip__value {
+  color: #fff;
+}
+
+/* key chips get a distinct accent */
+.search-chip--key {
+  border-color: #5a4a7a;
+  background: #1e1a2e;
+}
+.search-chip--key .search-chip__field { color: #b07ecf; }
+
+/* bpm chips */
+.search-chip--bpm {
+  border-color: #5a3a1a;
+  background: #2e1e0e;
+}
+.search-chip--bpm .search-chip__field { color: #cf9e5e; }
+
+.search-chip__remove {
+  background: none;
+  border: none;
+  color: #555;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+  margin-left: 2px;
+}
+.search-chip__remove:hover { color: #fff; }
+
+/* ── input row ──────────────────────────────────────────────────────────────── */
+
+.search-bar__input-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-bar__input {
+  width: 100%;
+  padding: 8px 30px 8px 8px;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background-color: #222;
+  color: #fff;
+  outline: none;
+  font-size: 13px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.search-bar__input:focus {
+  border-color: #4a7a4a;
+}
+
+.search-bar__clear {
+  position: absolute;
+  right: 8px;
+  background: none;
+  border: none;
+  color: #555;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 0;
+  line-height: 1;
+}
+.search-bar__clear:hover { color: #fff; }
+
+/* ── autocomplete dropdown ──────────────────────────────────────────────────── */
+
+.search-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.search-dropdown__item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  gap: 12px;
+}
+
+.search-dropdown__item:hover,
+.search-dropdown__item--active {
+  background: #2a2a2a;
+}
+
+/* field suggestions — green */
+.search-dropdown__item--field .search-dropdown__text {
+  color: #7ecf7e;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* operator suggestions — blue */
+.search-dropdown__item--operator .search-dropdown__text {
+  color: #7ab;
+}
+
+/* value / hint suggestions — muted */
+.search-dropdown__item--value .search-dropdown__text,
+.search-dropdown__item--hint .search-dropdown__text {
+  color: #ccc;
+  font-style: italic;
+}
+
+.search-dropdown__desc {
+  color: #555;
+  font-size: 11px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
