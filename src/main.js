@@ -16,6 +16,7 @@ import {
   reorderPlaylistTracks,
   getPlaylistsForTrack,
   getPlaylistTracks,
+  clearPlaylists,
 } from './db/playlistRepository.js';
 import {
   addTrack,
@@ -407,8 +408,12 @@ ipcMain.handle('import-audio-files', async (event, filePaths) => {
 ipcMain.handle('clear-library', async () => {
   const audioBase = path.join(app.getPath('userData'), 'audio');
   clearTracks();
+  clearPlaylists();
   if (fs.existsSync(audioBase)) fs.rmSync(audioBase, { recursive: true, force: true });
-  if (global.mainWindow) global.mainWindow.webContents.send('library-updated');
+  if (global.mainWindow) {
+    global.mainWindow.webContents.send('library-updated');
+    global.mainWindow.webContents.send('playlists-updated');
+  }
 });
 
 ipcMain.handle('clear-user-data', async () => {

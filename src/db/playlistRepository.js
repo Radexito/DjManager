@@ -162,3 +162,7 @@ export function getPlaylistTracks(playlistId) {
     )
     .all(playlistId);
 }
+
+export function clearPlaylists() {
+  db.prepare(`DELETE FROM playlists`).run();
+}
