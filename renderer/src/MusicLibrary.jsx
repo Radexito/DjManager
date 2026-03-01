@@ -130,6 +130,7 @@ function MusicLibrary({ selectedPlaylist }) {
   const [search, setSearch] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [contextMenu, setContextMenu] = useState(null); // { x, y, targetIds }
+  const [drillStack, setDrillStack] = useState([]); // overlay drill-down stack [{ id, label, content }]
   const [playlistSubmenu, setPlaylistSubmenu] = useState(null); // [{ id, name, color, is_member }]
   const [loadKey, setLoadKey] = useState(0);
   const [playlistInfo, setPlaylistInfo] = useState(null); // { name, total_duration, track_count }
@@ -284,7 +285,10 @@ function MusicLibrary({ selectedPlaylist }) {
   // Close context menu on outside click
   useEffect(() => {
     if (!contextMenu) return;
-    const close = () => setContextMenu(null);
+    const close = () => {
+      setContextMenu(null);
+      setDrillStack([]);
+    };
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [contextMenu]);
@@ -331,7 +335,29 @@ function MusicLibrary({ selectedPlaylist }) {
       // Fetch playlist membership for single track (representative for submenu)
       const playlists = await window.api.getPlaylistsForTrack(targetIds[0]);
       setPlaylistSubmenu(playlists);
-      setContextMenu({ x: e.clientX, y: e.clientY, targetIds, track });
+
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const MENU_W = 200; // approximate menu width
+      const MENU_H = 230; // approximate menu height
+
+      // Switch to bottom-sheet overlay when the window is too cramped
+      const overlayMode = vw < 500 || vh < 420;
+
+      // Clamp x so menu doesn't overflow the right edge
+      const x = Math.min(e.clientX, vw - MENU_W - 8);
+      // Flip the menu upward when clicking in the lower 55% of the viewport
+      const flipUp = e.clientY > vh * 0.55;
+      const y = flipUp ? Math.max(8, e.clientY - MENU_H) : e.clientY;
+      // Flip submenus to the left when the menu is in the right half
+      const flipLeft = x > vw / 2;
+
+      // Collect track objects for all selected ids (only those loaded into sortedTracksRef)
+      const targetTracks = targetIds
+        .map((id) => sortedTracksRef.current.find((t) => t.id === id))
+        .filter(Boolean);
+
+      setContextMenu({ x, y, targetIds, track, targetTracks, overlayMode, flipUp, flipLeft });
     },
     [selectedIds]
   );
@@ -475,6 +501,37 @@ function MusicLibrary({ selectedPlaylist }) {
 
   const activeTrack = activeId ? tracks.find((t) => t.id === activeId) : null;
 
+  // In normal mode: CSS hover fly-out.
+  // In overlay mode: clicking pushes children onto drillStack (drill-down navigation).
+  const SubItem = ({ id, label, children, wide }) => {
+    const isOverlay = contextMenu?.overlayMode;
+    if (isOverlay) {
+      return (
+        <div
+          className="context-menu-item context-menu-item--has-submenu"
+          onClick={(e) => {
+            e.stopPropagation();
+            setDrillStack((prev) => [...prev, { id, label, content: children }]);
+          }}
+        >
+          {label}
+        </div>
+      );
+    }
+    return (
+      <div className="context-menu-item context-menu-item--has-submenu">
+        {label}
+        <div
+          className={['context-submenu', wide ? 'context-submenu--wide' : '']
+            .filter(Boolean)
+            .join(' ')}
+        >
+          {children}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="music-library">
       <SearchBar value={search} onChange={setSearch} />
@@ -574,221 +631,353 @@ function MusicLibrary({ selectedPlaylist }) {
       )}
 
       {contextMenu && (
-        <div
-          className="context-menu"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          {/* ── Add to playlist ── */}
-          {playlistSubmenu !== null &&
-            (playlistSubmenu.length === 0 ? (
-              <div className="context-menu-item context-menu-item--disabled">➕ No playlists</div>
-            ) : (
-              <div className="context-menu-item context-menu-item--has-submenu">
-                ➕ Add to playlist
-                <div className="context-submenu">
-                  {playlistSubmenu.map((pl) => (
-                    <div
-                      key={pl.id}
-                      className={`context-menu-item${pl.is_member ? ' context-menu-item--checked' : ''}`}
-                      onClick={() =>
-                        !pl.is_member && handleAddToPlaylist(pl.id, contextMenu?.targetIds ?? [])
-                      }
-                    >
-                      {pl.color && (
-                        <span className="ctx-color-dot" style={{ background: pl.color }} />
-                      )}
-                      {pl.is_member ? '✓ ' : ''}
-                      {pl.name}
-                    </div>
-                  ))}
+        <>
+          {contextMenu.overlayMode && (
+            <div
+              className="context-backdrop"
+              onClick={() => {
+                setContextMenu(null);
+                setDrillStack([]);
+              }}
+            />
+          )}
+          <div
+            className={[
+              'context-menu',
+              contextMenu.overlayMode ? 'context-menu--overlay' : '',
+              contextMenu.flipLeft ? 'context-menu--flip-left' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+            style={
+              contextMenu.overlayMode ? undefined : { top: contextMenu.y, left: contextMenu.x }
+            }
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            {/* ── Overlay drill-down view ── */}
+            {contextMenu.overlayMode && drillStack.length > 0 ? (
+              <>
+                <div
+                  className="context-menu__back"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDrillStack((prev) => prev.slice(0, -1));
+                  }}
+                >
+                  ‹ {drillStack.length > 1 ? drillStack[drillStack.length - 2].label : 'Back'}
                 </div>
-              </div>
-            ))}
-
-          {/* ── Find similar ── */}
-          {contextMenu.track &&
-            (contextMenu.track.key_camelot ||
-              contextMenu.track.bpm ||
-              contextMenu.track.bpm_override ||
-              contextMenu.track.genres) && (
-              <div className="context-menu-item context-menu-item--has-submenu">
-                🔍 Find similar
-                <div className="context-submenu context-submenu--wide">
-                  {contextMenu.track.key_camelot && (
-                    <>
-                      <div className="context-menu-item context-menu-item--header">
-                        🎹 Key: {contextMenu.track.key_camelot.toUpperCase()}
-                      </div>
-                      <div
-                        className="context-menu-item"
-                        onClick={() =>
-                          handleFindSimilar(`KEY is ${contextMenu.track.key_camelot.toUpperCase()}`)
-                        }
-                      >
-                        Same key
-                      </div>
-                      <div
-                        className="context-menu-item"
-                        onClick={() =>
-                          handleFindSimilar(
-                            `KEY adjacent ${contextMenu.track.key_camelot.toUpperCase()}`
-                          )
-                        }
-                      >
-                        Adjacent — energy shift
-                      </div>
-                      <div
-                        className="context-menu-item"
-                        onClick={() =>
-                          handleFindSimilar(
-                            `KEY mode switch ${contextMenu.track.key_camelot.toUpperCase()}`
-                          )
-                        }
-                      >
-                        Mode switch — minor↔major
-                      </div>
-                      <div
-                        className="context-menu-item"
-                        onClick={() =>
-                          handleFindSimilar(
-                            `KEY matches ${contextMenu.track.key_camelot.toUpperCase()}`
-                          )
-                        }
-                      >
-                        All compatible keys
-                      </div>
-                    </>
-                  )}
-                  {(contextMenu.track.bpm_override ?? contextMenu.track.bpm) != null && (
-                    <>
-                      {contextMenu.track.key_camelot && <div className="context-menu-separator" />}
-                      {(() => {
-                        const bpm = Math.round(
-                          contextMenu.track.bpm_override ?? contextMenu.track.bpm
-                        );
-                        return (
-                          <>
-                            <div className="context-menu-item context-menu-item--header">
-                              ♩ BPM: {bpm}
-                            </div>
-                            <div
-                              className="context-menu-item"
-                              onClick={() => handleFindSimilar(`BPM is ${bpm}`)}
-                            >
-                              Exact BPM
-                            </div>
-                            <div
-                              className="context-menu-item"
-                              onClick={() =>
-                                handleFindSimilar(`BPM in range ${bpm - 5}-${bpm + 5}`)
-                              }
-                            >
-                              Similar BPM (±5)
-                            </div>
-                            <div
-                              className="context-menu-item"
-                              onClick={() =>
-                                handleFindSimilar(`BPM in range ${bpm - 2}-${bpm + 2}`)
-                              }
-                            >
-                              Very similar BPM (±2)
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </>
-                  )}
-                  {contextMenu.track.key_camelot &&
-                    (contextMenu.track.bpm_override ?? contextMenu.track.bpm) != null && (
-                      <>
-                        <div className="context-menu-separator" />
-                        <div className="context-menu-item context-menu-item--header">
-                          🎯 Combined
-                        </div>
+                <div className="context-menu-item context-menu-item--header">
+                  {drillStack[drillStack.length - 1].label}
+                </div>
+                {drillStack[drillStack.length - 1].content}
+              </>
+            ) : (
+              <>
+                {/* ── Add to playlist ── */}
+                {playlistSubmenu !== null &&
+                  (playlistSubmenu.length === 0 ? (
+                    <div className="context-menu-item context-menu-item--disabled">
+                      ➕ No playlists
+                    </div>
+                  ) : (
+                    <SubItem id="add-to-playlist" label="➕ Add to playlist">
+                      {playlistSubmenu.map((pl) => (
                         <div
-                          className="context-menu-item"
-                          onClick={() => {
+                          key={pl.id}
+                          className={`context-menu-item${pl.is_member ? ' context-menu-item--checked' : ''}`}
+                          onClick={() =>
+                            !pl.is_member &&
+                            handleAddToPlaylist(pl.id, contextMenu?.targetIds ?? [])
+                          }
+                        >
+                          {pl.color && (
+                            <span className="ctx-color-dot" style={{ background: pl.color }} />
+                          )}
+                          {pl.is_member ? '✓ ' : ''}
+                          {pl.name}
+                        </div>
+                      ))}
+                    </SubItem>
+                  ))}
+
+                {/* ── Find similar ── */}
+                {contextMenu.track &&
+                  (contextMenu.track.key_camelot ||
+                    contextMenu.track.bpm ||
+                    contextMenu.track.bpm_override ||
+                    contextMenu.track.genres) && (
+                    <SubItem id="find-similar" label="🔍 Find similar" wide>
+                      {contextMenu.track.key_camelot && (
+                        <>
+                          <div className="context-menu-item context-menu-item--header">
+                            🎹 Key: {contextMenu.track.key_camelot.toUpperCase()}
+                          </div>
+                          <div
+                            className="context-menu-item"
+                            onClick={() =>
+                              handleFindSimilar(
+                                `KEY is ${contextMenu.track.key_camelot.toUpperCase()}`
+                              )
+                            }
+                          >
+                            Same key
+                          </div>
+                          <div
+                            className="context-menu-item"
+                            onClick={() =>
+                              handleFindSimilar(
+                                `KEY adjacent ${contextMenu.track.key_camelot.toUpperCase()}`
+                              )
+                            }
+                          >
+                            Adjacent — energy shift
+                          </div>
+                          <div
+                            className="context-menu-item"
+                            onClick={() =>
+                              handleFindSimilar(
+                                `KEY mode switch ${contextMenu.track.key_camelot.toUpperCase()}`
+                              )
+                            }
+                          >
+                            Mode switch — minor↔major
+                          </div>
+                          <div
+                            className="context-menu-item"
+                            onClick={() =>
+                              handleFindSimilar(
+                                `KEY matches ${contextMenu.track.key_camelot.toUpperCase()}`
+                              )
+                            }
+                          >
+                            All compatible keys
+                          </div>
+                        </>
+                      )}
+                      {(contextMenu.track.bpm_override ?? contextMenu.track.bpm) != null && (
+                        <>
+                          {contextMenu.track.key_camelot && (
+                            <div className="context-menu-separator" />
+                          )}
+                          {(() => {
                             const bpm = Math.round(
                               contextMenu.track.bpm_override ?? contextMenu.track.bpm
                             );
-                            handleFindSimilar(
-                              `KEY matches ${contextMenu.track.key_camelot.toUpperCase()} AND BPM in range ${bpm - 5}-${bpm + 5}`
+                            return (
+                              <>
+                                <div className="context-menu-item context-menu-item--header">
+                                  ♩ BPM: {bpm}
+                                </div>
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() => handleFindSimilar(`BPM is ${bpm}`)}
+                                >
+                                  Exact BPM
+                                </div>
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleFindSimilar(`BPM in range ${bpm - 5}-${bpm + 5}`)
+                                  }
+                                >
+                                  Similar BPM (±5)
+                                </div>
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleFindSimilar(`BPM in range ${bpm - 2}-${bpm + 2}`)
+                                  }
+                                >
+                                  Very similar BPM (±2)
+                                </div>
+                              </>
                             );
-                          }}
-                        >
-                          Compatible key + similar BPM
-                        </div>
-                      </>
-                    )}
-                  {(() => {
-                    try {
-                      const genres = JSON.parse(contextMenu.track.genres ?? '[]');
-                      if (!genres.length) return null;
-                      return (
-                        <>
-                          <div className="context-menu-separator" />
-                          <div className="context-menu-item context-menu-item--header">
-                            🏷 Genre
-                          </div>
-                          {genres.slice(0, 3).map((g) => (
-                            <div
-                              key={g}
-                              className="context-menu-item"
-                              onClick={() => handleFindSimilar(`GENRE is ${g}`)}
-                            >
-                              {g}
-                            </div>
-                          ))}
+                          })()}
                         </>
-                      );
-                    } catch {
-                      return null;
-                    }
-                  })()}
-                </div>
-              </div>
-            )}
+                      )}
+                      {contextMenu.track.key_camelot &&
+                        (contextMenu.track.bpm_override ?? contextMenu.track.bpm) != null && (
+                          <>
+                            <div className="context-menu-separator" />
+                            <div className="context-menu-item context-menu-item--header">
+                              🎯 Combined
+                            </div>
+                            <div
+                              className="context-menu-item"
+                              onClick={() => {
+                                const bpm = Math.round(
+                                  contextMenu.track.bpm_override ?? contextMenu.track.bpm
+                                );
+                                handleFindSimilar(
+                                  `KEY matches ${contextMenu.track.key_camelot.toUpperCase()} AND BPM in range ${bpm - 5}-${bpm + 5}`
+                                );
+                              }}
+                            >
+                              Compatible key + similar BPM
+                            </div>
+                          </>
+                        )}
+                      {(() => {
+                        try {
+                          const genres = JSON.parse(contextMenu.track.genres ?? '[]');
+                          if (!genres.length) return null;
+                          return (
+                            <>
+                              <div className="context-menu-separator" />
+                              <div className="context-menu-item context-menu-item--header">
+                                🏷 Genre
+                              </div>
+                              {genres.slice(0, 3).map((g) => (
+                                <div
+                                  key={g}
+                                  className="context-menu-item"
+                                  onClick={() => handleFindSimilar(`GENRE is ${g}`)}
+                                >
+                                  {g}
+                                </div>
+                              ))}
+                            </>
+                          );
+                        } catch {
+                          return null;
+                        }
+                      })()}
+                      {/* ── From selection (multi-track) ── */}
+                      {contextMenu.targetTracks?.length > 1 &&
+                        (() => {
+                          const tt = contextMenu.targetTracks;
+                          const bpms = tt
+                            .map((t) => t.bpm_override ?? t.bpm)
+                            .filter((b) => b != null)
+                            .map((b) => Math.round(b));
+                          const keys = tt.map((t) => t.key_camelot).filter(Boolean);
+                          const allGenres = tt.flatMap((t) => {
+                            try {
+                              return JSON.parse(t.genres ?? '[]');
+                            } catch {
+                              return [];
+                            }
+                          });
+                          const genreCount = allGenres.reduce((acc, g) => {
+                            acc[g] = (acc[g] ?? 0) + 1;
+                            return acc;
+                          }, {});
+                          const topGenres = Object.entries(genreCount)
+                            .sort((a, b) => b[1] - a[1])
+                            .slice(0, 3)
+                            .map(([g]) => g);
+                          const keyCounts = keys.reduce((acc, k) => {
+                            const n = k.toLowerCase();
+                            acc[n] = (acc[n] ?? 0) + 1;
+                            return acc;
+                          }, {});
+                          const topKey = Object.entries(keyCounts).sort(
+                            (a, b) => b[1] - a[1]
+                          )[0]?.[0];
+                          const bpmMin = bpms.length ? Math.min(...bpms) : null;
+                          const bpmMax = bpms.length ? Math.max(...bpms) : null;
+                          if (!bpms.length && !topKey && !topGenres.length) return null;
+                          return (
+                            <>
+                              <div className="context-menu-separator" />
+                              <div className="context-menu-item context-menu-item--header">
+                                📦 From selection ({tt.length} tracks)
+                              </div>
+                              {bpms.length > 0 && bpmMin !== bpmMax && (
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleFindSimilar(`BPM in range ${bpmMin}-${bpmMax}`)
+                                  }
+                                >
+                                  BPM range {bpmMin}–{bpmMax}
+                                </div>
+                              )}
+                              {bpms.length > 0 && bpmMin === bpmMax && (
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() => handleFindSimilar(`BPM is ${bpmMin}`)}
+                                >
+                                  BPM {bpmMin} (all same)
+                                </div>
+                              )}
+                              {topKey && (
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleFindSimilar(`KEY matches ${topKey.toUpperCase()}`)
+                                  }
+                                >
+                                  Keys compatible with {topKey.toUpperCase()}
+                                </div>
+                              )}
+                              {topKey && bpms.length > 0 && (
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleFindSimilar(
+                                      `KEY matches ${topKey.toUpperCase()} AND BPM in range ${bpmMin}-${bpmMax}`
+                                    )
+                                  }
+                                >
+                                  Compatible key + BPM range
+                                </div>
+                              )}
+                              {topGenres.map((g) => (
+                                <div
+                                  key={g}
+                                  className="context-menu-item"
+                                  onClick={() => handleFindSimilar(`GENRE is ${g}`)}
+                                >
+                                  Genre: {g}
+                                </div>
+                              ))}
+                            </>
+                          );
+                        })()}
+                    </SubItem>
+                  )}
 
-          {/* ── separator ── */}
-          <div className="context-menu-separator" />
+                {/* ── separator ── */}
+                <div className="context-menu-separator" />
 
-          {/* ── Analysis submenu ── */}
-          <div className="context-menu-item context-menu-item--has-submenu">
-            🔬 Analysis{selectionLabel}
-            <div className="context-submenu">
-              <div className="context-menu-item" onClick={handleReanalyze}>
-                🔄 Re-analyze
-              </div>
-              <div className="context-menu-separator" />
-              <div className="context-menu-item context-menu-item--has-submenu">
-                🎵 BPM
-                <div className="context-submenu">
-                  <div className="context-menu-item" onClick={() => handleBpmAdjust(2)}>
-                    ✕2 Double BPM
+                {/* ── Analysis submenu ── */}
+                <SubItem id="analysis" label={`🔬 Analysis${selectionLabel}`}>
+                  <div className="context-menu-item" onClick={handleReanalyze}>
+                    🔄 Re-analyze
                   </div>
-                  <div className="context-menu-item" onClick={() => handleBpmAdjust(0.5)}>
-                    ÷2 Halve BPM
+                  <div className="context-menu-separator" />
+                  <SubItem id="bpm" label="🎵 BPM">
+                    <div className="context-menu-item" onClick={() => handleBpmAdjust(2)}>
+                      ✕2 Double BPM
+                    </div>
+                    <div className="context-menu-item" onClick={() => handleBpmAdjust(0.5)}>
+                      ÷2 Halve BPM
+                    </div>
+                  </SubItem>
+                </SubItem>
+
+                {/* ── Remove ── */}
+                {isPlaylistView ? (
+                  <div
+                    className="context-menu-item context-menu-item--danger"
+                    onClick={handleRemoveFromPlaylist}
+                  >
+                    ➖ Remove from playlist{selectionLabel}
                   </div>
-                </div>
-              </div>
-            </div>
+                ) : (
+                  <div
+                    className="context-menu-item context-menu-item--danger"
+                    onClick={handleRemove}
+                  >
+                    🗑️ Remove from library{selectionLabel}
+                  </div>
+                )}
+              </>
+            )}{' '}
+            {/* end drill-down conditional */}
           </div>
-
-          {/* ── Remove ── */}
-          {isPlaylistView ? (
-            <div
-              className="context-menu-item context-menu-item--danger"
-              onClick={handleRemoveFromPlaylist}
-            >
-              ➖ Remove from playlist{selectionLabel}
-            </div>
-          ) : (
-            <div className="context-menu-item context-menu-item--danger" onClick={handleRemove}>
-              🗑️ Remove from library{selectionLabel}
-            </div>
-          )}
-        </div>
+        </>
       )}
     </div>
   );
