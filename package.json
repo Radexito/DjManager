@@ -69,7 +69,8 @@
     },
     "win": {
       "target": "nsis",
-      "extraResources": []
+      "extraResources": [],
+      "artifactName": "djmanager-${version}-win-setup.${ext}"
     },
     "publish": {
       "provider": "github",
