@@ -25,6 +25,16 @@ FFmpeg and the audio analyser download automatically on first launch — no manu
 | Windows  | `DJ.Manager-x.x.x-Setup.exe`                      |
 | macOS    | `DJ.Manager-x.x.x.dmg`                            |
 
+### Windows — Chocolatey
+
+If you use [Chocolatey](https://chocolatey.org/), you can install and keep DJ Manager up to date with a single command:
+
+```powershell
+choco install djmanager
+```
+
+Package page: [community.chocolatey.org/packages/djmanager](https://community.chocolatey.org/packages/djmanager)
+
 ---
 
 ## What it does
