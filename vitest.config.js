@@ -2,12 +2,6 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    environment: 'node',
-    env: {
-      DB_PATH: ':memory:',
-    },
-    include: ['src/**/*.test.js'],
-    setupFiles: ['./src/__tests__/setup.js'],
     coverage: {
       provider: 'v8',
       include: ['src/db/**/*.js'],
@@ -20,5 +14,28 @@ export default defineConfig({
         lines: 65,
       },
     },
+    projects: [
+      {
+        // DB-backed tests — need the real SQLite setup
+        test: {
+          name: 'db',
+          environment: 'node',
+          env: { DB_PATH: ':memory:' },
+          include: [
+            'src/__tests__/trackRepository.test.js',
+            'src/__tests__/playlistRepository.test.js',
+          ],
+          setupFiles: ['./src/__tests__/setup.js'],
+        },
+      },
+      {
+        // Unit tests — no SQLite, no setup file
+        test: {
+          name: 'unit',
+          environment: 'node',
+          include: ['src/__tests__/importManager.test.js'],
+        },
+      },
+    ],
   },
 });
