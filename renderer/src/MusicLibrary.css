@@ -15,25 +15,6 @@
   min-width: 0;
 }
 
-/* Single horizontal scroll wrapper — header and list scroll together */
-.library-hscroll {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow-x: auto;
-  overflow-y: hidden;
-  min-width: 0;
-}
-
-/* Inner wrapper: width: 100% when wide, min-width when narrow.
-   Both header and List share this width so fr columns always match. */
-.library-hscroll-inner {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-}
-
 /* Search */
 .search-input {
   margin-bottom: 20px;
@@ -45,7 +26,7 @@
   outline: none;
 }
 
-/* Header */
+/* Header — scrollLeft synced to list via JS; no visible scrollbar */
 .header {
   display: grid;
   padding: 12px 8px;
@@ -53,9 +34,7 @@
   color: #e0e0e0;
   font-weight: 600;
   border-bottom: 1px solid #404040;
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  overflow-x: hidden;
   position: relative; /* for col-dropdown positioning */
 }
 
