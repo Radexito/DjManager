@@ -855,7 +855,7 @@ function MusicLibrary({ selectedPlaylist }) {
           {visibleColumns.map((col) => (
             <div
               key={col.key}
-              className={`header-cell ${['bpm', 'key_camelot', 'loudness', 'year', 'duration'].includes(col.key) ? 'right' : ''}`}
+              className={`header-cell ${['bpm', 'key_camelot', 'loudness', 'year', 'duration', 'bitrate'].includes(col.key) ? 'right' : ''}`}
               onClick={() => handleSort(col.key)}
             >
               {col.label} {sortBy.key === col.key ? (sortBy.asc ? '▲' : '▼') : ''}
