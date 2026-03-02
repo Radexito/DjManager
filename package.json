@@ -1,6 +1,6 @@
 {
   "name": "dj_manager",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "DJ-focused music library manager",
   "main": "src/main.js",
   "scripts": {
@@ -131,9 +131,9 @@
     "electron-builder": "^26.8.1",
     "electron-rebuild": "^3.2.9",
     "eslint": "^10.0.2",
-    "globals": "^17.3.0",
+    "globals": "^17.4.0",
     "husky": "^9.1.7",
-    "lint-staged": "^16.3.0",
+    "lint-staged": "^16.3.1",
     "prettier": "^3.8.1",
     "vitest": "^4.0.18",
     "wait-on": "^9.0.4"
@@ -144,6 +144,6 @@
     "@dnd-kit/utilities": "^3.2.2",
     "better-sqlite3": "^12.6.2",
     "react-virtualized": "^9.22.6",
-    "react-window": "^2.2.5"
+    "react-window": "^2.2.7"
   }
 }
