@@ -10,6 +10,7 @@ import {
   camelotMatches,
   getOpsForField,
   CAMELOT_KEYS,
+  FIELDS,
 } from '../searchParser.js';
 
 // ─── Camelot helpers ────────────────────────────────────────────────────────
@@ -254,5 +255,89 @@ describe('getSuggestions', () => {
     // genre has no pre-built value hints, so returns [] after value stage
     const suggestions = getSuggestions('GENRE is Techno ');
     expect(Array.isArray(suggestions)).toBe(true);
+  });
+});
+
+// ─── BITRATE field ────────────────────────────────────────────────────────────
+
+describe('FIELDS bitrate', () => {
+  it('includes bitrate as a number field', () => {
+    expect(FIELDS.bitrate).toBeDefined();
+    expect(FIELDS.bitrate.type).toBe('number');
+    expect(FIELDS.bitrate.label).toBe('BITRATE');
+  });
+
+  it('getOpsForField returns number ops for bitrate', () => {
+    const ops = getOpsForField('bitrate');
+    expect(ops).toContain('>=');
+    expect(ops).toContain('<=');
+    expect(ops).toContain('>');
+    expect(ops).toContain('<');
+    expect(ops).toContain('in range');
+    expect(ops).toContain('is');
+  });
+});
+
+describe('parseQuery BITRATE', () => {
+  it('parses BITRATE >= 320', () => {
+    const { filters } = parseQuery('BITRATE >= 320');
+    expect(filters).toHaveLength(1);
+    expect(filters[0]).toEqual({ field: 'bitrate', op: '>=', value: '320' });
+  });
+
+  it('parses BITRATE > 256', () => {
+    const { filters } = parseQuery('BITRATE > 256');
+    expect(filters[0]).toEqual({ field: 'bitrate', op: '>', value: '256' });
+  });
+
+  it('parses BITRATE < 320', () => {
+    const { filters } = parseQuery('BITRATE < 320');
+    expect(filters[0]).toEqual({ field: 'bitrate', op: '<', value: '320' });
+  });
+
+  it('parses BITRATE is 320', () => {
+    const { filters } = parseQuery('BITRATE is 320');
+    expect(filters[0]).toEqual({ field: 'bitrate', op: 'is', value: '320' });
+  });
+
+  it('parses BITRATE in range 192-320', () => {
+    const { filters } = parseQuery('BITRATE in range 192-320');
+    expect(filters).toHaveLength(1);
+    expect(filters[0]).toEqual({ field: 'bitrate', op: 'range', from: 192, to: 320 });
+  });
+
+  it('stacks BITRATE with another filter', () => {
+    const { filters } = parseQuery('BPM > 130 AND BITRATE >= 320');
+    expect(filters).toHaveLength(2);
+    expect(filters[0].field).toBe('bpm');
+    expect(filters[1]).toEqual({ field: 'bitrate', op: '>=', value: '320' });
+  });
+});
+
+describe('filterToText BITRATE', () => {
+  it('renders BITRATE range filter', () => {
+    expect(filterToText({ field: 'bitrate', op: 'range', from: 192, to: 320 })).toBe(
+      'BITRATE in range 192-320'
+    );
+  });
+
+  it('renders BITRATE >= filter', () => {
+    expect(filterToText({ field: 'bitrate', op: '>=', value: '320' })).toBe('BITRATE >= 320');
+  });
+});
+
+describe('getSuggestions BITRATE', () => {
+  it('returns operator suggestions for BITRATE field', () => {
+    const suggestions = getSuggestions('BITRATE ');
+    expect(suggestions.length).toBeGreaterThan(0);
+    expect(suggestions.some((s) => s.text.includes('>=') || s.text.includes('in range'))).toBe(
+      true
+    );
+  });
+
+  it('returns value hints for BITRATE >=', () => {
+    const suggestions = getSuggestions('BITRATE >= ');
+    expect(suggestions.length).toBeGreaterThan(0);
+    expect(suggestions.some((s) => s.text.includes('320'))).toBe(true);
   });
 });
