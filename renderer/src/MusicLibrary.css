@@ -469,31 +469,22 @@
   flex: 1;
 }
 
-.col-dropdown__arrows {
-  display: flex;
-  gap: 2px;
+.col-drag-handle {
+  cursor: grab;
+  color: #666;
+  font-size: 14px;
+  padding: 0 4px;
   flex-shrink: 0;
-}
-
-.btn-move {
-  background: none;
-  border: none;
-  color: #777;
-  cursor: pointer;
-  font-size: 10px;
-  padding: 1px 3px;
+  user-select: none;
   line-height: 1;
-  border-radius: 3px;
 }
 
-.btn-move:hover:not(:disabled) {
-  background: #555;
-  color: #eee;
+.col-drag-handle:hover {
+  color: #bbb;
 }
 
-.btn-move:disabled {
-  opacity: 0.25;
-  cursor: default;
+.col-drag-handle:active {
+  cursor: grabbing;
 }
 
 /* ── Details panel layout ─────────────────────────────────────────────── */

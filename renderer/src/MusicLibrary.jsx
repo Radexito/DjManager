@@ -222,6 +222,27 @@ function SortableRow({
   );
 }
 
+// ── SortableColItem — draggable row in the column-visibility dropdown ──────
+function SortableColItem({ colKey, label, checked, onToggle }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: colKey,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.35 : 1,
+  };
+  return (
+    <div ref={setNodeRef} style={style} className="col-dropdown__item">
+      <span className="col-drag-handle" {...attributes} {...listeners} title="Drag to reorder">
+        ☰
+      </span>
+      <input type="checkbox" checked={checked} onChange={onToggle} />
+      <span className="col-dropdown__label">{label}</span>
+    </div>
+  );
+}
+
 function MusicLibrary({ selectedPlaylist }) {
   const isPlaylistView = selectedPlaylist !== 'music';
   const { play, currentTrack, currentPlaylistId } = usePlayer();
@@ -507,14 +528,12 @@ function MusicLibrary({ selectedPlaylist }) {
     });
   }, []);
 
-  const moveCol = useCallback((key, dir) => {
+  const handleColDragEnd = useCallback(({ active, over }) => {
+    if (!over || active.id === over.id) return;
     setColOrder((prev) => {
-      const i = prev.indexOf(key);
-      if (i < 0) return prev;
-      const j = i + dir;
-      if (j < 0 || j >= prev.length) return prev;
-      const next = [...prev];
-      [next[i], next[j]] = [next[j], next[i]];
+      const oldIndex = prev.indexOf(active.id);
+      const newIndex = prev.indexOf(over.id);
+      const next = arrayMove(prev, oldIndex, newIndex);
       localStorage.setItem(LS_ORDER_KEY, JSON.stringify(next));
       return next;
     });
@@ -801,38 +820,23 @@ function MusicLibrary({ selectedPlaylist }) {
             </button>
             {colsOpen && (
               <div className="col-dropdown">
-                {colOrder.map((key, i) => {
-                  const col = COL_BY_KEY[key];
-                  if (!col) return null;
-                  return (
-                    <div key={key} className="col-dropdown__item">
-                      <input
-                        type="checkbox"
-                        checked={colVis[key] !== false}
-                        onChange={() => toggleCol(key)}
-                      />
-                      <span className="col-dropdown__label">{col.label}</span>
-                      <div className="col-dropdown__arrows">
-                        <button
-                          className="btn-move"
-                          onClick={() => moveCol(key, -1)}
-                          disabled={i === 0}
-                          title="Move up"
-                        >
-                          ▲
-                        </button>
-                        <button
-                          className="btn-move"
-                          onClick={() => moveCol(key, 1)}
-                          disabled={i === colOrder.length - 1}
-                          title="Move down"
-                        >
-                          ▼
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                <DndContext collisionDetection={closestCenter} onDragEnd={handleColDragEnd}>
+                  <SortableContext items={colOrder} strategy={verticalListSortingStrategy}>
+                    {colOrder.map((key) => {
+                      const col = COL_BY_KEY[key];
+                      if (!col) return null;
+                      return (
+                        <SortableColItem
+                          key={key}
+                          colKey={key}
+                          label={col.label}
+                          checked={colVis[key] !== false}
+                          onToggle={() => toggleCol(key)}
+                        />
+                      );
+                    })}
+                  </SortableContext>
+                </DndContext>
               </div>
             )}
           </div>
@@ -891,6 +895,7 @@ function MusicLibrary({ selectedPlaylist }) {
         ) : (
           /* Library view: virtualised list */
           <List
+            key={gridTemplate}
             listRef={listRef}
             defaultHeight={600}
             rowCount={sortedTracks.length + (hasMore ? 1 : 0)}
