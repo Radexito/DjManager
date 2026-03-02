@@ -141,11 +141,15 @@ function LibraryRow({
   onContextMenu,
   visibleColumns,
   gridTemplate,
+  minScrollWidth,
 }) {
   const t = tracks[index];
   if (!t) {
     return (
-      <div style={{ ...style, gridTemplateColumns: gridTemplate }} className="row row-loading">
+      <div
+        style={{ ...style, gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
+        className="row row-loading"
+      >
         Loading more tracks...
       </div>
     );
@@ -154,7 +158,7 @@ function LibraryRow({
   const isPlaying = currentTrackId === t.id;
   return (
     <div
-      style={{ ...style, gridTemplateColumns: gridTemplate }}
+      style={{ ...style, gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
       className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}`}
       title={`${t.title} - ${t.artist || 'Unknown'}`}
       onClick={(e) => onRowClick(e, t, index)}
@@ -292,6 +296,16 @@ function MusicLibrary({ selectedPlaylist }) {
     () => visibleColumns.map((c) => c.width).join(' '),
     [visibleColumns]
   );
+  const minScrollWidth = useMemo(() => {
+    const sum = visibleColumns.reduce((acc, c) => {
+      const mm = c.width.match(/minmax\((\d+)px/);
+      if (mm) return acc + parseInt(mm[1], 10);
+      const px = c.width.match(/^(\d+)px$/);
+      if (px) return acc + parseInt(px[1], 10);
+      return acc;
+    }, 0);
+    return sum + 16; // 8px left + 8px right padding
+  }, [visibleColumns]);
 
   // Sync header scrollLeft to List's horizontal scroll.
   useEffect(() => {
@@ -925,6 +939,7 @@ function MusicLibrary({ selectedPlaylist }) {
               onContextMenu: handleContextMenu,
               visibleColumns,
               gridTemplate,
+              minScrollWidth,
             }}
           />
         )}
