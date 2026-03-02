@@ -236,6 +236,44 @@ describe('trackRepository', () => {
       const results = getTracks({ filters: [{ field: 'loudness', op: '>', value: -10 }] });
       expect(results).toHaveLength(1);
     });
+
+    it('filters by BITRATE >= (kbps input, stored as bps)', () => {
+      // SAMPLE already has bitrate: 320000 (320 kbps)
+      addTrack(SAMPLE);
+      addTrack({ ...SAMPLE, file_hash: 'br2', file_path: '/tmp/br2.mp3', bitrate: 128000 });
+      // user types 256, filter should convert to 256000 and match only 320000
+      const results = getTracks({ filters: [{ field: 'bitrate', op: '>=', value: '256' }] });
+      expect(results).toHaveLength(1);
+      expect(results[0].bitrate).toBe(320000);
+    });
+
+    it('filters by BITRATE < (kbps input)', () => {
+      addTrack(SAMPLE); // 320 kbps
+      addTrack({ ...SAMPLE, file_hash: 'br3', file_path: '/tmp/br3.mp3', bitrate: 128000 });
+      const results = getTracks({ filters: [{ field: 'bitrate', op: '<', value: '256' }] });
+      expect(results).toHaveLength(1);
+      expect(results[0].bitrate).toBe(128000);
+    });
+
+    it('filters by BITRATE is (kbps input)', () => {
+      addTrack(SAMPLE); // 320 kbps = 320000 bps
+      addTrack({ ...SAMPLE, file_hash: 'br4', file_path: '/tmp/br4.mp3', bitrate: 192000 });
+      const results = getTracks({ filters: [{ field: 'bitrate', op: 'is', value: '320' }] });
+      expect(results).toHaveLength(1);
+      expect(results[0].bitrate).toBe(320000);
+    });
+
+    it('filters by BITRATE in range (kbps input)', () => {
+      addTrack(SAMPLE); // 320 kbps
+      addTrack({ ...SAMPLE, file_hash: 'br5', file_path: '/tmp/br5.mp3', bitrate: 256000 });
+      addTrack({ ...SAMPLE, file_hash: 'br6', file_path: '/tmp/br6.mp3', bitrate: 128000 });
+      // range 200-300 kbps → only 256000 bps should match
+      const results = getTracks({
+        filters: [{ field: 'bitrate', op: 'range', from: 200, to: 300 }],
+      });
+      expect(results).toHaveLength(1);
+      expect(results[0].bitrate).toBe(256000);
+    });
   });
 
   describe('getTrackIds', () => {
