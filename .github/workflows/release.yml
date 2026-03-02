@@ -172,10 +172,16 @@ jobs:
             Set-Content chocolatey/djmanager.nuspec
 
       - name: Pack Chocolatey package
+        shell: pwsh
         run: choco pack chocolatey/djmanager.nuspec --out dist-choco/
 
       - name: Push to Chocolatey.org
-        run: choco push dist-choco/*.nupkg --source https://push.chocolatey.org --api-key ${{ secrets.CHOCOLATEY_API_KEY }}
+        shell: pwsh
+        run: |
+          $pkg = Get-ChildItem dist-choco\*.nupkg | Select-Object -First 1
+          if (-not $pkg) { throw "No .nupkg found in dist-choco/" }
+          Write-Host "Pushing $($pkg.Name)"
+          choco push $pkg.FullName --source https://push.chocolatey.org --api-key ${{ secrets.CHOCOLATEY_API_KEY }}
 
   # ── Sync dev + bump version after master release ─────────────────────────────
   # Always merges master → dev first so dev has the exact released code,
