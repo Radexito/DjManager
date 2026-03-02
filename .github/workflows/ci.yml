@@ -4,18 +4,18 @@ on:
   push:
     branches: ['**']
   pull_request:
-    branches: [staging, master]
+    branches: [dev, master]
 
 jobs:
-  # ── Guard: PRs must target staging, not master ──────────────────────────────
+  # ── Guard: PRs must target dev, not master ───────────────────────────────────
   guard:
     if: github.event_name == 'pull_request' && github.base_ref == 'master'
     runs-on: ubuntu-22.04
     steps:
       - name: Reject direct PRs to master
         run: |
-          echo "::error title=Wrong target branch::PRs must target 'staging', not 'master'."
-          echo "Please retarget your PR to the 'staging' branch."
+          echo "::error title=Wrong target branch::PRs must target 'dev', not 'master'."
+          echo "Please retarget your PR to the 'dev' branch."
           exit 1
 
   # ── Lint + unit tests ────────────────────────────────────────────────────────

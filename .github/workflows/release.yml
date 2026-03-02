@@ -177,7 +177,9 @@ jobs:
       - name: Push to Chocolatey.org
         run: choco push dist-choco/*.nupkg --source https://push.chocolatey.org --api-key ${{ secrets.CHOCOLATEY_API_KEY }}
 
-  # ── Bump version on staging after master release ──────────────────────────────
+  # ── Sync dev + bump version after master release ─────────────────────────────
+  # Always merges master → dev first so dev has the exact released code,
+  # then bumps the patch version so the next dev build is ahead of master.
   bump-version:
     if: github.ref_name == 'master'
     needs: [create-release]
@@ -187,8 +189,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: staging
+          ref: dev
           fetch-depth: 0
+
+      - name: Merge master into dev
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin master
+          git merge origin/master --no-edit -m "chore: sync master → dev after release [skip ci]"
 
       - name: Bump patch version in package.json
         run: |
@@ -202,12 +211,9 @@ jobs:
           "
           echo "Bumped $OLD -> $NEW"
 
-      - name: Commit and push to staging
+      - name: Commit and push to dev
         run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
           VERSION=$(node -e "console.log(require('./package.json').version)")
           git add package.json
           git commit -m "chore: bump version to $VERSION [skip ci]"
-          git pull --rebase origin staging
-          git push origin staging
+          git push origin dev
