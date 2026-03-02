@@ -265,6 +265,10 @@ ipcMain.handle('remove-track', (_, trackId) => {
   if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
   return { ok: true };
 });
+ipcMain.handle('update-track', (_, { id, data }) => {
+  updateTrack(id, data);
+  return { ok: true };
+});
 ipcMain.handle('adjust-bpm', (_, { trackIds, factor }) => {
   if (factor !== 2 && factor !== 0.5) throw new Error('Invalid factor: must be 2 or 0.5');
   if (!Array.isArray(trackIds) || trackIds.length === 0 || trackIds.length > 500) {
