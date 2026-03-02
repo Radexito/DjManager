@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Module mocks (hoisted before imports) ────────────────────────────────────
 
-// Mock better-sqlite3 so setup.js can load database.js without the native module
 vi.mock('better-sqlite3', () => {
   const mockStmt = {
     run: vi.fn().mockReturnValue({ lastInsertRowid: 1, changes: 0 }),
@@ -23,11 +22,13 @@ vi.mock('electron', () => ({
 }));
 
 vi.mock('worker_threads', () => ({
-  Worker: vi.fn(),
+  Worker: vi.fn(function () {
+    this.on = vi.fn();
+  }),
 }));
 
 vi.mock('../deps.js', () => ({
-  getAnalyzerRuntimePath: vi.fn().mockResolvedValue('/fake/analyzer'),
+  getAnalyzerRuntimePath: vi.fn().mockReturnValue('/fake/analyzer'),
 }));
 
 vi.mock('../db/settingsRepository.js', () => ({
@@ -35,38 +36,40 @@ vi.mock('../db/settingsRepository.js', () => ({
 }));
 
 const FAKE_HASH = 'deadbeef1234567890abcdef1234567890abcdef';
+const ALT_HASH = 'aaaa1111bbbb2222cccc3333dddd4444eeee5555';
 
-// Predictable SHA-1 hash for all file reads
-vi.mock('crypto', async (importOriginal) => {
-  const real = await importOriginal();
-  return {
-    ...real,
-    createHash: () => ({
-      update: vi.fn().mockReturnThis(),
-      digest: vi.fn().mockReturnValue(FAKE_HASH),
-    }),
-  };
+// Crypto mock — createHash is a vi.fn() so tests can override per-call
+vi.mock('crypto', () => {
+  const mockCreateHash = vi.fn().mockImplementation(() => ({
+    update() {
+      return this;
+    },
+    digest() {
+      return FAKE_HASH;
+    },
+  }));
+  return { default: { createHash: mockCreateHash }, createHash: mockCreateHash };
 });
 
-// Mock fs — file copies are no-ops; readstream feeds the hash mock
-vi.mock('fs', async (importOriginal) => {
-  const real = await importOriginal();
-  return {
-    ...real,
+// fs mock — createReadStream resolves synchronously so hashFile Promise resolves
+vi.mock('fs', () => {
+  const makeStream = () => ({
+    on: vi.fn().mockImplementation(function (event, cb) {
+      if (event === 'data') cb(Buffer.from('x'));
+      if (event === 'end') cb();
+      return this;
+    }),
+  });
+  const fsMock = {
     existsSync: vi.fn().mockReturnValue(false),
     copyFileSync: vi.fn(),
     mkdirSync: vi.fn(),
-    createReadStream: vi.fn().mockImplementation(() => ({
-      on: vi.fn().mockImplementation(function (event, cb) {
-        if (event === 'data') cb(Buffer.from('x'));
-        if (event === 'end') cb();
-        return this;
-      }),
-    })),
+    createReadStream: vi.fn().mockImplementation(makeStream),
   };
+  return { default: fsMock, ...fsMock };
 });
 
-// Mock ffprobe — returns minimal valid probe result
+// ffprobe mock — returns minimal valid probe result
 vi.mock('../audio/ffmpeg.js', () => ({
   ffprobe: vi.fn().mockResolvedValue({
     format: {
@@ -79,7 +82,7 @@ vi.mock('../audio/ffmpeg.js', () => ({
   }),
 }));
 
-// Mock trackRepository — use controlled stubs so tests don't need SQLite
+// trackRepository mock — controlled stubs; no SQLite needed
 const mockGetTrackByHash = vi.fn();
 const mockAddTrack = vi.fn().mockReturnValue(99);
 const mockUpdateTrack = vi.fn();
@@ -92,16 +95,28 @@ vi.mock('../db/trackRepository.js', () => ({
   getTrackById: (...args) => mockGetTrackById(...args),
 }));
 
-// Import after mocks are registered
+// Import AFTER mocks so the module picks up all stubs
 import { importAudioFile } from '../audio/importManager.js';
+import cryptoDefault from 'crypto';
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// ── Setup ─────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockAddTrack.mockReturnValue(99);
   mockGetTrackByHash.mockReturnValue(undefined);
+  // Restore default hash implementation after clearAllMocks
+  cryptoDefault.createHash.mockImplementation(() => ({
+    update() {
+      return this;
+    },
+    digest() {
+      return FAKE_HASH;
+    },
+  }));
 });
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('importAudioFile — duplicate prevention', () => {
   it('imports a new file and stores its hash', async () => {
@@ -109,9 +124,7 @@ describe('importAudioFile — duplicate prevention', () => {
 
     expect(id).toBe(99);
     expect(mockAddTrack).toHaveBeenCalledOnce();
-
-    const call = mockAddTrack.mock.calls[0][0];
-    expect(call.file_hash).toBe(FAKE_HASH);
+    expect(mockAddTrack.mock.calls[0][0].file_hash).toBe(FAKE_HASH);
   });
 
   it('skips import when hash already exists and returns existing track id', async () => {
@@ -130,35 +143,40 @@ describe('importAudioFile — duplicate prevention', () => {
   });
 
   it('importing the same file twice only adds one DB record', async () => {
-    // First import — no existing track
     mockGetTrackByHash.mockReturnValueOnce(undefined);
     const firstId = await importAudioFile('/music/song.mp3');
     expect(mockAddTrack).toHaveBeenCalledTimes(1);
 
-    // Second import — hash already in DB (simulate what real DB would return)
+    // Second import: hash now found in DB
     mockGetTrackByHash.mockReturnValueOnce({ id: firstId, file_hash: FAKE_HASH });
     const secondId = await importAudioFile('/music/song.mp3');
-    expect(mockAddTrack).toHaveBeenCalledTimes(1); // still just 1 call total
+    expect(mockAddTrack).toHaveBeenCalledTimes(1); // still only 1 call
     expect(secondId).toBe(firstId);
   });
 
   it('importing two different files (different hashes) adds two DB records', async () => {
-    const { createHash } = await import('crypto');
-
     // First file → FAKE_HASH
-    createHash.mockReturnValueOnce({
-      update: vi.fn().mockReturnThis(),
-      digest: vi.fn().mockReturnValue(FAKE_HASH),
-    });
+    cryptoDefault.createHash.mockImplementationOnce(() => ({
+      update() {
+        return this;
+      },
+      digest() {
+        return FAKE_HASH;
+      },
+    }));
     mockGetTrackByHash.mockReturnValueOnce(undefined);
     mockAddTrack.mockReturnValueOnce(1);
     await importAudioFile('/music/a.mp3');
 
-    // Second file → different hash
-    createHash.mockReturnValueOnce({
-      update: vi.fn().mockReturnThis(),
-      digest: vi.fn().mockReturnValue('aaaa1111bbbb2222cccc3333dddd4444eeee5555'),
-    });
+    // Second file → ALT_HASH
+    cryptoDefault.createHash.mockImplementationOnce(() => ({
+      update() {
+        return this;
+      },
+      digest() {
+        return ALT_HASH;
+      },
+    }));
     mockGetTrackByHash.mockReturnValueOnce(undefined);
     mockAddTrack.mockReturnValueOnce(2);
     await importAudioFile('/music/b.mp3');
