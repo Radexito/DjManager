@@ -40,6 +40,7 @@ const ALL_COLUMNS = [
   { key: 'year', label: 'Year', width: '55px' },
   { key: 'label', label: 'Label', width: '100px' },
   { key: 'genres', label: 'Genres', width: '120px' },
+  { key: 'bitrate', label: 'Bitrate', width: '80px' },
   { key: 'duration', label: 'Duration', width: '70px' },
 ];
 
@@ -57,6 +58,7 @@ const DEFAULT_COL_VIS = {
   year: false,
   label: false,
   genres: false,
+  bitrate: false,
   duration: false,
 };
 
@@ -118,13 +120,17 @@ function renderCell(t, colKey) {
     }
     case 'duration':
       return fmtDuration(t.duration);
+    case 'bitrate':
+      return t.bitrate != null ? `${Math.round(t.bitrate / 1000)} kbps` : '—';
     default:
       return t[colKey] ?? '—';
   }
 }
 
 function cellClass(colKey, t) {
-  const numeric = ['bpm', 'key_camelot', 'loudness', 'year', 'duration'].includes(colKey);
+  const numeric = ['bpm', 'key_camelot', 'loudness', 'year', 'duration', 'bitrate'].includes(
+    colKey
+  );
   const over = colKey === 'bpm' && t.bpm_override != null;
   return `cell ${colKey}${numeric ? ' numeric' : ''}${over ? ' bpm--overridden' : ''}`;
 }
