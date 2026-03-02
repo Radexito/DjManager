@@ -6,13 +6,16 @@ import MusicLibrary from '../MusicLibrary.jsx';
 
 // Render all rows inline — no virtualization in tests
 vi.mock('react-window', () => ({
-  List: ({ rowComponent: Row, rowProps, rowCount }) => (
-    <div data-testid="virtual-list">
-      {Array.from({ length: rowCount }, (_, i) => (
-        <Row key={i} index={i} style={{}} {...rowProps} />
-      ))}
-    </div>
-  ),
+  List: ({ rowComponent, rowProps, rowCount }) => {
+    const Item = rowComponent;
+    return (
+      <div data-testid="virtual-list">
+        {Array.from({ length: rowCount }, (_, i) => (
+          <Item key={i} index={i} style={{}} {...rowProps} />
+        ))}
+      </div>
+    );
+  },
 }));
 
 vi.mock('../PlayerContext.jsx', () => ({
