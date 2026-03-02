@@ -277,6 +277,7 @@ function MusicLibrary({ selectedPlaylist }) {
   const [colOrder, setColOrder] = useState(loadColOrder);
   const [colMenuAnchor, setColMenuAnchor] = useState(null); // { x, y } | null
   const [detailsTrack, setDetailsTrack] = useState(null);
+  const [detailsBulkTracks, setDetailsBulkTracks] = useState(null); // array | null
 
   const offsetRef = useRef(0);
   const loadingRef = useRef(false);
@@ -515,13 +516,25 @@ function MusicLibrary({ selectedPlaylist }) {
 
   // ── Details panel ──────────────────────────────────────────────────────────
 
-  const handleDetailsClose = useCallback(() => setDetailsTrack(null), []);
+  const handleDetailsClose = useCallback(() => {
+    setDetailsTrack(null);
+    setDetailsBulkTracks(null);
+  }, []);
 
-  const handleDetailsSave = useCallback((updatedTrack) => {
-    setTracks((prev) =>
-      prev.map((t) => (t.id === updatedTrack.id ? { ...t, ...updatedTrack } : t))
-    );
-    setDetailsTrack(updatedTrack);
+  const handleDetailsSave = useCallback((result) => {
+    if (Array.isArray(result)) {
+      // bulk save: update each track in state
+      setTracks((prev) =>
+        prev.map((t) => {
+          const updated = result.find((u) => u.id === t.id);
+          return updated ? { ...t, ...updated } : t;
+        })
+      );
+      setDetailsBulkTracks(null);
+    } else {
+      setTracks((prev) => prev.map((t) => (t.id === result.id ? { ...t, ...result } : t)));
+      setDetailsTrack(result);
+    }
   }, []);
 
   const handleDetailsPrev = useCallback(() => {
@@ -803,7 +816,9 @@ function MusicLibrary({ selectedPlaylist }) {
   };
 
   return (
-    <div className={`music-library${detailsTrack ? ' music-library--with-panel' : ''}`}>
+    <div
+      className={`music-library${detailsTrack || detailsBulkTracks ? ' music-library--with-panel' : ''}`}
+    >
       <div className="music-library__main">
         <SearchBar value={search} onChange={setSearch} />
 
@@ -1261,6 +1276,25 @@ function MusicLibrary({ selectedPlaylist }) {
                   {/* ── separator ── */}
                   <div className="context-menu-separator" />
 
+                  {/* ── Edit Details ── */}
+                  <div
+                    className="context-menu-item"
+                    onClick={() => {
+                      const targetTracks = contextMenu?.targetTracks ?? [];
+                      setContextMenu(null);
+                      if (targetTracks.length === 1) {
+                        setDetailsBulkTracks(null);
+                        setDetailsTrack(targetTracks[0]);
+                        setSelectedIds(new Set([targetTracks[0].id]));
+                      } else if (targetTracks.length > 1) {
+                        setDetailsTrack(null);
+                        setDetailsBulkTracks(targetTracks);
+                      }
+                    }}
+                  >
+                    ✏️ Edit Details{selectionLabel}
+                  </div>
+
                   {/* ── Analysis submenu ── */}
                   <SubItem id="analysis" label={`🔬 Analysis${selectionLabel}`}>
                     <div className="context-menu-item" onClick={handleReanalyze}>
@@ -1317,6 +1351,13 @@ function MusicLibrary({ selectedPlaylist }) {
             />
           );
         })()}
+      {detailsBulkTracks && (
+        <TrackDetails
+          tracks={detailsBulkTracks}
+          onSave={handleDetailsSave}
+          onCancel={handleDetailsClose}
+        />
+      )}
     </div>
   );
 }
