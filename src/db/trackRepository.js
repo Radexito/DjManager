@@ -128,15 +128,17 @@ function buildFiltersSQL(filters = []) {
       case 'duration':
       case 'bitrate': {
         const col = f.field;
+        // bitrate is stored in bps but users input kbps — convert
+        const scale = f.field === 'bitrate' ? 1000 : 1;
         if (f.op === 'range') {
-          params[pk('lo')] = f.from;
-          params[pk('hi')] = f.to;
+          params[pk('lo')] = f.from * scale;
+          params[pk('hi')] = f.to * scale;
           clauses.push(`${col} BETWEEN @${pk('lo')} AND @${pk('hi')}`);
         } else if (f.op === 'is') {
-          params[pk('v')] = Number(f.value);
+          params[pk('v')] = Number(f.value) * scale;
           clauses.push(`${col} = @${pk('v')}`);
         } else if (['>', '<', '>=', '<='].includes(f.op)) {
-          params[pk('v')] = Number(f.value);
+          params[pk('v')] = Number(f.value) * scale;
           clauses.push(`${col} ${f.op} @${pk('v')}`);
         }
         break;
