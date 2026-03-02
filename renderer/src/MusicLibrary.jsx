@@ -26,23 +26,30 @@ const ROW_HEIGHT = 50;
 const PRELOAD_TRIGGER = 3;
 
 const LS_COL_KEY = 'djman_column_visibility';
+const LS_ORDER_KEY = 'djman_column_order';
 
-// All possible columns. toggleable:false = always visible.
+// All possible columns — all are user-hideable.
 const ALL_COLUMNS = [
-  { key: 'index', label: '#', width: '44px', toggleable: false },
-  { key: 'title', label: 'Title', width: '2fr', toggleable: false },
-  { key: 'artist', label: 'Artist', width: '1.5fr', toggleable: false },
-  { key: 'bpm', label: 'BPM', width: '70px', toggleable: true },
-  { key: 'key_camelot', label: 'Key', width: '60px', toggleable: true },
-  { key: 'loudness', label: 'Loudness (LUFS)', width: '100px', toggleable: true },
-  { key: 'album', label: 'Album', width: '1fr', toggleable: true },
-  { key: 'year', label: 'Year', width: '55px', toggleable: true },
-  { key: 'label', label: 'Label', width: '100px', toggleable: true },
-  { key: 'genres', label: 'Genres', width: '120px', toggleable: true },
-  { key: 'duration', label: 'Duration', width: '70px', toggleable: true },
+  { key: 'index', label: '#', width: '44px' },
+  { key: 'title', label: 'Title', width: '2fr' },
+  { key: 'artist', label: 'Artist', width: '1.5fr' },
+  { key: 'bpm', label: 'BPM', width: '70px' },
+  { key: 'key_camelot', label: 'Key', width: '60px' },
+  { key: 'loudness', label: 'Loudness (LUFS)', width: '100px' },
+  { key: 'album', label: 'Album', width: '1fr' },
+  { key: 'year', label: 'Year', width: '55px' },
+  { key: 'label', label: 'Label', width: '100px' },
+  { key: 'genres', label: 'Genres', width: '120px' },
+  { key: 'duration', label: 'Duration', width: '70px' },
 ];
 
+const ALL_COLUMN_KEYS = ALL_COLUMNS.map((c) => c.key);
+const COL_BY_KEY = Object.fromEntries(ALL_COLUMNS.map((c) => [c.key, c]));
+
 const DEFAULT_COL_VIS = {
+  index: true,
+  title: true,
+  artist: true,
   bpm: true,
   key_camelot: true,
   loudness: true,
@@ -58,6 +65,21 @@ function loadColVis() {
     return { ...DEFAULT_COL_VIS, ...JSON.parse(localStorage.getItem(LS_COL_KEY) ?? '{}') };
   } catch {
     return { ...DEFAULT_COL_VIS };
+  }
+}
+
+function loadColOrder() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_ORDER_KEY) ?? 'null');
+    if (!Array.isArray(saved)) return ALL_COLUMN_KEYS;
+    // merge: keep saved order, append any new keys not yet in saved
+    const merged = saved.filter((k) => COL_BY_KEY[k]);
+    ALL_COLUMN_KEYS.forEach((k) => {
+      if (!merged.includes(k)) merged.push(k);
+    });
+    return merged;
+  } catch {
+    return ALL_COLUMN_KEYS;
   }
 }
 
@@ -227,6 +249,7 @@ function MusicLibrary({ selectedPlaylist }) {
   const [activeId, setActiveId] = useState(null); // DnD active drag id
   const [sortSaved, setSortSaved] = useState(true); // false when sorted away from position order
   const [colVis, setColVis] = useState(loadColVis);
+  const [colOrder, setColOrder] = useState(loadColOrder);
   const [colsOpen, setColsOpen] = useState(false);
   const [detailsTrack, setDetailsTrack] = useState(null);
 
@@ -237,10 +260,11 @@ function MusicLibrary({ selectedPlaylist }) {
   const listRef = useRef();
   const sortedTracksRef = useRef([]);
   const lastSelectedIndexRef = useRef(null);
+  const colToggleRef = useRef(null);
 
   const visibleColumns = useMemo(
-    () => ALL_COLUMNS.filter((c) => !c.toggleable || colVis[c.key]),
-    [colVis]
+    () => colOrder.map((k) => COL_BY_KEY[k]).filter((c) => c && colVis[c.key] !== false),
+    [colVis, colOrder]
   );
   const gridTemplate = useMemo(
     () => visibleColumns.map((c) => c.width).join(' '),
@@ -482,6 +506,36 @@ function MusicLibrary({ selectedPlaylist }) {
       return next;
     });
   }, []);
+
+  const moveCol = useCallback((key, dir) => {
+    setColOrder((prev) => {
+      const i = prev.indexOf(key);
+      if (i < 0) return prev;
+      const j = i + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      localStorage.setItem(LS_ORDER_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  // Close column dropdown on outside click or Escape
+  useEffect(() => {
+    if (!colsOpen) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setColsOpen(false);
+    };
+    const onMouse = (e) => {
+      if (!colToggleRef.current?.contains(e.target)) setColsOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onMouse);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onMouse);
+    };
+  }, [colsOpen]);
 
   const handleContextMenu = useCallback(
     async (e, track, index) => {
@@ -734,7 +788,7 @@ function MusicLibrary({ selectedPlaylist }) {
             </div>
           ))}
           {/* Columns toggle button — sits outside the grid flow */}
-          <div className="header-col-toggle-wrap">
+          <div className="header-col-toggle-wrap" ref={colToggleRef}>
             <button
               className="btn-cols"
               onClick={(e) => {
@@ -746,17 +800,39 @@ function MusicLibrary({ selectedPlaylist }) {
               ⊞
             </button>
             {colsOpen && (
-              <div className="col-dropdown" onMouseDown={(e) => e.stopPropagation()}>
-                {ALL_COLUMNS.filter((c) => c.toggleable).map((col) => (
-                  <label key={col.key} className="col-dropdown__item">
-                    <input
-                      type="checkbox"
-                      checked={!!colVis[col.key]}
-                      onChange={() => toggleCol(col.key)}
-                    />
-                    {col.label}
-                  </label>
-                ))}
+              <div className="col-dropdown">
+                {colOrder.map((key, i) => {
+                  const col = COL_BY_KEY[key];
+                  if (!col) return null;
+                  return (
+                    <div key={key} className="col-dropdown__item">
+                      <input
+                        type="checkbox"
+                        checked={colVis[key] !== false}
+                        onChange={() => toggleCol(key)}
+                      />
+                      <span className="col-dropdown__label">{col.label}</span>
+                      <div className="col-dropdown__arrows">
+                        <button
+                          className="btn-move"
+                          onClick={() => moveCol(key, -1)}
+                          disabled={i === 0}
+                          title="Move up"
+                        >
+                          ▲
+                        </button>
+                        <button
+                          className="btn-move"
+                          onClick={() => moveCol(key, 1)}
+                          disabled={i === colOrder.length - 1}
+                          title="Move down"
+                        >
+                          ▼
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

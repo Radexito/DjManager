@@ -30,6 +30,7 @@
 .header {
   display: grid;
   padding: 12px 8px;
+  padding-right: 44px; /* room for the column-toggle button */
   background-color: #2a2a2a;
   color: #e0e0e0;
   font-weight: 600;
@@ -448,10 +449,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 14px;
+  padding: 5px 10px 5px 14px;
   font-size: 13px;
   color: #ddd;
-  cursor: pointer;
   white-space: nowrap;
 }
 
@@ -462,6 +462,38 @@
 .col-dropdown__item input[type='checkbox'] {
   accent-color: #6c63ff;
   cursor: pointer;
+  flex-shrink: 0;
+}
+
+.col-dropdown__label {
+  flex: 1;
+}
+
+.col-dropdown__arrows {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.btn-move {
+  background: none;
+  border: none;
+  color: #777;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 1px 3px;
+  line-height: 1;
+  border-radius: 3px;
+}
+
+.btn-move:hover:not(:disabled) {
+  background: #555;
+  color: #eee;
+}
+
+.btn-move:disabled {
+  opacity: 0.25;
+  cursor: default;
 }
 
 /* ── Details panel layout ─────────────────────────────────────────────── */
