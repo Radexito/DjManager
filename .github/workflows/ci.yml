@@ -7,20 +7,19 @@ on:
     branches: [dev, master]
 
 jobs:
-  # ── Guard: PRs must target dev, not master ───────────────────────────────────
+  # ── Guard: only dev may open PRs to master ───────────────────────────────────
   guard:
-    if: github.event_name == 'pull_request' && github.base_ref == 'master'
+    if: github.event_name == 'pull_request' && github.base_ref == 'master' && github.head_ref != 'dev'
     runs-on: ubuntu-22.04
     steps:
       - name: Reject direct PRs to master
         run: |
-          echo "::error title=Wrong target branch::PRs must target 'dev', not 'master'."
-          echo "Please retarget your PR to the 'dev' branch."
+          echo "::error title=Wrong target branch::Only 'dev' may target 'master'. Retarget your PR to 'dev'."
           exit 1
 
   # ── Lint + unit tests ────────────────────────────────────────────────────────
   lint-and-test:
-    if: github.event_name != 'pull_request' || github.base_ref != 'master'
+    if: github.event_name != 'pull_request' || github.base_ref != 'master' || github.head_ref == 'dev'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
@@ -59,7 +58,7 @@ jobs:
 
   # ── E2E tests ────────────────────────────────────────────────────────────────
   e2e:
-    if: github.event_name != 'pull_request' || github.base_ref != 'master'
+    if: github.event_name != 'pull_request' || github.base_ref != 'master' || github.head_ref == 'dev'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
