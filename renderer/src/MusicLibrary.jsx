@@ -34,7 +34,7 @@ const ALL_COLUMNS = [
   { key: 'artist', label: 'Artist', width: '1.5fr', toggleable: false },
   { key: 'bpm', label: 'BPM', width: '70px', toggleable: true },
   { key: 'key_camelot', label: 'Key', width: '60px', toggleable: true },
-  { key: 'loudness', label: 'Loudness', width: '100px', toggleable: true },
+  { key: 'loudness', label: 'Loudness (LUFS)', width: '100px', toggleable: true },
   { key: 'album', label: 'Album', width: '1fr', toggleable: true },
   { key: 'year', label: 'Year', width: '55px', toggleable: true },
   { key: 'label', label: 'Label', width: '100px', toggleable: true },
@@ -107,18 +107,19 @@ function cellClass(colKey, t) {
   return `cell ${colKey}${numeric ? ' numeric' : ''}${over ? ' bpm--overridden' : ''}`;
 }
 
-// ── LibraryRow — outside MusicLibrary so react-window doesn't remount on re-render ──
-function LibraryRow({ index, style, data }) {
-  const {
-    tracks,
-    selectedIds,
-    currentTrackId,
-    onRowClick,
-    onDoubleClick,
-    onContextMenu,
-    visibleColumns,
-    gridTemplate,
-  } = data;
+// ── LibraryRow — outside MusicLibrary so react-virtualized doesn't remount on re-render ──
+function LibraryRow({
+  index,
+  style,
+  tracks,
+  selectedIds,
+  currentTrackId,
+  onRowClick,
+  onDoubleClick,
+  onContextMenu,
+  visibleColumns,
+  gridTemplate,
+}) {
   const t = tracks[index];
   if (!t) {
     return (
