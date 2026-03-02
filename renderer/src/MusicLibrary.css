@@ -211,7 +211,7 @@
   z-index: 1001;
 }
 
-.context-menu-item--has-submenu:hover .context-submenu {
+.context-menu-item--has-submenu:hover > .context-submenu {
   display: block;
 }
 
@@ -334,8 +334,9 @@
   bottom: -4px;
 }
 
-/* Submenus scroll rather than overflow vertically */
-.context-submenu {
+/* Only long submenus (e.g. playlists) scroll — short ones stay overflow:visible
+   so nested absolutely-positioned submenus are never clipped */
+.context-submenu--scrollable {
   max-height: var(--submenu-max-h, 70vh);
   overflow-y: auto;
 }

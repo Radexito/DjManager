@@ -502,13 +502,7 @@ function MusicLibrary({ selectedPlaylist }) {
       const rangeIds = sortedTracksRef.current.slice(start, end + 1).map((t) => t.id);
       setSelectedIds(new Set(rangeIds));
     } else {
-      setSelectedIds((prev) => {
-        // Re-clicking the sole selected track opens the details panel
-        if (prev.size === 1 && prev.has(track.id)) {
-          setDetailsTrack(track);
-        }
-        return new Set([track.id]);
-      });
+      setSelectedIds(new Set([track.id]));
       lastSelectedIndexRef.current = index;
     }
   }, []);
@@ -792,7 +786,7 @@ function MusicLibrary({ selectedPlaylist }) {
 
   // In normal mode: CSS hover fly-out.
   // In overlay mode: clicking pushes children onto drillStack (drill-down navigation).
-  const SubItem = ({ id, label, children, wide }) => {
+  const SubItem = ({ id, label, children, wide, scrollable }) => {
     const isOverlay = contextMenu?.overlayMode;
     if (isOverlay) {
       return (
@@ -811,7 +805,11 @@ function MusicLibrary({ selectedPlaylist }) {
       <div className="context-menu-item context-menu-item--has-submenu">
         {label}
         <div
-          className={['context-submenu', wide ? 'context-submenu--wide' : '']
+          className={[
+            'context-submenu',
+            wide ? 'context-submenu--wide' : '',
+            scrollable ? 'context-submenu--scrollable' : '',
+          ]
             .filter(Boolean)
             .join(' ')}
         >
@@ -1022,7 +1020,7 @@ function MusicLibrary({ selectedPlaylist }) {
                         ➕ No playlists
                       </div>
                     ) : (
-                      <SubItem id="add-to-playlist" label="➕ Add to playlist">
+                      <SubItem id="add-to-playlist" label="➕ Add to playlist" scrollable>
                         {playlistSubmenu.map((pl) => (
                           <div
                             key={pl.id}
