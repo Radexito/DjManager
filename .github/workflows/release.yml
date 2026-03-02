@@ -2,23 +2,31 @@ name: Build & Release
 
 on:
   push:
-    branches: [master]
+    branches: [master, staging]
 
 permissions:
   contents: write
 
 jobs:
-  # ── Generate shared release tag ───────────────────────────────────────────
+  # ── Generate shared release metadata ─────────────────────────────────────────
   setup:
     runs-on: ubuntu-22.04
     outputs:
-      tag: ${{ steps.tag.outputs.tag }}
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
-      - name: Generate release tag
-        id: tag
-        run: echo "tag=build-$(date -u +%Y%m%d-%H%M%S)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: Generate release metadata
+        id: meta
+        run: |
+          VERSION="1.0.${{ github.run_number }}"
+          TAG="v${VERSION}-${GITHUB_SHA::7}"
+          PRERELEASE=${{ github.ref_name == 'staging' }}
+          echo "tag=$TAG"           >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"   >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
 
-  # ── Per-platform build ────────────────────────────────────────────────────
+  # ── Per-platform builds ───────────────────────────────────────────────────────
   build:
     needs: setup
     strategy:
@@ -43,7 +51,6 @@ jobs:
           node-version: 22
           cache: npm
 
-      # ── Node deps + renderer build ────────────────────────────────────────
       - name: Install root dependencies
         run: npm ci
 
@@ -53,25 +60,21 @@ jobs:
       - name: Build renderer
         run: npm run build-renderer
 
-      # ── Stamp version from tag ────────────────────────────────────────────
-      - name: Set version
+      - name: Stamp version
         shell: bash
         run: |
-          TAG="${{ needs.setup.outputs.tag }}"
           node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
-            pkg.version = '0.0.${{ github.run_number }}';
+            pkg.version = '${{ needs.setup.outputs.version }}';
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
           "
 
-      # ── Build Electron app ────────────────────────────────────────────────
       - name: Build Electron app
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --${{ matrix.platform }} --publish never
 
-      # ── Upload artifacts for release job ─────────────────────────────────
       - uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.platform }}
@@ -83,7 +86,7 @@ jobs:
             dist-electron/*.zip
           if-no-files-found: warn
 
-  # ── Create GitHub release ─────────────────────────────────────────────────
+  # ── Create GitHub Release ─────────────────────────────────────────────────────
   create-release:
     needs: [setup, build]
     runs-on: ubuntu-22.04
@@ -96,15 +99,17 @@ jobs:
           path: dist/
           merge-multiple: true
 
-      - name: Create versioned release
+      - name: Create ${{ github.ref_name == 'staging' && 'pre-release' || 'release' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.setup.outputs.tag }}
-          name: 'DJ Manager ${{ needs.setup.outputs.tag }}'
-          prerelease: false
+          name: 'DJ Manager ${{ needs.setup.outputs.version }}'
+          prerelease: ${{ needs.setup.outputs.prerelease == 'true' }}
+          make_latest: ${{ needs.setup.outputs.prerelease != 'true' }}
           body: |
-            Automated release from commit ${{ github.sha }}
+            ${{ github.ref_name == 'staging' && '> ⚠️ Pre-release build from `staging` — may be unstable.' || '✅ Stable release from `master`.' }}
 
+            **Commit:** ${{ github.sha }}
             ${{ github.event.head_commit.message }}
 
             ## Downloads
@@ -112,15 +117,69 @@ jobs:
             | File | Platform |
             |------|----------|
             | `*-Linux.AppImage` | Linux x86_64 |
-            | `*.dmg` | macOS Apple Silicon |
-            | `*.exe` (installer) | Windows x86_64 |
+            | `*.dmg`            | macOS Apple Silicon |
+            | `*-win-setup.exe`  | Windows x86_64 |
           files: dist/**/*
           fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ── Bump version on dev after release ─────────────────────────────────────
+  # ── Chocolatey (Windows · master only) ───────────────────────────────────────
+  # Requires secret: CHOCOLATEY_API_KEY
+  # One-time setup: submit chocolatey/djmanager.nuspec to chocolatey.org for
+  # initial package approval, then CI pushes all future updates automatically.
+  chocolatey:
+    if: github.ref_name == 'master'
+    needs: [setup, create-release]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-win
+          path: dist-win/
+
+      - name: Compute installer SHA256 and build download URL
+        id: installer
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist-win\*.exe | Select-Object -First 1
+          if (-not $exe) { throw "No .exe found in dist-win/" }
+          $sha256 = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
+          $url    = "https://github.com/${{ github.repository }}/releases/download/${{ needs.setup.outputs.tag }}/$($exe.Name)"
+          "sha256=$sha256" >> $env:GITHUB_OUTPUT
+          "url=$url"       >> $env:GITHUB_OUTPUT
+          Write-Host "Installer: $($exe.Name)"
+          Write-Host "SHA256:    $sha256"
+          Write-Host "URL:       $url"
+
+      - name: Generate chocolateyInstall.ps1 from template
+        shell: pwsh
+        run: |
+          $script = Get-Content chocolatey/tools/chocolateyInstall.ps1.template -Raw
+          $script = $script -replace '{{INSTALLER_URL}}',    '${{ steps.installer.outputs.url }}'
+          $script = $script -replace '{{INSTALLER_SHA256}}', '${{ steps.installer.outputs.sha256 }}'
+          Set-Content chocolatey/tools/chocolateyInstall.ps1 $script
+          Write-Host "Generated install script:"
+          Get-Content chocolatey/tools/chocolateyInstall.ps1
+
+      - name: Stamp version in nuspec
+        shell: pwsh
+        run: |
+          (Get-Content chocolatey/djmanager.nuspec) `
+            -replace '<version>.*</version>', '<version>${{ needs.setup.outputs.version }}</version>' |
+            Set-Content chocolatey/djmanager.nuspec
+
+      - name: Pack Chocolatey package
+        run: choco pack chocolatey/djmanager.nuspec --out dist-choco/
+
+      - name: Push to Chocolatey.org
+        run: choco push dist-choco/*.nupkg --source https://push.chocolatey.org --api-key ${{ secrets.CHOCOLATEY_API_KEY }}
+
+  # ── Bump version on staging after master release ──────────────────────────────
   bump-version:
+    if: github.ref_name == 'master'
     needs: [create-release]
     runs-on: ubuntu-22.04
     permissions:
@@ -128,7 +187,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: dev
+          ref: staging
           fetch-depth: 0
 
       - name: Bump patch version in package.json
@@ -143,12 +202,12 @@ jobs:
           "
           echo "Bumped $OLD -> $NEW"
 
-      - name: Commit and push to dev
+      - name: Commit and push to staging
         run: |
-          git config user.name "github-actions[bot]"
+          git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           VERSION=$(node -e "console.log(require('./package.json').version)")
           git add package.json
-          git commit -m "chore: bump version to $VERSION"
-          git pull --rebase origin dev
-          git push origin dev
+          git commit -m "chore: bump version to $VERSION [skip ci]"
+          git pull --rebase origin staging
+          git push origin staging

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>djmanager</id>
+    <!-- version is replaced by CI before packing -->
+    <version>0.0.0</version>
+    <title>DJ Manager</title>
+    <authors>Radexito</authors>
+    <projectUrl>https://github.com/Radexito/djman</projectUrl>
+    <description>DJ track library manager with automatic BPM detection, key analysis, beatgrid storage, dynamic columns and advanced search.</description>
+    <summary>Manage your DJ track library with automatic BPM, key and loudness analysis.</summary>
+    <tags>dj music audio library bpm key electron</tags>
+    <licenseUrl>https://github.com/Radexito/djman/blob/master/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <releaseNotes>https://github.com/Radexito/djman/releases</releaseNotes>
+  </metadata>
+</package>
