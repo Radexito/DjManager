@@ -271,7 +271,7 @@ function MusicLibrary({ selectedPlaylist }) {
   const [sortSaved, setSortSaved] = useState(true); // false when sorted away from position order
   const [colVis, setColVis] = useState(loadColVis);
   const [colOrder, setColOrder] = useState(loadColOrder);
-  const [colsOpen, setColsOpen] = useState(false);
+  const [colMenuAnchor, setColMenuAnchor] = useState(null); // { x, y } | null
   const [detailsTrack, setDetailsTrack] = useState(null);
 
   const offsetRef = useRef(0);
@@ -281,7 +281,7 @@ function MusicLibrary({ selectedPlaylist }) {
   const listRef = useRef();
   const sortedTracksRef = useRef([]);
   const lastSelectedIndexRef = useRef(null);
-  const colToggleRef = useRef(null);
+  const colDropdownRef = useRef(null);
 
   const visibleColumns = useMemo(
     () => colOrder.map((k) => COL_BY_KEY[k]).filter((c) => c && colVis[c.key] !== false),
@@ -541,12 +541,12 @@ function MusicLibrary({ selectedPlaylist }) {
 
   // Close column dropdown on outside click or Escape
   useEffect(() => {
-    if (!colsOpen) return;
+    if (!colMenuAnchor) return;
     const onKey = (e) => {
-      if (e.key === 'Escape') setColsOpen(false);
+      if (e.key === 'Escape') setColMenuAnchor(null);
     };
     const onMouse = (e) => {
-      if (!colToggleRef.current?.contains(e.target)) setColsOpen(false);
+      if (!colDropdownRef.current?.contains(e.target)) setColMenuAnchor(null);
     };
     document.addEventListener('keydown', onKey);
     document.addEventListener('mousedown', onMouse);
@@ -554,7 +554,7 @@ function MusicLibrary({ selectedPlaylist }) {
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('mousedown', onMouse);
     };
-  }, [colsOpen]);
+  }, [colMenuAnchor]);
 
   const handleContextMenu = useCallback(
     async (e, track, index) => {
@@ -796,7 +796,14 @@ function MusicLibrary({ selectedPlaylist }) {
           </div>
         )}
 
-        <div className="header" style={{ gridTemplateColumns: gridTemplate }}>
+        <div
+          className="header"
+          style={{ gridTemplateColumns: gridTemplate }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setColMenuAnchor({ x: e.clientX, y: e.clientY });
+          }}
+        >
           {visibleColumns.map((col) => (
             <div
               key={col.key}
@@ -806,41 +813,33 @@ function MusicLibrary({ selectedPlaylist }) {
               {col.label} {sortBy.key === col.key ? (sortBy.asc ? '▲' : '▼') : ''}
             </div>
           ))}
-          {/* Columns toggle button — sits outside the grid flow */}
-          <div className="header-col-toggle-wrap" ref={colToggleRef}>
-            <button
-              className="btn-cols"
-              onClick={(e) => {
-                e.stopPropagation();
-                setColsOpen((o) => !o);
-              }}
-              title="Show/hide columns"
-            >
-              ⊞
-            </button>
-            {colsOpen && (
-              <div className="col-dropdown">
-                <DndContext collisionDetection={closestCenter} onDragEnd={handleColDragEnd}>
-                  <SortableContext items={colOrder} strategy={verticalListSortingStrategy}>
-                    {colOrder.map((key) => {
-                      const col = COL_BY_KEY[key];
-                      if (!col) return null;
-                      return (
-                        <SortableColItem
-                          key={key}
-                          colKey={key}
-                          label={col.label}
-                          checked={colVis[key] !== false}
-                          onToggle={() => toggleCol(key)}
-                        />
-                      );
-                    })}
-                  </SortableContext>
-                </DndContext>
-              </div>
-            )}
-          </div>
         </div>
+
+        {colMenuAnchor && (
+          <div
+            className="col-dropdown"
+            ref={colDropdownRef}
+            style={{ position: 'fixed', left: colMenuAnchor.x, top: colMenuAnchor.y }}
+          >
+            <DndContext collisionDetection={closestCenter} onDragEnd={handleColDragEnd}>
+              <SortableContext items={colOrder} strategy={verticalListSortingStrategy}>
+                {colOrder.map((key) => {
+                  const col = COL_BY_KEY[key];
+                  if (!col) return null;
+                  return (
+                    <SortableColItem
+                      key={key}
+                      colKey={key}
+                      label={col.label}
+                      checked={colVis[key] !== false}
+                      onToggle={() => toggleCol(key)}
+                    />
+                  );
+                })}
+              </SortableContext>
+            </DndContext>
+          </div>
+        )}
 
         {/* Playlist view: full DnD list */}
         {isPlaylistView ? (
