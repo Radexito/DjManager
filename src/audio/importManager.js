@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { app } from 'electron';
 import { Worker } from 'worker_threads';
 import { ffprobe } from './ffmpeg.js';
-import { addTrack, updateTrack, getTrackById } from '../db/trackRepository.js';
+import { addTrack, updateTrack, getTrackById, getTrackByHash } from '../db/trackRepository.js';
 import { getAnalyzerRuntimePath } from '../deps.js';
 import { getSetting } from '../db/settingsRepository.js';
 
@@ -82,6 +82,14 @@ export async function importAudioFile(filePath) {
   console.log(`Importing: ${filePath}`);
   const ext = path.extname(filePath);
   const hash = await hashFile(filePath);
+
+  // Skip import if this file content already exists in the library
+  const existing = getTrackByHash(hash);
+  if (existing) {
+    console.log(`Skipping duplicate: hash ${hash} already exists as track ID ${existing.id}`);
+    return existing.id;
+  }
+
   const dest = getAudioStoragePath(hash, ext);
 
   if (!fs.existsSync(dest)) fs.copyFileSync(filePath, dest);
@@ -100,6 +108,7 @@ export async function importAudioFile(filePath) {
     album,
     duration,
     file_path: dest,
+    file_hash: hash,
     format,
     bitrate,
     year,
