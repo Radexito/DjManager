@@ -31,12 +31,12 @@ const LS_ORDER_KEY = 'djman_column_order';
 // All possible columns — all are user-hideable.
 const ALL_COLUMNS = [
   { key: 'index', label: '#', width: '44px' },
-  { key: 'title', label: 'Title', width: '2fr' },
-  { key: 'artist', label: 'Artist', width: '1.5fr' },
+  { key: 'title', label: 'Title', width: 'minmax(120px, 2fr)' },
+  { key: 'artist', label: 'Artist', width: 'minmax(90px, 1.5fr)' },
   { key: 'bpm', label: 'BPM', width: '70px' },
   { key: 'key_camelot', label: 'Key', width: '60px' },
   { key: 'loudness', label: 'Loudness (LUFS)', width: '100px' },
-  { key: 'album', label: 'Album', width: '1fr' },
+  { key: 'album', label: 'Album', width: 'minmax(80px, 1fr)' },
   { key: 'year', label: 'Year', width: '55px' },
   { key: 'label', label: 'Label', width: '100px' },
   { key: 'genres', label: 'Genres', width: '120px' },
