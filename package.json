@@ -132,7 +132,7 @@
     "eslint": "^10.0.2",
     "globals": "^17.3.0",
     "husky": "^9.1.7",
-    "lint-staged": "^16.3.0",
+    "lint-staged": "^16.3.1",
     "prettier": "^3.8.1",
     "vitest": "^4.0.18",
     "wait-on": "^9.0.4"
