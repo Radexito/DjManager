@@ -144,6 +144,6 @@
     "@dnd-kit/utilities": "^3.2.2",
     "better-sqlite3": "^12.6.2",
     "react-virtualized": "^9.22.6",
-    "react-window": "^2.2.5"
+    "react-window": "^2.2.7"
   }
 }
