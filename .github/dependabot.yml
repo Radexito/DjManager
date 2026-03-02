@@ -3,6 +3,7 @@ updates:
   # Root package (Electron main + build tooling)
   - package-ecosystem: 'npm'
     directory: '/'
+    target-branch: 'dev'
     schedule:
       interval: 'weekly'
       day: 'monday'
@@ -24,6 +25,7 @@ updates:
   # Renderer package (React UI)
   - package-ecosystem: 'npm'
     directory: '/renderer'
+    target-branch: 'dev'
     schedule:
       interval: 'weekly'
       day: 'monday'
@@ -38,6 +40,7 @@ updates:
   # GitHub Actions
   - package-ecosystem: 'github-actions'
     directory: '/'
+    target-branch: 'dev'
     schedule:
       interval: 'weekly'
       day: 'monday'
