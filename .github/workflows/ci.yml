@@ -4,10 +4,22 @@ on:
   push:
     branches: ['**']
   pull_request:
-    branches: [master]
+    branches: [dev, master]
 
 jobs:
+  # ── Guard: only dev may open PRs to master ───────────────────────────────────
+  guard:
+    if: github.event_name == 'pull_request' && github.base_ref == 'master' && github.head_ref != 'dev'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Reject direct PRs to master
+        run: |
+          echo "::error title=Wrong target branch::Only 'dev' may target 'master'. Retarget your PR to 'dev'."
+          exit 1
+
+  # ── Lint + unit tests ────────────────────────────────────────────────────────
   lint-and-test:
+    if: github.event_name != 'pull_request' || github.base_ref != 'master' || github.head_ref == 'dev'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
@@ -44,7 +56,9 @@ jobs:
       - name: Test (renderer)
         run: cd renderer && npm run test:coverage
 
+  # ── E2E tests ────────────────────────────────────────────────────────────────
   e2e:
+    if: github.event_name != 'pull_request' || github.base_ref != 'master' || github.head_ref == 'dev'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
