@@ -110,6 +110,7 @@ function createWindow() {
   });
 
   mainWindow = new BrowserWindow({
+    title: 'DjManager - RWTechWorks.pl',
     width: 1200,
     height: 800,
     webPreferences: {
