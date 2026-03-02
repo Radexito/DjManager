@@ -25,6 +25,15 @@
   min-width: 0;
 }
 
+/* Inner wrapper: width: 100% when wide, min-width when narrow.
+   Both header and List share this width so fr columns always match. */
+.library-hscroll-inner {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
 /* Search */
 .search-input {
   margin-bottom: 20px;
