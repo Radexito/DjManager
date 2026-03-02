@@ -12,6 +12,7 @@ export const FIELDS = {
   year: { type: 'number', label: 'YEAR' },
   rating: { type: 'number', label: 'RATING' },
   duration: { type: 'number', label: 'DURATION' },
+  bitrate: { type: 'number', label: 'BITRATE' },
 };
 
 const TEXT_OPS = ['is not', 'is', 'contains'];
@@ -273,6 +274,7 @@ function getValueHints(fieldKey, op, base, partialValue = '') {
     year: { 'in range': '2020-2024', is: '2024', '>': '2020' },
     rating: { 'in range': '3-5', is: '5', '>=': '4' },
     duration: { '>': '180', '<': '300', 'in range': '180-300' },
+    bitrate: { '>=': '320', '>': '256', '<': '320', 'in range': '192-320' },
   };
 
   const hint = hints[fieldKey]?.[op];

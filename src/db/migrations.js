@@ -31,6 +31,7 @@ export function initDB() {
       replay_gain REAL,
       intro_secs REAL,
       outro_secs REAL,
+      beatgrid TEXT,
 
       -- User
       rating INTEGER,
@@ -55,6 +56,7 @@ export function initDB() {
     'ALTER TABLE tracks ADD COLUMN replay_gain REAL',
     'ALTER TABLE tracks ADD COLUMN intro_secs REAL',
     'ALTER TABLE tracks ADD COLUMN outro_secs REAL',
+    'ALTER TABLE tracks ADD COLUMN beatgrid TEXT',
   ]) {
     try {
       db.prepare(col).run();

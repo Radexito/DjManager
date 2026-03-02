@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('api', {
   getTrackIds: (params) => ipcRenderer.invoke('get-track-ids', params),
   reanalyzeTrack: (trackId) => ipcRenderer.invoke('reanalyze-track', trackId),
   removeTrack: (trackId) => ipcRenderer.invoke('remove-track', trackId),
+  updateTrack: (id, data) => ipcRenderer.invoke('update-track', { id, data }),
   adjustBpm: (payload) => ipcRenderer.invoke('adjust-bpm', payload),
 
   // Import
