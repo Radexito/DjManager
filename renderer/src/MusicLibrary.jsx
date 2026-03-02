@@ -29,24 +29,36 @@ const LS_COL_KEY = 'djman_column_visibility';
 
 // All possible columns. toggleable:false = always visible.
 const ALL_COLUMNS = [
-  { key: 'index',       label: '#',        width: '44px', toggleable: false },
-  { key: 'title',       label: 'Title',    width: '2fr',  toggleable: false },
-  { key: 'artist',      label: 'Artist',   width: '1.5fr',toggleable: false },
-  { key: 'bpm',         label: 'BPM',      width: '70px', toggleable: true  },
-  { key: 'key_camelot', label: 'Key',      width: '60px', toggleable: true  },
-  { key: 'loudness',    label: 'Loudness', width: '100px',toggleable: true  },
-  { key: 'album',       label: 'Album',    width: '1fr',  toggleable: true  },
-  { key: 'year',        label: 'Year',     width: '55px', toggleable: true  },
-  { key: 'label',       label: 'Label',    width: '100px',toggleable: true  },
-  { key: 'genres',      label: 'Genres',   width: '120px',toggleable: true  },
-  { key: 'duration',    label: 'Duration', width: '70px', toggleable: true  },
+  { key: 'index', label: '#', width: '44px', toggleable: false },
+  { key: 'title', label: 'Title', width: '2fr', toggleable: false },
+  { key: 'artist', label: 'Artist', width: '1.5fr', toggleable: false },
+  { key: 'bpm', label: 'BPM', width: '70px', toggleable: true },
+  { key: 'key_camelot', label: 'Key', width: '60px', toggleable: true },
+  { key: 'loudness', label: 'Loudness', width: '100px', toggleable: true },
+  { key: 'album', label: 'Album', width: '1fr', toggleable: true },
+  { key: 'year', label: 'Year', width: '55px', toggleable: true },
+  { key: 'label', label: 'Label', width: '100px', toggleable: true },
+  { key: 'genres', label: 'Genres', width: '120px', toggleable: true },
+  { key: 'duration', label: 'Duration', width: '70px', toggleable: true },
 ];
 
-const DEFAULT_COL_VIS = { bpm: true, key_camelot: true, loudness: true, album: false, year: false, label: false, genres: false, duration: false };
+const DEFAULT_COL_VIS = {
+  bpm: true,
+  key_camelot: true,
+  loudness: true,
+  album: false,
+  year: false,
+  label: false,
+  genres: false,
+  duration: false,
+};
 
 function loadColVis() {
-  try { return { ...DEFAULT_COL_VIS, ...JSON.parse(localStorage.getItem(LS_COL_KEY) ?? '{}') }; }
-  catch { return { ...DEFAULT_COL_VIS }; }
+  try {
+    return { ...DEFAULT_COL_VIS, ...JSON.parse(localStorage.getItem(LS_COL_KEY) ?? '{}') };
+  } catch {
+    return { ...DEFAULT_COL_VIS };
+  }
 }
 
 function fmtDuration(secs) {
@@ -59,37 +71,64 @@ function fmtDuration(secs) {
 function renderCell(t, colKey) {
   const bpmValue = t.bpm_override ?? t.bpm;
   switch (colKey) {
-    case 'title':       return t.title;
-    case 'artist':      return t.artist || 'Unknown';
-    case 'bpm':         return bpmValue ?? '...';
-    case 'key_camelot': return t.key_camelot ?? '...';
-    case 'loudness':    return t.loudness != null ? t.loudness : '...';
-    case 'album':       return t.album || '—';
-    case 'year':        return t.year ?? '—';
-    case 'label':       return t.label || '—';
+    case 'title':
+      return t.title;
+    case 'artist':
+      return t.artist || 'Unknown';
+    case 'bpm':
+      return bpmValue ?? '...';
+    case 'key_camelot':
+      return t.key_camelot ?? '...';
+    case 'loudness':
+      return t.loudness != null ? t.loudness : '...';
+    case 'album':
+      return t.album || '—';
+    case 'year':
+      return t.year ?? '—';
+    case 'label':
+      return t.label || '—';
     case 'genres': {
-      try { return JSON.parse(t.genres ?? '[]').join(', ') || '—'; } catch { return '—'; }
+      try {
+        return JSON.parse(t.genres ?? '[]').join(', ') || '—';
+      } catch {
+        return '—';
+      }
     }
-    case 'duration':    return fmtDuration(t.duration);
-    default:            return t[colKey] ?? '—';
+    case 'duration':
+      return fmtDuration(t.duration);
+    default:
+      return t[colKey] ?? '—';
   }
 }
 
 function cellClass(colKey, t) {
-  const numeric = ['bpm','key_camelot','loudness','year','duration'].includes(colKey);
-  const over    = colKey === 'bpm' && t.bpm_override != null;
+  const numeric = ['bpm', 'key_camelot', 'loudness', 'year', 'duration'].includes(colKey);
+  const over = colKey === 'bpm' && t.bpm_override != null;
   return `cell ${colKey}${numeric ? ' numeric' : ''}${over ? ' bpm--overridden' : ''}`;
 }
 
 // ── LibraryRow — outside MusicLibrary so react-window doesn't remount on re-render ──
 function LibraryRow({ index, style, data }) {
-  const { tracks, selectedIds, currentTrackId, onRowClick, onDoubleClick, onContextMenu, visibleColumns, gridTemplate } = data;
+  const {
+    tracks,
+    selectedIds,
+    currentTrackId,
+    onRowClick,
+    onDoubleClick,
+    onContextMenu,
+    visibleColumns,
+    gridTemplate,
+  } = data;
   const t = tracks[index];
   if (!t) {
-    return <div style={{ ...style, gridTemplateColumns: gridTemplate }} className="row row-loading">Loading more tracks...</div>;
+    return (
+      <div style={{ ...style, gridTemplateColumns: gridTemplate }} className="row row-loading">
+        Loading more tracks...
+      </div>
+    );
   }
   const isSelected = selectedIds.has(t.id);
-  const isPlaying  = currentTrackId === t.id;
+  const isPlaying = currentTrackId === t.id;
   return (
     <div
       style={{ ...style, gridTemplateColumns: gridTemplate }}
@@ -99,19 +138,42 @@ function LibraryRow({ index, style, data }) {
       onDoubleClick={() => onDoubleClick(t, index)}
       onContextMenu={(e) => onContextMenu(e, t, index)}
     >
-      {visibleColumns.map(col => (
-        col.key === 'index'
-          ? <div key="index" className="cell index">{index + 1}</div>
-          : <div key={col.key} className={cellClass(col.key, t)}>{renderCell(t, col.key)}</div>
-      ))}
+      {visibleColumns.map((col) =>
+        col.key === 'index' ? (
+          <div key="index" className="cell index">
+            {index + 1}
+          </div>
+        ) : (
+          <div key={col.key} className={cellClass(col.key, t)}>
+            {renderCell(t, col.key)}
+          </div>
+        )
+      )}
     </div>
   );
 }
 
 // ── SortableRow — must be defined outside MusicLibrary to avoid remount ────
-function SortableRow({ t, index, isSelected, isPlaying, onRowClick, onDoubleClick, onContextMenu, visibleColumns, gridTemplate }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: t.id });
-  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1, gridTemplateColumns: gridTemplate };
+function SortableRow({
+  t,
+  index,
+  isSelected,
+  isPlaying,
+  onRowClick,
+  onDoubleClick,
+  onContextMenu,
+  visibleColumns,
+  gridTemplate,
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: t.id,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+    gridTemplateColumns: gridTemplate,
+  };
   return (
     <div
       ref={setNodeRef}
@@ -122,11 +184,17 @@ function SortableRow({ t, index, isSelected, isPlaying, onRowClick, onDoubleClic
       onDoubleClick={() => onDoubleClick(t, index)}
       onContextMenu={(e) => onContextMenu(e, t, index)}
     >
-      {visibleColumns.map(col => (
-        col.key === 'index'
-          ? <div key="index" className="cell index drag-handle" {...attributes} {...listeners}>⠿</div>
-          : <div key={col.key} className={cellClass(col.key, t)}>{renderCell(t, col.key)}</div>
-      ))}
+      {visibleColumns.map((col) =>
+        col.key === 'index' ? (
+          <div key="index" className="cell index drag-handle" {...attributes} {...listeners}>
+            ⠿
+          </div>
+        ) : (
+          <div key={col.key} className={cellClass(col.key, t)}>
+            {renderCell(t, col.key)}
+          </div>
+        )
+      )}
     </div>
   );
 }
@@ -170,11 +238,11 @@ function MusicLibrary({ selectedPlaylist }) {
   const lastSelectedIndexRef = useRef(null);
 
   const visibleColumns = useMemo(
-    () => ALL_COLUMNS.filter(c => !c.toggleable || colVis[c.key]),
+    () => ALL_COLUMNS.filter((c) => !c.toggleable || colVis[c.key]),
     [colVis]
   );
   const gridTemplate = useMemo(
-    () => visibleColumns.map(c => c.width).join(' '),
+    () => visibleColumns.map((c) => c.width).join(' '),
     [visibleColumns]
   );
 
@@ -307,10 +375,10 @@ function MusicLibrary({ selectedPlaylist }) {
       if ((e.key === 'Enter' || e.key === 'e') && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const target = e.target;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-        setSelectedIds(prev => {
+        setSelectedIds((prev) => {
           if (prev.size === 1) {
             const id = [...prev][0];
-            const track = sortedTracksRef.current.find(t => t.id === id);
+            const track = sortedTracksRef.current.find((t) => t.id === id);
             if (track) setDetailsTrack(track);
           }
           return prev;
@@ -355,7 +423,7 @@ function MusicLibrary({ selectedPlaylist }) {
       const rangeIds = sortedTracksRef.current.slice(start, end + 1).map((t) => t.id);
       setSelectedIds(new Set(rangeIds));
     } else {
-      setSelectedIds(prev => {
+      setSelectedIds((prev) => {
         // Re-clicking the sole selected track opens the details panel
         if (prev.size === 1 && prev.has(track.id)) {
           setDetailsTrack(track);
@@ -378,14 +446,16 @@ function MusicLibrary({ selectedPlaylist }) {
   const handleDetailsClose = useCallback(() => setDetailsTrack(null), []);
 
   const handleDetailsSave = useCallback((updatedTrack) => {
-    setTracks(prev => prev.map(t => t.id === updatedTrack.id ? { ...t, ...updatedTrack } : t));
+    setTracks((prev) =>
+      prev.map((t) => (t.id === updatedTrack.id ? { ...t, ...updatedTrack } : t))
+    );
     setDetailsTrack(updatedTrack);
   }, []);
 
   const handleDetailsPrev = useCallback(() => {
     const tracks = sortedTracksRef.current;
     if (!detailsTrack) return;
-    const idx = tracks.findIndex(t => t.id === detailsTrack.id);
+    const idx = tracks.findIndex((t) => t.id === detailsTrack.id);
     if (idx > 0) {
       setDetailsTrack(tracks[idx - 1]);
       setSelectedIds(new Set([tracks[idx - 1].id]));
@@ -395,7 +465,7 @@ function MusicLibrary({ selectedPlaylist }) {
   const handleDetailsNext = useCallback(() => {
     const tracks = sortedTracksRef.current;
     if (!detailsTrack) return;
-    const idx = tracks.findIndex(t => t.id === detailsTrack.id);
+    const idx = tracks.findIndex((t) => t.id === detailsTrack.id);
     if (idx >= 0 && idx < tracks.length - 1) {
       setDetailsTrack(tracks[idx + 1]);
       setSelectedIds(new Set([tracks[idx + 1].id]));
@@ -405,7 +475,7 @@ function MusicLibrary({ selectedPlaylist }) {
   // ── Column visibility ──────────────────────────────────────────────────────
 
   const toggleCol = useCallback((key) => {
-    setColVis(prev => {
+    setColVis((prev) => {
       const next = { ...prev, [key]: !prev[key] };
       localStorage.setItem(LS_COL_KEY, JSON.stringify(next));
       return next;
@@ -635,501 +705,509 @@ function MusicLibrary({ selectedPlaylist }) {
   return (
     <div className={`music-library${detailsTrack ? ' music-library--with-panel' : ''}`}>
       <div className="music-library__main">
-      <SearchBar value={search} onChange={setSearch} />
+        <SearchBar value={search} onChange={setSearch} />
 
-      {/* Playlist header bar */}
-      {isPlaylistView && playlistInfo && (
-        <div className="playlist-header-bar">
-          <span className="playlist-header-name">{playlistInfo.name}</span>
-          <span className="playlist-header-meta">
-            {playlistInfo.track_count} tracks · {formatDuration(playlistInfo.total_duration)}
-          </span>
-          {!sortSaved && (
-            <button className="btn-save-order" onClick={handleSaveOrder}>
-              💾 Save Order
-            </button>
-          )}
-        </div>
-      )}
-
-      <div className="header" style={{ gridTemplateColumns: gridTemplate }}>
-        {visibleColumns.map(col => (
-          <div
-            key={col.key}
-            className={`header-cell ${['bpm','key_camelot','loudness','year','duration'].includes(col.key) ? 'right' : ''}`}
-            onClick={() => handleSort(col.key)}
-          >
-            {col.label} {sortBy.key === col.key ? (sortBy.asc ? '▲' : '▼') : ''}
+        {/* Playlist header bar */}
+        {isPlaylistView && playlistInfo && (
+          <div className="playlist-header-bar">
+            <span className="playlist-header-name">{playlistInfo.name}</span>
+            <span className="playlist-header-meta">
+              {playlistInfo.track_count} tracks · {formatDuration(playlistInfo.total_duration)}
+            </span>
+            {!sortSaved && (
+              <button className="btn-save-order" onClick={handleSaveOrder}>
+                💾 Save Order
+              </button>
+            )}
           </div>
-        ))}
-        {/* Columns toggle button — sits outside the grid flow */}
-        <div className="header-col-toggle-wrap">
-          <button
-            className="btn-cols"
-            onClick={e => { e.stopPropagation(); setColsOpen(o => !o); }}
-            title="Show/hide columns"
-          >
-            ⊞
-          </button>
-          {colsOpen && (
-            <div className="col-dropdown" onMouseDown={e => e.stopPropagation()}>
-              {ALL_COLUMNS.filter(c => c.toggleable).map(col => (
-                <label key={col.key} className="col-dropdown__item">
-                  <input
-                    type="checkbox"
-                    checked={!!colVis[col.key]}
-                    onChange={() => toggleCol(col.key)}
-                  />
-                  {col.label}
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+        )}
 
-      {/* Playlist view: full DnD list */}
-      {isPlaylistView ? (
-        tracks.length === 0 ? (
-          <div className="playlist-empty-state">
-            No tracks in this playlist.
-            <br />
-            Right-click tracks in your library to add them.
-          </div>
-        ) : (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext
-              items={sortedTracks.map((t) => t.id)}
-              strategy={verticalListSortingStrategy}
+        <div className="header" style={{ gridTemplateColumns: gridTemplate }}>
+          {visibleColumns.map((col) => (
+            <div
+              key={col.key}
+              className={`header-cell ${['bpm', 'key_camelot', 'loudness', 'year', 'duration'].includes(col.key) ? 'right' : ''}`}
+              onClick={() => handleSort(col.key)}
             >
-              <div className="playlist-dnd-list">
-                {sortedTracks.map((t, index) => (
-                  <SortableRow
-                    key={t.id}
-                    t={t}
-                    index={index}
-                    isSelected={selectedIds.has(t.id)}
-                    isPlaying={playingTrackId === t.id}
-                    onRowClick={handleRowClick}
-                    onDoubleClick={handleDoubleClick}
-                    onContextMenu={handleContextMenu}
-                    visibleColumns={visibleColumns}
-                    gridTemplate={gridTemplate}
-                  />
+              {col.label} {sortBy.key === col.key ? (sortBy.asc ? '▲' : '▼') : ''}
+            </div>
+          ))}
+          {/* Columns toggle button — sits outside the grid flow */}
+          <div className="header-col-toggle-wrap">
+            <button
+              className="btn-cols"
+              onClick={(e) => {
+                e.stopPropagation();
+                setColsOpen((o) => !o);
+              }}
+              title="Show/hide columns"
+            >
+              ⊞
+            </button>
+            {colsOpen && (
+              <div className="col-dropdown" onMouseDown={(e) => e.stopPropagation()}>
+                {ALL_COLUMNS.filter((c) => c.toggleable).map((col) => (
+                  <label key={col.key} className="col-dropdown__item">
+                    <input
+                      type="checkbox"
+                      checked={!!colVis[col.key]}
+                      onChange={() => toggleCol(col.key)}
+                    />
+                    {col.label}
+                  </label>
                 ))}
               </div>
-            </SortableContext>
-            <DragOverlay>
-              {activeTrack && (
-                <div className="row row-drag-overlay" style={{ gridTemplateColumns: gridTemplate }}>
-                  <div className="cell index">⠿</div>
-                  <div className="cell title">{activeTrack.title}</div>
-                  <div className="cell artist">{activeTrack.artist || 'Unknown'}</div>
-                </div>
-              )}
-            </DragOverlay>
-          </DndContext>
-        )
-      ) : (
-        /* Library view: virtualised list */
-        <List
-          listRef={listRef}
-          defaultHeight={600}
-          rowCount={sortedTracks.length + (hasMore ? 1 : 0)}
-          rowHeight={ROW_HEIGHT}
-          width="100%"
-          onRowsRendered={handleItemsRendered}
-          className="track-list"
-          rowComponent={LibraryRow}
-          rowProps={{
-            tracks: sortedTracks,
-            selectedIds,
-            currentTrackId: playingTrackId,
-            onRowClick: handleRowClick,
-            onDoubleClick: handleDoubleClick,
-            onContextMenu: handleContextMenu,
-            visibleColumns,
-            gridTemplate,
-          }}
-        />
-      )}
+            )}
+          </div>
+        </div>
 
-      {contextMenu && (
-        <>
-          {contextMenu.overlayMode && (
-            <div
-              className="context-backdrop"
-              onClick={() => {
-                setContextMenu(null);
-                setDrillStack([]);
-              }}
-            />
-          )}
-          <div
-            className={[
-              'context-menu',
-              contextMenu.overlayMode ? 'context-menu--overlay' : '',
-              contextMenu.flipLeft ? 'context-menu--flip-left' : '',
-              contextMenu.flipUp ? 'context-menu--flip-up' : '',
-            ]
-              .filter(Boolean)
-              .join(' ')}
-            style={
-              contextMenu.overlayMode
-                ? undefined
-                : {
-                    top: contextMenu.y,
-                    left: contextMenu.x,
-                    '--submenu-max-h': `${contextMenu.submenuMaxH}px`,
-                  }
-            }
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            {/* ── Overlay drill-down view ── */}
-            {contextMenu.overlayMode && drillStack.length > 0 ? (
-              <>
-                <div
-                  className="context-menu__back"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDrillStack((prev) => prev.slice(0, -1));
-                  }}
-                >
-                  ‹ {drillStack.length > 1 ? drillStack[drillStack.length - 2].label : 'Back'}
-                </div>
-                <div className="context-menu-item context-menu-item--header">
-                  {drillStack[drillStack.length - 1].label}
-                </div>
-                {drillStack[drillStack.length - 1].content}
-              </>
-            ) : (
-              <>
-                {/* ── Add to playlist ── */}
-                {playlistSubmenu !== null &&
-                  (playlistSubmenu.length === 0 ? (
-                    <div className="context-menu-item context-menu-item--disabled">
-                      ➕ No playlists
-                    </div>
-                  ) : (
-                    <SubItem id="add-to-playlist" label="➕ Add to playlist">
-                      {playlistSubmenu.map((pl) => (
-                        <div
-                          key={pl.id}
-                          className={`context-menu-item${pl.is_member ? ' context-menu-item--checked' : ''}`}
-                          onClick={() =>
-                            !pl.is_member &&
-                            handleAddToPlaylist(pl.id, contextMenu?.targetIds ?? [])
-                          }
-                        >
-                          {pl.color && (
-                            <span className="ctx-color-dot" style={{ background: pl.color }} />
-                          )}
-                          {pl.is_member ? '✓ ' : ''}
-                          {pl.name}
-                        </div>
-                      ))}
-                    </SubItem>
+        {/* Playlist view: full DnD list */}
+        {isPlaylistView ? (
+          tracks.length === 0 ? (
+            <div className="playlist-empty-state">
+              No tracks in this playlist.
+              <br />
+              Right-click tracks in your library to add them.
+            </div>
+          ) : (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={sortedTracks.map((t) => t.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                <div className="playlist-dnd-list">
+                  {sortedTracks.map((t, index) => (
+                    <SortableRow
+                      key={t.id}
+                      t={t}
+                      index={index}
+                      isSelected={selectedIds.has(t.id)}
+                      isPlaying={playingTrackId === t.id}
+                      onRowClick={handleRowClick}
+                      onDoubleClick={handleDoubleClick}
+                      onContextMenu={handleContextMenu}
+                      visibleColumns={visibleColumns}
+                      gridTemplate={gridTemplate}
+                    />
                   ))}
+                </div>
+              </SortableContext>
+              <DragOverlay>
+                {activeTrack && (
+                  <div
+                    className="row row-drag-overlay"
+                    style={{ gridTemplateColumns: gridTemplate }}
+                  >
+                    <div className="cell index">⠿</div>
+                    <div className="cell title">{activeTrack.title}</div>
+                    <div className="cell artist">{activeTrack.artist || 'Unknown'}</div>
+                  </div>
+                )}
+              </DragOverlay>
+            </DndContext>
+          )
+        ) : (
+          /* Library view: virtualised list */
+          <List
+            listRef={listRef}
+            defaultHeight={600}
+            rowCount={sortedTracks.length + (hasMore ? 1 : 0)}
+            rowHeight={ROW_HEIGHT}
+            width="100%"
+            onRowsRendered={handleItemsRendered}
+            className="track-list"
+            rowComponent={LibraryRow}
+            rowProps={{
+              tracks: sortedTracks,
+              selectedIds,
+              currentTrackId: playingTrackId,
+              onRowClick: handleRowClick,
+              onDoubleClick: handleDoubleClick,
+              onContextMenu: handleContextMenu,
+              visibleColumns,
+              gridTemplate,
+            }}
+          />
+        )}
 
-                {/* ── Find similar ── */}
-                {contextMenu.targetTracks?.length > 0 && (
-                  <SubItem id="find-similar" label="🔍 Find similar" wide>
-                    {contextMenu.targetTracks.length === 1 ? (
-                      /* ── Single-track options ── */
-                      <>
-                        {contextMenu.track.key_camelot && (
-                          <>
-                            <div className="context-menu-item context-menu-item--header">
-                              🎹 Key: {contextMenu.track.key_camelot.toUpperCase()}
-                            </div>
-                            <div
-                              className="context-menu-item"
-                              onClick={() =>
-                                handleFindSimilar(
-                                  `KEY is ${contextMenu.track.key_camelot.toUpperCase()}`
-                                )
-                              }
-                            >
-                              Same key
-                            </div>
-                            <div
-                              className="context-menu-item"
-                              onClick={() =>
-                                handleFindSimilar(
-                                  `KEY adjacent ${contextMenu.track.key_camelot.toUpperCase()}`
-                                )
-                              }
-                            >
-                              Adjacent — energy shift
-                            </div>
-                            <div
-                              className="context-menu-item"
-                              onClick={() =>
-                                handleFindSimilar(
-                                  `KEY mode switch ${contextMenu.track.key_camelot.toUpperCase()}`
-                                )
-                              }
-                            >
-                              Mode switch — minor↔major
-                            </div>
-                            <div
-                              className="context-menu-item"
-                              onClick={() =>
-                                handleFindSimilar(
-                                  `KEY matches ${contextMenu.track.key_camelot.toUpperCase()}`
-                                )
-                              }
-                            >
-                              All compatible keys
-                            </div>
-                          </>
-                        )}
-                        {(contextMenu.track.bpm_override ?? contextMenu.track.bpm) != null &&
-                          (() => {
-                            const bpm = Math.round(
-                              contextMenu.track.bpm_override ?? contextMenu.track.bpm
-                            );
-                            return (
-                              <>
-                                {contextMenu.track.key_camelot && (
-                                  <div className="context-menu-separator" />
-                                )}
-                                <div className="context-menu-item context-menu-item--header">
-                                  ♩ BPM: {bpm}
-                                </div>
-                                <div
-                                  className="context-menu-item"
-                                  onClick={() => handleFindSimilar(`BPM is ${bpm}`)}
-                                >
-                                  Exact BPM
-                                </div>
-                                <div
-                                  className="context-menu-item"
-                                  onClick={() =>
-                                    handleFindSimilar(`BPM in range ${bpm - 5}-${bpm + 5}`)
-                                  }
-                                >
-                                  Similar BPM (±5)
-                                </div>
-                                <div
-                                  className="context-menu-item"
-                                  onClick={() =>
-                                    handleFindSimilar(`BPM in range ${bpm - 2}-${bpm + 2}`)
-                                  }
-                                >
-                                  Very similar BPM (±2)
-                                </div>
-                              </>
-                            );
-                          })()}
-                        {contextMenu.track.key_camelot &&
-                          (contextMenu.track.bpm_override ?? contextMenu.track.bpm) != null &&
-                          (() => {
-                            const bpm = Math.round(
-                              contextMenu.track.bpm_override ?? contextMenu.track.bpm
-                            );
-                            return (
-                              <>
-                                <div className="context-menu-separator" />
-                                <div className="context-menu-item context-menu-item--header">
-                                  🎯 Combined
-                                </div>
-                                <div
-                                  className="context-menu-item"
-                                  onClick={() =>
-                                    handleFindSimilar(
-                                      `KEY matches ${contextMenu.track.key_camelot.toUpperCase()} AND BPM in range ${bpm - 5}-${bpm + 5}`
-                                    )
-                                  }
-                                >
-                                  Compatible key + similar BPM
-                                </div>
-                              </>
-                            );
-                          })()}
-                        {(() => {
-                          try {
-                            const genres = JSON.parse(contextMenu.track.genres ?? '[]');
-                            if (!genres.length) return null;
-                            return (
-                              <>
-                                <div className="context-menu-separator" />
-                                <div className="context-menu-item context-menu-item--header">
-                                  🏷 Genre
-                                </div>
-                                {genres.slice(0, 3).map((g) => (
-                                  <div
-                                    key={g}
-                                    className="context-menu-item"
-                                    onClick={() => handleFindSimilar(`GENRE is ${g}`)}
-                                  >
-                                    {g}
-                                  </div>
-                                ))}
-                              </>
-                            );
-                          } catch {
-                            return null;
-                          }
-                        })()}
-                      </>
+        {contextMenu && (
+          <>
+            {contextMenu.overlayMode && (
+              <div
+                className="context-backdrop"
+                onClick={() => {
+                  setContextMenu(null);
+                  setDrillStack([]);
+                }}
+              />
+            )}
+            <div
+              className={[
+                'context-menu',
+                contextMenu.overlayMode ? 'context-menu--overlay' : '',
+                contextMenu.flipLeft ? 'context-menu--flip-left' : '',
+                contextMenu.flipUp ? 'context-menu--flip-up' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              style={
+                contextMenu.overlayMode
+                  ? undefined
+                  : {
+                      top: contextMenu.y,
+                      left: contextMenu.x,
+                      '--submenu-max-h': `${contextMenu.submenuMaxH}px`,
+                    }
+              }
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              {/* ── Overlay drill-down view ── */}
+              {contextMenu.overlayMode && drillStack.length > 0 ? (
+                <>
+                  <div
+                    className="context-menu__back"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDrillStack((prev) => prev.slice(0, -1));
+                    }}
+                  >
+                    ‹ {drillStack.length > 1 ? drillStack[drillStack.length - 2].label : 'Back'}
+                  </div>
+                  <div className="context-menu-item context-menu-item--header">
+                    {drillStack[drillStack.length - 1].label}
+                  </div>
+                  {drillStack[drillStack.length - 1].content}
+                </>
+              ) : (
+                <>
+                  {/* ── Add to playlist ── */}
+                  {playlistSubmenu !== null &&
+                    (playlistSubmenu.length === 0 ? (
+                      <div className="context-menu-item context-menu-item--disabled">
+                        ➕ No playlists
+                      </div>
                     ) : (
-                      /* ── Multi-track options only ── */
-                      (() => {
-                        const tt = contextMenu.targetTracks;
-                        const bpms = tt
-                          .map((t) => t.bpm_override ?? t.bpm)
-                          .filter((b) => b != null)
-                          .map((b) => Math.round(b));
-                        const keys = tt.map((t) => t.key_camelot).filter(Boolean);
-                        const allGenres = tt.flatMap((t) => {
-                          try {
-                            return JSON.parse(t.genres ?? '[]');
-                          } catch {
-                            return [];
-                          }
-                        });
-                        const genreCount = allGenres.reduce((acc, g) => {
-                          acc[g] = (acc[g] ?? 0) + 1;
-                          return acc;
-                        }, {});
-                        const topGenres = Object.entries(genreCount)
-                          .sort((a, b) => b[1] - a[1])
-                          .slice(0, 3)
-                          .map(([g]) => g);
-                        const keyCounts = keys.reduce((acc, k) => {
-                          const n = k.toLowerCase();
-                          acc[n] = (acc[n] ?? 0) + 1;
-                          return acc;
-                        }, {});
-                        const topKey = Object.entries(keyCounts).sort(
-                          (a, b) => b[1] - a[1]
-                        )[0]?.[0];
-                        const bpmMin = bpms.length ? Math.min(...bpms) : null;
-                        const bpmMax = bpms.length ? Math.max(...bpms) : null;
-                        return (
-                          <>
-                            <div className="context-menu-item context-menu-item--header">
-                              📦 {tt.length} tracks selected
-                            </div>
-                            {bpms.length > 0 && bpmMin !== bpmMax && (
-                              <div
-                                className="context-menu-item"
-                                onClick={() =>
-                                  handleFindSimilar(`BPM in range ${bpmMin}-${bpmMax}`)
-                                }
-                              >
-                                BPM range {bpmMin}–{bpmMax}
-                              </div>
+                      <SubItem id="add-to-playlist" label="➕ Add to playlist">
+                        {playlistSubmenu.map((pl) => (
+                          <div
+                            key={pl.id}
+                            className={`context-menu-item${pl.is_member ? ' context-menu-item--checked' : ''}`}
+                            onClick={() =>
+                              !pl.is_member &&
+                              handleAddToPlaylist(pl.id, contextMenu?.targetIds ?? [])
+                            }
+                          >
+                            {pl.color && (
+                              <span className="ctx-color-dot" style={{ background: pl.color }} />
                             )}
-                            {bpms.length > 0 && bpmMin === bpmMax && (
-                              <div
-                                className="context-menu-item"
-                                onClick={() => handleFindSimilar(`BPM is ${bpmMin}`)}
-                              >
-                                BPM {bpmMin} (all same)
+                            {pl.is_member ? '✓ ' : ''}
+                            {pl.name}
+                          </div>
+                        ))}
+                      </SubItem>
+                    ))}
+
+                  {/* ── Find similar ── */}
+                  {contextMenu.targetTracks?.length > 0 && (
+                    <SubItem id="find-similar" label="🔍 Find similar" wide>
+                      {contextMenu.targetTracks.length === 1 ? (
+                        /* ── Single-track options ── */
+                        <>
+                          {contextMenu.track.key_camelot && (
+                            <>
+                              <div className="context-menu-item context-menu-item--header">
+                                🎹 Key: {contextMenu.track.key_camelot.toUpperCase()}
                               </div>
-                            )}
-                            {topKey && (
-                              <div
-                                className="context-menu-item"
-                                onClick={() =>
-                                  handleFindSimilar(`KEY matches ${topKey.toUpperCase()}`)
-                                }
-                              >
-                                Keys compatible with {topKey.toUpperCase()}
-                              </div>
-                            )}
-                            {topKey && bpms.length > 0 && (
                               <div
                                 className="context-menu-item"
                                 onClick={() =>
                                   handleFindSimilar(
-                                    `KEY matches ${topKey.toUpperCase()} AND BPM in range ${bpmMin}-${bpmMax}`
+                                    `KEY is ${contextMenu.track.key_camelot.toUpperCase()}`
                                   )
                                 }
                               >
-                                Compatible key + BPM range
+                                Same key
                               </div>
-                            )}
-                            {topGenres.map((g) => (
                               <div
-                                key={g}
                                 className="context-menu-item"
-                                onClick={() => handleFindSimilar(`GENRE is ${g}`)}
+                                onClick={() =>
+                                  handleFindSimilar(
+                                    `KEY adjacent ${contextMenu.track.key_camelot.toUpperCase()}`
+                                  )
+                                }
                               >
-                                Genre: {g}
+                                Adjacent — energy shift
                               </div>
-                            ))}
-                          </>
-                        );
-                      })()
-                    )}
-                  </SubItem>
-                )}
+                              <div
+                                className="context-menu-item"
+                                onClick={() =>
+                                  handleFindSimilar(
+                                    `KEY mode switch ${contextMenu.track.key_camelot.toUpperCase()}`
+                                  )
+                                }
+                              >
+                                Mode switch — minor↔major
+                              </div>
+                              <div
+                                className="context-menu-item"
+                                onClick={() =>
+                                  handleFindSimilar(
+                                    `KEY matches ${contextMenu.track.key_camelot.toUpperCase()}`
+                                  )
+                                }
+                              >
+                                All compatible keys
+                              </div>
+                            </>
+                          )}
+                          {(contextMenu.track.bpm_override ?? contextMenu.track.bpm) != null &&
+                            (() => {
+                              const bpm = Math.round(
+                                contextMenu.track.bpm_override ?? contextMenu.track.bpm
+                              );
+                              return (
+                                <>
+                                  {contextMenu.track.key_camelot && (
+                                    <div className="context-menu-separator" />
+                                  )}
+                                  <div className="context-menu-item context-menu-item--header">
+                                    ♩ BPM: {bpm}
+                                  </div>
+                                  <div
+                                    className="context-menu-item"
+                                    onClick={() => handleFindSimilar(`BPM is ${bpm}`)}
+                                  >
+                                    Exact BPM
+                                  </div>
+                                  <div
+                                    className="context-menu-item"
+                                    onClick={() =>
+                                      handleFindSimilar(`BPM in range ${bpm - 5}-${bpm + 5}`)
+                                    }
+                                  >
+                                    Similar BPM (±5)
+                                  </div>
+                                  <div
+                                    className="context-menu-item"
+                                    onClick={() =>
+                                      handleFindSimilar(`BPM in range ${bpm - 2}-${bpm + 2}`)
+                                    }
+                                  >
+                                    Very similar BPM (±2)
+                                  </div>
+                                </>
+                              );
+                            })()}
+                          {contextMenu.track.key_camelot &&
+                            (contextMenu.track.bpm_override ?? contextMenu.track.bpm) != null &&
+                            (() => {
+                              const bpm = Math.round(
+                                contextMenu.track.bpm_override ?? contextMenu.track.bpm
+                              );
+                              return (
+                                <>
+                                  <div className="context-menu-separator" />
+                                  <div className="context-menu-item context-menu-item--header">
+                                    🎯 Combined
+                                  </div>
+                                  <div
+                                    className="context-menu-item"
+                                    onClick={() =>
+                                      handleFindSimilar(
+                                        `KEY matches ${contextMenu.track.key_camelot.toUpperCase()} AND BPM in range ${bpm - 5}-${bpm + 5}`
+                                      )
+                                    }
+                                  >
+                                    Compatible key + similar BPM
+                                  </div>
+                                </>
+                              );
+                            })()}
+                          {(() => {
+                            try {
+                              const genres = JSON.parse(contextMenu.track.genres ?? '[]');
+                              if (!genres.length) return null;
+                              return (
+                                <>
+                                  <div className="context-menu-separator" />
+                                  <div className="context-menu-item context-menu-item--header">
+                                    🏷 Genre
+                                  </div>
+                                  {genres.slice(0, 3).map((g) => (
+                                    <div
+                                      key={g}
+                                      className="context-menu-item"
+                                      onClick={() => handleFindSimilar(`GENRE is ${g}`)}
+                                    >
+                                      {g}
+                                    </div>
+                                  ))}
+                                </>
+                              );
+                            } catch {
+                              return null;
+                            }
+                          })()}
+                        </>
+                      ) : (
+                        /* ── Multi-track options only ── */
+                        (() => {
+                          const tt = contextMenu.targetTracks;
+                          const bpms = tt
+                            .map((t) => t.bpm_override ?? t.bpm)
+                            .filter((b) => b != null)
+                            .map((b) => Math.round(b));
+                          const keys = tt.map((t) => t.key_camelot).filter(Boolean);
+                          const allGenres = tt.flatMap((t) => {
+                            try {
+                              return JSON.parse(t.genres ?? '[]');
+                            } catch {
+                              return [];
+                            }
+                          });
+                          const genreCount = allGenres.reduce((acc, g) => {
+                            acc[g] = (acc[g] ?? 0) + 1;
+                            return acc;
+                          }, {});
+                          const topGenres = Object.entries(genreCount)
+                            .sort((a, b) => b[1] - a[1])
+                            .slice(0, 3)
+                            .map(([g]) => g);
+                          const keyCounts = keys.reduce((acc, k) => {
+                            const n = k.toLowerCase();
+                            acc[n] = (acc[n] ?? 0) + 1;
+                            return acc;
+                          }, {});
+                          const topKey = Object.entries(keyCounts).sort(
+                            (a, b) => b[1] - a[1]
+                          )[0]?.[0];
+                          const bpmMin = bpms.length ? Math.min(...bpms) : null;
+                          const bpmMax = bpms.length ? Math.max(...bpms) : null;
+                          return (
+                            <>
+                              <div className="context-menu-item context-menu-item--header">
+                                📦 {tt.length} tracks selected
+                              </div>
+                              {bpms.length > 0 && bpmMin !== bpmMax && (
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleFindSimilar(`BPM in range ${bpmMin}-${bpmMax}`)
+                                  }
+                                >
+                                  BPM range {bpmMin}–{bpmMax}
+                                </div>
+                              )}
+                              {bpms.length > 0 && bpmMin === bpmMax && (
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() => handleFindSimilar(`BPM is ${bpmMin}`)}
+                                >
+                                  BPM {bpmMin} (all same)
+                                </div>
+                              )}
+                              {topKey && (
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleFindSimilar(`KEY matches ${topKey.toUpperCase()}`)
+                                  }
+                                >
+                                  Keys compatible with {topKey.toUpperCase()}
+                                </div>
+                              )}
+                              {topKey && bpms.length > 0 && (
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleFindSimilar(
+                                      `KEY matches ${topKey.toUpperCase()} AND BPM in range ${bpmMin}-${bpmMax}`
+                                    )
+                                  }
+                                >
+                                  Compatible key + BPM range
+                                </div>
+                              )}
+                              {topGenres.map((g) => (
+                                <div
+                                  key={g}
+                                  className="context-menu-item"
+                                  onClick={() => handleFindSimilar(`GENRE is ${g}`)}
+                                >
+                                  Genre: {g}
+                                </div>
+                              ))}
+                            </>
+                          );
+                        })()
+                      )}
+                    </SubItem>
+                  )}
 
-                {/* ── separator ── */}
-                <div className="context-menu-separator" />
-
-                {/* ── Analysis submenu ── */}
-                <SubItem id="analysis" label={`🔬 Analysis${selectionLabel}`}>
-                  <div className="context-menu-item" onClick={handleReanalyze}>
-                    🔄 Re-analyze
-                  </div>
+                  {/* ── separator ── */}
                   <div className="context-menu-separator" />
-                  <SubItem id="bpm" label="🎵 BPM">
-                    <div className="context-menu-item" onClick={() => handleBpmAdjust(2)}>
-                      ✕2 Double BPM
+
+                  {/* ── Analysis submenu ── */}
+                  <SubItem id="analysis" label={`🔬 Analysis${selectionLabel}`}>
+                    <div className="context-menu-item" onClick={handleReanalyze}>
+                      🔄 Re-analyze
                     </div>
-                    <div className="context-menu-item" onClick={() => handleBpmAdjust(0.5)}>
-                      ÷2 Halve BPM
-                    </div>
+                    <div className="context-menu-separator" />
+                    <SubItem id="bpm" label="🎵 BPM">
+                      <div className="context-menu-item" onClick={() => handleBpmAdjust(2)}>
+                        ✕2 Double BPM
+                      </div>
+                      <div className="context-menu-item" onClick={() => handleBpmAdjust(0.5)}>
+                        ÷2 Halve BPM
+                      </div>
+                    </SubItem>
                   </SubItem>
-                </SubItem>
 
-                {/* ── Remove ── */}
-                {isPlaylistView ? (
-                  <div
-                    className="context-menu-item context-menu-item--danger"
-                    onClick={handleRemoveFromPlaylist}
-                  >
-                    ➖ Remove from playlist{selectionLabel}
-                  </div>
-                ) : (
-                  <div
-                    className="context-menu-item context-menu-item--danger"
-                    onClick={handleRemove}
-                  >
-                    🗑️ Remove from library{selectionLabel}
-                  </div>
-                )}
-              </>
-            )}{' '}
-            {/* end drill-down conditional */}
-          </div>
-        </>
-      )}
-      </div>{/* end .music-library__main */}
+                  {/* ── Remove ── */}
+                  {isPlaylistView ? (
+                    <div
+                      className="context-menu-item context-menu-item--danger"
+                      onClick={handleRemoveFromPlaylist}
+                    >
+                      ➖ Remove from playlist{selectionLabel}
+                    </div>
+                  ) : (
+                    <div
+                      className="context-menu-item context-menu-item--danger"
+                      onClick={handleRemove}
+                    >
+                      🗑️ Remove from library{selectionLabel}
+                    </div>
+                  )}
+                </>
+              )}{' '}
+              {/* end drill-down conditional */}
+            </div>
+          </>
+        )}
+      </div>
+      {/* end .music-library__main */}
 
-      {detailsTrack && (() => {
-        const idx = sortedTracksRef.current.findIndex(t => t.id === detailsTrack.id);
-        return (
-          <TrackDetails
-            track={detailsTrack}
-            onSave={handleDetailsSave}
-            onCancel={handleDetailsClose}
-            onPrev={handleDetailsPrev}
-            onNext={handleDetailsNext}
-            hasPrev={idx > 0}
-            hasNext={idx >= 0 && idx < sortedTracksRef.current.length - 1}
-          />
-        );
-      })()}
+      {detailsTrack &&
+        (() => {
+          const idx = sortedTracksRef.current.findIndex((t) => t.id === detailsTrack.id);
+          return (
+            <TrackDetails
+              track={detailsTrack}
+              onSave={handleDetailsSave}
+              onCancel={handleDetailsClose}
+              onPrev={handleDetailsPrev}
+              onNext={handleDetailsNext}
+              hasPrev={idx > 0}
+              hasNext={idx >= 0 && idx < sortedTracksRef.current.length - 1}
+            />
+          );
+        })()}
     </div>
   );
 }

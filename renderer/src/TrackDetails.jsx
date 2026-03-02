@@ -30,7 +30,15 @@ function trackToForm(track) {
   };
 }
 
-export default function TrackDetails({ track, onSave, onCancel, onPrev, onNext, hasPrev, hasNext }) {
+export default function TrackDetails({
+  track,
+  onSave,
+  onCancel,
+  onPrev,
+  onNext,
+  hasPrev,
+  hasNext,
+}) {
   const [form, setForm] = useState(() => trackToForm(track));
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -126,7 +134,10 @@ export default function TrackDetails({ track, onSave, onCancel, onPrev, onNext, 
       <div className="track-details__info">
         <div className="track-details__info-row">
           <span>BPM</span>
-          <span>{track.bpm_override ?? track.bpm ?? '—'}{track.bpm_override != null ? ' *' : ''}</span>
+          <span>
+            {track.bpm_override ?? track.bpm ?? '—'}
+            {track.bpm_override != null ? ' *' : ''}
+          </span>
         </div>
         <div className="track-details__info-row">
           <span>Key</span>
