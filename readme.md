@@ -73,10 +73,26 @@ git clone https://github.com/Radexito/djman.git
 cd djman
 npm install
 cd renderer && npm install && cd ..
-npm start
+npm run dev
 ```
 
 FFmpeg and mixxx-analyzer are downloaded automatically to `~/.config/djman/bin/` on first run.
+
+### Other useful commands
+
+| Command                 | What it does                                                        |
+| ----------------------- | ------------------------------------------------------------------- |
+| `npm run dev`           | Start Electron + Vite dev server together (default for development) |
+| `npm run react`         | Start the Vite renderer only (UI dev without Electron)              |
+| `npm run build`         | Build the renderer for production                                   |
+| `npm run electron-prod` | Run Electron against the production build                           |
+| `npm run dist`          | Build + package for the current platform                            |
+| `npm run dist:linux`    | Build + package for Linux (AppImage)                                |
+| `npm run dist:win`      | Build + package for Windows (NSIS installer)                        |
+| `npm run dist:mac`      | Build + package for macOS (DMG)                                     |
+| `npm run lint:all`      | Lint main process + renderer                                        |
+| `npm test`              | Run unit tests (Vitest)                                             |
+| `npm run test:e2e`      | Run E2E tests (Playwright)                                          |
 
 ---
 
