@@ -130,10 +130,10 @@
     "electron": "^40.6.1",
     "electron-builder": "^26.8.1",
     "electron-rebuild": "^3.2.9",
-    "eslint": "^10.0.2",
+    "eslint": "^10.0.3",
     "globals": "^17.4.0",
     "husky": "^9.1.7",
-    "lint-staged": "^16.3.1",
+    "lint-staged": "^16.3.2",
     "prettier": "^3.8.1",
     "vitest": "^4.0.18",
     "wait-on": "^9.0.4"
