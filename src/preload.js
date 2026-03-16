@@ -34,6 +34,27 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('export-m3u-progress', handler);
   },
 
+  // USB / Rekordbox export
+  checkUsbFormat: (mountPath) => ipcRenderer.invoke('check-usb-format', mountPath),
+  formatUsb: (opts) => ipcRenderer.invoke('format-usb', opts),
+  exportRekordbox: (opts) => ipcRenderer.invoke('export-rekordbox', opts),
+  exportAll: (opts) => ipcRenderer.invoke('export-all', opts),
+  onFormatUsbProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('format-usb-progress', handler);
+    return () => ipcRenderer.removeListener('format-usb-progress', handler);
+  },
+  onExportRekordboxProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('export-rekordbox-progress', handler);
+    return () => ipcRenderer.removeListener('export-rekordbox-progress', handler);
+  },
+  onExportAllProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('export-all-progress', handler);
+    return () => ipcRenderer.removeListener('export-all-progress', handler);
+  },
+
   // Settings
   getSetting: (key, def) => ipcRenderer.invoke('get-setting', key, def),
   setSetting: (key, value) => ipcRenderer.invoke('set-setting', key, value),
