@@ -30,6 +30,7 @@ import {
 } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import { importAudioFile, spawnAnalysis, getLibraryBase } from './audio/importManager.js';
+import { searchMusicBrainz, searchDiscogs } from './audio/autoTagger.js';
 import { ensureDeps } from './deps.js';
 import { getInstalledVersions, checkForUpdates, updateAnalyzer, updateAll } from './deps.js';
 import { initLogger, getLogDir } from './logger.js';
@@ -456,6 +457,24 @@ ipcMain.handle('update-all-deps', async (_event) => {
     if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
   });
   if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+});
+
+// ─── Auto-tagger ──────────────────────────────────────────────────────────────
+
+ipcMain.handle('auto-tag-search', async (_, { query }) => {
+  try {
+    const [mbRes, discogsRes] = await Promise.allSettled([
+      searchMusicBrainz(query),
+      searchDiscogs(query),
+    ]);
+    const results = [
+      ...(mbRes.status === 'fulfilled' ? mbRes.value : []),
+      ...(discogsRes.status === 'fulfilled' ? discogsRes.value : []),
+    ];
+    return { ok: true, results };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 
 app.on('ready', initApp);
