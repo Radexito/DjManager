@@ -180,3 +180,6 @@ playwright-report/
 # System shared libraries
 *.so
 *.so.*
+
+build-resources/rekordbox-exporter
+build-resources/rekordbox-exporter.exe
