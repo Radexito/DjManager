@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import './TrackDetails.css';
+import AutoTaggerModal from './AutoTaggerModal.jsx';
 
 const EDITABLE_FIELDS = [
   { key: 'title', label: 'Title', type: 'text', bulkSupported: false },
@@ -56,6 +57,7 @@ export default function TrackDetails({
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [showAutoTagger, setShowAutoTagger] = useState(false);
 
   // Reset form when track/tracks changes
   useEffect(() => {
@@ -180,6 +182,16 @@ export default function TrackDetails({
 
       {!isBulk && (
         <div className="track-details__info">
+          <div className="track-details__info-header">
+            <span className="track-details__info-title">Track Info</span>
+            <button
+              className="track-details__autotag-btn"
+              onClick={() => setShowAutoTagger(true)}
+              title="Fetch metadata from MusicBrainz or Discogs"
+            >
+              🔍 Auto-tag
+            </button>
+          </div>
           <div className="track-details__info-row">
             <span>BPM</span>
             <span>
@@ -248,6 +260,32 @@ export default function TrackDetails({
           </button>
         </div>
       </div>
+
+      {showAutoTagger && (
+        <AutoTaggerModal
+          track={track}
+          onClose={() => setShowAutoTagger(false)}
+          onApply={(update) => {
+            // Merge result into form fields (convert genres array → comma string)
+            const merged = { ...form };
+            if (update.title != null) merged.title = update.title;
+            if (update.artist != null) merged.artist = update.artist;
+            if (update.album != null) merged.album = update.album;
+            if (update.label != null) merged.label = update.label;
+            if (update.year != null) merged.year = String(update.year);
+            if (update.genres != null) {
+              try {
+                merged.genres = JSON.parse(update.genres).join(', ');
+              } catch {
+                merged.genres = update.genres;
+              }
+            }
+            setForm(merged);
+            setDirty(true);
+            setShowAutoTagger(false);
+          }}
+        />
+      )}
     </div>
   );
 }
