@@ -108,6 +108,10 @@
 .at-error {
   color: #f38ba8;
 }
+.at-error--inline {
+  padding: 4px 0 0;
+  text-align: left;
+}
 
 /* Result card */
 .at-result-card {
