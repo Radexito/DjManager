@@ -461,10 +461,16 @@ ipcMain.handle('update-all-deps', async (_event) => {
 
 // ─── Auto-tagger ──────────────────────────────────────────────────────────────
 
-ipcMain.handle('auto-tag-search', async (_, { query, source }) => {
+ipcMain.handle('auto-tag-search', async (_, { query }) => {
   try {
-    const results =
-      source === 'Discogs' ? await searchDiscogs(query) : await searchMusicBrainz(query);
+    const [mbRes, discogsRes] = await Promise.allSettled([
+      searchMusicBrainz(query),
+      searchDiscogs(query),
+    ]);
+    const results = [
+      ...(mbRes.status === 'fulfilled' ? mbRes.value : []),
+      ...(discogsRes.status === 'fulfilled' ? discogsRes.value : []),
+    ];
     return { ok: true, results };
   } catch (err) {
     return { ok: false, error: err.message };
