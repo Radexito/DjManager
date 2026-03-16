@@ -105,6 +105,36 @@
   gap: 4px;
 }
 
+.track-details__info-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.track-details__info-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.track-details__autotag-btn {
+  background: none;
+  border: 1px solid #444;
+  color: #89b4fa;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.track-details__autotag-btn:hover {
+  background: #313244;
+}
+
 .track-details__info-row {
   display: flex;
   justify-content: space-between;
