@@ -71,7 +71,7 @@ import { initLogger, getLogDir } from './logger.js';
 import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
 import { writeAnlz } from './audio/anlzWriter.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
-import { spawn } from 'child_process';
+import { writePdb } from './usb/pdbWriter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -709,23 +709,6 @@ ipcMain.handle('format-usb', async (_, { device, mountPoint }) => {
   }
 });
 
-/** Locates the rekordbox-exporter binary (same convention as mixxx-analyzer). */
-function findRekordboxExporter() {
-  const ext = process.platform === 'win32' ? '.exe' : '';
-  const name = `rekordbox-exporter${ext}`;
-
-  // Runtime path (alongside mixxx-analyzer)
-  const binDir = path.join(app.getPath('userData'), 'bin');
-  const runtime = path.join(binDir, name);
-  if (fs.existsSync(runtime)) return runtime;
-
-  // Dev path
-  const dev = path.resolve(__dirname, '..', 'build-resources', name);
-  if (fs.existsSync(dev)) return dev;
-
-  return null;
-}
-
 /** Copies a track's audio file to {usbRoot}/music/, returns the USB path or null on error. */
 function copyTrackToUsb(track, usbRoot, usedNames) {
   const ext = path.extname(track.file_path || '');
@@ -749,29 +732,10 @@ function copyTrackToUsb(track, usbRoot, usedNames) {
   return `/music/${finalName}`;
 }
 
-/** Invokes the Go rekordbox-exporter binary via stdin/stdout. */
-async function runPdbExporter(payload, usbRoot) {
-  const exporter = findRekordboxExporter();
-  if (!exporter) throw new Error('rekordbox-exporter binary not found. Build it first.');
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(exporter, [], { cwd: usbRoot });
-    let stderr = '';
-    child.stdin.write(JSON.stringify(payload));
-    child.stdin.end();
-    child.stderr.on('data', (d) => (stderr += d));
-    child.stdout.on('data', (d) => {
-      const lines = d.toString().trim().split('\n');
-      for (const line of lines) {
-        if (line) send('export-rekordbox-progress', { msg: line });
-      }
-    });
-    child.on('close', (code) => {
-      if (code !== 0) reject(new Error(stderr || `exporter exited with code ${code}`));
-      else resolve();
-    });
-    child.on('error', reject);
-  });
+/** Writes the Rekordbox PDB database file using the pure-JS writer. */
+function runPdbExporter(payload, usbRoot) {
+  const outputPath = path.join(usbRoot, 'PIONEER', 'rekordbox', 'export.pdb');
+  writePdb(payload, outputPath);
 }
 
 ipcMain.handle('export-rekordbox', async (_, { usbRoot, playlistIds, playlistId }) => {
@@ -857,7 +821,7 @@ ipcMain.handle('export-rekordbox', async (_, { usbRoot, playlistIds, playlistId 
         .filter((id) => usbPaths.has(id)),
     }));
 
-    await runPdbExporter({ usbRoot, tracks: pdbTracks, playlists: pdbPlaylists }, usbRoot);
+    runPdbExporter({ usbRoot, tracks: pdbTracks, playlists: pdbPlaylists }, usbRoot);
     writeSettingFiles(usbRoot);
 
     send('export-rekordbox-progress', { msg: 'Done!', pct: 100 });
@@ -969,7 +933,7 @@ ipcMain.handle('export-all', async (_, { usbRoot, playlistIds, playlistId }) => 
         .map((t) => t.id)
         .filter((id) => usbPaths.has(id)),
     }));
-    await runPdbExporter({ usbRoot, tracks: pdbTracks, playlists: pdbPlaylists }, usbRoot);
+    runPdbExporter({ usbRoot, tracks: pdbTracks, playlists: pdbPlaylists }, usbRoot);
     writeSettingFiles(usbRoot);
 
     send('export-all-progress', { msg: 'Done!', pct: 100 });
