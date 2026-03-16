@@ -37,6 +37,7 @@ export default defineConfig({
             'src/__tests__/importManager.test.js',
             'src/__tests__/ytDlpManager.test.js',
             'src/__tests__/mediaServer.test.js',
+            'src/__tests__/nmlWriter.test.js',
           ],
         },
       },

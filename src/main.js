@@ -68,6 +68,7 @@ import {
   updateAll,
 } from './deps.js';
 import { initLogger, getLogDir } from './logger.js';
+import { writeNml } from './audio/nmlWriter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -667,6 +668,70 @@ ipcMain.handle(
 
 ipcMain.handle('open-external', async (_event, url) => {
   shell.openExternal(url);
+});
+
+// ─── Traktor NML Export ────────────────────────────────────────────────────────
+
+function sendNml(data) {
+  if (global.mainWindow) global.mainWindow.webContents.send('export-nml-progress', data);
+}
+
+/** Build the NML payload for a set of track IDs and playlists. */
+function buildNmlPayload(trackIds, playlistRows) {
+  const tracks = trackIds.map((id) => getTrackById(id)).filter(Boolean);
+  return { tracks, playlists: playlistRows };
+}
+
+ipcMain.handle('export-nml', async (_, { outputPath, playlistId }) => {
+  try {
+    sendNml({ msg: 'Loading tracks…', pct: 10 });
+
+    const playlist = getPlaylist(playlistId);
+    if (!playlist) throw new Error('Playlist not found');
+
+    const trackRows = getPlaylistTracks(playlistId);
+    const trackIds = trackRows.map((t) => t.id);
+    sendNml({ msg: `Exporting ${trackIds.length} tracks…`, pct: 30 });
+
+    const payload = buildNmlPayload(trackIds, [{ name: playlist.name, track_ids: trackIds }]);
+
+    writeNml(payload, outputPath);
+    sendNml({ msg: 'Done', pct: 100 });
+    sendNml(null);
+    return { ok: true, outputPath };
+  } catch (err) {
+    sendNml(null);
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('export-nml-all', async (_, { outputPath }) => {
+  try {
+    sendNml({ msg: 'Loading library…', pct: 10 });
+
+    const allTracks = getTracks({ limit: 999999, offset: 0 });
+    const allPlaylists = getPlaylists();
+
+    sendNml({ msg: `Exporting ${allTracks.length} tracks…`, pct: 30 });
+
+    const playlistsWithTracks = allPlaylists.map((pl) => {
+      const trackRows = getPlaylistTracks(pl.id);
+      return {
+        name: pl.name,
+        track_ids: trackRows.map((t) => t.id),
+      };
+    });
+
+    const payload = { tracks: allTracks, playlists: playlistsWithTracks };
+    writeNml(payload, outputPath);
+
+    sendNml({ msg: 'Done', pct: 100 });
+    sendNml(null);
+    return { ok: true, outputPath };
+  } catch (err) {
+    sendNml(null);
+    return { ok: false, error: err.message };
+  }
 });
 
 app.on('ready', initApp);

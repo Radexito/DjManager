@@ -17,7 +17,7 @@ const PRESET_COLORS = [
   '#adb5bd',
 ];
 
-function Sidebar({ selectedMenuItemId, onMenuSelect }) {
+function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistNml, onExportNmlAll }) {
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
   const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
@@ -99,6 +99,16 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
         `Exported ${result.trackCount} track${result.trackCount !== 1 ? 's' : ''} to:\n${result.destDir}`
       );
     }
+  };
+
+  const handleExportPlaylistNml = (id) => {
+    setPlaylistMenu(null);
+    onExportPlaylistNml(id);
+  };
+
+  const handleExportNmlAll = (id) => {
+    setPlaylistMenu(null);
+    onExportNmlAll(id);
   };
 
   const handleDeletePlaylist = async (id) => {
@@ -251,6 +261,15 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
           <div className="context-menu-separator" />
           <div className="context-menu-item" onClick={() => handleExportM3U(playlistMenu.id)}>
             📤 Export as M3U…
+          </div>
+          <div
+            className="context-menu-item"
+            onClick={() => handleExportPlaylistNml(playlistMenu.id)}
+          >
+            📄 Export Traktor NML…
+          </div>
+          <div className="context-menu-item" onClick={() => handleExportNmlAll(playlistMenu.id)}>
+            📦 Export All as NML…
           </div>
           <div className="context-menu-separator" />
           <div
