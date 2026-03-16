@@ -68,7 +68,7 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('open-settings', handler);
   },
   // Auto-tagger
-  autoTagSearch: (query, source) => ipcRenderer.invoke('auto-tag-search', { query, source }),
+  autoTagSearch: (query) => ipcRenderer.invoke('auto-tag-search', { query }),
 
   clearLibrary: () => ipcRenderer.invoke('clear-library'),
   clearUserData: () => ipcRenderer.invoke('clear-user-data'),
