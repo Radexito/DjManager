@@ -676,10 +676,33 @@ function sendNml(data) {
   if (global.mainWindow) global.mainWindow.webContents.send('export-nml-progress', data);
 }
 
-/** Build the NML payload for a set of track IDs and playlists. */
-function buildNmlPayload(trackIds, playlistRows) {
-  const tracks = trackIds.map((id) => getTrackById(id)).filter(Boolean);
-  return { tracks, playlists: playlistRows };
+/**
+ * Copy tracks to <destDir>/music/ with friendly "Artist - Title.ext" names.
+ * Returns a new tracks array with file_path rewritten to the copied location.
+ */
+function copyTracksForNml(tracks, destDir) {
+  const musicDir = path.join(destDir, 'music');
+  fs.mkdirSync(musicDir, { recursive: true });
+
+  const usedNames = new Set();
+  return tracks.map((track) => {
+    const ext = path.extname(track.file_path || '');
+    const rawBase =
+      [track.artist, track.title].filter(Boolean).join(' - ') ||
+      path.basename(track.file_path || 'track', ext);
+    const safeBase = rawBase.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+    let filename = `${safeBase}${ext}`;
+    let n = 1;
+    while (usedNames.has(filename)) filename = `${safeBase} (${n++})${ext}`;
+    usedNames.add(filename);
+
+    const dest = path.join(musicDir, filename);
+    if (track.file_path && fs.existsSync(track.file_path)) {
+      fs.copyFileSync(track.file_path, dest);
+    }
+
+    return { ...track, file_path: dest };
+  });
 }
 
 ipcMain.handle('export-nml', async (_, { outputPath, playlistId }) => {
@@ -690,10 +713,19 @@ ipcMain.handle('export-nml', async (_, { outputPath, playlistId }) => {
     if (!playlist) throw new Error('Playlist not found');
 
     const trackRows = getPlaylistTracks(playlistId);
-    const trackIds = trackRows.map((t) => t.id);
-    sendNml({ msg: `Exporting ${trackIds.length} tracks…`, pct: 30 });
+    const tracks = trackRows.map((t) => getTrackById(t.id)).filter(Boolean);
+    const total = tracks.length;
 
-    const payload = buildNmlPayload(trackIds, [{ name: playlist.name, track_ids: trackIds }]);
+    sendNml({ msg: `Copying ${total} tracks…`, pct: 20 });
+    const outputDir = path.dirname(outputPath);
+    const copiedTracks = copyTracksForNml(tracks, outputDir);
+
+    sendNml({ msg: 'Writing NML…', pct: 80 });
+    const trackIds = tracks.map((t) => t.id);
+    const payload = {
+      tracks: copiedTracks,
+      playlists: [{ name: playlist.name, track_ids: trackIds }],
+    };
 
     writeNml(payload, outputPath);
     sendNml({ msg: 'Done', pct: 100 });
@@ -711,18 +743,19 @@ ipcMain.handle('export-nml-all', async (_, { outputPath }) => {
 
     const allTracks = getTracks({ limit: 999999, offset: 0 });
     const allPlaylists = getPlaylists();
+    const total = allTracks.length;
 
-    sendNml({ msg: `Exporting ${allTracks.length} tracks…`, pct: 30 });
+    sendNml({ msg: `Copying ${total} tracks…`, pct: 20 });
+    const outputDir = path.dirname(outputPath);
+    const copiedTracks = copyTracksForNml(allTracks, outputDir);
 
+    sendNml({ msg: 'Writing NML…', pct: 80 });
     const playlistsWithTracks = allPlaylists.map((pl) => {
       const trackRows = getPlaylistTracks(pl.id);
-      return {
-        name: pl.name,
-        track_ids: trackRows.map((t) => t.id),
-      };
+      return { name: pl.name, track_ids: trackRows.map((t) => t.id) };
     });
 
-    const payload = { tracks: allTracks, playlists: playlistsWithTracks };
+    const payload = { tracks: copiedTracks, playlists: playlistsWithTracks };
     writeNml(payload, outputPath);
 
     sendNml({ msg: 'Done', pct: 100 });
