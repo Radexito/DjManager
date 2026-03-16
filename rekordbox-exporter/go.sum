@@ -1,6 +1,0 @@
-github.com/ambientsound/rex v0.0.0-20231005163953-e9294f844f1e h1:Zm3aTebyuc47E/+pTcs/AvrW7R8EpTwFGZGHeTm6WII=
-github.com/ambientsound/rex v0.0.0-20231005163953-e9294f844f1e/go.mod h1:O4j6kmEJ03swbsswWtyiNlKW9MxOAy8mB2AgjBZWrUQ=
-github.com/lunixbochs/struc v0.0.0-20200707160740-784aaebc1d40 h1:EnfXoSqDfSNJv0VBNqY/88RNnhSGYkrHaO0mmFGbVsc=
-github.com/lunixbochs/struc v0.0.0-20200707160740-784aaebc1d40/go.mod h1:vy1vK6wD6j7xX6O6hXe621WabdtNkou2h7uRtTfRMyg=
-golang.org/x/text v0.13.0 h1:ablQoSUd0tRdKxZewP80B+BaqeKJuVhuRxj/dkrun3k=
-golang.org/x/text v0.13.0/go.mod h1:TvPlkZtksWOMsz7fbANvkp4WM8x/WCo/om8BMLbz+aE=

@@ -758,7 +758,7 @@ export function buildFileHeader(tableStates, nextUnusedPage, sequence) {
 /**
  * Build the complete PDB binary buffer from an input object.
  *
- * Matches the logic of rekordbox-exporter/main.go:
+ * Ported from the rex Go library (github.com/ambientsound/rex):
  *  1. Create all 20 table index pages (nextUnusedPage starts at 1, increments by 2 per table)
  *  2. Insert row data into pages per table type
  *  3. Write file header page

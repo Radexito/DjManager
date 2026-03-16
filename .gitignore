@@ -169,10 +169,6 @@ samples/
 build-resources/analysis
 build-resources/analysis.exe
 
-# Compiled rekordbox-exporter binary (built from rekordbox-exporter/main.go)
-build-resources/rekordbox-exporter
-build-resources/rekordbox-exporter.exe
-
 # Shared libraries bundled at runtime (not source)
 *.so
 *.so.*
