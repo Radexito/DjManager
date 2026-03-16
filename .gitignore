@@ -172,3 +172,7 @@ build-resources/analysis.exe
 # Playwright
 test-results/
 playwright-report/
+
+# System shared libraries
+*.so
+*.so.*
