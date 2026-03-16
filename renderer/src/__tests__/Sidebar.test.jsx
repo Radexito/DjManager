@@ -6,7 +6,7 @@ describe('Sidebar', () => {
   const defaultProps = {
     selectedMenuItemId: 'music',
     onMenuSelect: vi.fn(),
-    onExportPlaylistUsb: vi.fn(),
+    onExportPlaylistRekordboxUsb: vi.fn(),
     onExportPlaylistAll: vi.fn(),
   };
 
@@ -92,18 +92,20 @@ describe('Sidebar', () => {
     expect(screen.getByText(/Export All to USB/)).toBeInTheDocument();
   });
 
-  it('calls onExportPlaylistUsb with playlist id when "Export Rekordbox USB…" is clicked', async () => {
-    const onExportPlaylistUsb = vi.fn();
+  it('calls onExportPlaylistRekordboxUsb with playlist id when "Export Rekordbox USB…" is clicked', async () => {
+    const onExportPlaylistRekordboxUsb = vi.fn();
     window.api.getPlaylists.mockResolvedValueOnce([
       { id: 42, name: 'My Set', color: null, track_count: 0, total_duration: 0 },
     ]);
 
-    render(<Sidebar {...defaultProps} onExportPlaylistUsb={onExportPlaylistUsb} />);
+    render(
+      <Sidebar {...defaultProps} onExportPlaylistRekordboxUsb={onExportPlaylistRekordboxUsb} />
+    );
     await waitFor(() => screen.getByText('My Set'));
     fireEvent.contextMenu(screen.getByText('My Set'));
     fireEvent.click(screen.getByText(/Export Rekordbox USB/));
 
-    expect(onExportPlaylistUsb).toHaveBeenCalledWith(42);
+    expect(onExportPlaylistRekordboxUsb).toHaveBeenCalledWith(42);
   });
 
   it('calls onExportPlaylistAll with playlist id when "Export All to USB…" is clicked', async () => {

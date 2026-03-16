@@ -31,7 +31,9 @@ function App() {
         <Sidebar
           selectedMenuItemId={selectedPlaylistId}
           onMenuSelect={setSelectedPlaylistId}
-          onExportPlaylistUsb={(id) => setExportState({ playlistId: id, mode: 'rekordbox' })}
+          onExportPlaylistRekordboxUsb={(id) =>
+            setExportState({ playlistId: id, mode: 'rekordbox' })
+          }
           onExportPlaylistAll={(id) => setExportState({ playlistId: id, mode: 'all' })}
         />
         {selectedPlaylistId === 'download' ? (

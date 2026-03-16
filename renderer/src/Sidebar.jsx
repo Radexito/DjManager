@@ -17,7 +17,12 @@ const PRESET_COLORS = [
   '#adb5bd',
 ];
 
-function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistUsb, onExportPlaylistAll }) {
+function Sidebar({
+  selectedMenuItemId,
+  onMenuSelect,
+  onExportPlaylistRekordboxUsb,
+  onExportPlaylistAll,
+}) {
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
   const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
@@ -101,9 +106,9 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistUsb, onExpo
     }
   };
 
-  const handleExportPlaylistUsb = (id) => {
+  const handleExportPlaylistRekordboxUsb = (id) => {
     setPlaylistMenu(null);
-    onExportPlaylistUsb(id);
+    onExportPlaylistRekordboxUsb(id);
   };
 
   const handleExportPlaylistAll = (id) => {
@@ -264,7 +269,7 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistUsb, onExpo
           </div>
           <div
             className="context-menu-item"
-            onClick={() => handleExportPlaylistUsb(playlistMenu.id)}
+            onClick={() => handleExportPlaylistRekordboxUsb(playlistMenu.id)}
           >
             💾 Export Rekordbox USB…
           </div>
