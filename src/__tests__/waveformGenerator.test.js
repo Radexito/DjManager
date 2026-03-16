@@ -8,7 +8,7 @@ vi.mock('child_process', () => ({
 }));
 
 // Import after mocks
-import { generateWaveform } from '../audio/waveformGenerator.js';
+import { generateWaveform, PWAV_COLS, PWV2_COLS, PWV4_COLS } from '../audio/waveformGenerator.js';
 import { spawn } from 'child_process';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -55,11 +55,14 @@ describe('generateWaveform', () => {
     expect(result).toHaveProperty('pwv3');
     expect(result).toHaveProperty('pwv5');
     expect(result).toHaveProperty('pwav');
+    expect(result).toHaveProperty('pwv2');
+    expect(result).toHaveProperty('pwv4');
     expect(result).toHaveProperty('numCols');
-    expect(result).toHaveProperty('numPreviewCols');
     expect(Buffer.isBuffer(result.pwv3)).toBe(true);
     expect(Buffer.isBuffer(result.pwv5)).toBe(true);
     expect(Buffer.isBuffer(result.pwav)).toBe(true);
+    expect(Buffer.isBuffer(result.pwv2)).toBe(true);
+    expect(Buffer.isBuffer(result.pwv4)).toBe(true);
   });
 
   it('silent audio (all zeros) produces zero heights in pwv3', async () => {
@@ -83,7 +86,7 @@ describe('generateWaveform', () => {
     expect(maxHeight).toBeGreaterThan(0);
   });
 
-  it('pwv3 has 1 byte per column', async () => {
+  it('pwv3 has 1 byte per scroll column', async () => {
     const numCols = 30;
     spawn.mockReturnValue(
       makeFakeProc(makeF32leBuffer(new Array(SAMPLES_PER_COL * numCols).fill(0.5)))
@@ -95,7 +98,7 @@ describe('generateWaveform', () => {
     expect(result.numCols).toBe(numCols);
   });
 
-  it('pwv5 has 2 bytes per column', async () => {
+  it('pwv5 has 2 bytes per scroll column', async () => {
     const numCols = 30;
     spawn.mockReturnValue(
       makeFakeProc(makeF32leBuffer(new Array(SAMPLES_PER_COL * numCols).fill(0.5)))
@@ -106,16 +109,69 @@ describe('generateWaveform', () => {
     expect(result.pwv5.length).toBe(numCols * 2);
   });
 
-  it('pwav has 1/10th the columns of pwv3', async () => {
-    const numCols = 100; // must be divisible by 10
+  it('pwav is always exactly PWAV_COLS (400) bytes regardless of track length', async () => {
+    // Short track
+    spawn.mockReturnValue(makeFakeProc(makeF32leBuffer(new Array(SAMPLES_PER_COL * 10).fill(0.3))));
+    const short = await generateWaveform('/audio/short.mp3');
+    expect(short.pwav.length).toBe(PWAV_COLS);
+
+    // Long track
     spawn.mockReturnValue(
-      makeFakeProc(makeF32leBuffer(new Array(SAMPLES_PER_COL * numCols).fill(0.3)))
+      makeFakeProc(makeF32leBuffer(new Array(SAMPLES_PER_COL * 500).fill(0.3)))
     );
+    const long = await generateWaveform('/audio/long.mp3');
+    expect(long.pwav.length).toBe(PWAV_COLS);
+  });
+
+  it('pwv2 is always exactly PWV2_COLS (100) bytes', async () => {
+    spawn.mockReturnValue(makeFakeProc(makeF32leBuffer(new Array(SAMPLES_PER_COL * 50).fill(0.5))));
 
     const result = await generateWaveform('/audio/test.mp3');
 
-    expect(result.pwav.length).toBe(numCols / 10);
-    expect(result.numPreviewCols).toBe(numCols / 10);
+    expect(result.pwv2.length).toBe(PWV2_COLS);
+  });
+
+  it('pwv2 bytes are in 4-bit height range (0-15)', async () => {
+    spawn.mockReturnValue(makeFakeProc(makeF32leBuffer(new Array(SAMPLES_PER_COL * 50).fill(0.5))));
+
+    const result = await generateWaveform('/audio/test.mp3');
+
+    for (let i = 0; i < result.pwv2.length; i++) {
+      expect(result.pwv2[i]).toBeGreaterThanOrEqual(0);
+      expect(result.pwv2[i]).toBeLessThanOrEqual(15);
+    }
+  });
+
+  it('pwv4 is always exactly PWV4_COLS × 6 (7200) bytes', async () => {
+    spawn.mockReturnValue(makeFakeProc(makeF32leBuffer(new Array(SAMPLES_PER_COL * 50).fill(0.5))));
+
+    const result = await generateWaveform('/audio/test.mp3');
+
+    expect(result.pwv4.length).toBe(PWV4_COLS * 6);
+  });
+
+  it('pwv5 RGB+height encoding: u16be bits (r:3|g:3|b:3|h:5|unused:2)', async () => {
+    spawn.mockReturnValue(makeFakeProc(makeF32leBuffer(new Array(SAMPLES_PER_COL * 10).fill(0.5))));
+
+    const result = await generateWaveform('/audio/test.mp3');
+
+    for (let i = 0; i < result.numCols; i++) {
+      const u16 = result.pwv5.readUInt16BE(i * 2);
+      const r = (u16 >> 13) & 7;
+      const g = (u16 >> 10) & 7;
+      const b = (u16 >> 7) & 7;
+      const h = (u16 >> 2) & 31;
+      expect(r).toBeGreaterThanOrEqual(0);
+      expect(r).toBeLessThanOrEqual(7);
+      expect(g).toBeGreaterThanOrEqual(0);
+      expect(g).toBeLessThanOrEqual(7);
+      expect(b).toBeGreaterThanOrEqual(0);
+      expect(b).toBeLessThanOrEqual(7);
+      expect(h).toBeGreaterThanOrEqual(0);
+      expect(h).toBeLessThanOrEqual(31);
+      // unused bits must be zero
+      expect(u16 & 0x3).toBe(0);
+    }
   });
 
   it('pwv3 byte encoding: (whiteness << 5) | height', async () => {
@@ -131,6 +187,16 @@ describe('generateWaveform', () => {
       expect(height).toBeLessThanOrEqual(31);
       expect(whiteness).toBeGreaterThanOrEqual(0);
       expect(whiteness).toBeLessThanOrEqual(7);
+    }
+  });
+
+  it('silent audio produces zero heights in pwv2', async () => {
+    spawn.mockReturnValue(makeFakeProc(makeF32leBuffer(new Array(SAMPLES_PER_COL * 20).fill(0))));
+
+    const result = await generateWaveform('/audio/silent.mp3');
+
+    for (let i = 0; i < result.pwv2.length; i++) {
+      expect(result.pwv2[i]).toBe(0);
     }
   });
 

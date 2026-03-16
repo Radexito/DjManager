@@ -6,7 +6,9 @@ vi.mock('../audio/waveformGenerator.js', () => ({
   generateWaveform: vi.fn().mockResolvedValue({
     pwv3: Buffer.alloc(100, 0x21),
     pwv5: Buffer.alloc(200, 0x11),
-    pwav: Buffer.alloc(10, 0x41),
+    pwav: Buffer.alloc(400, 0x41),
+    pwv2: Buffer.alloc(100, 0x22),
+    pwv4: Buffer.alloc(7200, 0x33),
   }),
 }));
 
@@ -158,5 +160,38 @@ describe('writeAnlz', () => {
 
     const mkdirPath = fs.mkdirSync.mock.calls[0][0];
     expect(mkdirPath).toMatch(/\/mnt\/usb[/\\]PIONEER[/\\]USBANLZ/);
+  });
+
+  it('DAT file contains PWV2 tiny waveform section', async () => {
+    await writeAnlz(baseOpts);
+
+    const datBuf = fs.writeFileSync.mock.calls.find((c) => c[0].endsWith('.DAT'))[1];
+    expect(datBuf.toString('binary')).toContain('PWV2');
+  });
+
+  it('EXT file contains PWV4 colour preview section', async () => {
+    await writeAnlz(baseOpts);
+
+    const extBuf = fs.writeFileSync.mock.calls.find((c) => c[0].endsWith('.EXT'))[1];
+    expect(extBuf.toString('binary')).toContain('PWV4');
+  });
+
+  it('EXT file contains PWV5 colour scroll section', async () => {
+    await writeAnlz(baseOpts);
+
+    const extBuf = fs.writeFileSync.mock.calls.find((c) => c[0].endsWith('.EXT'))[1];
+    expect(extBuf.toString('binary')).toContain('PWV5');
+  });
+
+  it('PWAV section has unknown field 0x00010000', async () => {
+    await writeAnlz(baseOpts);
+
+    const datBuf = fs.writeFileSync.mock.calls.find((c) => c[0].endsWith('.DAT'))[1];
+    const pwavIdx = datBuf.indexOf(Buffer.from('PWAV', 'ascii'));
+    expect(pwavIdx).toBeGreaterThan(-1);
+    // PWAV body starts at pwavIdx + 12 (4 fourcc + 4 len_header + 4 len_tag)
+    // First 4 bytes of body = len_data, next 4 bytes = unknown = 0x00010000
+    const unknown = datBuf.readUInt32BE(pwavIdx + 12 + 4);
+    expect(unknown).toBe(0x00010000);
   });
 });

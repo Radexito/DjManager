@@ -70,6 +70,7 @@ import {
 import { initLogger, getLogDir } from './logger.js';
 import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
 import { writeAnlz } from './audio/anlzWriter.js';
+import { writeSettingFiles } from './usb/settingWriter.js';
 import { spawn } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -845,6 +846,7 @@ ipcMain.handle('export-rekordbox', async (_, { usbRoot, playlistIds, playlistId 
       file_size: t.file_size || 0,
       bitrate: t.bitrate || 0,
       comments: t.comments || '',
+      rating: t.rating || 0,
     }));
 
     const pdbPlaylists = allPlaylists.map((pl) => ({
@@ -856,6 +858,7 @@ ipcMain.handle('export-rekordbox', async (_, { usbRoot, playlistIds, playlistId 
     }));
 
     await runPdbExporter({ usbRoot, tracks: pdbTracks, playlists: pdbPlaylists }, usbRoot);
+    writeSettingFiles(usbRoot);
 
     send('export-rekordbox-progress', { msg: 'Done!', pct: 100 });
     send('export-rekordbox-progress', null);
@@ -957,6 +960,7 @@ ipcMain.handle('export-all', async (_, { usbRoot, playlistIds, playlistId }) => 
       file_size: t.file_size || 0,
       bitrate: t.bitrate || 0,
       comments: t.comments || '',
+      rating: t.rating || 0,
     }));
     const pdbPlaylists = allPlaylists.map((pl) => ({
       id: pl.id,
@@ -966,6 +970,7 @@ ipcMain.handle('export-all', async (_, { usbRoot, playlistIds, playlistId }) => 
         .filter((id) => usbPaths.has(id)),
     }));
     await runPdbExporter({ usbRoot, tracks: pdbTracks, playlists: pdbPlaylists }, usbRoot);
+    writeSettingFiles(usbRoot);
 
     send('export-all-progress', { msg: 'Done!', pct: 100 });
     send('export-all-progress', null);

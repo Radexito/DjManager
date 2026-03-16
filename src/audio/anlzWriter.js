@@ -174,8 +174,13 @@ function buildPwv3Section(pwv3Data) {
 }
 
 /**
- * Builds a PWV5 section (2-byte color scroll waveform for CDJ-3000, 10ms/column).
- * Each u16be: bits 15-11=bassH, 10=bassW, 9-5=trebleH, 4=trebleW
+ * Builds a PWV5 section (2-byte colour scroll waveform for CDJ-3000, 10ms/column).
+ * u16be per Pioneer/crate-digger spec:
+ *   bits 15-13: red   (treble energy, 3 bits)
+ *   bits 12-10: green (mid energy,    3 bits)
+ *   bits  9- 7: blue  (bass energy,   3 bits)
+ *   bits  6- 2: height               (5 bits)
+ *   bits  1- 0: unused
  */
 function buildPwv5Section(pwv5Data) {
   const numEntries = pwv5Data.length / 2;
@@ -187,16 +192,43 @@ function buildPwv5Section(pwv5Data) {
 }
 
 /**
- * Builds a PWAV section (monochrome preview waveform, 100ms/column, for touch strip).
- * Same byte encoding as PWV3.
+ * Builds a PWAV section (monochrome preview waveform for touch strip).
+ * Fixed 400 columns, same byte encoding as PWV3: (whiteness << 5) | height.
+ * The unknown u32 field always has value 0x00010000 per crate-digger spec.
  */
 function buildPwavSection(pwavData) {
-  // PWAV body: lenData(u4) + unknown(u4) + data bytes
+  // PWAV body: lenData(u4) + unknown(u4, always 0x00010000) + data bytes
   const body = Buffer.alloc(8 + pwavData.length);
   body.writeUInt32BE(pwavData.length, 0);
-  body.writeUInt32BE(0, 4); // unknown
+  body.writeUInt32BE(0x00010000, 4);
   pwavData.copy(body, 8);
   return buildSection('PWAV', body);
+}
+
+/**
+ * Builds a PWV2 section (tiny monochrome overview for CDJ-900).
+ * Fixed 100 columns, 1 byte each: 4-bit height only (byte = height & 0x0F).
+ */
+function buildPwv2Section(pwv2Data) {
+  const body = Buffer.alloc(8 + pwv2Data.length);
+  body.writeUInt32BE(pwv2Data.length, 0);
+  body.writeUInt32BE(0x00010000, 4);
+  pwv2Data.copy(body, 8);
+  return buildSection('PWV2', body);
+}
+
+/**
+ * Builds a PWV4 section (colour preview waveform for CDJ-NXS2).
+ * Fixed 1200 columns × 6 bytes each = 7200 bytes.
+ * Per rekordcrate: [whiteness, whiteness, overall_rms, bass, mid, treble]
+ */
+function buildPwv4Section(pwv4Data) {
+  const numEntries = pwv4Data.length / 6;
+  const header = Buffer.alloc(12);
+  header.writeUInt32BE(6, 0); // lenEntryBytes
+  header.writeUInt32BE(numEntries, 4); // lenEntries
+  header.writeUInt32BE(0x960000, 8);
+  return buildSectionWithBigHeader('PWV4', header, pwv4Data);
 }
 
 // Sections with a 24-byte header (12 standard + 12 section-specific)
@@ -237,19 +269,21 @@ export async function writeAnlz(opts) {
     }
   }
 
-  // ── ANLZ0000.DAT (beat grid + preview waveform) ──────────────────────────
+  // ── ANLZ0000.DAT (beat grid + preview waveforms) ─────────────────────────
   const datSections = [buildPathTag(usbFilePath), buildBeatGrid(beatgrid, bpm)];
   if (waveforms) {
     datSections.push(buildPwavSection(waveforms.pwav));
+    datSections.push(buildPwv2Section(waveforms.pwv2));
   }
   const datSize = 28 + datSections.reduce((s, b) => s + b.length, 0);
   const datBuffer = Buffer.concat([buildFileHeader(datSize), ...datSections]);
   fs.writeFileSync(path.join(anlzDir, 'ANLZ0000.DAT'), datBuffer);
 
-  // ── ANLZ0000.EXT (scrolling waveform) ────────────────────────────────────
+  // ── ANLZ0000.EXT (scrolling waveforms + colour overview) ─────────────────
   const extSections = [buildPathTag(usbFilePath)];
   if (waveforms) {
     extSections.push(buildPwv3Section(waveforms.pwv3));
+    extSections.push(buildPwv4Section(waveforms.pwv4));
     extSections.push(buildPwv5Section(waveforms.pwv5));
   } else {
     // Fallback flat placeholder so CDJ shows something
