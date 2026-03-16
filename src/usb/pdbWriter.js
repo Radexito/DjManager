@@ -836,17 +836,15 @@ function buildPdbBuffer(input) {
   for (let i = 0; i < playlists.length; i++) {
     const pl = playlists[i];
     const plId = i + 1;
-    rowsByType
-      .get(TABLE_TYPES.PlaylistTree)
-      .push(
-        buildPlaylistTreeRow({
-          id: plId,
-          parentId: 0,
-          sortOrder: i,
-          isFolder: false,
-          name: pl.name,
-        })
-      );
+    rowsByType.get(TABLE_TYPES.PlaylistTree).push(
+      buildPlaylistTreeRow({
+        id: plId,
+        parentId: 0,
+        sortOrder: i,
+        isFolder: false,
+        name: pl.name,
+      })
+    );
     for (let j = 0; j < (pl.track_ids || []).length; j++) {
       const pdbTrackId = trackPdbId.get(pl.track_ids[j]);
       if (pdbTrackId === undefined) continue;
