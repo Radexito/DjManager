@@ -168,7 +168,7 @@ function buildEntry(track) {
   const modInfo = tag('MODIFICATION_INFO', { AUTHOR_TYPE: 'user' });
 
   const infoAttrs = {
-    BITRATE: track.bitrate ? String(track.bitrate * 1000) : '',
+    BITRATE: track.bitrate ? String(track.bitrate) : '',
     GENRE: genre,
     LABEL: track.label || '',
     COMMENT: track.comments || '',
