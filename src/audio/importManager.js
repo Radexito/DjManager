@@ -78,7 +78,7 @@ export function spawnAnalysis(trackId, filePath) {
   });
 }
 
-export async function importAudioFile(filePath) {
+export async function importAudioFile(filePath, sourceMeta = {}) {
   console.log(`Importing: ${filePath}`);
   const ext = path.extname(filePath);
   const hash = await hashFile(filePath);
@@ -114,6 +114,9 @@ export async function importAudioFile(filePath) {
     year,
     label,
     genres: JSON.stringify(genre),
+    source_url: sourceMeta.source_url ?? null,
+    source_platform: sourceMeta.source_platform ?? null,
+    source_quality: sourceMeta.source_quality ?? null,
   });
 
   console.log(`Added track ID ${trackId}: ${title || path.basename(filePath, ext)}`);

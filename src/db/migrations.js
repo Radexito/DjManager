@@ -57,6 +57,9 @@ export function initDB() {
     'ALTER TABLE tracks ADD COLUMN intro_secs REAL',
     'ALTER TABLE tracks ADD COLUMN outro_secs REAL',
     'ALTER TABLE tracks ADD COLUMN beatgrid TEXT',
+    'ALTER TABLE tracks ADD COLUMN source_url TEXT',
+    'ALTER TABLE tracks ADD COLUMN source_platform TEXT',
+    'ALTER TABLE tracks ADD COLUMN source_quality TEXT',
   ]) {
     try {
       db.prepare(col).run();

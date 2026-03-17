@@ -31,8 +31,15 @@ import {
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import { importAudioFile, spawnAnalysis, getLibraryBase } from './audio/importManager.js';
 import { searchMusicBrainz, searchDiscogs } from './audio/autoTagger.js';
+import { downloadUrl as ytDlpDownloadUrl } from './audio/ytDlpManager.js';
 import { ensureDeps } from './deps.js';
-import { getInstalledVersions, checkForUpdates, updateAnalyzer, updateAll } from './deps.js';
+import {
+  getInstalledVersions,
+  checkForUpdates,
+  updateAnalyzer,
+  updateYtDlp,
+  updateAll,
+} from './deps.js';
 import { initLogger, getLogDir } from './logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -452,6 +459,13 @@ ipcMain.handle('update-analyzer', async (_event) => {
   });
   if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
 });
+
+ipcMain.handle('update-yt-dlp', async (_event) => {
+  await updateYtDlp((msg, pct) => {
+    if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
+  });
+  if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+});
 ipcMain.handle('update-all-deps', async (_event) => {
   await updateAll((msg, pct) => {
     if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
@@ -473,6 +487,36 @@ ipcMain.handle('auto-tag-search', async (_, { query }) => {
     ];
     return { ok: true, results };
   } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// ─── yt-dlp URL download ──────────────────────────────────────────────────────
+
+ipcMain.handle('ytdlp-download-url', async (_event, url) => {
+  try {
+    const sendProgress = (msg, pct) => {
+      if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-progress', { msg, pct });
+    };
+
+    sendProgress('Starting download…', 0);
+    const { filePath, originalUrl, platform, quality } = await ytDlpDownloadUrl(url, sendProgress);
+
+    sendProgress('Importing to library…', 99);
+    const trackId = await importAudioFile(filePath, {
+      source_url: originalUrl,
+      source_platform: platform,
+      source_quality: quality,
+    });
+
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('library-updated');
+      global.mainWindow.webContents.send('ytdlp-progress', null);
+    }
+
+    return { ok: true, trackId };
+  } catch (err) {
+    if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-progress', null);
     return { ok: false, error: err.message };
   }
 });

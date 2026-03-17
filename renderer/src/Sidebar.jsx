@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import UrlDownloadModal from './UrlDownloadModal.jsx';
 import './Sidebar.css';
 
 const MUSIC_ITEMS = [{ id: 'music', name: 'Music', icon: '🎵' }];
@@ -17,6 +18,7 @@ const PRESET_COLORS = [
 function Sidebar({ selectedMenuItemId, onMenuSelect }) {
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
+  const [showUrlModal, setShowUrlModal] = useState(false);
   const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
@@ -206,7 +208,12 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
         <button className="import-button" onClick={handleImport}>
           Import Audio Files
         </button>
+        <button className="import-button import-button--url" onClick={() => setShowUrlModal(true)}>
+          Download from URL
+        </button>
       </div>
+
+      {showUrlModal && <UrlDownloadModal onClose={() => setShowUrlModal(false)} />}
 
       {/* Playlist context menu */}
       {playlistMenu && (

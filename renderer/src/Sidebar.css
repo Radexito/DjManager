@@ -93,7 +93,7 @@
 
 .import-button {
   margin-top: 12px;
-  margin-bottom: 25px;
+  margin-bottom: 4px;
   width: 100%;
   padding: 10px;
   background-color: #1db9542f;
@@ -103,6 +103,18 @@
   cursor: pointer;
   font-weight: bold;
   transition: all 0.2s ease;
+}
+
+.import-button--url {
+  margin-top: 6px;
+  margin-bottom: 25px;
+  background-color: rgba(124, 92, 252, 0.15);
+  border-color: #7c5cfc;
+}
+
+.import-button--url:hover {
+  background-color: rgba(124, 92, 252, 0.28) !important;
+  border-color: #9b7fff !important;
 }
 
 .import-button:active,
