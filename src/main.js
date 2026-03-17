@@ -65,6 +65,9 @@ function createWindow() {
     '.ogg': 'audio/ogg',
     '.m4a': 'audio/mp4',
     '.aac': 'audio/aac',
+    '.opus': 'audio/ogg; codecs=opus',
+    '.webm': 'audio/webm',
+    '.weba': 'audio/webm',
   };
   protocol.handle('media', async (request) => {
     try {
