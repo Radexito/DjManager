@@ -77,10 +77,10 @@ export default function DownloadView() {
   return (
     <div className="dl-view">
       <div className="dl-header">
-        <h2 className="dl-title">Download from URL</h2>
+        <h2 className="dl-title">YT-DLP Download</h2>
         <p className="dl-subtitle">
           Paste a link from YouTube, SoundCloud, Bandcamp, or any yt-dlp–supported site. Audio is
-          extracted and added directly to your library.
+          extracted as M4A and added directly to your library.
         </p>
       </div>
 

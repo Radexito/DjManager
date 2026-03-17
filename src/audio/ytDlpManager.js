@@ -47,7 +47,7 @@ export async function downloadUrl(url, onProgress) {
   const args = [
     '--extract-audio',
     '--audio-format',
-    'best',
+    'm4a',
     '--audio-quality',
     '0', // best quality
     '--no-playlist',

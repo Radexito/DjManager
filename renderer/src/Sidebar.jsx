@@ -3,7 +3,7 @@ import './Sidebar.css';
 
 const MENU_ITEMS = [
   { id: 'music', name: 'Music', icon: '🎵' },
-  { id: 'download', name: 'Download Tidal', icon: '⬇️' },
+  { id: 'download', name: 'YT-DLP', icon: '⬇️' },
 ];
 
 const PRESET_COLORS = [
