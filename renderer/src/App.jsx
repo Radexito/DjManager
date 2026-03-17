@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Sidebar from './Sidebar.jsx';
 import MusicLibrary from './MusicLibrary.jsx';
+import DownloadView from './DownloadView.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import PlayerBar from './PlayerBar.jsx';
 import { PlayerProvider } from './PlayerContext.jsx';
@@ -26,7 +27,11 @@ function App() {
     <PlayerProvider>
       <div className="app-main">
         <Sidebar selectedMenuItemId={selectedPlaylistId} onMenuSelect={setSelectedPlaylistId} />
-        <MusicLibrary selectedPlaylist={selectedPlaylistId} />
+        {selectedPlaylistId === 'download' ? (
+          <DownloadView />
+        ) : (
+          <MusicLibrary selectedPlaylist={selectedPlaylistId} />
+        )}
       </div>
       <PlayerBar onNavigateToPlaylist={setSelectedPlaylistId} />
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
