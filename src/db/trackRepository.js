@@ -158,10 +158,12 @@ export function addTrack(track) {
     INSERT INTO tracks (
       title, artist, album, duration,
       file_path, file_hash, format, bitrate,
+      source_url, source_platform, source_quality,
       created_at
     ) VALUES (
       @title, @artist, @album, @duration,
       @file_path, @file_hash, @format, @bitrate,
+      @source_url, @source_platform, @source_quality,
       @created_at
     )
   `);
@@ -175,6 +177,9 @@ export function addTrack(track) {
     file_hash: track.file_hash,
     format: track.format,
     bitrate: track.bitrate,
+    source_url: track.source_url ?? null,
+    source_platform: track.source_platform ?? null,
+    source_quality: track.source_quality ?? null,
     created_at: Date.now(),
   });
 

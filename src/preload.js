@@ -70,6 +70,15 @@ contextBridge.exposeInMainWorld('api', {
   // Auto-tagger
   autoTagSearch: (query) => ipcRenderer.invoke('auto-tag-search', { query }),
 
+  // yt-dlp URL download
+  ytDlpDownloadUrl: (url) => ipcRenderer.invoke('ytdlp-download-url', url),
+  onYtDlpProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-progress', handler);
+    return () => ipcRenderer.removeListener('ytdlp-progress', handler);
+  },
+  updateYtDlp: () => ipcRenderer.invoke('update-yt-dlp'),
+
   clearLibrary: () => ipcRenderer.invoke('clear-library'),
   clearUserData: () => ipcRenderer.invoke('clear-user-data'),
   getLogDir: () => ipcRenderer.invoke('get-log-dir'),
