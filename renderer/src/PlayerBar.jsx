@@ -140,11 +140,14 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
             max={duration || 0}
             step={0.5}
             defaultValue={0}
-            onPointerDown={() => {
+            onPointerDown={(e) => {
+              console.log(`[seekbar] pointerDown value=${Number(e.target.value).toFixed(3)}`);
               seekingRef.current = true;
             }}
             onPointerUp={(e) => {
-              seek(Number(e.target.value));
+              const val = Number(e.target.value);
+              console.log(`[seekbar] pointerUp  value=${val.toFixed(3)}`);
+              seek(val);
               seekingRef.current = false;
             }}
           />

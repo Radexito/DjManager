@@ -3,6 +3,24 @@ import fs from 'fs';
 import { Readable } from 'stream';
 import { fileURLToPath } from 'url';
 import { app, BrowserWindow, ipcMain, dialog, Menu, protocol, shell } from 'electron';
+
+// Fix for Linux/Wayland + AMD radeonsi/Mesa stability issues.
+// Root cause chain (diagnosed 2025-03):
+//   1. --ozone-platform=wayland required to prevent X11 shared-memory FATALs
+//   2. GPU process causes network service crash via pidfd shared-memory race
+//   3. --no-zygote avoids the zygote-pidfd handshake that returns ESRCH in
+//      child processes on this kernel/namespace configuration
+//   4. app.disableHardwareAcceleration() + --disable-gpu eliminate GPU process
+//   5. --no-sandbox / --disable-gpu-sandbox prevent remaining sandbox failures
+if (process.platform === 'linux') {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('ozone-platform', 'wayland');
+  app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform,WaylandWindowDecorations');
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('disable-gpu-sandbox');
+  app.commandLine.appendSwitch('no-sandbox');
+  app.commandLine.appendSwitch('no-zygote');
+}
 import { initDB } from './db/migrations.js';
 import {
   createPlaylist,
@@ -77,15 +95,23 @@ function createWindow() {
       const ext = path.extname(filePath).toLowerCase();
       const mime = MIME[ext] || 'audio/mpeg';
       const range = request.headers.get('Range');
+      const name = path.basename(filePath);
+      const t = () => new Date().toISOString().slice(11, 23); // HH:MM:SS.mmm
 
-      const makeStream = (opts) => {
-        const nodeStream = fs.createReadStream(filePath, opts);
-        // Suppress abort errors when Chromium cancels a request mid-stream
+      const makeStream = (start, end) => {
+        const nodeStream = fs.createReadStream(filePath, { start, end });
+        console.log(`[media] ${t()} OPEN  bytes=${start}-${end} (${end - start + 1}B) [${name}]`);
+        nodeStream.on('close', () =>
+          console.log(`[media] ${t()} CLOSE bytes=${start}-${end} [${name}]`)
+        );
         nodeStream.on('error', (err) => {
-          // Suppress normal abort errors from Chromium cancelling requests on track switch
           const expected = ['ERR_STREAM_DESTROYED', 'ECONNRESET', 'ABORT_ERR', 'ERR_ABORTED'];
-          if (!expected.includes(err.code)) {
-            console.error('media:// stream error:', err.code, filePath);
+          if (expected.includes(err.code)) {
+            console.log(`[media] ${t()} ABORT bytes=${start}-${end} err=${err.code} [${name}]`);
+          } else {
+            console.error(
+              `[media] ${t()} ERROR bytes=${start}-${end} err=${err.code} ${err.message} [${name}]`
+            );
           }
         });
         return Readable.toWeb(nodeStream);
@@ -95,7 +121,7 @@ function createWindow() {
         const [, s, e] = range.match(/bytes=(\d+)-(\d*)/) || [];
         const start = parseInt(s, 10);
         const end = e ? Math.min(parseInt(e, 10), total - 1) : total - 1;
-        return new Response(makeStream({ start, end }), {
+        return new Response(makeStream(start, end), {
           status: 206,
           headers: {
             'Content-Type': mime,
@@ -106,7 +132,7 @@ function createWindow() {
         });
       }
 
-      return new Response(makeStream({}), {
+      return new Response(makeStream(0, total - 1), {
         status: 200,
         headers: {
           'Content-Type': mime,
@@ -124,6 +150,7 @@ function createWindow() {
     title: 'DjManager - RWTechWorks.pl',
     width: 1200,
     height: 800,
+    backgroundColor: '#0f0f0f',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -528,4 +555,12 @@ app.on('ready', initApp);
 app.on('window-all-closed', () => {
   console.log('All windows closed.');
   if (process.platform !== 'darwin') app.quit();
+});
+
+// Log child process crashes (network service, GPU process, etc.) for diagnostics
+app.on('child-process-gone', (_event, details) => {
+  console.error(
+    `[crash] child-process-gone type=${details.type} reason=${details.reason}` +
+      ` exitCode=${details.exitCode} name=${details.name || '?'}`
+  );
 });
