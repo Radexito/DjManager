@@ -71,8 +71,31 @@ export default function UrlDownloadModal({ onClose }) {
 
         {status && status !== 'done' && !status.error && (
           <div className="url-modal-progress">
-            <div className="url-modal-progress-bar">
-              <div className="url-modal-progress-fill" style={{ width: `${status.pct ?? 0}%` }} />
+            {/* Overall bar — only for playlists */}
+            {(status.overallTotal ?? 1) > 1 && (
+              <div className="url-modal-progress-row">
+                <span className="url-modal-progress-label">
+                  Overall {status.overallCurrent} / {status.overallTotal}
+                </span>
+                <div className="url-modal-progress-bar">
+                  <div
+                    className="url-modal-progress-fill"
+                    style={{ width: `${status.pct ?? 0}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            {/* Per-track bar */}
+            <div className="url-modal-progress-row">
+              {(status.overallTotal ?? 1) > 1 && (
+                <span className="url-modal-progress-label">Track</span>
+              )}
+              <div className="url-modal-progress-bar">
+                <div
+                  className="url-modal-progress-fill"
+                  style={{ width: `${status.trackPct ?? status.pct ?? 0}%` }}
+                />
+              </div>
             </div>
             <span className="url-modal-progress-msg">{status.msg}</span>
           </div>

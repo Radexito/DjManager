@@ -96,6 +96,17 @@
   gap: 6px;
 }
 
+.url-modal-progress-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.url-modal-progress-label {
+  font-size: 11px;
+  color: var(--text-secondary, #666);
+}
+
 .url-modal-progress-bar {
   height: 4px;
   background: var(--bg-tertiary, #141414);

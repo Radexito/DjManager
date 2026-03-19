@@ -92,10 +92,12 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
 
   const dest = getAudioStoragePath(hash, ext);
 
-  if (!fs.existsSync(dest)) fs.copyFileSync(filePath, dest);
+  if (!fs.existsSync(dest)) {
+    fs.copyFileSync(filePath, dest);
+  }
 
   const probe = await ffprobe(dest);
-  const format = probe.format.format_name;
+  const format = ext.slice(1).toLowerCase();
   const duration = Number(probe.format.duration);
   const bitrate = Number(probe.format.bit_rate);
 
@@ -117,6 +119,7 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
     source_url: sourceMeta.source_url ?? null,
     source_platform: sourceMeta.source_platform ?? null,
     source_quality: sourceMeta.source_quality ?? null,
+    source_link: sourceMeta.source_link ?? null,
   });
 
   console.log(`Added track ID ${trackId}: ${title || path.basename(filePath, ext)}`);

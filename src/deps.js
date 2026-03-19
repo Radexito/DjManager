@@ -127,6 +127,33 @@ export function getLatestRelease(owner, repo) {
   });
 }
 
+export function getReleaseByTag(owner, repo, tag) {
+  return new Promise((resolve, reject) => {
+    https
+      .get(
+        `https://api.github.com/repos/${owner}/${repo}/releases/tags/${tag}`,
+        {
+          headers: { 'User-Agent': 'djman-dep-downloader', Accept: 'application/vnd.github+json' },
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (c) => (body += c));
+          res.on('end', () => {
+            try {
+              const data = JSON.parse(body);
+              if (data.message) reject(new Error(`GitHub: ${data.message} (tag: ${tag})`));
+              else resolve(data);
+            } catch (e) {
+              reject(e);
+            }
+          });
+          res.on('error', reject);
+        }
+      )
+      .on('error', reject);
+  });
+}
+
 // ── Archive helpers ───────────────────────────────────────────────────────────
 
 async function extractTarGz(archive, destDir) {
@@ -321,9 +348,11 @@ async function downloadAnalyzer(tmp, onProgress) {
 
 // ── yt-dlp download ───────────────────────────────────────────────────────────
 
-async function downloadYtDlp(tmp, onProgress) {
+async function downloadYtDlp(tmp, onProgress, tag = null) {
   onProgress?.('Downloading yt-dlp…', 0);
-  const release = await getLatestRelease('yt-dlp', 'yt-dlp');
+  const release = tag
+    ? await getReleaseByTag('yt-dlp', 'yt-dlp', tag)
+    : await getLatestRelease('yt-dlp', 'yt-dlp');
 
   const platform = process.platform;
   let assetName;
@@ -433,14 +462,14 @@ export async function updateAnalyzer(onProgress) {
   }
 }
 
-export async function updateYtDlp(onProgress) {
+export async function updateYtDlp(onProgress, tag = null) {
   const binDir = getBinDir();
   await fs.promises.mkdir(binDir, { recursive: true });
   const tmp = path.join(app.getPath('temp'), 'djman-deps');
   await fs.promises.mkdir(tmp, { recursive: true });
   try {
-    await downloadYtDlp(tmp, onProgress);
-    onProgress?.('yt-dlp updated.', 100);
+    await downloadYtDlp(tmp, onProgress, tag);
+    onProgress?.(tag ? `yt-dlp ${tag} installed.` : 'yt-dlp updated.', 100);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

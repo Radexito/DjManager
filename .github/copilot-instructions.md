@@ -9,29 +9,47 @@ npm run dev
 # Renderer only (Vite at http://localhost:5173)
 npm run react
 
-# Lint renderer
+# Lint src/ (main process)
+npm run lint
+# Lint everything (main + renderer)
+npm run lint:all
+# Lint renderer only
 cd renderer && npm run lint
+
+# Format all files
+npm run format
+# Check formatting without writing
+npm run format:check
 
 # Build renderer for production
 npm run build
+
+# Package app (all platforms / specific platform)
+npm run dist
+npm run dist:linux   # or :win / :mac
 
 # Run in production mode (after build)
 npm run electron-prod
 
 # Unit tests (Vitest) — covers src/db/**
 npm test
-
-# Run a single test file
+# Run a single main-process test file
 npx vitest run src/__tests__/trackRepository.test.js
+# Test with coverage
+npm run test:coverage
 
 # Renderer unit tests (React Testing Library)
 cd renderer && npm test
+# Run a single renderer test file
+cd renderer && npx vitest run src/__tests__/MusicLibrary.contextmenu.test.jsx
+# Renderer coverage
+cd renderer && npm run test:coverage
 
 # E2E tests (Playwright) — not yet in CI
 npm run test:e2e
 ```
 
-Coverage thresholds (v8): 65% statements/lines, 44% branches, 70% functions. Only `src/db/**` is included in coverage.
+Coverage thresholds (v8): 65% statements/lines, 44% branches, 70% functions for `src/db/**`. Renderer thresholds are minimal (7%).
 
 ## Architecture
 
@@ -99,5 +117,6 @@ importAudioFiles(filePaths) →
 - **FFmpeg binaries**: `analysisWorker.js` and `src/audio/ffmpeg.js` check `./ffmpeg/<binary>` first, then fall back to system PATH. Local binaries installed via `scripts/install-ffmpeg.sh`.
 - **mixxx-analyzer binary**: located via `workerData.analyzerPath` (runtime-downloaded) or `build-resources/analysis` (dev). Called with `--json <filePath>`, outputs a JSON array. Source lives in the [mixxx-analyzer](https://github.com/Radexito/mixxx-analyzer) repo.
 - **Genres** stored as JSON-stringified array in the `genres TEXT` column.
-- **Playlist tables** exist in the schema (`playlists`, `playlist_tracks`) but all related IPC handlers and repository calls are commented out — they are not yet active.
+- **Playlists** are fully implemented end-to-end: schema, `playlistRepository.js`, IPC handlers in `main.js`, and renderer UI. Mutations (`createPlaylist`, `addTracksToPlaylist`, etc.) always emit a `playlists-updated` event so the sidebar stays in sync.
+- **Search** is handled client-side by `renderer/src/searchParser.js`, which supports field-qualified queries (e.g. `bpm >= 120 AND key:12A artist:"Daft Punk"`). The parsed AST filters the already-loaded `tracks` array — no extra DB queries.
 - **`global.mainWindow`** is set in `main.js` so the analysis worker result handler can push IPC events to the renderer without importing BrowserWindow directly.

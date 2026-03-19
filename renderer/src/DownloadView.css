@@ -87,7 +87,14 @@
 .dl-progress {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 5px;
+}
+
+.dl-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-secondary, #888);
 }
 
 .dl-progress-bar {
@@ -101,6 +108,10 @@
   height: 100%;
   background: var(--accent, #7c5cfc);
   transition: width 0.3s ease;
+}
+
+.dl-progress-fill--track {
+  background: color-mix(in srgb, var(--accent, #7c5cfc) 70%, #48bb78 30%);
 }
 
 .dl-progress-msg {
@@ -130,6 +141,15 @@
   color: #fc8181;
   border: 1px solid rgba(245, 101, 101, 0.2);
   word-break: break-word;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dl-result-hint {
+  font-size: 12px;
+  color: #f6ad55;
+  opacity: 0.9;
 }
 
 /* ── History ─────────────────────────────────────────────────────────────── */
@@ -211,6 +231,19 @@
   border-radius: 20px;
   font-size: 12px;
   color: var(--text-secondary, #aaa);
+  text-decoration: none;
+}
+
+.dl-source-chip--link {
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.dl-source-chip--link:hover {
+  border-color: var(--accent, #7c5cfc);
+  color: var(--text-primary, #e0e0e0);
 }
 
 .dl-source-icon {
@@ -221,6 +254,74 @@
   border-style: dashed;
   color: var(--text-secondary, #666);
   font-style: italic;
+}
+
+/* ── Track status table ──────────────────────────────────────────────────── */
+
+.dl-track-table {
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.dl-track-table-head {
+  display: grid;
+  grid-template-columns: 1fr 60px;
+  padding: 7px 12px;
+  background: var(--bg-secondary, #1a1a1a);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #666);
+  border-bottom: 1px solid var(--border, #2a2a2a);
+}
+
+.dl-track-table-body {
+  max-height: min(280px, 35vh);
+  overflow-y: auto;
+}
+
+.dl-track-row {
+  display: grid;
+  grid-template-columns: 1fr 60px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border, #222);
+  align-items: center;
+}
+
+.dl-track-row:last-child {
+  border-bottom: none;
+}
+
+.dl-track-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary, #ddd);
+}
+
+.dl-track-status {
+  text-align: right;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.dl-track-status--pending {
+  color: var(--text-secondary, #555);
+}
+.dl-track-status--downloading {
+  color: #f6ad55;
+}
+.dl-track-status--importing {
+  color: #63b3ed;
+}
+.dl-track-status--done {
+  color: #68d391;
+}
+.dl-track-status--failed {
+  color: #fc8181;
 }
 
 /* ── Go to library button ────────────────────────────────────────────────── */
@@ -240,4 +341,179 @@
 
 .dl-goto-btn:hover {
   opacity: 0.8;
+}
+
+/* ── Result actions row ─────────────────────────────────────────────────── */
+
+.dl-result-actions {
+  display: flex;
+  gap: 16px;
+  margin-top: 6px;
+}
+
+/* ── Fetch loading spinner ──────────────────────────────────────────────── */
+
+.dl-fetch-spinner {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.dl-spinner-svg {
+  width: 14px;
+  height: 14px;
+  animation: dl-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes dl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Selection step ─────────────────────────────────────────────────────── */
+
+.dl-select {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 640px;
+  min-height: 0;
+  flex: 1;
+}
+
+.dl-select-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.dl-back-btn {
+  background: none;
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  color: var(--text-secondary, #aaa);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 6px 12px;
+  white-space: nowrap;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+  flex-shrink: 0;
+}
+
+.dl-back-btn:hover {
+  border-color: var(--accent, #7c5cfc);
+  color: var(--text-primary, #e0e0e0);
+}
+
+.dl-select-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.dl-select-playlist-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dl-select-count {
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+}
+
+.dl-select-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+}
+
+.dl-select-all-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary, #aaa);
+  cursor: pointer;
+  user-select: none;
+}
+
+.dl-select-all-label:hover {
+  color: var(--text-primary, #e0e0e0);
+}
+
+.dl-select-selected-count {
+  font-size: 12px;
+  color: var(--text-secondary, #666);
+}
+
+.dl-select-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  max-height: min(420px, 50vh);
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 6px;
+}
+
+.dl-select-item {
+  display: grid;
+  grid-template-columns: auto 32px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border, #1e1e1e);
+  cursor: pointer;
+  transition: background 0.1s;
+  user-select: none;
+}
+
+.dl-select-item:last-child {
+  border-bottom: none;
+}
+.dl-select-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.dl-select-item input[type='checkbox'] {
+  accent-color: var(--accent, #7c5cfc);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.dl-select-item-num {
+  font-size: 11px;
+  color: var(--text-secondary, #555);
+  text-align: right;
+}
+
+.dl-select-item-title {
+  font-size: 13px;
+  color: var(--text-primary, #ddd);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dl-select-item-dur {
+  font-size: 12px;
+  color: var(--text-secondary, #666);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dl-select-footer {
+  padding-top: 4px;
 }
