@@ -71,13 +71,21 @@ contextBridge.exposeInMainWorld('api', {
   autoTagSearch: (query) => ipcRenderer.invoke('auto-tag-search', { query }),
 
   // yt-dlp URL download
-  ytDlpDownloadUrl: (url) => ipcRenderer.invoke('ytdlp-download-url', url),
+  ytDlpFetchInfo: (url) => ipcRenderer.invoke('ytdlp-fetch-info', url),
+  ytDlpDownloadUrl: ({ url, playlistItems, playlistTitle }) =>
+    ipcRenderer.invoke('ytdlp-download-url', { url, playlistItems, playlistTitle }),
   onYtDlpProgress: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('ytdlp-progress', handler);
     return () => ipcRenderer.removeListener('ytdlp-progress', handler);
   },
-  updateYtDlp: () => ipcRenderer.invoke('update-yt-dlp'),
+  onYtDlpTrackUpdate: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-track-update', handler);
+    return () => ipcRenderer.removeListener('ytdlp-track-update', handler);
+  },
+  updateYtDlp: (tag) => ipcRenderer.invoke('update-yt-dlp', tag ?? null),
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
 
   clearLibrary: () => ipcRenderer.invoke('clear-library'),
   clearUserData: () => ipcRenderer.invoke('clear-user-data'),

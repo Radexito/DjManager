@@ -654,6 +654,12 @@ function MusicLibrary({ selectedPlaylist }) {
 
   const handleRemove = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
+    const n = targetIds.length;
+    const msg =
+      n === 1
+        ? 'Remove this track from your library? This cannot be undone.'
+        : `Remove ${n} tracks from your library? This cannot be undone.`;
+    if (!window.confirm(msg)) return;
     setContextMenu(null);
     for (const id of targetIds) await window.api.removeTrack(id);
     setTracks((prev) => prev.filter((t) => !targetIds.includes(t.id)));
@@ -663,6 +669,10 @@ function MusicLibrary({ selectedPlaylist }) {
 
   const handleRemoveFromPlaylist = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
+    const n = targetIds.length;
+    const msg =
+      n === 1 ? 'Remove this track from the playlist?' : `Remove ${n} tracks from the playlist?`;
+    if (!window.confirm(msg)) return;
     setContextMenu(null);
     for (const id of targetIds) {
       await window.api.removeTrackFromPlaylist(Number(selectedPlaylist), id);
@@ -1317,12 +1327,20 @@ function MusicLibrary({ selectedPlaylist }) {
 
                   {/* ── Remove ── */}
                   {isPlaylistView ? (
-                    <div
-                      className="context-menu-item context-menu-item--danger"
-                      onClick={handleRemoveFromPlaylist}
-                    >
-                      ➖ Remove from playlist{selectionLabel}
-                    </div>
+                    <>
+                      <div
+                        className="context-menu-item context-menu-item--danger"
+                        onClick={handleRemoveFromPlaylist}
+                      >
+                        ➖ Remove from playlist{selectionLabel}
+                      </div>
+                      <div
+                        className="context-menu-item context-menu-item--danger"
+                        onClick={handleRemove}
+                      >
+                        🗑️ Remove from library{selectionLabel}
+                      </div>
+                    </>
                   ) : (
                     <div
                       className="context-menu-item context-menu-item--danger"
