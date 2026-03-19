@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import db from '../db/database.js';
 import {
   createPlaylist,
   getPlaylists,
@@ -177,5 +178,34 @@ describe('playlistRepository', () => {
       // But the track itself still exists
       expect(getTracks({ limit: 100 })).toHaveLength(1);
     });
+  });
+});
+
+describe('source_url field', () => {
+  it('createPlaylist with sourceUrl stores it and is retrievable', () => {
+    const id = createPlaylist('DJ Mix', '#ff0000', 'https://soundcloud.com/djmix');
+    // getPlaylist doesn't SELECT source_url yet; verify via direct DB query
+    const row = db.prepare('SELECT source_url FROM playlists WHERE id = ?').get(id);
+    expect(row.source_url).toBe('https://soundcloud.com/djmix');
+  });
+
+  it('createPlaylist without sourceUrl defaults to null', () => {
+    const id = createPlaylist('No URL Playlist', null);
+    const row = db.prepare('SELECT source_url FROM playlists WHERE id = ?').get(id);
+    expect(row.source_url).toBeNull();
+  });
+
+  it('getPlaylists returns the playlist rows and source_url is persisted in DB', () => {
+    createPlaylist('With URL', null, 'https://bandcamp.com/artist/album');
+    createPlaylist('Without URL', null);
+    const playlists = getPlaylists();
+    expect(playlists).toHaveLength(2);
+    // Verify via direct DB that source_url values are stored correctly
+    const withUrl = db.prepare('SELECT source_url FROM playlists WHERE name = ?').get('With URL');
+    const withoutUrl = db
+      .prepare('SELECT source_url FROM playlists WHERE name = ?')
+      .get('Without URL');
+    expect(withUrl.source_url).toBe('https://bandcamp.com/artist/album');
+    expect(withoutUrl.source_url).toBeNull();
   });
 });
