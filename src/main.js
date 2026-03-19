@@ -1,8 +1,8 @@
 import path from 'path';
 import fs from 'fs';
-import { Readable } from 'stream';
+import http from 'http';
 import { fileURLToPath } from 'url';
-import { app, BrowserWindow, ipcMain, dialog, Menu, protocol, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron';
 
 // Fix for Linux/Wayland + AMD radeonsi/Mesa stability issues.
 // Root cause chain (diagnosed 2025-03):
@@ -70,82 +70,76 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow;
 
-// Register media:// protocol to serve local audio files from the renderer.
-// Must be called before app is ready.
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'media',
-    privileges: { secure: true, supportFetchAPI: true, bypassCSP: true, stream: true },
-  },
-]);
+const AUDIO_MIME = {
+  '.mp3': 'audio/mpeg',
+  '.flac': 'audio/flac',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+};
 
-function createWindow() {
-  // Handle media:// scheme with Range request support so seeking works.
-  const MIME = {
-    '.mp3': 'audio/mpeg',
-    '.flac': 'audio/flac',
-    '.wav': 'audio/wav',
-    '.ogg': 'audio/ogg',
-    '.m4a': 'audio/mp4',
-    '.aac': 'audio/aac',
-  };
-  protocol.handle('media', async (request) => {
-    try {
-      const filePath = decodeURIComponent(new URL(request.url).pathname);
-      const stat = await fs.promises.stat(filePath);
-      const total = stat.size;
-      const ext = path.extname(filePath).toLowerCase();
-      const mime = MIME[ext] || 'audio/mpeg';
-      const range = request.headers.get('Range');
-      const name = path.basename(filePath);
-      const t = () => new Date().toISOString().slice(11, 23); // HH:MM:SS.mmm
+// Serve audio files over a local HTTP server so Chromium's media pipeline can
+// issue standard Range requests during seeking. Custom Electron protocols have
+// unreliable Range support in Electron 28+ and cause PIPELINE_ERROR_READ on seek.
+let mediaServerPort = null;
 
-      const makeStream = (start, end) => {
-        const nodeStream = fs.createReadStream(filePath, { start, end });
-        console.log(`[media] ${t()} OPEN  bytes=${start}-${end} (${end - start + 1}B) [${name}]`);
-        nodeStream.on('end', () =>
-          console.log(`[media] ${t()} END   bytes=${start}-${end} [${name}]`)
-        );
-        nodeStream.on('close', () =>
-          console.log(`[media] ${t()} CLOSE bytes=${start}-${end} [${name}]`)
-        );
-        nodeStream.on('error', (err) =>
-          console.error(
-            `[media] ${t()} ERROR bytes=${start}-${end} err=${err.code} ${err.message} [${name}]`
-          )
-        );
-        return Readable.toWeb(nodeStream);
-      };
+function startMediaServer() {
+  return new Promise((resolve, reject) => {
+    const audioBase = path.join(app.getPath('userData'), 'audio');
 
-      if (range) {
-        const [, s, e] = range.match(/bytes=(\d+)-(\d*)/) || [];
-        const start = parseInt(s, 10);
-        const end = e ? Math.min(parseInt(e, 10), total - 1) : total - 1;
-        return new Response(makeStream(start, end), {
-          status: 206,
-          headers: {
+    const server = http.createServer((req, res) => {
+      try {
+        const urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+
+        // Security: only serve files inside the managed audio directory.
+        if (!urlPath.startsWith(audioBase)) {
+          res.writeHead(403);
+          res.end();
+          return;
+        }
+
+        const stat = fs.statSync(urlPath);
+        const total = stat.size;
+        const mime = AUDIO_MIME[path.extname(urlPath).toLowerCase()] || 'audio/mpeg';
+        const rangeHeader = req.headers['range'];
+
+        if (rangeHeader) {
+          const [, s, e] = rangeHeader.match(/bytes=(\d+)-(\d*)/) || [];
+          const start = parseInt(s, 10);
+          const end = e ? Math.min(parseInt(e, 10), total - 1) : total - 1;
+          res.writeHead(206, {
             'Content-Type': mime,
             'Content-Range': `bytes ${start}-${end}/${total}`,
             'Accept-Ranges': 'bytes',
             'Content-Length': String(end - start + 1),
-          },
-        });
+          });
+          fs.createReadStream(urlPath, { start, end }).pipe(res);
+        } else {
+          res.writeHead(200, {
+            'Content-Type': mime,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': String(total),
+          });
+          fs.createReadStream(urlPath).pipe(res);
+        }
+      } catch (err) {
+        if (err.code !== 'ENOENT') console.error('[media-server] error:', err.message);
+        res.writeHead(err.code === 'ENOENT' ? 404 : 500);
+        res.end();
       }
+    });
 
-      return new Response(makeStream(0, total - 1), {
-        status: 200,
-        headers: {
-          'Content-Type': mime,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': String(total),
-        },
-      });
-    } catch (err) {
-      if (err.code !== 'ENOENT') console.error('media:// error:', err.code, err.message);
-      return new Response('Not found', { status: 404 });
-    }
+    server.listen(0, '127.0.0.1', () => {
+      mediaServerPort = server.address().port;
+      console.log(`[media-server] listening on http://127.0.0.1:${mediaServerPort}`);
+      resolve(mediaServerPort);
+    });
+    server.on('error', reject);
   });
+}
 
+function createWindow() {
   mainWindow = new BrowserWindow({
     title: 'DjManager - RWTechWorks.pl',
     width: 1200,
@@ -180,6 +174,7 @@ async function initApp() {
   initLogger();
   console.log('Initializing database...');
   initDB();
+  await startMediaServer();
   console.log('Creating window.');
   createWindow();
 
@@ -232,6 +227,7 @@ async function initApp() {
 }
 
 // IPC Handlers
+ipcMain.handle('get-media-port', () => mediaServerPort);
 ipcMain.handle('get-tracks', (_, params) => getTracks(params));
 ipcMain.handle('get-track-ids', (_, params) => getTrackIds(params));
 ipcMain.handle('get-setting', (_, key, def) => getSetting(key, def));
