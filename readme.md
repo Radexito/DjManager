@@ -1,6 +1,6 @@
 # DJ Manager
 
-Your music library, built for DJs. Import tracks, analyse BPM and key automatically, build playlists, and prepare sets — all offline, all on your machine.
+Your music library, built for DJs. Import tracks, analyse BPM and key automatically, build playlists, download from anywhere, and prepare sets — all stored locally on your machine.
 
 [![CI](https://github.com/Radexito/DjManager/actions/workflows/ci.yml/badge.svg)](https://github.com/Radexito/DjManager/actions/workflows/ci.yml)
 [![Release](https://github.com/Radexito/DjManager/actions/workflows/release.yml/badge.svg)](https://github.com/Radexito/DjManager/actions/workflows/release.yml)
