@@ -48,6 +48,15 @@ export function spawnAnalysis(trackId, filePath) {
     workerData: { filePath, trackId, analyzerPath: getAnalyzerRuntimePath() },
   });
 
+  worker.on('error', (err) => {
+    console.error(`Analysis worker error for track ID ${trackId}:`, err.message);
+  });
+
+  worker.on('exit', (code) => {
+    if (code !== 0)
+      console.warn(`Analysis worker exited with code ${code} for track ID ${trackId}`);
+  });
+
   worker.on('message', ({ ok, result, error }) => {
     if (!ok) {
       console.error(`Analysis failed for track ID ${trackId}:`, error);
