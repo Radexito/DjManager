@@ -348,3 +348,22 @@ describe('trackRepository', () => {
     });
   });
 });
+
+describe('source_link field', () => {
+  it('addTrack with source_link stores it and getTrackById returns it', () => {
+    const id = addTrack({
+      ...SAMPLE,
+      file_hash: 'sl1',
+      file_path: '/tmp/sl1.mp3',
+      source_link: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    });
+    const track = getTrackById(id);
+    expect(track.source_link).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+  });
+
+  it('addTrack without source_link defaults to null', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'sl2', file_path: '/tmp/sl2.mp3' });
+    const track = getTrackById(id);
+    expect(track.source_link).toBeNull();
+  });
+});

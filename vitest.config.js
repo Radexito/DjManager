@@ -33,7 +33,10 @@ export default defineConfig({
         test: {
           name: 'unit',
           environment: 'node',
-          include: ['src/__tests__/importManager.test.js'],
+          include: [
+            'src/__tests__/importManager.test.js',
+            'src/__tests__/ytDlpManager.test.js',
+          ],
         },
       },
     ],
