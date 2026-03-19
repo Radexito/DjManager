@@ -1,6 +1,5 @@
 import path from 'path';
 import fs from 'fs';
-import http from 'http';
 import { fileURLToPath } from 'url';
 import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron';
 
@@ -70,14 +69,7 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow;
 
-const AUDIO_MIME = {
-  '.mp3': 'audio/mpeg',
-  '.flac': 'audio/flac',
-  '.wav': 'audio/wav',
-  '.ogg': 'audio/ogg',
-  '.m4a': 'audio/mp4',
-  '.aac': 'audio/aac',
-};
+import { startMediaServer as _startMediaServer } from './audio/mediaServer.js';
 
 // Serve audio files over a local HTTP server so Chromium's media pipeline can
 // issue standard Range requests during seeking. Custom Electron protocols have
@@ -85,57 +77,9 @@ const AUDIO_MIME = {
 let mediaServerPort = null;
 
 function startMediaServer() {
-  return new Promise((resolve, reject) => {
-    const audioBase = path.join(app.getPath('userData'), 'audio');
-
-    const server = http.createServer((req, res) => {
-      try {
-        const urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
-
-        // Security: only serve files inside the managed audio directory.
-        if (!urlPath.startsWith(audioBase)) {
-          res.writeHead(403);
-          res.end();
-          return;
-        }
-
-        const stat = fs.statSync(urlPath);
-        const total = stat.size;
-        const mime = AUDIO_MIME[path.extname(urlPath).toLowerCase()] || 'audio/mpeg';
-        const rangeHeader = req.headers['range'];
-
-        if (rangeHeader) {
-          const [, s, e] = rangeHeader.match(/bytes=(\d+)-(\d*)/) || [];
-          const start = parseInt(s, 10);
-          const end = e ? Math.min(parseInt(e, 10), total - 1) : total - 1;
-          res.writeHead(206, {
-            'Content-Type': mime,
-            'Content-Range': `bytes ${start}-${end}/${total}`,
-            'Accept-Ranges': 'bytes',
-            'Content-Length': String(end - start + 1),
-          });
-          fs.createReadStream(urlPath, { start, end }).pipe(res);
-        } else {
-          res.writeHead(200, {
-            'Content-Type': mime,
-            'Accept-Ranges': 'bytes',
-            'Content-Length': String(total),
-          });
-          fs.createReadStream(urlPath).pipe(res);
-        }
-      } catch (err) {
-        if (err.code !== 'ENOENT') console.error('[media-server] error:', err.message);
-        res.writeHead(err.code === 'ENOENT' ? 404 : 500);
-        res.end();
-      }
-    });
-
-    server.listen(0, '127.0.0.1', () => {
-      mediaServerPort = server.address().port;
-      console.log(`[media-server] listening on http://127.0.0.1:${mediaServerPort}`);
-      resolve(mediaServerPort);
-    });
-    server.on('error', reject);
+  const audioBase = path.join(app.getPath('userData'), 'audio');
+  return _startMediaServer(audioBase).then(({ port }) => {
+    mediaServerPort = port;
   });
 }
 

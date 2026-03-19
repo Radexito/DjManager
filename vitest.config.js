@@ -36,6 +36,7 @@ export default defineConfig({
           include: [
             'src/__tests__/importManager.test.js',
             'src/__tests__/ytDlpManager.test.js',
+            'src/__tests__/mediaServer.test.js',
           ],
         },
       },
