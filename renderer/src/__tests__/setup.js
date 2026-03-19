@@ -44,6 +44,7 @@ window.api = {
   onDepsProgress: vi.fn().mockImplementation(noop),
   onMoveLibraryProgress: vi.fn().mockImplementation(noop),
   onExportM3UProgress: vi.fn().mockImplementation(noop),
+  getMediaPort: vi.fn().mockResolvedValue(19876),
   ytDlpFetchInfo: vi.fn().mockResolvedValue({ ok: false, error: 'not configured' }),
   ytDlpDownloadUrl: vi.fn().mockResolvedValue({ ok: true, trackIds: [] }),
   onYtDlpProgress: vi.fn().mockImplementation(() => () => {}),

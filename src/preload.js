@@ -71,6 +71,7 @@ contextBridge.exposeInMainWorld('api', {
   autoTagSearch: (query) => ipcRenderer.invoke('auto-tag-search', { query }),
 
   // yt-dlp URL download
+  getMediaPort: () => ipcRenderer.invoke('get-media-port'),
   ytDlpFetchInfo: (url) => ipcRenderer.invoke('ytdlp-fetch-info', url),
   ytDlpDownloadUrl: ({ url, playlistItems, playlistTitle }) =>
     ipcRenderer.invoke('ytdlp-download-url', { url, playlistItems, playlistTitle }),

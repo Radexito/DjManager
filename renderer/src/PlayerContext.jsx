@@ -27,6 +27,14 @@ export function PlayerProvider({ children }) {
   const [repeat, setRepeat] = useState('none'); // 'none' | 'all' | 'one'
   const [outputDeviceId, setOutputDeviceId] = useState('');
 
+  // Port of the local HTTP media server (started in main process before window opens).
+  const mediaPortRef = useRef(null);
+  useEffect(() => {
+    window.api.getMediaPort().then((port) => {
+      mediaPortRef.current = port;
+    });
+  }, []);
+
   // Keep mutable refs so event handlers always see latest values
   const queueRef = useRef(queue);
   const idxRef = useRef(queueIndex);
@@ -63,7 +71,12 @@ export function PlayerProvider({ children }) {
         .split('/')
         .map((seg) => encodeURIComponent(seg))
         .join('/');
-      const src = `media://${encodedPath}?t=${gen}`; // cache-bust: same file reloaded = fresh pipeline
+      const port = mediaPortRef.current;
+      if (!port) {
+        console.error('[player] media server not ready yet');
+        return;
+      }
+      const src = `http://127.0.0.1:${port}${encodedPath}?t=${gen}`; // cache-bust: same file reloaded = fresh pipeline
       audio.pause(); // cleanly stop current pipeline before swapping source
       audio.src = src;
       // Setting src triggers an implicit load; calling audio.load() would race with play()
