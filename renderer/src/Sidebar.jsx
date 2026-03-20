@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import ImportPlaylistModal from './ImportPlaylistModal.jsx';
 import './Sidebar.css';
 
 const MENU_ITEMS = [
@@ -20,6 +21,7 @@ const PRESET_COLORS = [
 function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistNml, onExportNmlAll }) {
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
+  const [pendingImportFiles, setPendingImportFiles] = useState(null); // files waiting for playlist choice
   const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
@@ -61,8 +63,28 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistNml, onExpo
   const handleImport = async () => {
     const files = await window.api.selectAudioFiles();
     if (!files.length) return;
+    setPendingImportFiles(files);
+  };
+
+  const handleImportConfirm = async ({ mode, name, id }) => {
+    const files = pendingImportFiles;
+    setPendingImportFiles(null);
     setImportProgress({ total: files.length, completed: 0 });
-    await window.api.importAudioFiles(files);
+
+    let playlistId = null;
+    if (mode === 'existing') {
+      playlistId = id;
+    } else if (mode === 'new' && name) {
+      const id = await window.api.createPlaylist(name, null);
+      playlistId = id ?? null;
+    }
+
+    const trackIds = await window.api.importAudioFiles(files);
+
+    if (playlistId && trackIds?.length) {
+      await window.api.addTracksToPlaylist(playlistId, trackIds);
+    }
+
     setImportProgress({ total: 0, completed: 0 });
   };
 
@@ -279,6 +301,13 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistNml, onExpo
             🗑️ Delete playlist
           </div>
         </div>
+      )}
+      {pendingImportFiles && (
+        <ImportPlaylistModal
+          fileCount={pendingImportFiles.length}
+          onConfirm={handleImportConfirm}
+          onCancel={() => setPendingImportFiles(null)}
+        />
       )}
     </div>
   );
