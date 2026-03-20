@@ -351,3 +351,25 @@
   font-family: monospace;
   font-size: 12px;
 }
+
+.settings-cookie-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.settings-cookie-status--ok {
+  background: rgba(72, 199, 116, 0.1);
+  color: #48c774;
+  border: 1px solid rgba(72, 199, 116, 0.22);
+}
+
+.settings-cookie-status--warn {
+  background: rgba(255, 189, 46, 0.08);
+  color: #ffbd2e;
+  border: 1px solid rgba(255, 189, 46, 0.2);
+}

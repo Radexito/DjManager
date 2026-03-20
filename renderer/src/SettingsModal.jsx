@@ -251,10 +251,21 @@ function SettingsModal({ onClose }) {
                   </select>
                 </div>
                 {cookiesBrowser && (
-                  <p className="settings-group-desc" style={{ marginTop: '0.5rem' }}>
-                    yt-dlp will read cookies from <strong>{cookiesBrowser}</strong>. Make sure the
-                    browser is closed or not actively using the cookie store when downloading.
-                  </p>
+                  <div
+                    className="settings-cookie-status settings-cookie-status--ok"
+                    style={{ marginTop: '0.5rem' }}
+                  >
+                    🟢 Cookies active — <strong>{cookiesBrowser}</strong>. Make sure the browser is
+                    closed or not actively using the cookie store when downloading.
+                  </div>
+                )}
+                {!cookiesBrowser && (
+                  <div
+                    className="settings-cookie-status settings-cookie-status--warn"
+                    style={{ marginTop: '0.5rem' }}
+                  >
+                    🔒 No browser selected — private or age-restricted content may fail.
+                  </div>
                 )}
               </div>
             </>
