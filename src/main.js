@@ -5,16 +5,21 @@ import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron';
 
 // Fix for Linux/Wayland + AMD radeonsi/Mesa stability issues.
 // Root cause chain (diagnosed 2025-03):
-//   1. --ozone-platform=wayland required to prevent X11 shared-memory FATALs
+//   1. --ozone-platform=wayland required to prevent X11 shared-memory FATALs on Wayland
 //   2. GPU process causes network service crash via pidfd shared-memory race
 //   3. --no-zygote avoids the zygote-pidfd handshake that returns ESRCH in
 //      child processes on this kernel/namespace configuration
 //   4. app.disableHardwareAcceleration() + --disable-gpu eliminate GPU process
 //   5. --no-sandbox / --disable-gpu-sandbox prevent remaining sandbox failures
+//
+// NOTE: --ozone-platform=wayland is ONLY set when WAYLAND_DISPLAY is present.
+// Forcing Wayland on X11/xvfb (e.g. CI) breaks Playwright click interactions.
 if (process.platform === 'linux') {
   app.disableHardwareAcceleration();
-  app.commandLine.appendSwitch('ozone-platform', 'wayland');
-  app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform,WaylandWindowDecorations');
+  if (process.env.WAYLAND_DISPLAY) {
+    app.commandLine.appendSwitch('ozone-platform', 'wayland');
+    app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform,WaylandWindowDecorations');
+  }
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('disable-gpu-sandbox');
   app.commandLine.appendSwitch('no-sandbox');
@@ -467,7 +472,10 @@ ipcMain.handle('auto-tag-search', async (_, { query }) => {
 ipcMain.handle('ytdlp-fetch-info', async (_event, url) => {
   console.log('[ytdlp-fetch-info] fetching info for:', url);
   try {
-    const info = await ytDlpFetchPlaylistInfo(url);
+    const cookiesBrowser = getSetting('ytdlp_cookies_browser', '') || null;
+    if (cookiesBrowser)
+      console.log('[ytdlp-fetch-info] using cookies from browser:', cookiesBrowser);
+    const info = await ytDlpFetchPlaylistInfo(url, { cookiesBrowser });
     console.log(`[ytdlp-fetch-info] ok — type=${info.type} entries=${info.entries?.length}`);
     return { ok: true, ...info };
   } catch (err) {

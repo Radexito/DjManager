@@ -55,9 +55,10 @@ function extractTitleFromFilename(filePath) {
  * index page, not individual track pages — fast even for 100+ item playlists.
  *
  * @param {string} url
+ * @param {{ cookiesBrowser?: string|null }} [options]
  * @returns {Promise<{ type: 'playlist'|'single', title: string|null, entries: Array<{index,id,title,url,duration}> }>}
  */
-export async function fetchPlaylistInfo(url) {
+export async function fetchPlaylistInfo(url, options = {}) {
   const ytDlp = getYtDlpRuntimePath();
   if (!fs.existsSync(ytDlp)) throw new Error('yt-dlp binary not found. Please reinstall deps.');
 
@@ -66,6 +67,9 @@ export async function fetchPlaylistInfo(url) {
 
   if (platform === 'youtube') {
     args.push('--extractor-args', 'youtube:player_client=android_vr,web');
+  }
+  if (options.cookiesBrowser) {
+    args.push('--cookies-from-browser', options.cookiesBrowser);
   }
   args.push(url);
 
