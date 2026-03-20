@@ -5,8 +5,8 @@
   "main": "src/main.js",
   "scripts": {
     "react": "cd renderer && npm run dev",
-    "electron": "wait-on http://localhost:5173 && electron .",
-    "dev": "concurrently -k \"npm:react\" \"npm:electron\"",
+    "electron": "wait-on file:.dev-url && electron .",
+    "dev": "node -e \"require('fs').rmSync('.dev-url',{force:true})\" && concurrently -k \"npm:react\" \"npm:electron\"",
     "build-renderer": "cd renderer && npm run build",
     "build": "npm run build-renderer",
     "electron-prod": "NODE_ENV=production electron .",

@@ -176,3 +176,4 @@ playwright-report/
 # System shared libraries
 *.so
 *.so.*
+.dev-url
