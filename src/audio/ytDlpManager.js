@@ -237,7 +237,9 @@ export async function downloadUrl(url, onProgress, options = {}) {
 
   const args = [
     '-f',
-    'bestaudio/best',
+    // Prefer m4a (returned by android_vr client), then webm/opus, then any audio-only,
+    // then fall back to best available so we never get "Requested format is not available".
+    'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio/best',
     '--extract-audio',
     '--audio-format',
     audioFormat,
