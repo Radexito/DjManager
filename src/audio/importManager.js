@@ -48,6 +48,15 @@ export function spawnAnalysis(trackId, filePath) {
     workerData: { filePath, trackId, analyzerPath: getAnalyzerRuntimePath() },
   });
 
+  worker.on('error', (err) => {
+    console.error(`Analysis worker error for track ID ${trackId}:`, err.message);
+  });
+
+  worker.on('exit', (code) => {
+    if (code !== 0)
+      console.warn(`Analysis worker exited with code ${code} for track ID ${trackId}`);
+  });
+
   worker.on('message', ({ ok, result, error }) => {
     if (!ok) {
       console.error(`Analysis failed for track ID ${trackId}:`, error);
@@ -78,7 +87,7 @@ export function spawnAnalysis(trackId, filePath) {
   });
 }
 
-export async function importAudioFile(filePath) {
+export async function importAudioFile(filePath, sourceMeta = {}) {
   console.log(`Importing: ${filePath}`);
   const ext = path.extname(filePath);
   const hash = await hashFile(filePath);
@@ -92,10 +101,12 @@ export async function importAudioFile(filePath) {
 
   const dest = getAudioStoragePath(hash, ext);
 
-  if (!fs.existsSync(dest)) fs.copyFileSync(filePath, dest);
+  if (!fs.existsSync(dest)) {
+    fs.copyFileSync(filePath, dest);
+  }
 
   const probe = await ffprobe(dest);
-  const format = probe.format.format_name;
+  const format = ext.slice(1).toLowerCase();
   const duration = Number(probe.format.duration);
   const bitrate = Number(probe.format.bit_rate);
 
@@ -114,6 +125,10 @@ export async function importAudioFile(filePath) {
     year,
     label,
     genres: JSON.stringify(genre),
+    source_url: sourceMeta.source_url ?? null,
+    source_platform: sourceMeta.source_platform ?? null,
+    source_quality: sourceMeta.source_quality ?? null,
+    source_link: sourceMeta.source_link ?? null,
   });
 
   console.log(`Added track ID ${trackId}: ${title || path.basename(filePath, ext)}`);

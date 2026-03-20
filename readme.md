@@ -1,9 +1,9 @@
 # DJ Manager
 
-Your music library, built for DJs. Import tracks, analyse BPM and key automatically, build playlists, and prepare sets — all offline, all on your machine.
+Your music library, built for DJs. Import tracks, analyse BPM and key automatically, build playlists, download from anywhere, and prepare sets — all stored locally on your machine.
 
-[![CI](https://github.com/Radexito/djman/actions/workflows/ci.yml/badge.svg)](https://github.com/Radexito/djman/actions/workflows/ci.yml)
-[![Release](https://github.com/Radexito/djman/actions/workflows/release.yml/badge.svg)](https://github.com/Radexito/djman/actions/workflows/release.yml)
+[![CI](https://github.com/Radexito/DjManager/actions/workflows/ci.yml/badge.svg)](https://github.com/Radexito/DjManager/actions/workflows/ci.yml)
+[![Release](https://github.com/Radexito/DjManager/actions/workflows/release.yml/badge.svg)](https://github.com/Radexito/DjManager/actions/workflows/release.yml)
 [![code style: prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg)](https://github.com/prettier/prettier)
 [![ESLint](https://img.shields.io/badge/linting-ESLint-4B32C3)](https://eslint.org/)
 [![Tested with Vitest](https://img.shields.io/badge/tested_with-Vitest-6E9F18)](https://vitest.dev/)
@@ -15,7 +15,7 @@ Your music library, built for DJs. Import tracks, analyse BPM and key automatica
 
 ## Download
 
-Grab the latest build for your platform from [**Releases**](https://github.com/Radexito/djman/releases).
+Grab the latest build for your platform from [**Releases**](https://github.com/Radexito/DjManager/releases).
 
 FFmpeg and the audio analyser download automatically on first launch — no manual setup required.
 
@@ -58,7 +58,11 @@ The search bar shows field and operator suggestions as you type, and completed f
 
 **Find Similar** — Right-click a track to find others with a matching or adjacent Camelot key, or within a close BPM range. Results are applied as a live search filter.
 
-**Playlists** — Create colour-coded playlists in the sidebar, drag tracks in from the library, reorder by drag-and-drop, and sort by any column. Track count and total duration are shown at all times. Exporting a playlist to M3U is one click.
+**Auto-tag** — Right-click any track and choose **Auto-tag** to look up metadata from [MusicBrainz](https://musicbrainz.org/) and [Discogs](https://www.discogs.com/) simultaneously. A side-by-side diff shows the current value next to every candidate found; pick the value you want per field (Title, Artist, Album, Label, Year, Genres) from a dropdown and apply in one click.
+
+**URL Import** — Paste a URL from YouTube, SoundCloud, Bandcamp, Spotify, or [1000+ other sources](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) into the **Download** tab. DJ Manager fetches the track list first so you can review and deselect anything before downloading. Tracks are imported into the library one by one as they finish — no waiting for the full playlist. A dual progress bar tracks both the current download and overall playlist progress, and a status table shows each track's state (pending → downloading → importing → done / failed).
+
+**Playlists** — Create colour-coded playlists in the sidebar, drag tracks in from the library, reorder by drag-and-drop, and sort by any column. Track count and total duration are shown at all times. Exporting a playlist to M3U is one click. Playlists imported via URL remember their source link.
 
 **Player** — Full playback with seekbar, shuffle, repeat, previous/next, and hardware media key support. Intro and outro zones are shown visually on the seekbar so you know exactly when to mix. Double-click any track to play.
 
@@ -69,14 +73,14 @@ The search bar shows field and operator suggestions as you type, and completed f
 ## Running from source
 
 ```bash
-git clone https://github.com/Radexito/djman.git
-cd djman
+git clone https://github.com/Radexito/DjManager.git
+cd DjManager
 npm install
 cd renderer && npm install && cd ..
 npm run dev
 ```
 
-FFmpeg and mixxx-analyzer are downloaded automatically to `~/.config/djman/bin/` on first run.
+FFmpeg and mixxx-analyzer are downloaded automatically to `~/.config/dj_manager/bin/` on first run.
 
 ### Other useful commands
 
@@ -96,12 +100,12 @@ FFmpeg and mixxx-analyzer are downloaded automatically to `~/.config/djman/bin/`
 
 ---
 
-Upcoming work is tracked on the [**Issues**](https://github.com/Radexito/djman/issues) page.
+Upcoming work is tracked on the [**Issues**](https://github.com/Radexito/DjManager/issues) page.
 
 ---
 
 ## How files are stored
 
-Audio is stored at `~/.config/djman/audio/<xx>/<hash>.<ext>` (configurable via Settings → Library). The two-character hash prefix keeps directory sizes manageable. Playlists reference tracks by ID — no duplicates, no copies.
+Audio is stored at `~/.config/dj_manager/audio/<xx>/<hash>.<ext>` (configurable via Settings → Library). The two-character hash prefix keeps directory sizes manageable. Playlists reference tracks by ID — no duplicates, no copies.
 
-Logs are written daily to `~/.config/djman/logs/app-YYYY-MM-DD.log`.
+Logs are written daily to `~/.config/dj_manager/logs/app-YYYY-MM-DD.log`.

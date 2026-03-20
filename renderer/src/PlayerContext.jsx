@@ -27,6 +27,14 @@ export function PlayerProvider({ children }) {
   const [repeat, setRepeat] = useState('none'); // 'none' | 'all' | 'one'
   const [outputDeviceId, setOutputDeviceId] = useState('');
 
+  // Port of the local HTTP media server (started in main process before window opens).
+  const mediaPortRef = useRef(null);
+  useEffect(() => {
+    window.api.getMediaPort().then((port) => {
+      mediaPortRef.current = port;
+    });
+  }, []);
+
   // Keep mutable refs so event handlers always see latest values
   const queueRef = useRef(queue);
   const idxRef = useRef(queueIndex);
@@ -63,7 +71,12 @@ export function PlayerProvider({ children }) {
         .split('/')
         .map((seg) => encodeURIComponent(seg))
         .join('/');
-      const src = `media://${encodedPath}?t=${gen}`; // cache-bust: same file reloaded = fresh pipeline
+      const port = mediaPortRef.current;
+      if (!port) {
+        console.error('[player] media server not ready yet');
+        return;
+      }
+      const src = `http://127.0.0.1:${port}${encodedPath}?t=${gen}`; // cache-bust: same file reloaded = fresh pipeline
       audio.pause(); // cleanly stop current pipeline before swapping source
       audio.src = src;
       // Setting src triggers an implicit load; calling audio.load() would race with play()
@@ -113,9 +126,16 @@ export function PlayerProvider({ children }) {
 
     const onError = () => {
       const code = audio.error?.code;
-      // Suppress expected errors from rapid track switching (aborted/decode/pipeline)
-      if (code !== 1 && code !== 3 && code !== 4)
-        console.error('[player] audio error:', audio.error?.message);
+      const msg = audio.error?.message ?? '(none)';
+      // code 1=ABORTED, 3=DECODE, 4=SRC_NOT_SUPPORTED — suppress expected pipeline churn
+      if (code !== 1 && code !== 3 && code !== 4) {
+        console.error(
+          `[player] audio error code=${code} "${msg}"\n` +
+            `  src=${audio.src}\n` +
+            `  currentTime=${audio.currentTime.toFixed(3)}  duration=${isFinite(audio.duration) ? audio.duration.toFixed(3) : 'n/a'}\n` +
+            `  readyState=${audio.readyState}  networkState=${audio.networkState}`
+        );
+      }
     };
 
     audio.addEventListener('error', onError);
@@ -171,12 +191,25 @@ export function PlayerProvider({ children }) {
 
   const seek = useCallback(
     (time) => {
+      console.log(
+        `[seek] → ${time.toFixed(3)}s  ` +
+          `currentTime=${audio.currentTime.toFixed(3)}  duration=${isFinite(audio.duration) ? audio.duration.toFixed(3) : 'n/a'}  ` +
+          `readyState=${audio.readyState}  networkState=${audio.networkState}`
+      );
       audio.currentTime = time;
     },
     [audio]
   );
 
   const toggleShuffle = useCallback(() => setShuffle((s) => !s), []);
+
+  const stop = useCallback(() => {
+    audio.pause();
+    audio.src = '';
+    setCurrentTrack(null);
+    setQueue([]);
+    setQueueIndex(0);
+  }, [audio]);
 
   const cycleRepeat = useCallback(
     () => setRepeat((r) => (r === 'none' ? 'all' : r === 'all' ? 'one' : 'none')),
@@ -250,6 +283,7 @@ export function PlayerProvider({ children }) {
         outputDeviceId,
         play,
         togglePlay,
+        stop,
         next,
         prev,
         seek,

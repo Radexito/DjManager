@@ -1,8 +1,30 @@
 import path from 'path';
 import fs from 'fs';
-import { Readable } from 'stream';
 import { fileURLToPath } from 'url';
-import { app, BrowserWindow, ipcMain, dialog, Menu, protocol, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron';
+
+// Fix for Linux/Wayland + AMD radeonsi/Mesa stability issues.
+// Root cause chain (diagnosed 2025-03):
+//   1. --ozone-platform=wayland required to prevent X11 shared-memory FATALs on Wayland
+//   2. GPU process causes network service crash via pidfd shared-memory race
+//   3. --no-zygote avoids the zygote-pidfd handshake that returns ESRCH in
+//      child processes on this kernel/namespace configuration
+//   4. app.disableHardwareAcceleration() + --disable-gpu eliminate GPU process
+//   5. --no-sandbox / --disable-gpu-sandbox prevent remaining sandbox failures
+//
+// NOTE: --ozone-platform=wayland is ONLY set when WAYLAND_DISPLAY is present.
+// Forcing Wayland on X11/xvfb (e.g. CI) breaks Playwright click interactions.
+if (process.platform === 'linux') {
+  app.disableHardwareAcceleration();
+  if (process.env.WAYLAND_DISPLAY) {
+    app.commandLine.appendSwitch('ozone-platform', 'wayland');
+    app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform,WaylandWindowDecorations');
+  }
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('disable-gpu-sandbox');
+  app.commandLine.appendSwitch('no-sandbox');
+  app.commandLine.appendSwitch('no-zygote');
+}
 import { initDB } from './db/migrations.js';
 import {
   createPlaylist,
@@ -11,6 +33,7 @@ import {
   renamePlaylist,
   updatePlaylistColor,
   deletePlaylist,
+  addTrackToPlaylist,
   addTracksToPlaylist,
   removeTrackFromPlaylist,
   reorderPlaylistTracks,
@@ -30,9 +53,20 @@ import {
 } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import { importAudioFile, spawnAnalysis, getLibraryBase } from './audio/importManager.js';
+
 import { searchMusicBrainz, searchDiscogs } from './audio/autoTagger.js';
+import {
+  downloadUrl as ytDlpDownloadUrl,
+  fetchPlaylistInfo as ytDlpFetchPlaylistInfo,
+} from './audio/ytDlpManager.js';
 import { ensureDeps } from './deps.js';
-import { getInstalledVersions, checkForUpdates, updateAnalyzer, updateAll } from './deps.js';
+import {
+  getInstalledVersions,
+  checkForUpdates,
+  updateAnalyzer,
+  updateYtDlp,
+  updateAll,
+} from './deps.js';
 import { initLogger, getLogDir } from './logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -40,80 +74,26 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow;
 
-// Register media:// protocol to serve local audio files from the renderer.
-// Must be called before app is ready.
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'media',
-    privileges: { secure: true, supportFetchAPI: true, bypassCSP: true, stream: true },
-  },
-]);
+import { startMediaServer as _startMediaServer } from './audio/mediaServer.js';
+
+// Serve audio files over a local HTTP server so Chromium's media pipeline can
+// issue standard Range requests during seeking. Custom Electron protocols have
+// unreliable Range support in Electron 28+ and cause PIPELINE_ERROR_READ on seek.
+let mediaServerPort = null;
+
+function startMediaServer() {
+  const audioBase = path.join(app.getPath('userData'), 'audio');
+  return _startMediaServer(audioBase).then(({ port }) => {
+    mediaServerPort = port;
+  });
+}
 
 function createWindow() {
-  // Handle media:// scheme with Range request support so seeking works.
-  const MIME = {
-    '.mp3': 'audio/mpeg',
-    '.flac': 'audio/flac',
-    '.wav': 'audio/wav',
-    '.ogg': 'audio/ogg',
-    '.m4a': 'audio/mp4',
-    '.aac': 'audio/aac',
-  };
-  protocol.handle('media', async (request) => {
-    try {
-      const filePath = decodeURIComponent(new URL(request.url).pathname);
-      const stat = await fs.promises.stat(filePath);
-      const total = stat.size;
-      const ext = path.extname(filePath).toLowerCase();
-      const mime = MIME[ext] || 'audio/mpeg';
-      const range = request.headers.get('Range');
-
-      const makeStream = (opts) => {
-        const nodeStream = fs.createReadStream(filePath, opts);
-        // Suppress abort errors when Chromium cancels a request mid-stream
-        nodeStream.on('error', (err) => {
-          // Suppress normal abort errors from Chromium cancelling requests on track switch
-          const expected = ['ERR_STREAM_DESTROYED', 'ECONNRESET', 'ABORT_ERR', 'ERR_ABORTED'];
-          if (!expected.includes(err.code)) {
-            console.error('media:// stream error:', err.code, filePath);
-          }
-        });
-        return Readable.toWeb(nodeStream);
-      };
-
-      if (range) {
-        const [, s, e] = range.match(/bytes=(\d+)-(\d*)/) || [];
-        const start = parseInt(s, 10);
-        const end = e ? Math.min(parseInt(e, 10), total - 1) : total - 1;
-        return new Response(makeStream({ start, end }), {
-          status: 206,
-          headers: {
-            'Content-Type': mime,
-            'Content-Range': `bytes ${start}-${end}/${total}`,
-            'Accept-Ranges': 'bytes',
-            'Content-Length': String(end - start + 1),
-          },
-        });
-      }
-
-      return new Response(makeStream({}), {
-        status: 200,
-        headers: {
-          'Content-Type': mime,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': String(total),
-        },
-      });
-    } catch (err) {
-      if (err.code !== 'ENOENT') console.error('media:// error:', err.code, err.message);
-      return new Response('Not found', { status: 404 });
-    }
-  });
-
   mainWindow = new BrowserWindow({
     title: 'DjManager - RWTechWorks.pl',
     width: 1200,
     height: 800,
+    backgroundColor: '#0f0f0f',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -143,6 +123,7 @@ async function initApp() {
   initLogger();
   console.log('Initializing database...');
   initDB();
+  await startMediaServer();
   console.log('Creating window.');
   createWindow();
 
@@ -195,6 +176,7 @@ async function initApp() {
 }
 
 // IPC Handlers
+ipcMain.handle('get-media-port', () => mediaServerPort);
 ipcMain.handle('get-tracks', (_, params) => getTracks(params));
 ipcMain.handle('get-track-ids', (_, params) => getTrackIds(params));
 ipcMain.handle('get-setting', (_, key, def) => getSetting(key, def));
@@ -247,6 +229,7 @@ ipcMain.handle('move-library', async (event, newDir) => {
   setSetting('library_path', newDir);
   return { moved, total };
 });
+
 ipcMain.handle('normalize-library', (_, { targetLufs }) => {
   const parsed = Number(targetLufs);
   if (!Number.isFinite(parsed) || parsed < -60 || parsed > 0) {
@@ -452,6 +435,13 @@ ipcMain.handle('update-analyzer', async (_event) => {
   });
   if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
 });
+
+ipcMain.handle('update-yt-dlp', async (_event, tag = null) => {
+  await updateYtDlp((msg, pct) => {
+    if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
+  }, tag);
+  if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+});
 ipcMain.handle('update-all-deps', async (_event) => {
   await updateAll((msg, pct) => {
     if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
@@ -477,8 +467,218 @@ ipcMain.handle('auto-tag-search', async (_, { query }) => {
   }
 });
 
+// ─── yt-dlp playlist info fetch ──────────────────────────────────────────────
+
+ipcMain.handle('ytdlp-fetch-info', async (_event, url) => {
+  console.log('[ytdlp-fetch-info] fetching info for:', url);
+  try {
+    const cookiesBrowser = getSetting('ytdlp_cookies_browser', '') || null;
+    if (cookiesBrowser)
+      console.log('[ytdlp-fetch-info] using cookies from browser:', cookiesBrowser);
+    const info = await ytDlpFetchPlaylistInfo(url, { cookiesBrowser });
+    console.log(`[ytdlp-fetch-info] ok — type=${info.type} entries=${info.entries?.length}`);
+    return { ok: true, ...info };
+  } catch (err) {
+    console.error('[ytdlp-fetch-info] error:', err.message);
+    return { ok: false, error: err.message };
+  }
+});
+
+// ─── yt-dlp URL download ──────────────────────────────────────────────────────
+
+ipcMain.handle(
+  'ytdlp-download-url',
+  async (_event, { url, playlistItems, playlistTitle, existingPlaylistId, newPlaylistName }) => {
+    try {
+      const send = (channel, data) => {
+        if (global.mainWindow) global.mainWindow.webContents.send(channel, data);
+      };
+      const sendProgress = (data) => send('ytdlp-progress', data);
+      const sendTrackUpdate = (data) => send('ytdlp-track-update', data);
+
+      const cookiesBrowser = getSetting('ytdlp_cookies_browser', '') || null;
+
+      sendProgress({
+        msg: 'Starting download…',
+        pct: 0,
+        trackPct: 0,
+        overallCurrent: 1,
+        overallTotal: 1,
+      });
+
+      let playlistId = null;
+      const trackIds = [];
+      const importPromises = [];
+      // Track which files were already handled by onFileReady (avoid double-import)
+      const handledPaths = new Set();
+
+      // Create or assign playlist upfront so every onFileReady can add tracks immediately
+      if (existingPlaylistId) {
+        playlistId = existingPlaylistId;
+      } else if (newPlaylistName) {
+        try {
+          playlistId = createPlaylist(newPlaylistName, null, url);
+          send('playlists-updated');
+        } catch (err) {
+          console.error('[ytdlp] createPlaylist failed:', err.message);
+        }
+      }
+
+      const handleFileReady = async ({
+        filePath,
+        originalUrl,
+        trackUrl,
+        platform,
+        quality,
+        title,
+        index,
+      }) => {
+        handledPaths.add(filePath);
+        sendTrackUpdate({ type: 'update', index, title, url: trackUrl, status: 'importing' });
+        try {
+          const trackId = await importAudioFile(filePath, {
+            source_url: originalUrl,
+            source_link: trackUrl !== originalUrl ? trackUrl : null,
+            source_platform: platform,
+            source_quality: quality,
+          });
+          trackIds.push(trackId);
+          if (playlistId) {
+            addTrackToPlaylist(playlistId, trackId);
+            send('playlists-updated');
+          }
+          sendTrackUpdate({ type: 'update', index, title, url: trackUrl, status: 'done', trackId });
+          send('library-updated');
+        } catch (err) {
+          sendTrackUpdate({
+            type: 'update',
+            index,
+            title,
+            url: trackUrl,
+            status: 'failed',
+            error: err.message,
+          });
+        }
+      };
+
+      let lastOverallCurrent = 0;
+
+      const { files, playlistName: detectedPlaylistName } = await ytDlpDownloadUrl(
+        url,
+        (data) => {
+          // When a new playlist item starts downloading, emit a 'downloading' track update
+          if (data.overallTotal > 1 && data.overallCurrent !== lastOverallCurrent) {
+            lastOverallCurrent = data.overallCurrent;
+            sendTrackUpdate({
+              type: 'update',
+              index: data.overallCurrent - 1,
+              status: 'downloading',
+            });
+          }
+          sendProgress(data);
+        },
+        {
+          cookiesBrowser,
+          playlistItems: playlistItems || null,
+          onFileReady: (f) => {
+            importPromises.push(handleFileReady(f));
+          },
+          onTrackMeta: ({ index, title }) => {
+            sendTrackUpdate({ type: 'update', index, title, status: 'downloading' });
+          },
+          onPlaylistDetected: ({ name, total }) => {
+            if (total > 1) {
+              // Create playlist if not already assigned (fallback for non-interactive downloads)
+              if (!playlistId) {
+                try {
+                  playlistId = createPlaylist(
+                    name || playlistTitle || 'Imported Playlist',
+                    null,
+                    url
+                  );
+                  send('playlists-updated');
+                } catch (err) {
+                  console.error('[ytdlp] createPlaylist failed:', err.message);
+                }
+              }
+              sendTrackUpdate({ type: 'init', total });
+            }
+          },
+        }
+      );
+
+      // Wait for any in-flight imports to complete
+      await Promise.allSettled(importPromises);
+
+      // Fallback: import any files that weren't handled by onFileReady (e.g. fallback scan files)
+      for (const { filePath, originalUrl, trackUrl, platform, quality } of files) {
+        if (handledPaths.has(filePath)) continue;
+        sendProgress({
+          msg: 'Importing to library…',
+          pct: 99,
+          trackPct: 99,
+          overallCurrent: 1,
+          overallTotal: 1,
+        });
+        try {
+          const trackId = await importAudioFile(filePath, {
+            source_url: originalUrl,
+            source_link: trackUrl !== originalUrl ? trackUrl : null,
+            source_platform: platform,
+            source_quality: quality,
+          });
+          trackIds.push(trackId);
+          send('library-updated');
+        } catch {
+          // ignore individual import errors in fallback path
+        }
+      }
+
+      sendProgress(null);
+
+      // Post-download fallback: if yt-dlp never emitted "Downloading item X of Y"
+      // (some extractors skip that line) but we imported multiple tracks, create the
+      // playlist now using the final trackIds list.
+      if (!playlistId && trackIds.length > 1) {
+        try {
+          const name =
+            detectedPlaylistName || playlistTitle || `Playlist ${new Date().toLocaleDateString()}`;
+          playlistId = createPlaylist(name, null, url);
+          for (const tid of trackIds) {
+            try {
+              addTrackToPlaylist(playlistId, tid);
+            } catch {
+              /* dupe guard */
+            }
+          }
+          send('playlists-updated');
+        } catch (err) {
+          console.error('[ytdlp] post-download createPlaylist failed:', err.message);
+        }
+      }
+
+      return { ok: true, trackIds, playlistId: playlistId ?? null };
+    } catch (err) {
+      if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-progress', null);
+      return { ok: false, error: err.message };
+    }
+  }
+);
+
+ipcMain.handle('open-external', async (_event, url) => {
+  shell.openExternal(url);
+});
+
 app.on('ready', initApp);
 app.on('window-all-closed', () => {
   console.log('All windows closed.');
   if (process.platform !== 'darwin') app.quit();
+});
+
+// Log child process crashes (network service, GPU process, etc.) for diagnostics
+app.on('child-process-gone', (_event, details) => {
+  console.error(
+    `[crash] child-process-gone type=${details.type} reason=${details.reason}` +
+      ` exitCode=${details.exitCode} name=${details.name || '?'}`
+  );
 });

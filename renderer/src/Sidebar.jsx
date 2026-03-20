@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './Sidebar.css';
 
-const MUSIC_ITEMS = [{ id: 'music', name: 'Music', icon: '🎵' }];
+const MENU_ITEMS = [
+  { id: 'music', name: 'Music', icon: '🎵' },
+  { id: 'download', name: 'YT-DLP', icon: '⬇️' },
+];
 
 const PRESET_COLORS = [
   '#e63946',
@@ -114,7 +117,7 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
     <div className="sidebar">
       <div className="fixed-top-section">
         <div className="menu-section">
-          {MUSIC_ITEMS.map((item) => (
+          {MENU_ITEMS.map((item) => (
             <div
               key={item.id}
               className={`menu-item ${selectedMenuItemId === item.id ? 'active' : ''}`}

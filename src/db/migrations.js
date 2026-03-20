@@ -57,6 +57,10 @@ export function initDB() {
     'ALTER TABLE tracks ADD COLUMN intro_secs REAL',
     'ALTER TABLE tracks ADD COLUMN outro_secs REAL',
     'ALTER TABLE tracks ADD COLUMN beatgrid TEXT',
+    'ALTER TABLE tracks ADD COLUMN source_url TEXT',
+    'ALTER TABLE tracks ADD COLUMN source_platform TEXT',
+    'ALTER TABLE tracks ADD COLUMN source_quality TEXT',
+    'ALTER TABLE tracks ADD COLUMN source_link TEXT',
   ]) {
     try {
       db.prepare(col).run();
@@ -107,6 +111,7 @@ export function initDB() {
   for (const col of [
     'ALTER TABLE playlists ADD COLUMN color TEXT',
     'ALTER TABLE playlists ADD COLUMN created_at INTEGER',
+    'ALTER TABLE playlists ADD COLUMN source_url TEXT',
     'ALTER TABLE playlist_tracks ADD COLUMN position INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE playlist_tracks ADD COLUMN date_added INTEGER',
   ]) {
