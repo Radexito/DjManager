@@ -635,7 +635,7 @@ ipcMain.handle('ytdlp-download-url', async (_event, { url, playlistItems, playli
       }
     }
 
-    return { ok: true, trackIds };
+    return { ok: true, trackIds, playlistId: playlistId ?? null };
   } catch (err) {
     if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-progress', null);
     return { ok: false, error: err.message };
