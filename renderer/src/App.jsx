@@ -28,7 +28,10 @@ function App() {
       <div className="app-main">
         <Sidebar selectedMenuItemId={selectedPlaylistId} onMenuSelect={setSelectedPlaylistId} />
         {selectedPlaylistId === 'download' ? (
-          <DownloadView onGoToLibrary={() => setSelectedPlaylistId('music')} />
+          <DownloadView
+            onGoToLibrary={() => setSelectedPlaylistId('music')}
+            onOpenSettings={() => setShowSettings(true)}
+          />
         ) : (
           <MusicLibrary selectedPlaylist={selectedPlaylistId} />
         )}

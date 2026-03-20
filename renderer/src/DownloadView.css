@@ -517,3 +517,41 @@
 .dl-select-footer {
   padding-top: 4px;
 }
+
+/* Cookie status pill */
+.dl-cookie-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  margin-bottom: 12px;
+}
+
+.dl-cookie-status--ok {
+  background: rgba(72, 199, 116, 0.12);
+  color: #48c774;
+  border: 1px solid rgba(72, 199, 116, 0.25);
+}
+
+.dl-cookie-status--warn {
+  background: rgba(255, 189, 46, 0.1);
+  color: #ffbd2e;
+  border: 1px solid rgba(255, 189, 46, 0.22);
+}
+
+.dl-cookie-status__settings-link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  font-size: inherit;
+  text-decoration: underline;
+  opacity: 0.85;
+}
+
+.dl-cookie-status__settings-link:hover {
+  opacity: 1;
+}

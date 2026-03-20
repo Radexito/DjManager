@@ -36,7 +36,7 @@ function fmtDuration(secs) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export default function DownloadView({ onGoToLibrary }) {
+export default function DownloadView({ onGoToLibrary, onOpenSettings }) {
   // ── shared state ─────────────────────────────────────────────────────────
   const [url, setUrl] = useState('');
   const [history, setHistory] = useState([]);
@@ -46,6 +46,7 @@ export default function DownloadView({ onGoToLibrary }) {
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState(null);
   const inputRef = useRef(null);
+  const [cookiesBrowser, setCookiesBrowser] = useState(null); // null = loading, '' = none, 'firefox' etc.
 
   // ── step: select ──────────────────────────────────────────────────────────
   const [playlistInfo, setPlaylistInfo] = useState(null); // { type, title, entries }
@@ -59,6 +60,7 @@ export default function DownloadView({ onGoToLibrary }) {
 
   useEffect(() => {
     inputRef.current?.focus();
+    window.api.getSetting('ytdlp_cookies_browser', '').then((v) => setCookiesBrowser(v || ''));
 
     const unsubProgress = window.api.onYtDlpProgress((data) => {
       if (data === null) {
@@ -316,6 +318,28 @@ export default function DownloadView({ onGoToLibrary }) {
               </div>
             )}
           </form>
+
+          {cookiesBrowser !== null && (
+            <div
+              className={`dl-cookie-status ${cookiesBrowser ? 'dl-cookie-status--ok' : 'dl-cookie-status--warn'}`}
+            >
+              {cookiesBrowser ? (
+                <>
+                  🟢 Cookies: <strong>{cookiesBrowser}</strong>
+                </>
+              ) : (
+                <>
+                  🔒 No browser cookies configured — private/age-restricted content may fail.{' '}
+                  <button
+                    className="dl-cookie-status__settings-link"
+                    onClick={() => onOpenSettings?.()}
+                  >
+                    Open Settings →
+                  </button>
+                </>
+              )}
+            </div>
+          )}
 
           <div className="dl-sources">
             <div className="dl-sources-title">Supported sources</div>

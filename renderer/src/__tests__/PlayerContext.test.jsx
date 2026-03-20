@@ -1,22 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { renderHook, waitFor } from '@testing-library/react';
 import { PlayerProvider, usePlayer } from '../PlayerContext.jsx';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Render a PlayerProvider and expose the context value via a ref. */
+/** Render a PlayerProvider and expose the context value via renderHook. */
 function renderProvider() {
-  let ctx;
-  function Capture() {
-    ctx = usePlayer();
-    return null;
-  }
-  render(
-    <PlayerProvider>
-      <Capture />
-    </PlayerProvider>
-  );
-  return () => ctx;
+  return renderHook(() => usePlayer(), { wrapper: PlayerProvider });
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -41,8 +31,8 @@ describe('PlayerProvider — media server port', () => {
 
 describe('PlayerProvider — context API', () => {
   it('exposes expected API surface', () => {
-    const getCtx = renderProvider();
-    const ctx = getCtx();
+    const { result } = renderProvider();
+    const ctx = result.current;
     expect(typeof ctx.seek).toBe('function');
     expect(typeof ctx.play).toBe('function');
     expect(typeof ctx.toggleShuffle).toBe('function');
