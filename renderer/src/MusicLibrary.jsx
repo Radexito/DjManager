@@ -255,7 +255,7 @@ function SortableColItem({ colKey, label, checked, onToggle }) {
 
 function MusicLibrary({ selectedPlaylist }) {
   const isPlaylistView = selectedPlaylist !== 'music';
-  const { play, currentTrack, currentPlaylistId } = usePlayer();
+  const { play, stop, currentTrack, currentPlaylistId } = usePlayer();
 
   // Only highlight a track as "playing" when the source context matches this view.
   // Library view: only highlight when played from library (currentPlaylistId === null).
@@ -660,12 +660,13 @@ function MusicLibrary({ selectedPlaylist }) {
         ? 'Remove this track from your library? This cannot be undone.'
         : `Remove ${n} tracks from your library? This cannot be undone.`;
     if (!window.confirm(msg)) return;
+    if (currentTrack && targetIds.includes(currentTrack.id)) stop();
     setContextMenu(null);
     for (const id of targetIds) await window.api.removeTrack(id);
     setTracks((prev) => prev.filter((t) => !targetIds.includes(t.id)));
     setSelectedIds(new Set());
     offsetRef.current = Math.max(0, offsetRef.current - targetIds.length);
-  }, [contextMenu]);
+  }, [contextMenu, currentTrack, stop]);
 
   const handleRemoveFromPlaylist = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
@@ -673,6 +674,7 @@ function MusicLibrary({ selectedPlaylist }) {
     const msg =
       n === 1 ? 'Remove this track from the playlist?' : `Remove ${n} tracks from the playlist?`;
     if (!window.confirm(msg)) return;
+    if (currentTrack && targetIds.includes(currentTrack.id)) stop();
     setContextMenu(null);
     for (const id of targetIds) {
       await window.api.removeTrackFromPlaylist(Number(selectedPlaylist), id);
@@ -680,7 +682,7 @@ function MusicLibrary({ selectedPlaylist }) {
     setTracks((prev) => prev.filter((t) => !targetIds.includes(t.id)));
     setSelectedIds(new Set());
     offsetRef.current = Math.max(0, offsetRef.current - targetIds.length);
-  }, [contextMenu, selectedPlaylist]);
+  }, [contextMenu, selectedPlaylist, currentTrack, stop]);
 
   const handleAddToPlaylist = useCallback(async (playlistId, targetIds) => {
     setContextMenu(null);

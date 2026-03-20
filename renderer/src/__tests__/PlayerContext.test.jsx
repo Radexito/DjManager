@@ -35,6 +35,7 @@ describe('PlayerProvider — context API', () => {
     const ctx = result.current;
     expect(typeof ctx.seek).toBe('function');
     expect(typeof ctx.play).toBe('function');
+    expect(typeof ctx.stop).toBe('function');
     expect(typeof ctx.toggleShuffle).toBe('function');
     expect(typeof ctx.cycleRepeat).toBe('function');
     expect(ctx.isPlaying).toBe(false);

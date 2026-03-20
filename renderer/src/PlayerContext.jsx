@@ -203,6 +203,14 @@ export function PlayerProvider({ children }) {
 
   const toggleShuffle = useCallback(() => setShuffle((s) => !s), []);
 
+  const stop = useCallback(() => {
+    audio.pause();
+    audio.src = '';
+    setCurrentTrack(null);
+    setQueue([]);
+    setQueueIndex(0);
+  }, [audio]);
+
   const cycleRepeat = useCallback(
     () => setRepeat((r) => (r === 'none' ? 'all' : r === 'all' ? 'one' : 'none')),
     []
@@ -275,6 +283,7 @@ export function PlayerProvider({ children }) {
         outputDeviceId,
         play,
         togglePlay,
+        stop,
         next,
         prev,
         seek,
