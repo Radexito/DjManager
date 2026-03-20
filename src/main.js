@@ -106,11 +106,7 @@ function createWindow() {
   if (process.env.E2E_TEST === '1') {
     mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'));
   } else if (!app.isPackaged) {
-    const devUrl = fs.readFileSync(path.join(__dirname, '../.dev-url'), 'utf8').trim();
-    if (!/^http:\/\/localhost:\d+$/.test(devUrl)) {
-      throw new Error(`Refusing to load unsafe dev URL: ${devUrl}`);
-    }
-    mainWindow.loadURL(devUrl);
+    mainWindow.loadURL(fs.readFileSync(path.join(__dirname, '../.dev-url'), 'utf8').trim());
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'));
