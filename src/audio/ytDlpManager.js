@@ -11,11 +11,75 @@ import { getYtDlpRuntimePath } from '../deps.js';
 
 const AUDIO_EXTS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.wav', '.ogg', '.opus']);
 
-// yt-dlp does not support LibreWolf directly; it stores cookies in Firefox-compatible
-// format, so we map it to 'firefox' when building --cookies-from-browser arguments.
-const BROWSER_ALIASES = { librewolf: 'firefox' };
+// yt-dlp does not support LibreWolf directly. LibreWolf stores cookies in
+// Firefox-compatible format, so we resolve it to `firefox:/path/to/profile`.
+// We search the known base directories for a profiles.ini and extract the default
+// profile path, then pass it explicitly to avoid yt-dlp searching Firefox locations.
+
+const LIBREWOLF_BASE_DIRS = [
+  // Native / AUR install
+  `${process.env.HOME}/.librewolf`,
+  // Flatpak (most common on Linux desktops)
+  `${process.env.HOME}/.var/app/io.gitlab.librewolf-community/.librewolf`,
+];
+
+function findLibreWolfProfile() {
+  for (const baseDir of LIBREWOLF_BASE_DIRS) {
+    if (!fs.existsSync(baseDir)) continue;
+    const iniPath = path.join(baseDir, 'profiles.ini');
+    if (!fs.existsSync(iniPath)) continue;
+
+    try {
+      const ini = fs.readFileSync(iniPath, 'utf8');
+
+      // Prefer the profile referenced by [Install…] Default= (last-used install default)
+      const installMatch = ini.match(/^\[Install[^\]]*\][^[]*Default=(.+)$/m);
+      if (installMatch) {
+        const candidate = path.join(baseDir, installMatch[1].trim());
+        if (fs.existsSync(candidate)) return candidate;
+      }
+
+      // Fallback: first [ProfileN] section with Default=1
+      const blocks = ini.split(/(?=\[Profile\d)/);
+      for (const block of blocks) {
+        if (!/Default\s*=\s*1/i.test(block)) continue;
+        const pathMatch = block.match(/^Path=(.+)$/m);
+        const isRelative = /IsRelative\s*=\s*1/i.test(block);
+        if (pathMatch) {
+          const profilePath = isRelative
+            ? path.join(baseDir, pathMatch[1].trim())
+            : pathMatch[1].trim();
+          if (fs.existsSync(profilePath)) return profilePath;
+        }
+      }
+
+      // Last resort: first directory that looks like a profile
+      const entries = fs.readdirSync(baseDir, { withFileTypes: true });
+      const dir = entries.find(
+        (e) => e.isDirectory() && (e.name.includes('default') || e.name.includes('.'))
+      );
+      if (dir) {
+        const p = path.join(baseDir, dir.name);
+        if (fs.existsSync(path.join(p, 'cookies.sqlite'))) return p;
+      }
+    } catch {
+      // malformed ini or permission error — try next base dir
+    }
+  }
+  return null;
+}
+
 function resolveBrowser(name) {
-  return BROWSER_ALIASES[name?.toLowerCase()] ?? name;
+  if (name?.toLowerCase() === 'librewolf') {
+    const profile = findLibreWolfProfile();
+    if (profile) {
+      console.log('[ytdlp] LibreWolf profile resolved to:', profile);
+      return `firefox:${profile}`;
+    }
+    console.warn('[ytdlp] LibreWolf profile not found, falling back to firefox');
+    return 'firefox';
+  }
+  return name;
 }
 
 /**
