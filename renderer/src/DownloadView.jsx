@@ -50,6 +50,9 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
   // ── step: select ──────────────────────────────────────────────────────────
   const [playlistInfo, setPlaylistInfo] = useState(null); // { type, title, entries }
   const [selectedIndices, setSelectedIndices] = useState(new Set());
+  const [playlists, setPlaylists] = useState([]); // existing playlists for combobox
+  const [targetPlaylistId, setTargetPlaylistId] = useState(null); // null = create new
+  const [targetPlaylistName, setTargetPlaylistName] = useState('');
 
   // ── step: download ────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(false);
@@ -143,6 +146,16 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
       }
       setPlaylistInfo(res);
       setSelectedIndices(new Set(res.entries.map((_, i) => i)));
+      // Initialise playlist target defaults
+      setTargetPlaylistId(null);
+      setTargetPlaylistName(res.title || '');
+      // Fetch existing playlists for the combobox
+      try {
+        const existingPlaylists = await window.api.getPlaylists();
+        setPlaylists(existingPlaylists || []);
+      } catch {
+        setPlaylists([]);
+      }
       setStep('select');
     } catch (err) {
       console.error('[DownloadView] handleLoad error:', err);
@@ -219,6 +232,11 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
       url,
       playlistItems,
       playlistTitle: playlistInfo?.title || null,
+      existingPlaylistId: playlistInfo?.type === 'playlist' ? targetPlaylistId : null,
+      newPlaylistName:
+        playlistInfo?.type === 'playlist' && !targetPlaylistId
+          ? targetPlaylistName || playlistInfo?.title || 'Imported Playlist'
+          : null,
     });
     setLoading(false);
     setProgress(null);
@@ -234,16 +252,20 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
     setTrackStatuses([]);
     setProgress(null);
     setUrl('');
+    setPlaylists([]);
+    setTargetPlaylistId(null);
+    setTargetPlaylistName('');
     setTimeout(() => inputRef.current?.focus(), 50);
   };
 
   // ── derived ───────────────────────────────────────────────────────────────
-  const isPlaylist = (progress?.overallTotal ?? 0) > 1 || trackStatuses.length > 1;
+  const isPlaylist = trackStatuses.length > 1 || (progress?.overallTotal ?? 0) > 1;
   const completedCount = trackStatuses.filter(
     (t) => t.status === 'done' || t.status === 'failed'
   ).length;
-  const overallCurrent = loading ? (progress?.overallCurrent ?? completedCount) : completedCount;
-  const overallTotal = progress?.overallTotal ?? trackStatuses.length;
+  // Drive overall counter from trackStatuses (truth source) to avoid yt-dlp reset on retry
+  const overallTotal = trackStatuses.length || (progress?.overallTotal ?? 1);
+  const overallCurrent = loading ? Math.min(completedCount + 1, overallTotal) : completedCount;
   const overallPct = overallTotal > 0 ? Math.round((overallCurrent / overallTotal) * 100) : 0;
 
   const allSelected = playlistInfo && selectedIndices.size === playlistInfo.entries.length;
@@ -412,6 +434,32 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
           </div>
 
           <div className="dl-select-footer">
+            {playlistInfo.type === 'playlist' && (
+              <div className="dl-playlist-target">
+                <label className="dl-playlist-target-label">Save to playlist</label>
+                <select
+                  className="dl-playlist-select"
+                  value={targetPlaylistId ?? ''}
+                  onChange={(e) => setTargetPlaylistId(e.target.value || null)}
+                >
+                  <option value="">New playlist</option>
+                  {playlists.map((pl) => (
+                    <option key={pl.id} value={pl.id}>
+                      {pl.name}
+                    </option>
+                  ))}
+                </select>
+                {!targetPlaylistId && (
+                  <input
+                    className="dl-playlist-name-input"
+                    type="text"
+                    placeholder="Playlist name"
+                    value={targetPlaylistName}
+                    onChange={(e) => setTargetPlaylistName(e.target.value)}
+                  />
+                )}
+              </div>
+            )}
             <button
               className="dl-btn"
               onClick={handleDownload}

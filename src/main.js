@@ -486,161 +486,184 @@ ipcMain.handle('ytdlp-fetch-info', async (_event, url) => {
 
 // ─── yt-dlp URL download ──────────────────────────────────────────────────────
 
-ipcMain.handle('ytdlp-download-url', async (_event, { url, playlistItems, playlistTitle }) => {
-  try {
-    const send = (channel, data) => {
-      if (global.mainWindow) global.mainWindow.webContents.send(channel, data);
-    };
-    const sendProgress = (data) => send('ytdlp-progress', data);
-    const sendTrackUpdate = (data) => send('ytdlp-track-update', data);
+ipcMain.handle(
+  'ytdlp-download-url',
+  async (_event, { url, playlistItems, playlistTitle, existingPlaylistId, newPlaylistName }) => {
+    try {
+      const send = (channel, data) => {
+        if (global.mainWindow) global.mainWindow.webContents.send(channel, data);
+      };
+      const sendProgress = (data) => send('ytdlp-progress', data);
+      const sendTrackUpdate = (data) => send('ytdlp-track-update', data);
 
-    const cookiesBrowser = getSetting('ytdlp_cookies_browser', '') || null;
+      const cookiesBrowser = getSetting('ytdlp_cookies_browser', '') || null;
 
-    sendProgress({
-      msg: 'Starting download…',
-      pct: 0,
-      trackPct: 0,
-      overallCurrent: 1,
-      overallTotal: 1,
-    });
-
-    let playlistId = null;
-    const trackIds = [];
-    const importPromises = [];
-    // Track which files were already handled by onFileReady (avoid double-import)
-    const handledPaths = new Set();
-
-    const handleFileReady = async ({
-      filePath,
-      originalUrl,
-      trackUrl,
-      platform,
-      quality,
-      title,
-      index,
-    }) => {
-      handledPaths.add(filePath);
-      sendTrackUpdate({ type: 'update', index, title, url: trackUrl, status: 'importing' });
-      try {
-        const trackId = await importAudioFile(filePath, {
-          source_url: originalUrl,
-          source_link: trackUrl !== originalUrl ? trackUrl : null,
-          source_platform: platform,
-          source_quality: quality,
-        });
-        trackIds.push(trackId);
-        if (playlistId) {
-          addTrackToPlaylist(playlistId, trackId);
-          send('playlists-updated');
-        }
-        sendTrackUpdate({ type: 'update', index, title, url: trackUrl, status: 'done', trackId });
-        send('library-updated');
-      } catch (err) {
-        sendTrackUpdate({
-          type: 'update',
-          index,
-          title,
-          url: trackUrl,
-          status: 'failed',
-          error: err.message,
-        });
-      }
-    };
-
-    let lastOverallCurrent = 0;
-
-    const { files, playlistName: detectedPlaylistName } = await ytDlpDownloadUrl(
-      url,
-      (data) => {
-        // When a new playlist item starts downloading, emit a 'downloading' track update
-        if (data.overallTotal > 1 && data.overallCurrent !== lastOverallCurrent) {
-          lastOverallCurrent = data.overallCurrent;
-          sendTrackUpdate({
-            type: 'update',
-            index: data.overallCurrent - 1,
-            status: 'downloading',
-          });
-        }
-        sendProgress(data);
-      },
-      {
-        cookiesBrowser,
-        playlistItems: playlistItems || null,
-        onFileReady: (f) => {
-          importPromises.push(handleFileReady(f));
-        },
-        onTrackMeta: ({ index, title }) => {
-          sendTrackUpdate({ type: 'update', index, title, status: 'downloading' });
-        },
-        onPlaylistDetected: ({ name, total }) => {
-          if (total > 1 && !playlistId) {
-            try {
-              playlistId = createPlaylist(name || playlistTitle || 'Imported Playlist', null, url);
-              sendTrackUpdate({ type: 'init', total });
-            } catch (err) {
-              console.error('[ytdlp] createPlaylist failed:', err.message);
-            }
-          }
-        },
-      }
-    );
-
-    // Wait for any in-flight imports to complete
-    await Promise.allSettled(importPromises);
-
-    // Fallback: import any files that weren't handled by onFileReady (e.g. fallback scan files)
-    for (const { filePath, originalUrl, trackUrl, platform, quality } of files) {
-      if (handledPaths.has(filePath)) continue;
       sendProgress({
-        msg: 'Importing to library…',
-        pct: 99,
-        trackPct: 99,
+        msg: 'Starting download…',
+        pct: 0,
+        trackPct: 0,
         overallCurrent: 1,
         overallTotal: 1,
       });
-      try {
-        const trackId = await importAudioFile(filePath, {
-          source_url: originalUrl,
-          source_link: trackUrl !== originalUrl ? trackUrl : null,
-          source_platform: platform,
-          source_quality: quality,
-        });
-        trackIds.push(trackId);
-        send('library-updated');
-      } catch {
-        // ignore individual import errors in fallback path
-      }
-    }
 
-    sendProgress(null);
+      let playlistId = null;
+      const trackIds = [];
+      const importPromises = [];
+      // Track which files were already handled by onFileReady (avoid double-import)
+      const handledPaths = new Set();
 
-    // Post-download fallback: if yt-dlp never emitted "Downloading item X of Y"
-    // (some extractors skip that line) but we imported multiple tracks, create the
-    // playlist now using the final trackIds list.
-    if (!playlistId && trackIds.length > 1) {
-      try {
-        const name =
-          detectedPlaylistName || playlistTitle || `Playlist ${new Date().toLocaleDateString()}`;
-        playlistId = createPlaylist(name, null, url);
-        for (const tid of trackIds) {
-          try {
-            addTrackToPlaylist(playlistId, tid);
-          } catch {
-            /* dupe guard */
-          }
+      // Create or assign playlist upfront so every onFileReady can add tracks immediately
+      if (existingPlaylistId) {
+        playlistId = existingPlaylistId;
+      } else if (newPlaylistName) {
+        try {
+          playlistId = createPlaylist(newPlaylistName, null, url);
+          send('playlists-updated');
+        } catch (err) {
+          console.error('[ytdlp] createPlaylist failed:', err.message);
         }
-        send('playlists-updated');
-      } catch (err) {
-        console.error('[ytdlp] post-download createPlaylist failed:', err.message);
       }
-    }
 
-    return { ok: true, trackIds, playlistId: playlistId ?? null };
-  } catch (err) {
-    if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-progress', null);
-    return { ok: false, error: err.message };
+      const handleFileReady = async ({
+        filePath,
+        originalUrl,
+        trackUrl,
+        platform,
+        quality,
+        title,
+        index,
+      }) => {
+        handledPaths.add(filePath);
+        sendTrackUpdate({ type: 'update', index, title, url: trackUrl, status: 'importing' });
+        try {
+          const trackId = await importAudioFile(filePath, {
+            source_url: originalUrl,
+            source_link: trackUrl !== originalUrl ? trackUrl : null,
+            source_platform: platform,
+            source_quality: quality,
+          });
+          trackIds.push(trackId);
+          if (playlistId) {
+            addTrackToPlaylist(playlistId, trackId);
+            send('playlists-updated');
+          }
+          sendTrackUpdate({ type: 'update', index, title, url: trackUrl, status: 'done', trackId });
+          send('library-updated');
+        } catch (err) {
+          sendTrackUpdate({
+            type: 'update',
+            index,
+            title,
+            url: trackUrl,
+            status: 'failed',
+            error: err.message,
+          });
+        }
+      };
+
+      let lastOverallCurrent = 0;
+
+      const { files, playlistName: detectedPlaylistName } = await ytDlpDownloadUrl(
+        url,
+        (data) => {
+          // When a new playlist item starts downloading, emit a 'downloading' track update
+          if (data.overallTotal > 1 && data.overallCurrent !== lastOverallCurrent) {
+            lastOverallCurrent = data.overallCurrent;
+            sendTrackUpdate({
+              type: 'update',
+              index: data.overallCurrent - 1,
+              status: 'downloading',
+            });
+          }
+          sendProgress(data);
+        },
+        {
+          cookiesBrowser,
+          playlistItems: playlistItems || null,
+          onFileReady: (f) => {
+            importPromises.push(handleFileReady(f));
+          },
+          onTrackMeta: ({ index, title }) => {
+            sendTrackUpdate({ type: 'update', index, title, status: 'downloading' });
+          },
+          onPlaylistDetected: ({ name, total }) => {
+            if (total > 1) {
+              // Create playlist if not already assigned (fallback for non-interactive downloads)
+              if (!playlistId) {
+                try {
+                  playlistId = createPlaylist(
+                    name || playlistTitle || 'Imported Playlist',
+                    null,
+                    url
+                  );
+                  send('playlists-updated');
+                } catch (err) {
+                  console.error('[ytdlp] createPlaylist failed:', err.message);
+                }
+              }
+              sendTrackUpdate({ type: 'init', total });
+            }
+          },
+        }
+      );
+
+      // Wait for any in-flight imports to complete
+      await Promise.allSettled(importPromises);
+
+      // Fallback: import any files that weren't handled by onFileReady (e.g. fallback scan files)
+      for (const { filePath, originalUrl, trackUrl, platform, quality } of files) {
+        if (handledPaths.has(filePath)) continue;
+        sendProgress({
+          msg: 'Importing to library…',
+          pct: 99,
+          trackPct: 99,
+          overallCurrent: 1,
+          overallTotal: 1,
+        });
+        try {
+          const trackId = await importAudioFile(filePath, {
+            source_url: originalUrl,
+            source_link: trackUrl !== originalUrl ? trackUrl : null,
+            source_platform: platform,
+            source_quality: quality,
+          });
+          trackIds.push(trackId);
+          send('library-updated');
+        } catch {
+          // ignore individual import errors in fallback path
+        }
+      }
+
+      sendProgress(null);
+
+      // Post-download fallback: if yt-dlp never emitted "Downloading item X of Y"
+      // (some extractors skip that line) but we imported multiple tracks, create the
+      // playlist now using the final trackIds list.
+      if (!playlistId && trackIds.length > 1) {
+        try {
+          const name =
+            detectedPlaylistName || playlistTitle || `Playlist ${new Date().toLocaleDateString()}`;
+          playlistId = createPlaylist(name, null, url);
+          for (const tid of trackIds) {
+            try {
+              addTrackToPlaylist(playlistId, tid);
+            } catch {
+              /* dupe guard */
+            }
+          }
+          send('playlists-updated');
+        } catch (err) {
+          console.error('[ytdlp] post-download createPlaylist failed:', err.message);
+        }
+      }
+
+      return { ok: true, trackIds, playlistId: playlistId ?? null };
+    } catch (err) {
+      if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-progress', null);
+      return { ok: false, error: err.message };
+    }
   }
-});
+);
 
 ipcMain.handle('open-external', async (_event, url) => {
   shell.openExternal(url);
