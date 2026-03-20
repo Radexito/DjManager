@@ -11,6 +11,13 @@ import { getYtDlpRuntimePath } from '../deps.js';
 
 const AUDIO_EXTS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.wav', '.ogg', '.opus']);
 
+// yt-dlp does not support LibreWolf directly; it stores cookies in Firefox-compatible
+// format, so we map it to 'firefox' when building --cookies-from-browser arguments.
+const BROWSER_ALIASES = { librewolf: 'firefox' };
+function resolveBrowser(name) {
+  return BROWSER_ALIASES[name?.toLowerCase()] ?? name;
+}
+
 /**
  * Detect the platform/service from a URL.
  * @param {string} url
@@ -69,7 +76,7 @@ export async function fetchPlaylistInfo(url, options = {}) {
     args.push('--extractor-args', 'youtube:player_client=android_vr,web');
   }
   if (options.cookiesBrowser) {
-    args.push('--cookies-from-browser', options.cookiesBrowser);
+    args.push('--cookies-from-browser', resolveBrowser(options.cookiesBrowser));
   }
   args.push(url);
 
@@ -188,7 +195,7 @@ export async function downloadUrl(url, onProgress, options = {}) {
     args.push('--extractor-args', 'youtube:player_client=android_vr,web');
   }
   if (options.cookiesBrowser) {
-    args.push('--cookies-from-browser', options.cookiesBrowser);
+    args.push('--cookies-from-browser', resolveBrowser(options.cookiesBrowser));
   }
   if (options.playlistItems) {
     args.push('--playlist-items', options.playlistItems);
