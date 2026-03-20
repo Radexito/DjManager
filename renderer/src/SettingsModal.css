@@ -303,3 +303,73 @@
   color: #a6adc8;
   margin-bottom: 4px;
 }
+.settings-select {
+  padding: 5px 8px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 5px;
+  color: #f0f0f0;
+  font-size: 13px;
+  min-width: 160px;
+  cursor: pointer;
+}
+.settings-select:focus {
+  outline: none;
+  border-color: #2d6aa0;
+}
+
+.settings-version-input {
+  padding: 5px 8px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 5px;
+  color: #f0f0f0;
+  font-size: 13px;
+  min-width: 180px;
+  flex: 1;
+}
+.settings-version-input:focus {
+  outline: none;
+  border-color: #2d6aa0;
+}
+.settings-version-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.settings-link {
+  color: #89b4fa;
+  text-decoration: none;
+}
+.settings-link:hover {
+  text-decoration: underline;
+}
+.settings-code {
+  background: #1e1e2e;
+  border: 1px solid #444;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.settings-cookie-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.settings-cookie-status--ok {
+  background: rgba(72, 199, 116, 0.1);
+  color: #48c774;
+  border: 1px solid rgba(72, 199, 116, 0.22);
+}
+
+.settings-cookie-status--warn {
+  background: rgba(255, 189, 46, 0.08);
+  color: #ffbd2e;
+  border: 1px solid rgba(255, 189, 46, 0.2);
+}

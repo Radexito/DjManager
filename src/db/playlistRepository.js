@@ -1,10 +1,10 @@
 // src/db/playlistRepository.js
 import db from './database.js';
 
-export function createPlaylist(name, color = null) {
+export function createPlaylist(name, color = null, sourceUrl = null) {
   const info = db
-    .prepare(`INSERT INTO playlists (name, color, created_at) VALUES (?, ?, ?)`)
-    .run(name, color, Date.now());
+    .prepare(`INSERT INTO playlists (name, color, source_url, created_at) VALUES (?, ?, ?, ?)`)
+    .run(name, color, sourceUrl, Date.now());
   return info.lastInsertRowid;
 }
 
