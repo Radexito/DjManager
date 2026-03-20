@@ -36,7 +36,7 @@ function fmtDuration(secs) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export default function DownloadView({ onGoToLibrary }) {
+export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
   // ── shared state ─────────────────────────────────────────────────────────
   const [url, setUrl] = useState('');
   const [history, setHistory] = useState([]);
@@ -485,9 +485,19 @@ export default function DownloadView({ onGoToLibrary }) {
                   : `✓ ${result.trackIds.length} tracks added to your library`}
               </span>
               <div className="dl-result-actions">
-                <button type="button" className="dl-goto-btn" onClick={onGoToLibrary}>
-                  View in Music →
-                </button>
+                {result.playlistId ? (
+                  <button
+                    type="button"
+                    className="dl-goto-btn"
+                    onClick={() => onGoToPlaylist(result.playlistId)}
+                  >
+                    Go to Playlist →
+                  </button>
+                ) : (
+                  <button type="button" className="dl-goto-btn" onClick={onGoToLibrary}>
+                    View in Music →
+                  </button>
+                )}
                 <button type="button" className="dl-goto-btn" onClick={handleDownloadAnother}>
                   ← New download
                 </button>
