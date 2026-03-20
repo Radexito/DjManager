@@ -129,7 +129,26 @@ function extractTitleFromFilename(filePath) {
  * @param {{ cookiesBrowser?: string|null }} [options]
  * @returns {Promise<{ type: 'playlist'|'single', title: string|null, entries: Array<{index,id,title,url,duration}> }>}
  */
+/** Returns true when yt-dlp fails because no format matched (EJS/cookie issue). */
+function isFormatUnavailableError(err) {
+  return err?.message?.includes('Requested format is not available');
+}
+
 export async function fetchPlaylistInfo(url, options = {}) {
+  try {
+    return await _fetchPlaylistInfoOnce(url, options);
+  } catch (err) {
+    if (isFormatUnavailableError(err) && options.cookiesBrowser) {
+      console.warn(
+        '[ytdlp] fetchPlaylistInfo: format unavailable with cookies (EJS solver), retrying without cookies'
+      );
+      return _fetchPlaylistInfoOnce(url, { ...options, cookiesBrowser: null });
+    }
+    throw err;
+  }
+}
+
+function _fetchPlaylistInfoOnce(url, options = {}) {
   const ytDlp = getYtDlpRuntimePath();
   if (!fs.existsSync(ytDlp)) throw new Error('yt-dlp binary not found. Please reinstall deps.');
 
@@ -220,6 +239,20 @@ export async function fetchPlaylistInfo(url, options = {}) {
  * @returns {Promise<Array<{ filePath, originalUrl, trackUrl, platform, quality, title }>>}
  */
 export async function downloadUrl(url, onProgress, options = {}) {
+  try {
+    return await _downloadUrlOnce(url, onProgress, options);
+  } catch (err) {
+    if (isFormatUnavailableError(err) && options.cookiesBrowser) {
+      console.warn(
+        '[ytdlp] downloadUrl: format unavailable with cookies (EJS solver), retrying without cookies'
+      );
+      return _downloadUrlOnce(url, onProgress, { ...options, cookiesBrowser: null });
+    }
+    throw err;
+  }
+}
+
+async function _downloadUrlOnce(url, onProgress, options = {}) {
   const ytDlp = getYtDlpRuntimePath();
   if (!fs.existsSync(ytDlp)) throw new Error('yt-dlp binary not found. Please reinstall deps.');
 
