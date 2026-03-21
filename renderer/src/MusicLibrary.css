@@ -115,6 +115,11 @@
   min-width: 0;
 }
 
+/* In library mode the List manages its own scroll — wrapper must not clip it */
+.table-scroll-wrap.library-mode {
+  overflow-x: hidden;
+}
+
 /* react-window */
 .track-list {
   flex: 1;

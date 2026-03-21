@@ -315,6 +315,7 @@ function MusicLibrary({ selectedPlaylist }) {
   const lastSelectedIndexRef = useRef(null);
   const colDropdownRef = useRef(null);
   const headerRef = useRef(null);
+  const headerScrollRef = useRef(null); // syncs header horizontal scroll to List scroll
 
   const visibleColumns = useMemo(
     () => colOrder.map((k) => COL_BY_KEY[k]).filter((c) => c && colVis[c.key] !== false),
@@ -612,6 +613,18 @@ function MusicLibrary({ selectedPlaylist }) {
     };
   }, [colMenuAnchor]);
 
+  // Sync header horizontal scroll with the react-window List in library view
+  useEffect(() => {
+    if (isPlaylistView) return;
+    const el = listRef.current?.element;
+    if (!el) return;
+    const sync = () => {
+      if (headerScrollRef.current) headerScrollRef.current.scrollLeft = el.scrollLeft;
+    };
+    el.addEventListener('scroll', sync, { passive: true });
+    return () => el.removeEventListener('scroll', sync);
+  });
+
   const handleRatingChange = useCallback(
     async (trackId, newRating) => {
       try {
@@ -882,26 +895,50 @@ function MusicLibrary({ selectedPlaylist }) {
           </div>
         )}
 
-        <div className="table-scroll-wrap">
-          <div
-            ref={headerRef}
-            className="header"
-            style={{ gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setColMenuAnchor({ x: e.clientX, y: e.clientY });
-            }}
-          >
-            {visibleColumns.map((col) => (
+        <div className={`table-scroll-wrap${isPlaylistView ? '' : ' library-mode'}`}>
+          {isPlaylistView ? (
+            <div
+              ref={headerRef}
+              className="header"
+              style={{ gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setColMenuAnchor({ x: e.clientX, y: e.clientY });
+              }}
+            >
+              {visibleColumns.map((col) => (
+                <div
+                  key={col.key}
+                  className={`header-cell ${['bpm', 'key_camelot', 'loudness', 'year', 'duration', 'bitrate'].includes(col.key) ? 'right' : ''}`}
+                  onClick={() => handleSort(col.key)}
+                >
+                  {col.label} {sortBy.key === col.key ? (sortBy.asc ? '▲' : '▼') : ''}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div ref={headerScrollRef} style={{ overflow: 'hidden' }}>
               <div
-                key={col.key}
-                className={`header-cell ${['bpm', 'key_camelot', 'loudness', 'year', 'duration', 'bitrate'].includes(col.key) ? 'right' : ''}`}
-                onClick={() => handleSort(col.key)}
+                ref={headerRef}
+                className="header"
+                style={{ gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setColMenuAnchor({ x: e.clientX, y: e.clientY });
+                }}
               >
-                {col.label} {sortBy.key === col.key ? (sortBy.asc ? '▲' : '▼') : ''}
+                {visibleColumns.map((col) => (
+                  <div
+                    key={col.key}
+                    className={`header-cell ${['bpm', 'key_camelot', 'loudness', 'year', 'duration', 'bitrate'].includes(col.key) ? 'right' : ''}`}
+                    onClick={() => handleSort(col.key)}
+                  >
+                    {col.label} {sortBy.key === col.key ? (sortBy.asc ? '▲' : '▼') : ''}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          )}
 
           {colMenuAnchor && (
             <div
@@ -990,7 +1027,7 @@ function MusicLibrary({ selectedPlaylist }) {
               rowCount={sortedTracks.length + (hasMore ? 1 : 0)}
               rowHeight={ROW_HEIGHT}
               width="100%"
-              style={{ overflowX: 'hidden', minWidth: minScrollWidth }}
+              style={{}}
               onRowsRendered={handleItemsRendered}
               className="track-list"
               rowComponent={LibraryRow}
