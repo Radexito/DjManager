@@ -23,6 +23,8 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
   const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [renameError, setRenameError] = useState('');
   const [playlistMenu, setPlaylistMenu] = useState(null); // { id, x, y }
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
@@ -73,15 +75,27 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
       setCreatingPlaylist(false);
       return;
     }
-    await window.api.createPlaylist(name, null);
+    const result = await window.api.createPlaylist(name, null);
+    if (result?.error === 'duplicate') {
+      setCreateError('A playlist with this name already exists.');
+      return;
+    }
     setNewPlaylistName('');
+    setCreateError('');
     setCreatingPlaylist(false);
   };
 
   const handleRenameSubmit = async (e) => {
     e.preventDefault();
     const name = renameValue.trim();
-    if (name) await window.api.renamePlaylist(renamingId, name);
+    if (name) {
+      const result = await window.api.renamePlaylist(renamingId, name);
+      if (result?.error === 'duplicate') {
+        setRenameError('A playlist with this name already exists.');
+        return;
+      }
+    }
+    setRenameError('');
     setRenamingId(null);
   };
 
@@ -148,13 +162,17 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
           <form className="playlist-new-form" onSubmit={handleCreatePlaylist}>
             <input
               ref={newInputRef}
-              className="playlist-rename-input"
+              className={`playlist-rename-input${createError ? ' input-error' : ''}`}
               value={newPlaylistName}
-              onChange={(e) => setNewPlaylistName(e.target.value)}
+              onChange={(e) => {
+                setNewPlaylistName(e.target.value);
+                setCreateError('');
+              }}
               placeholder="Playlist name"
               onBlur={handleCreatePlaylist}
               onKeyDown={(e) => e.key === 'Escape' && setCreatingPlaylist(false)}
             />
+            {createError && <div className="playlist-input-error">{createError}</div>}
           </form>
         )}
 
@@ -168,12 +186,16 @@ function Sidebar({ selectedMenuItemId, onMenuSelect }) {
               <form className="playlist-new-form" onSubmit={handleRenameSubmit}>
                 <input
                   ref={renameInputRef}
-                  className="playlist-rename-input"
+                  className={`playlist-rename-input${renameError ? ' input-error' : ''}`}
                   value={renameValue}
-                  onChange={(e) => setRenameValue(e.target.value)}
+                  onChange={(e) => {
+                    setRenameValue(e.target.value);
+                    setRenameError('');
+                  }}
                   onBlur={handleRenameSubmit}
                   onKeyDown={(e) => e.key === 'Escape' && setRenamingId(null)}
                 />
+                {renameError && <div className="playlist-input-error">{renameError}</div>}
               </form>
             ) : (
               <div
