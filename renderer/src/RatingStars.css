@@ -1,0 +1,28 @@
+.rating-stars {
+  display: inline-flex;
+  gap: 2px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.rating-star {
+  color: #444;
+  cursor: pointer;
+  transition:
+    color 0.1s,
+    transform 0.1s;
+  user-select: none;
+}
+
+.rating-star--filled {
+  color: #f5c518;
+}
+
+.rating-stars:not(.rating-stars--readonly) .rating-star:hover {
+  color: #f5c518;
+  transform: scale(1.15);
+}
+
+.rating-stars--readonly .rating-star {
+  cursor: default;
+}
