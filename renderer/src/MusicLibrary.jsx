@@ -209,6 +209,7 @@ function SortableRow({
   onRowClick,
   onDoubleClick,
   onContextMenu,
+  onRatingChange,
   visibleColumns,
   gridTemplate,
   minScrollWidth,
@@ -237,6 +238,10 @@ function SortableRow({
         col.key === 'index' ? (
           <div key="index" className="cell index drag-handle" {...attributes} {...listeners}>
             ⠿
+          </div>
+        ) : col.key === 'rating' ? (
+          <div key="rating" className="cell rating" onClick={(e) => e.stopPropagation()}>
+            <RatingStars value={t.rating ?? 0} onChange={(val) => onRatingChange(t.id, val)} />
           </div>
         ) : (
           <div key={col.key} className={cellClass(col.key, t)}>
@@ -954,6 +959,7 @@ function MusicLibrary({ selectedPlaylist }) {
                         onRowClick={handleRowClick}
                         onDoubleClick={handleDoubleClick}
                         onContextMenu={handleContextMenu}
+                        onRatingChange={handleRatingChange}
                         visibleColumns={visibleColumns}
                         gridTemplate={gridTemplate}
                         minScrollWidth={minScrollWidth}
