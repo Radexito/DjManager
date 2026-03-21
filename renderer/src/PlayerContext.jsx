@@ -10,6 +10,8 @@ import {
 
 const PlayerContext = createContext(null);
 
+const HISTORY_MAX = 50;
+
 export function PlayerProvider({ children }) {
   const audioRef = useRef(null);
   if (audioRef.current == null) audioRef.current = new Audio();
@@ -18,6 +20,7 @@ export function PlayerProvider({ children }) {
 
   const [currentTrack, setCurrentTrack] = useState(null);
   const [currentPlaylistId, setCurrentPlaylistId] = useState(null);
+  const [currentPlaylistName, setCurrentPlaylistName] = useState(null);
   const [queue, setQueue] = useState([]);
   const [queueIndex, setQueueIndex] = useState(-1);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -26,6 +29,8 @@ export function PlayerProvider({ children }) {
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState('none'); // 'none' | 'all' | 'one'
   const [outputDeviceId, setOutputDeviceId] = useState('');
+  const [volume, setVolumeState] = useState(1.0);
+  const [history, setHistory] = useState([]); // ring buffer, newest first
 
   // Port of the local HTTP media server (started in main process before window opens).
   const mediaPortRef = useRef(null);
@@ -41,6 +46,9 @@ export function PlayerProvider({ children }) {
   const shuffleRef = useRef(shuffle);
   const repeatRef = useRef(repeat);
   const currentPlaylistIdRef = useRef(currentPlaylistId);
+  const currentPlaylistNameRef = useRef(currentPlaylistName);
+  const currentTrackRef = useRef(currentTrack);
+  const volumeRef = useRef(volume);
   useEffect(() => {
     queueRef.current = queue;
   }, [queue]);
@@ -56,6 +64,15 @@ export function PlayerProvider({ children }) {
   useEffect(() => {
     currentPlaylistIdRef.current = currentPlaylistId;
   }, [currentPlaylistId]);
+  useEffect(() => {
+    currentPlaylistNameRef.current = currentPlaylistName;
+  }, [currentPlaylistName]);
+  useEffect(() => {
+    currentTrackRef.current = currentTrack;
+  }, [currentTrack]);
+  useEffect(() => {
+    volumeRef.current = volume;
+  }, [volume]);
 
   // Generation counter — incremented on every track switch so stale play() rejections are ignored
   const playGenRef = useRef(0);
@@ -63,7 +80,7 @@ export function PlayerProvider({ children }) {
   // Stable play-at-index — exposed via ref so handleEnded can call it without stale closure
   const playAtIndexRef = useRef(null);
   const playAtIndex = useCallback(
-    (newQueue, index, playlistId = null) => {
+    (newQueue, index, playlistId = null, playlistName = null) => {
       const track = newQueue[index];
       if (!track) return;
       const gen = ++playGenRef.current;
@@ -77,6 +94,15 @@ export function PlayerProvider({ children }) {
         return;
       }
       const src = `http://127.0.0.1:${port}${encodedPath}?t=${gen}`; // cache-bust: same file reloaded = fresh pipeline
+
+      // Push currently playing track to history before switching
+      if (currentTrackRef.current) {
+        setHistory((prev) => {
+          const next = [currentTrackRef.current, ...prev];
+          return next.length > HISTORY_MAX ? next.slice(0, HISTORY_MAX) : next;
+        });
+      }
+
       audio.pause(); // cleanly stop current pipeline before swapping source
       audio.src = src;
       // Setting src triggers an implicit load; calling audio.load() would race with play()
@@ -89,6 +115,7 @@ export function PlayerProvider({ children }) {
       setQueue(newQueue);
       setQueueIndex(index);
       setCurrentPlaylistId(playlistId);
+      setCurrentPlaylistName(playlistName ?? null);
     },
     [audio]
   );
@@ -108,17 +135,18 @@ export function PlayerProvider({ children }) {
       const rep = repeatRef.current;
       const shuf = shuffleRef.current;
       const plId = currentPlaylistIdRef.current;
+      const plName = currentPlaylistNameRef.current;
       if (rep === 'one') {
         audio.currentTime = 0;
         audio.play().catch(console.error);
         return;
       }
       if (shuf) {
-        playAtIndexRef.current(q, Math.floor(Math.random() * q.length), plId);
+        playAtIndexRef.current(q, Math.floor(Math.random() * q.length), plId, plName);
       } else if (idx < q.length - 1) {
-        playAtIndexRef.current(q, idx + 1, plId);
+        playAtIndexRef.current(q, idx + 1, plId, plName);
       } else if (rep === 'all' && q.length > 0) {
-        playAtIndexRef.current(q, 0, plId);
+        playAtIndexRef.current(q, 0, plId, plName);
       } else {
         setIsPlaying(false);
       }
@@ -155,8 +183,8 @@ export function PlayerProvider({ children }) {
   }, [audio]);
 
   const play = useCallback(
-    (track, newQueue, index, playlistId = null) => {
-      playAtIndex(newQueue, index, playlistId);
+    (track, newQueue, index, playlistId = null, playlistName = null) => {
+      playAtIndex(newQueue, index, playlistId, playlistName);
     },
     [playAtIndex]
   );
@@ -170,10 +198,11 @@ export function PlayerProvider({ children }) {
     const q = queueRef.current;
     const idx = idxRef.current;
     const plId = currentPlaylistIdRef.current;
+    const plName = currentPlaylistNameRef.current;
     if (shuffleRef.current) {
-      playAtIndexRef.current(q, Math.floor(Math.random() * q.length), plId);
+      playAtIndexRef.current(q, Math.floor(Math.random() * q.length), plId, plName);
     } else if (idx < q.length - 1) {
-      playAtIndexRef.current(q, idx + 1, plId);
+      playAtIndexRef.current(q, idx + 1, plId, plName);
     }
   }, []);
 
@@ -184,7 +213,8 @@ export function PlayerProvider({ children }) {
       const q = queueRef.current;
       const idx = idxRef.current;
       const plId = currentPlaylistIdRef.current;
-      if (idx > 0) playAtIndexRef.current(q, idx - 1, plId);
+      const plName = currentPlaylistNameRef.current;
+      if (idx > 0) playAtIndexRef.current(q, idx - 1, plId, plName);
       else audio.currentTime = 0;
     }
   }, [audio]);
@@ -210,6 +240,18 @@ export function PlayerProvider({ children }) {
     setQueue([]);
     setQueueIndex(0);
   }, [audio]);
+
+  const setVolume = useCallback((v) => {
+    const clamped = Math.max(0, Math.min(1, v));
+    setVolumeState(clamped);
+  }, []);
+
+  // Apply user volume combined with per-track replay_gain
+  useEffect(() => {
+    const rg = currentTrack?.replay_gain ?? 0;
+    const gainLinear = Math.pow(10, rg / 20);
+    audio.volume = Math.min(1.0, volume * gainLinear);
+  }, [volume, currentTrack, audio]);
 
   const cycleRepeat = useCallback(
     () => setRepeat((r) => (r === 'none' ? 'all' : r === 'all' ? 'one' : 'none')),
@@ -273,6 +315,7 @@ export function PlayerProvider({ children }) {
       value={{
         currentTrack,
         currentPlaylistId,
+        currentPlaylistName,
         queue,
         queueIndex,
         isPlaying,
@@ -281,6 +324,8 @@ export function PlayerProvider({ children }) {
         shuffle,
         repeat,
         outputDeviceId,
+        volume,
+        history,
         play,
         togglePlay,
         stop,
@@ -290,6 +335,7 @@ export function PlayerProvider({ children }) {
         toggleShuffle,
         cycleRepeat,
         setDevice,
+        setVolume,
       }}
     >
       {children}

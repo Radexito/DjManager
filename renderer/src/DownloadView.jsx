@@ -36,7 +36,7 @@ function fmtDuration(secs) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
+export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
   // ── shared state ─────────────────────────────────────────────────────────
   const [url, setUrl] = useState('');
   const [history, setHistory] = useState([]);
@@ -146,15 +146,25 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
       }
       setPlaylistInfo(res);
       setSelectedIndices(new Set(res.entries.map((_, i) => i)));
-      // Initialise playlist target defaults
-      setTargetPlaylistId(null);
-      setTargetPlaylistName(res.title || '');
       // Fetch existing playlists for the combobox
+      let existingPlaylists = [];
       try {
-        const existingPlaylists = await window.api.getPlaylists();
-        setPlaylists(existingPlaylists || []);
+        existingPlaylists = (await window.api.getPlaylists()) || [];
+        setPlaylists(existingPlaylists);
       } catch {
         setPlaylists([]);
+      }
+      // Auto-select existing playlist if name matches the detected title
+      const detectedTitle = res.title || '';
+      const match = existingPlaylists.find(
+        (p) => p.name.toLowerCase() === detectedTitle.toLowerCase()
+      );
+      if (match) {
+        setTargetPlaylistId(match.id);
+        setTargetPlaylistName('');
+      } else {
+        setTargetPlaylistId(null);
+        setTargetPlaylistName(detectedTitle);
       }
       setStep('select');
     } catch (err) {
@@ -273,7 +283,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
-    <div className="dl-view">
+    <div className="dl-view" style={style}>
       <div className="dl-header">
         <h2 className="dl-title">YT-DLP Download</h2>
         <p className="dl-subtitle">

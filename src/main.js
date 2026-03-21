@@ -28,6 +28,7 @@ if (process.platform === 'linux') {
 import { initDB } from './db/migrations.js';
 import {
   createPlaylist,
+  findOrCreatePlaylist,
   getPlaylists,
   getPlaylist,
   renamePlaylist,
@@ -75,6 +76,8 @@ const __dirname = path.dirname(__filename);
 let mainWindow;
 
 import { startMediaServer as _startMediaServer } from './audio/mediaServer.js';
+import { getArtworkBase } from './audio/importManager.js';
+import { writeId3Tags } from './audio/id3Writer.js';
 
 // Serve audio files over a local HTTP server so Chromium's media pipeline can
 // issue standard Range requests during seeking. Custom Electron protocols have
@@ -83,7 +86,8 @@ let mediaServerPort = null;
 
 function startMediaServer() {
   const audioBase = path.join(app.getPath('userData'), 'audio');
-  return _startMediaServer(audioBase).then(({ port }) => {
+  const artworkBase = getArtworkBase();
+  return _startMediaServer(audioBase, artworkBase).then(({ port }) => {
     mediaServerPort = port;
   });
 }
@@ -252,6 +256,13 @@ ipcMain.handle('remove-track', (_, trackId) => {
 });
 ipcMain.handle('update-track', (_, { id, data }) => {
   updateTrack(id, data);
+  // Fire-and-forget ID3 tag write-back (non-blocking, best-effort)
+  const track = getTrackById(id);
+  if (track?.file_path) {
+    writeId3Tags(track.file_path, data).catch((e) =>
+      console.error('[update-track] id3 write failed:', e.message)
+    );
+  }
   return { ok: true };
 });
 ipcMain.handle('adjust-bpm', (_, { trackIds, factor }) => {
@@ -274,13 +285,24 @@ ipcMain.handle('adjust-bpm', (_, { trackIds, factor }) => {
 // Playlist IPC handlers
 ipcMain.handle('get-playlists', () => getPlaylists());
 ipcMain.handle('create-playlist', (_, { name, color }) => {
-  const id = createPlaylist(name, color ?? null);
-  if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
-  return id;
+  try {
+    const id = createPlaylist(name, color ?? null);
+    if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+    return { id };
+  } catch (err) {
+    if (err.code === 'DUPLICATE_PLAYLIST_NAME') return { error: 'duplicate', message: err.message };
+    throw err;
+  }
 });
 ipcMain.handle('rename-playlist', (_, { id, name }) => {
-  renamePlaylist(id, name);
-  if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+  try {
+    renamePlaylist(id, name);
+    if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+    return {};
+  } catch (err) {
+    if (err.code === 'DUPLICATE_PLAYLIST_NAME') return { error: 'duplicate', message: err.message };
+    throw err;
+  }
 });
 ipcMain.handle('update-playlist-color', (_, { id, color }) => {
   updatePlaylistColor(id, color);
@@ -517,10 +539,11 @@ ipcMain.handle(
         playlistId = existingPlaylistId;
       } else if (newPlaylistName) {
         try {
-          playlistId = createPlaylist(newPlaylistName, null, url);
+          const { id } = findOrCreatePlaylist(newPlaylistName, null, url);
+          playlistId = id;
           send('playlists-updated');
         } catch (err) {
-          console.error('[ytdlp] createPlaylist failed:', err.message);
+          console.error('[ytdlp] findOrCreatePlaylist failed:', err.message);
         }
       }
 
@@ -591,14 +614,15 @@ ipcMain.handle(
               // Create playlist if not already assigned (fallback for non-interactive downloads)
               if (!playlistId) {
                 try {
-                  playlistId = createPlaylist(
+                  const { id } = findOrCreatePlaylist(
                     name || playlistTitle || 'Imported Playlist',
                     null,
                     url
                   );
+                  playlistId = id;
                   send('playlists-updated');
                 } catch (err) {
-                  console.error('[ytdlp] createPlaylist failed:', err.message);
+                  console.error('[ytdlp] findOrCreatePlaylist failed:', err.message);
                 }
               }
               sendTrackUpdate({ type: 'init', total });
@@ -643,7 +667,8 @@ ipcMain.handle(
         try {
           const name =
             detectedPlaylistName || playlistTitle || `Playlist ${new Date().toLocaleDateString()}`;
-          playlistId = createPlaylist(name, null, url);
+          const { id: pid } = findOrCreatePlaylist(name, null, url);
+          playlistId = pid;
           for (const tid of trackIds) {
             try {
               addTrackToPlaylist(playlistId, tid);

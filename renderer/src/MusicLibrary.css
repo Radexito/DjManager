@@ -29,12 +29,12 @@
 /* Header — scrollLeft synced to list via JS; no visible scrollbar */
 .header {
   display: grid;
+  column-gap: 6px;
   padding: 12px 8px;
   background-color: #2a2a2a;
   color: #e0e0e0;
   font-weight: 600;
   border-bottom: 1px solid #404040;
-  overflow-x: hidden;
   position: relative; /* for col-dropdown positioning */
 }
 
@@ -53,6 +53,7 @@
   height: 50px;
   width: 100%;
   display: grid;
+  column-gap: 6px;
   align-items: center;
   padding: 0 8px;
   cursor: pointer;
@@ -102,6 +103,21 @@
   text-align: center;
   font-size: 16px;
   color: #4ade80;
+}
+
+/* Shared horizontal-scroll container for header + list */
+.table-scroll-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-width: 0;
+}
+
+/* In library mode the List manages its own scroll — wrapper must not clip it */
+.table-scroll-wrap.library-mode {
+  overflow-x: hidden;
 }
 
 /* react-window */
@@ -254,8 +270,9 @@
 
 /* ── Playlist DnD list ─────────────────────────────────────────────────── */
 .playlist-dnd-list {
+  flex: 1;
   overflow-y: auto;
-  height: 600px;
+  overflow-x: auto;
 }
 
 .drag-handle {
