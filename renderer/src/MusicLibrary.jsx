@@ -211,6 +211,7 @@ function SortableRow({
   onContextMenu,
   visibleColumns,
   gridTemplate,
+  minScrollWidth,
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: t.id,
@@ -220,6 +221,7 @@ function SortableRow({
     transition,
     opacity: isDragging ? 0.4 : 1,
     gridTemplateColumns: gridTemplate,
+    minWidth: minScrollWidth,
   };
   return (
     <div
@@ -941,7 +943,7 @@ function MusicLibrary({ selectedPlaylist }) {
                   items={sortedTracks.map((t) => t.id)}
                   strategy={verticalListSortingStrategy}
                 >
-                  <div className="playlist-dnd-list">
+                  <div className="playlist-dnd-list" style={{ minWidth: minScrollWidth }}>
                     {sortedTracks.map((t, index) => (
                       <SortableRow
                         key={t.id}
@@ -954,6 +956,7 @@ function MusicLibrary({ selectedPlaylist }) {
                         onContextMenu={handleContextMenu}
                         visibleColumns={visibleColumns}
                         gridTemplate={gridTemplate}
+                        minScrollWidth={minScrollWidth}
                       />
                     ))}
                   </div>

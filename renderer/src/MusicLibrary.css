@@ -265,8 +265,9 @@
 
 /* ── Playlist DnD list ─────────────────────────────────────────────────── */
 .playlist-dnd-list {
+  flex: 1;
   overflow-y: auto;
-  height: 600px;
+  overflow-x: hidden;
 }
 
 .drag-handle {
