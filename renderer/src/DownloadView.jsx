@@ -146,15 +146,25 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
       }
       setPlaylistInfo(res);
       setSelectedIndices(new Set(res.entries.map((_, i) => i)));
-      // Initialise playlist target defaults
-      setTargetPlaylistId(null);
-      setTargetPlaylistName(res.title || '');
       // Fetch existing playlists for the combobox
+      let existingPlaylists = [];
       try {
-        const existingPlaylists = await window.api.getPlaylists();
-        setPlaylists(existingPlaylists || []);
+        existingPlaylists = (await window.api.getPlaylists()) || [];
+        setPlaylists(existingPlaylists);
       } catch {
         setPlaylists([]);
+      }
+      // Auto-select existing playlist if name matches the detected title
+      const detectedTitle = res.title || '';
+      const match = existingPlaylists.find(
+        (p) => p.name.toLowerCase() === detectedTitle.toLowerCase()
+      );
+      if (match) {
+        setTargetPlaylistId(match.id);
+        setTargetPlaylistName('');
+      } else {
+        setTargetPlaylistId(null);
+        setTargetPlaylistName(detectedTitle);
       }
       setStep('select');
     } catch (err) {
