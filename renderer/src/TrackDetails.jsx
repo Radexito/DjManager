@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import './TrackDetails.css';
 import AutoTaggerModal from './AutoTaggerModal.jsx';
+import RatingStars from './RatingStars.jsx';
 
 const EDITABLE_FIELDS = [
   { key: 'title', label: 'Title', type: 'text', bulkSupported: false },
@@ -9,6 +10,8 @@ const EDITABLE_FIELDS = [
   { key: 'year', label: 'Year', type: 'number', bulkSupported: true },
   { key: 'genres', label: 'Genres', type: 'genres', bulkSupported: true },
   { key: 'label', label: 'Label', type: 'text', bulkSupported: true },
+  { key: 'rating', label: 'Rating', type: 'rating', bulkSupported: true },
+  { key: 'user_tags', label: 'Tags', type: 'tags', bulkSupported: true },
   { key: 'comments', label: 'Comments', type: 'textarea', bulkSupported: true },
 ];
 
@@ -27,6 +30,8 @@ function trackToForm(track) {
     year: track.year != null ? String(track.year) : '',
     genres: JSON.parse(track.genres ?? '[]').join(', '),
     label: track.label ?? '',
+    rating: track.rating ?? 0,
+    user_tags: track.user_tags ?? '',
     comments: track.comments ?? '',
   };
 }
@@ -39,6 +44,8 @@ const EMPTY_BULK_FORM = {
   year: '',
   genres: '',
   label: '',
+  rating: null, // null = "don't change"
+  user_tags: '',
   comments: '',
 };
 
@@ -88,6 +95,8 @@ export default function TrackDetails({
         if (form.year.trim() !== '') data.year = parseInt(form.year, 10) || null;
         if (form.genres.trim() !== '') data.genres = JSON.stringify(genreArray);
         if (form.label.trim() !== '') data.label = form.label.trim();
+        if (form.rating !== null) data.rating = form.rating;
+        if (form.user_tags.trim() !== '') data.user_tags = form.user_tags.trim();
         if (form.comments.trim() !== '') data.comments = form.comments.trim();
         if (Object.keys(data).length === 0) {
           setSaving(false);
@@ -108,6 +117,8 @@ export default function TrackDetails({
           year: form.year !== '' ? parseInt(form.year, 10) || null : null,
           genres: JSON.stringify(genreArray),
           label: form.label,
+          rating: form.rating,
+          user_tags: form.user_tags,
           comments: form.comments,
         };
         await window.api.updateTrack(track.id, data);
@@ -160,7 +171,20 @@ export default function TrackDetails({
         {visibleFields.map(({ key, label, type }) => (
           <label key={key} className="track-details__field">
             <span className="track-details__label">{label}</span>
-            {type === 'textarea' ? (
+            {type === 'rating' ? (
+              <RatingStars
+                value={form.rating ?? 0}
+                onChange={(val) => handleChange('rating', val)}
+              />
+            ) : type === 'tags' ? (
+              <input
+                className="track-details__input"
+                type="text"
+                value={form[key]}
+                placeholder={isBulk ? 'Leave blank to keep existing' : 'e.g. dark, peak-hour, 90s'}
+                onChange={(e) => handleChange(key, e.target.value)}
+              />
+            ) : type === 'textarea' ? (
               <textarea
                 className="track-details__input track-details__input--textarea"
                 value={form[key]}

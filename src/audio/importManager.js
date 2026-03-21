@@ -1,12 +1,17 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { app } from 'electron';
 import { Worker } from 'worker_threads';
 import { ffprobe } from './ffmpeg.js';
+import { getFfmpegRuntimePath } from '../deps.js';
 import { addTrack, updateTrack, getTrackById, getTrackByHash } from '../db/trackRepository.js';
 import { getAnalyzerRuntimePath } from '../deps.js';
 import { getSetting } from '../db/settingsRepository.js';
+
+const execFileAsync = promisify(execFile);
 
 function hashFile(filePath) {
   const hash = crypto.createHash('sha1');
@@ -24,11 +29,39 @@ export function getLibraryBase() {
   return custom || path.join(app.getPath('userData'), 'audio');
 }
 
+export function getArtworkBase() {
+  return path.join(app.getPath('userData'), 'artwork');
+}
+
 function getAudioStoragePath(hash, ext) {
   const base = getLibraryBase();
   const shard = hash.slice(0, 2);
   fs.mkdirSync(path.join(base, shard), { recursive: true });
   return path.join(base, shard, `${hash}${ext}`);
+}
+
+async function extractArtwork(srcPath, hash) {
+  const artworkBase = getArtworkBase();
+  fs.mkdirSync(artworkBase, { recursive: true });
+  const artworkPath = path.join(artworkBase, `${hash}.jpg`);
+  if (fs.existsSync(artworkPath)) return artworkPath;
+  try {
+    await execFileAsync(getFfmpegRuntimePath(), [
+      '-y',
+      '-i',
+      srcPath,
+      '-map',
+      '0:v:0',
+      '-c:v',
+      'copy',
+      '-frames:v',
+      '1',
+      artworkPath,
+    ]);
+    return fs.existsSync(artworkPath) ? artworkPath : null;
+  } catch {
+    return null;
+  }
 }
 
 function parseTags(ffprobeData) {
@@ -113,6 +146,9 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
   // Extract tags
   const { title, artist, album, genre, year, label } = parseTags(probe);
 
+  // Extract embedded album art (best-effort, non-blocking)
+  const artworkPath = await extractArtwork(dest, hash);
+
   const trackId = addTrack({
     title: title || path.basename(filePath, ext),
     artist,
@@ -129,6 +165,8 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
     source_platform: sourceMeta.source_platform ?? null,
     source_quality: sourceMeta.source_quality ?? null,
     source_link: sourceMeta.source_link ?? null,
+    has_artwork: artworkPath ? 1 : 0,
+    artwork_path: artworkPath ?? null,
   });
 
   console.log(`Added track ID ${trackId}: ${title || path.basename(filePath, ext)}`);
