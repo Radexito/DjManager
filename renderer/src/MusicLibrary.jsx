@@ -315,7 +315,8 @@ function MusicLibrary({ selectedPlaylist }) {
   const lastSelectedIndexRef = useRef(null);
   const colDropdownRef = useRef(null);
   const headerRef = useRef(null);
-  const headerScrollRef = useRef(null); // syncs header horizontal scroll to List scroll
+  const headerScrollRef = useRef(null); // syncs header horizontal scroll to content scroll
+  const dndScrollRef = useRef(null); // ref to playlist DnD scroll container
 
   const visibleColumns = useMemo(
     () => colOrder.map((k) => COL_BY_KEY[k]).filter((c) => c && colVis[c.key] !== false),
@@ -613,10 +614,9 @@ function MusicLibrary({ selectedPlaylist }) {
     };
   }, [colMenuAnchor]);
 
-  // Sync header horizontal scroll with the react-window List in library view
+  // Sync header horizontal scroll with the scroll container (library or playlist)
   useEffect(() => {
-    if (isPlaylistView) return;
-    const el = listRef.current?.element;
+    const el = isPlaylistView ? dndScrollRef.current : listRef.current?.element;
     if (!el) return;
     const sync = () => {
       if (headerScrollRef.current) headerScrollRef.current.scrollLeft = el.scrollLeft;
@@ -895,26 +895,28 @@ function MusicLibrary({ selectedPlaylist }) {
           </div>
         )}
 
-        <div className={`table-scroll-wrap${isPlaylistView ? '' : ' library-mode'}`}>
+        <div className="table-scroll-wrap library-mode">
           {isPlaylistView ? (
-            <div
-              ref={headerRef}
-              className="header"
-              style={{ gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setColMenuAnchor({ x: e.clientX, y: e.clientY });
-              }}
-            >
-              {visibleColumns.map((col) => (
-                <div
-                  key={col.key}
-                  className={`header-cell ${['bpm', 'key_camelot', 'loudness', 'year', 'duration', 'bitrate'].includes(col.key) ? 'right' : ''}`}
-                  onClick={() => handleSort(col.key)}
-                >
-                  {col.label} {sortBy.key === col.key ? (sortBy.asc ? '▲' : '▼') : ''}
-                </div>
-              ))}
+            <div ref={headerScrollRef} style={{ overflow: 'hidden' }}>
+              <div
+                ref={headerRef}
+                className="header"
+                style={{ gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setColMenuAnchor({ x: e.clientX, y: e.clientY });
+                }}
+              >
+                {visibleColumns.map((col) => (
+                  <div
+                    key={col.key}
+                    className={`header-cell ${['bpm', 'key_camelot', 'loudness', 'year', 'duration', 'bitrate'].includes(col.key) ? 'right' : ''}`}
+                    onClick={() => handleSort(col.key)}
+                  >
+                    {col.label} {sortBy.key === col.key ? (sortBy.asc ? '▲' : '▼') : ''}
+                  </div>
+                ))}
+              </div>
             </div>
           ) : (
             <div ref={headerScrollRef} style={{ overflow: 'hidden' }}>
@@ -985,7 +987,7 @@ function MusicLibrary({ selectedPlaylist }) {
                   items={sortedTracks.map((t) => t.id)}
                   strategy={verticalListSortingStrategy}
                 >
-                  <div className="playlist-dnd-list" style={{ minWidth: minScrollWidth }}>
+                  <div ref={dndScrollRef} className="playlist-dnd-list">
                     {sortedTracks.map((t, index) => (
                       <SortableRow
                         key={t.id}
