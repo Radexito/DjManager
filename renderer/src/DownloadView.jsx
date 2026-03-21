@@ -36,7 +36,7 @@ function fmtDuration(secs) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
+export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
   // ── shared state ─────────────────────────────────────────────────────────
   const [url, setUrl] = useState('');
   const [history, setHistory] = useState([]);
@@ -273,7 +273,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
-    <div className="dl-view">
+    <div className="dl-view" style={style}>
       <div className="dl-header">
         <h2 className="dl-title">YT-DLP Download</h2>
         <p className="dl-subtitle">

@@ -27,12 +27,12 @@ function App() {
     <PlayerProvider>
       <div className="app-main">
         <Sidebar selectedMenuItemId={selectedPlaylistId} onMenuSelect={setSelectedPlaylistId} />
-        {selectedPlaylistId === 'download' ? (
-          <DownloadView
-            onGoToLibrary={() => setSelectedPlaylistId('music')}
-            onGoToPlaylist={(id) => setSelectedPlaylistId(id)}
-          />
-        ) : (
+        <DownloadView
+          onGoToLibrary={() => setSelectedPlaylistId('music')}
+          onGoToPlaylist={(id) => setSelectedPlaylistId(id)}
+          style={{ display: selectedPlaylistId === 'download' ? 'flex' : 'none' }}
+        />
+        {selectedPlaylistId !== 'download' && (
           <MusicLibrary selectedPlaylist={selectedPlaylistId} />
         )}
       </div>
