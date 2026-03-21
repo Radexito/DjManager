@@ -75,6 +75,8 @@ const __dirname = path.dirname(__filename);
 let mainWindow;
 
 import { startMediaServer as _startMediaServer } from './audio/mediaServer.js';
+import { getArtworkBase } from './audio/importManager.js';
+import { writeId3Tags } from './audio/id3Writer.js';
 
 // Serve audio files over a local HTTP server so Chromium's media pipeline can
 // issue standard Range requests during seeking. Custom Electron protocols have
@@ -83,7 +85,8 @@ let mediaServerPort = null;
 
 function startMediaServer() {
   const audioBase = path.join(app.getPath('userData'), 'audio');
-  return _startMediaServer(audioBase).then(({ port }) => {
+  const artworkBase = getArtworkBase();
+  return _startMediaServer(audioBase, artworkBase).then(({ port }) => {
     mediaServerPort = port;
   });
 }
@@ -252,6 +255,13 @@ ipcMain.handle('remove-track', (_, trackId) => {
 });
 ipcMain.handle('update-track', (_, { id, data }) => {
   updateTrack(id, data);
+  // Fire-and-forget ID3 tag write-back (non-blocking, best-effort)
+  const track = getTrackById(id);
+  if (track?.file_path) {
+    writeId3Tags(track.file_path, data).catch((e) =>
+      console.error('[update-track] id3 write failed:', e.message)
+    );
+  }
   return { ok: true };
 });
 ipcMain.handle('adjust-bpm', (_, { trackIds, factor }) => {

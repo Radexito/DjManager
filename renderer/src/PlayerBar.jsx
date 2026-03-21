@@ -13,12 +13,15 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
   const {
     currentTrack,
     currentPlaylistId,
+    currentPlaylistName,
     isPlaying,
     currentTime,
     duration,
     shuffle,
     repeat,
     outputDeviceId,
+    volume,
+    history,
     togglePlay,
     next,
     prev,
@@ -26,13 +29,17 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
     toggleShuffle,
     cycleRepeat,
     setDevice,
+    setVolume,
+    play,
   } = usePlayer();
 
   const [devices, setDevices] = useState([]);
   const [showDevices, setShowDevices] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const seekbarRef = useRef(); // uncontrolled range input
   const seekingRef = useRef(false); // true while user drags
   const deviceWrapRef = useRef();
+  const historyWrapRef = useRef();
 
   useEffect(() => {
     async function loadDevices() {
@@ -86,20 +93,45 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
     return () => document.removeEventListener('mousedown', handler);
   }, [showDevices]);
 
+  // Close history dropdown on outside click
+  useEffect(() => {
+    if (!showHistory) return;
+    const handler = (e) => {
+      if (historyWrapRef.current && !historyWrapRef.current.contains(e.target))
+        setShowHistory(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showHistory]);
+
+  // Album art URL via media server (same port, absolute path as URL path)
+  const artworkUrl =
+    currentTrack?.has_artwork && currentTrack?.artwork_path ? `${currentTrack.artwork_path}` : null;
+
   return (
     <div className="player-bar">
-      {/* Left: current track info */}
+      {/* Left: album art + current track info */}
       <div className="player-left">
-        {currentTrack ? (
-          <>
-            <div className="player-title" title={currentTrack.title}>
-              {currentTrack.title}
-            </div>
-            <div className="player-artist">{currentTrack.artist || 'Unknown'}</div>
-          </>
-        ) : (
-          <div className="player-idle">No track playing</div>
+        {artworkUrl && (
+          <img className="player-art" src={artworkUrl} alt="Album art" draggable={false} />
         )}
+        <div className="player-track-info">
+          {currentTrack ? (
+            <>
+              <div className="player-title" title={currentTrack.title}>
+                {currentTrack.title}
+              </div>
+              <div className="player-artist">{currentTrack.artist || 'Unknown'}</div>
+              {currentPlaylistName && (
+                <div className="player-from" title={`Playing from: ${currentPlaylistName}`}>
+                  ▶ {currentPlaylistName}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="player-idle">No track playing</div>
+          )}
+        </div>
       </div>
 
       {/* Center: transport controls + seekbar */}
@@ -155,15 +187,33 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
         </div>
       </div>
 
-      {/* Right: device picker + navigate to playlist */}
+      {/* Right: volume + device picker + history + navigate to playlist */}
       <div className="player-right">
+        {/* Volume control */}
+        <div className="player-volume-wrap">
+          <span className="player-volume-icon" title="Volume">
+            {volume === 0 ? '🔇' : volume < 0.4 ? '🔉' : '🔊'}
+          </span>
+          <input
+            type="range"
+            className="player-volume-slider"
+            min={0}
+            max={1}
+            step={0.01}
+            value={volume}
+            onChange={(e) => setVolume(Number(e.target.value))}
+            title={`Volume: ${Math.round(volume * 100)}%`}
+          />
+        </div>
+
+        {/* Device picker */}
         <div className="player-device-wrap" ref={deviceWrapRef}>
           <button
             className="player-btn"
             onClick={() => setShowDevices((s) => !s)}
-            title="Audio output"
+            title="Audio output device"
           >
-            🔊
+            🎧
           </button>
           {showDevices && (
             <div className="player-device-menu">
@@ -186,14 +236,46 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
           )}
         </div>
 
-        <button
-          className="player-btn"
-          onClick={() => currentPlaylistId && onNavigateToPlaylist(String(currentPlaylistId))}
-          title="Go to current playlist"
-          disabled={!currentPlaylistId}
-        >
-          ☰
-        </button>
+        {/* Playback history */}
+        <div className="player-history-wrap" ref={historyWrapRef}>
+          <button
+            className={`player-btn${showHistory ? ' player-btn--active' : ''}`}
+            onClick={() => setShowHistory((s) => !s)}
+            title="Playback history"
+            disabled={history.length === 0}
+          >
+            🕐
+          </button>
+          {showHistory && history.length > 0 && (
+            <div className="player-history-menu">
+              <div className="player-history-header">Recent tracks</div>
+              {history.map((t, i) => (
+                <div
+                  key={`${t.id}-${i}`}
+                  className="player-history-item"
+                  title={`${t.title} — ${t.artist || 'Unknown'}`}
+                  onClick={() => {
+                    play(t, [t], 0, null, null);
+                    setShowHistory(false);
+                  }}
+                >
+                  <span className="player-history-title">{t.title}</span>
+                  <span className="player-history-artist">{t.artist || 'Unknown'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {currentPlaylistId && (
+          <button
+            className="player-btn"
+            onClick={() => onNavigateToPlaylist(String(currentPlaylistId))}
+            title="Go to current playlist"
+          >
+            ☰
+          </button>
+        )}
       </div>
     </div>
   );

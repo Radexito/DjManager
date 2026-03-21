@@ -160,12 +160,14 @@ export function addTrack(track) {
       file_path, file_hash, format, bitrate,
       year, label, genres,
       source_url, source_platform, source_quality, source_link,
+      user_tags, has_artwork, artwork_path,
       created_at
     ) VALUES (
       @title, @artist, @album, @duration,
       @file_path, @file_hash, @format, @bitrate,
       @year, @label, @genres,
       @source_url, @source_platform, @source_quality, @source_link,
+      @user_tags, @has_artwork, @artwork_path,
       @created_at
     )
   `);
@@ -186,6 +188,9 @@ export function addTrack(track) {
     source_platform: track.source_platform ?? null,
     source_quality: track.source_quality ?? null,
     source_link: track.source_link ?? null,
+    user_tags: track.user_tags ?? null,
+    has_artwork: track.has_artwork ?? 0,
+    artwork_path: track.artwork_path ?? null,
     created_at: Date.now(),
   });
 
