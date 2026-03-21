@@ -990,7 +990,7 @@ function MusicLibrary({ selectedPlaylist }) {
               rowCount={sortedTracks.length + (hasMore ? 1 : 0)}
               rowHeight={ROW_HEIGHT}
               width="100%"
-              style={{ overflowX: 'hidden' }}
+              style={{ overflowX: 'hidden', minWidth: minScrollWidth }}
               onRowsRendered={handleItemsRendered}
               className="track-list"
               rowComponent={LibraryRow}
