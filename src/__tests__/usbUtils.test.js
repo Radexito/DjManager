@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ── Module mocks (hoisted before imports) ─────────────────────────────────────
 
@@ -16,6 +16,18 @@ vi.mock('child_process', () => {
 
 // Import after mocks
 import { detectFilesystem, describeFilesystem } from '../usb/usbUtils.js';
+
+// ── Platform stub — force Linux branch regardless of host OS ─────────────────
+// usbUtils reads process.platform at call time, so stubbing the global works.
+const _realProcess = globalThis.process;
+beforeEach(() => {
+  const mock = Object.create(_realProcess);
+  Object.defineProperty(mock, 'platform', { value: 'linux', configurable: true, writable: false });
+  vi.stubGlobal('process', mock);
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
