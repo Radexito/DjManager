@@ -24,7 +24,7 @@ npm run build
 npm run dist
 npm run dist:linux   # or :win / :mac
 
-# Unit tests (Vitest) — covers src/db/** and src/audio/**
+# Unit tests (Vitest) — covers src/db/**, src/audio/**, src/usb/**
 npm test
 npx vitest run src/__tests__/trackRepository.test.js
 npm run test:coverage
@@ -38,12 +38,14 @@ cd renderer && npm run test:coverage
 npm run test:e2e
 ```
 
+**Before running tests**: the Electron app must be closed. `pretest` rebuilds `better-sqlite3` for Node.js (needed by Vitest); if Electron holds the `.node` file open the rebuild fails with EBUSY. `posttest` rebuilds it back for Electron automatically.
+
 Coverage thresholds (v8): 65% statements/lines, 44% branches, 70% functions for `src/db/**`. Renderer thresholds are minimal (7%).
 
 **Vitest projects** (`vitest.config.js`):
 
 - `db` — tests needing real SQLite (in-memory via `DB_PATH=:memory:`): `trackRepository`, `playlistRepository`. Uses `src/__tests__/setup.js` which calls `initDB()`.
-- `unit` — no DB, no setup: `importManager`, `ytDlpManager`, `mediaServer`. Add new non-DB tests here.
+- `unit` — no DB, no setup: `importManager`, `ytDlpManager`, `mediaServer`, `anlzWriter`, `waveformGenerator`, `usbUtils`, `settingWriter`, `pdbWriter`.
 
 ## Architecture
 
@@ -64,6 +66,10 @@ Three distinct execution contexts:
 - All `window.api.on*()` methods return a cleanup function — always call it in `useEffect` cleanup
 - `global.mainWindow` is set in `main.js` so analysis worker result handlers can push IPC events to the renderer without importing BrowserWindow directly
 
+### Dev Server Signaling
+
+`npm run dev` uses a `.dev-url` file (not `wait-on http://localhost:5173`). Vite writes the URL to `.dev-url` when ready; Electron waits on `file:.dev-url`. The dev script deletes `.dev-url` first to avoid stale signals. `.dev-url` is gitignored.
+
 ### Audio Import Pipeline
 
 ```
@@ -82,6 +88,28 @@ importAudioFiles(filePaths) →
 
 `spawnAnalysis()` **must** attach `worker.on('error', ...)` and `worker.on('exit', ...)` — an unhandled `'error'` event on a Worker crashes the main process.
 
+### Rekordbox USB Export Pipeline
+
+`src/usb/` contains the full Pioneer CDJ-compatible export. Triggered via `export-rekordbox` / `export-all` IPC handlers in `main.js`.
+
+```
+export-rekordbox IPC →
+  1. Collect tracks from playlist(s) (deduplicated by trackId)
+  2. copyTrackToUsb() → copy audio to {usbRoot}/music/ (skipped if file exists)
+  3. writeAnlz() → per track: ANLZ0000.DAT + .EXT + .2EX in PIONEER/USBANLZ/{hash}/
+  4. writePdb() → export.pdb (DeviceSQL binary, full rebuild every time)
+  5. writeSettingFiles() → PIONEER/MYSETTING.DAT, MYSETTING2.DAT, DEVSETTING.DAT
+```
+
+Key files:
+
+- `src/audio/anlzWriter.js` — writes all ANLZ binary sections. Section order matters; PVBR **must** appear between PPTH and PQTZ in the DAT file or Rekordbox silently ignores waveform/beatgrid data.
+- `src/audio/waveformGenerator.js` — generates waveform data from PCM via ffmpeg. `COLS_PER_SEC = 150` (not 10ms/col).
+- `src/usb/pdbWriter.js` — pure JS DeviceSQL PDB writer.
+- `src/usb/settingWriter.js` — SETTING.DAT files with CRC-16/XMODEM checksums.
+- `src/usb/usbUtils.js` — filesystem detection (platform-branching: lsblk/diskutil/fsutil).
+- `protocol_rekordbox.md` — full reverse-engineered binary format spec.
+
 ### Database
 
 - **better-sqlite3** (synchronous API) — all DB calls in main process are blocking, no async needed
@@ -97,11 +125,11 @@ importAudioFiles(filePaths) →
 
 Audio is served over a local HTTP server (`src/audio/mediaServer.js`) instead of a custom Electron protocol. Electron 28+'s `protocol.handle` has unreliable Range request handling, causing `PIPELINE_ERROR_READ` errors on seek.
 
-- `startMediaServer(audioBase)` starts on `127.0.0.1` on an ephemeral port and returns `{ server, port }`
+- `startMediaServer(audioBase, artworkBase?)` starts on `127.0.0.1` on an ephemeral port
 - Called in `initApp()` **before** `createWindow()` so the port is ready before any IPC
-- Security: only files inside `audioBase` are served (403 for anything outside)
+- Security: only files inside `audioBase` or `artworkBase` are served (403 otherwise)
 - Port exposed via `ipcMain.handle('get-media-port', () => port)` → `window.api.getMediaPort()`
-- Audio src URL: `` `http://127.0.0.1:${port}${encodedPath}?t=${gen}` `` — `?t=` cache-busts the pipeline when replaying the same file
+- URL format: `http://127.0.0.1:${port}/${encodedPath.replace(/^\//, '')}?t=${gen}` — on Windows the path is `/C:/path/to/file`; the server strips the leading slash and converts to backslashes. `?t=` cache-busts the pipeline when replaying the same file.
 
 ### yt-dlp Download Flow (2-step)
 
@@ -140,6 +168,8 @@ Handled client-side by `renderer/src/searchParser.js`. Supports field-qualified 
 - **Genres** stored as JSON-stringified array in the `genres TEXT` column.
 - **Playlists**: mutations (`createPlaylist`, `addTracksToPlaylist`, etc.) always emit a `playlists-updated` IPC event so the sidebar stays in sync.
 - **Renderer test mocks**: `renderer/src/__tests__/setup.js` defines the full `window.api` mock. When adding a new IPC method, add a corresponding `vi.fn()` entry there or renderer tests that mount components will fail.
+- **Platform-specific test stubs**: `usbUtils.test.js` stubs `process.platform` via `vi.stubGlobal` so Linux-branch tests run correctly on Windows. Use the same pattern for any test that branches on `process.platform`.
+- **Windows path in tests**: when constructing HTTP URLs from OS file paths in tests, convert with `'/' + filePath.replace(/\\/g, '/')` so paths are valid on Windows (e.g. `/C:/path/to/file`).
 
 ## Known Issues
 
