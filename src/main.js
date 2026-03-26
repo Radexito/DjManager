@@ -763,6 +763,44 @@ function runPdbExporter(payload, usbRoot) {
   writePdb(payload, outputPath);
 }
 
+// ── USB export manifest ────────────────────────────────────────────────────────
+// Stored at {usbRoot}/PIONEER/rekordbox/export-manifest.json.
+// Allows subsequent exports to the same USB to merge with existing data
+// instead of rebuilding the PDB from only the current playlist's tracks.
+
+function getManifestPath(usbRoot) {
+  return path.join(usbRoot, 'PIONEER', 'rekordbox', 'export-manifest.json');
+}
+
+/** Returns { tracks: Map<id, pdbTrack>, playlists: Map<id, pdbPlaylist> } */
+function loadManifest(usbRoot) {
+  const p = getManifestPath(usbRoot);
+  if (!fs.existsSync(p)) return { tracks: new Map(), playlists: new Map() };
+  try {
+    const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+    return {
+      tracks: new Map((data.tracks || []).map((t) => [t.id, t])),
+      playlists: new Map((data.playlists || []).map((pl) => [pl.id, pl])),
+    };
+  } catch {
+    return { tracks: new Map(), playlists: new Map() };
+  }
+}
+
+function saveManifest(usbRoot, tracksMap, playlistsMap) {
+  const p = getManifestPath(usbRoot);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(
+    p,
+    JSON.stringify({
+      version: 1,
+      tracks: [...tracksMap.values()],
+      playlists: [...playlistsMap.values()],
+    }),
+    'utf8'
+  );
+}
+
 ipcMain.handle('export-rekordbox', async (_, { usbRoot, playlistIds, playlistId }) => {
   try {
     const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
@@ -779,10 +817,25 @@ ipcMain.handle('export-rekordbox', async (_, { usbRoot, playlistIds, playlistId 
     const tracks = [...trackMap.values()];
     const total = tracks.length;
 
-    send('export-rekordbox-progress', { msg: `Exporting ${total} tracks…`, pct: 0 });
+    // Load existing manifest so we can merge with previously exported tracks/playlists
+    const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
+    const existingCount = existingTracks.size;
+
+    send('export-rekordbox-progress', {
+      msg: existingCount
+        ? `Merging ${total} tracks into existing export (${existingCount} tracks already on USB)…`
+        : `Exporting ${total} tracks…`,
+      pct: 0,
+    });
+
+    // Pre-populate usedNames from existing manifest so copyTrackToUsb won't assign duplicate filenames
+    const usedNames = new Map();
+    for (const et of existingTracks.values()) {
+      const name = path.basename(et.file_path || '').toLowerCase();
+      if (name) usedNames.set(name, true);
+    }
 
     // 2. Copy files to USB, build USB path map
-    const usedNames = new Map();
     const usbPaths = new Map(); // trackId → USB path
     for (let i = 0; i < tracks.length; i++) {
       const t = tracks[i];
@@ -794,14 +847,13 @@ ipcMain.handle('export-rekordbox', async (_, { usbRoot, playlistIds, playlistId 
       });
     }
 
-    // 3. Write ANLZ beat grid files
+    // 3. Write ANLZ beat grid files (only for tracks in the current export)
     send('export-rekordbox-progress', { msg: 'Writing beat grids & waveforms…', pct: 40 });
     const anlzPaths = new Map(); // trackId → Pioneer analyze_path string for PDB
     for (let i = 0; i < tracks.length; i++) {
       const t = tracks[i];
       const usbFilePath = usbPaths.get(t.id);
       if (!usbFilePath) continue;
-      // Store the analyze_path in Pioneer format (forward slashes, leading slash, .DAT filename)
       const anlzFolder = getAnlzFolder(usbFilePath).replace(/\\/g, '/');
       anlzPaths.set(t.id, `/${anlzFolder}/ANLZ0000.DAT`);
       try {
@@ -822,9 +874,9 @@ ipcMain.handle('export-rekordbox', async (_, { usbRoot, playlistIds, playlistId 
       });
     }
 
-    // 4. Build PDB payload and run Go exporter
+    // 4. Build PDB tracks for the current export
     send('export-rekordbox-progress', { msg: 'Writing Rekordbox database…', pct: 70 });
-    const pdbTracks = tracks.map((t) => ({
+    const newPdbTracks = tracks.map((t) => ({
       id: t.id,
       title: t.title || '',
       artist: t.artist || '',
@@ -844,7 +896,7 @@ ipcMain.handle('export-rekordbox', async (_, { usbRoot, playlistIds, playlistId 
       analyzePath: anlzPaths.get(t.id) || '',
     }));
 
-    const pdbPlaylists = allPlaylists.map((pl) => ({
+    const newPdbPlaylists = allPlaylists.map((pl) => ({
       id: pl.id,
       name: pl.name,
       track_ids: getPlaylistTracks(pl.id)
@@ -852,12 +904,23 @@ ipcMain.handle('export-rekordbox', async (_, { usbRoot, playlistIds, playlistId 
         .filter((id) => usbPaths.has(id)),
     }));
 
-    runPdbExporter({ usbRoot, tracks: pdbTracks, playlists: pdbPlaylists }, usbRoot);
+    // Merge: existing data is the base; new export overrides by id
+    const mergedTracks = new Map(existingTracks);
+    for (const t of newPdbTracks) mergedTracks.set(t.id, t);
+
+    const mergedPlaylists = new Map(existingPlaylists);
+    for (const pl of newPdbPlaylists) mergedPlaylists.set(pl.id, pl);
+
+    runPdbExporter(
+      { usbRoot, tracks: [...mergedTracks.values()], playlists: [...mergedPlaylists.values()] },
+      usbRoot
+    );
     writeSettingFiles(usbRoot);
+    saveManifest(usbRoot, mergedTracks, mergedPlaylists);
 
     send('export-rekordbox-progress', { msg: 'Done!', pct: 100 });
     send('export-rekordbox-progress', null);
-    return { ok: true, trackCount: total, usbRoot };
+    return { ok: true, trackCount: mergedTracks.size, newTrackCount: total, usbRoot };
   } catch (err) {
     send('export-rekordbox-progress', null);
     return { ok: false, error: err.message };
@@ -881,10 +944,25 @@ ipcMain.handle('export-all', async (_, { usbRoot, playlistIds, playlistId }) => 
     const allTracks = [...trackMap.values()];
     const total = allTracks.length;
 
-    send('export-all-progress', { msg: `Exporting ${total} tracks…`, pct: 0 });
+    // Load existing manifest for merging
+    const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
+    const existingCount = existingTracks.size;
+
+    send('export-all-progress', {
+      msg: existingCount
+        ? `Merging ${total} tracks into existing export (${existingCount} tracks already on USB)…`
+        : `Exporting ${total} tracks…`,
+      pct: 0,
+    });
+
+    // Pre-populate usedNames from manifest to avoid filename collisions
+    const usedNames = new Map();
+    for (const et of existingTracks.values()) {
+      const name = path.basename(et.file_path || '').toLowerCase();
+      if (name) usedNames.set(name, true);
+    }
 
     // Copy files once
-    const usedNames = new Map();
     const usbPaths = new Map();
     for (let i = 0; i < allTracks.length; i++) {
       const t = allTracks[i];
@@ -909,12 +987,12 @@ ipcMain.handle('export-all', async (_, { usbRoot, playlistIds, playlistId }) => 
         const duration = Math.floor(t.duration ?? -1);
         const label = [t.artist, t.title].filter(Boolean).join(' - ') || path.basename(usbPath);
         lines.push(`#EXTINF:${duration},${label}`);
-        lines.push(usbPath); // absolute USB path
+        lines.push(usbPath);
       }
       fs.writeFileSync(path.join(playlistDir, `${safeName}.m3u`), lines.join('\n') + '\n', 'utf8');
     }
 
-    // Write ANLZ beat grids + waveforms
+    // Write ANLZ beat grids + waveforms (only for tracks in the current export)
     send('export-all-progress', { msg: 'Writing beat grids & waveforms…', pct: 50 });
     for (let i = 0; i < allTracks.length; i++) {
       const t = allTracks[i];
@@ -938,9 +1016,9 @@ ipcMain.handle('export-all', async (_, { usbRoot, playlistIds, playlistId }) => 
       });
     }
 
-    // Write PDB
+    // Write PDB — merge with existing manifest
     send('export-all-progress', { msg: 'Writing Rekordbox database…', pct: 70 });
-    const pdbTracks = allTracks.map((t) => ({
+    const newPdbTracks = allTracks.map((t) => ({
       id: t.id,
       title: t.title || '',
       artist: t.artist || '',
@@ -964,19 +1042,36 @@ ipcMain.handle('export-all', async (_, { usbRoot, playlistIds, playlistId }) => 
         return folder ? `/${folder}/ANLZ0000.DAT` : '';
       })(),
     }));
-    const pdbPlaylists = allPlaylists.map((pl) => ({
+    const newPdbPlaylists = allPlaylists.map((pl) => ({
       id: pl.id,
       name: pl.name,
       track_ids: getPlaylistTracks(pl.id)
         .map((t) => t.id)
         .filter((id) => usbPaths.has(id)),
     }));
-    runPdbExporter({ usbRoot, tracks: pdbTracks, playlists: pdbPlaylists }, usbRoot);
+
+    const mergedTracks = new Map(existingTracks);
+    for (const t of newPdbTracks) mergedTracks.set(t.id, t);
+
+    const mergedPlaylists = new Map(existingPlaylists);
+    for (const pl of newPdbPlaylists) mergedPlaylists.set(pl.id, pl);
+
+    runPdbExporter(
+      { usbRoot, tracks: [...mergedTracks.values()], playlists: [...mergedPlaylists.values()] },
+      usbRoot
+    );
     writeSettingFiles(usbRoot);
+    saveManifest(usbRoot, mergedTracks, mergedPlaylists);
 
     send('export-all-progress', { msg: 'Done!', pct: 100 });
     send('export-all-progress', null);
-    return { ok: true, trackCount: total, playlistCount: allPlaylists.length, usbRoot };
+    return {
+      ok: true,
+      trackCount: mergedTracks.size,
+      newTrackCount: total,
+      playlistCount: mergedPlaylists.size,
+      usbRoot,
+    };
   } catch (err) {
     send('export-all-progress', null);
     return { ok: false, error: err.message };
