@@ -104,6 +104,23 @@ Upcoming work is tracked on the [**Issues**](https://github.com/Radexito/DjManag
 
 ---
 
+## Rekordbox USB export
+
+Right-click any playlist in the sidebar and choose **Export Rekordbox USB** to write a Pioneer CDJ-compatible USB drive — no Rekordbox software required. DJ Manager writes the binary formats CDJs read directly: `export.pdb` (track database), `ANLZ0000.DAT/.EXT/.2EX` (waveforms and beat grids), and `PIONEER/MYSETTING.DAT` (player settings).
+
+### Re-exporting and incremental behaviour
+
+| What gets written                | Behaviour                                                             |
+| -------------------------------- | --------------------------------------------------------------------- |
+| Audio files (`/music/`)          | **Skipped if already present** — existing files are never overwritten |
+| ANLZ files (waveform / beatgrid) | **Always regenerated** — overwritten on every export                  |
+| `export.pdb` (track database)    | **Always regenerated** — rebuilt from scratch each export             |
+| `PIONEER/MYSETTING.DAT` etc.     | **Always regenerated**                                                |
+
+**Important:** the PDB is rebuilt from only the tracks in the current export. If you export two different playlists to the same USB separately, the second export's PDB will only contain that playlist's tracks — CDJs won't see the first playlist's tracks even though the audio files are still on the drive. To keep multiple playlists on one USB, export them together using **Export All** or select multiple playlists at once.
+
+---
+
 ## How files are stored
 
 Audio is stored at `~/.config/dj_manager/audio/<xx>/<hash>.<ext>` (configurable via Settings → Library). The two-character hash prefix keeps directory sizes manageable. Playlists reference tracks by ID — no duplicates, no copies.
