@@ -19,13 +19,20 @@ function getBinDir() {
   return path.join(app.getPath('userData'), 'bin');
 }
 
+// On Windows, ffmpeg/ffprobe live in their own subdirectory so they don't
+// accidentally load conflicting system DLLs that the analyzer bundle places
+// alongside it in the shared bin/ directory.
+function getFfmpegBinDir() {
+  return process.platform === 'win32' ? path.join(getBinDir(), 'ffmpeg') : getBinDir();
+}
+
 const EXT = process.platform === 'win32' ? '.exe' : '';
 
 export function getFfmpegRuntimePath() {
-  return path.join(getBinDir(), `ffmpeg${EXT}`);
+  return path.join(getFfmpegBinDir(), `ffmpeg${EXT}`);
 }
 export function getFfprobeRuntimePath() {
-  return path.join(getBinDir(), `ffprobe${EXT}`);
+  return path.join(getFfmpegBinDir(), `ffprobe${EXT}`);
 }
 export function getAnalyzerRuntimePath() {
   return path.join(getBinDir(), `analysis${EXT}`);
@@ -231,8 +238,22 @@ async function downloadFFmpeg(tmp, onProgress) {
     onProgress?.('Extracting FFmpeg…', 99);
     const dir = path.join(tmp, 'ffmpeg-win-extracted');
     await extractZip(archive, dir);
-    fs.copyFileSync(await findFile(dir, 'ffmpeg.exe'), getFfmpegRuntimePath());
-    fs.copyFileSync(await findFile(dir, 'ffprobe.exe'), getFfprobeRuntimePath());
+    const ffmpegExe = await findFile(dir, 'ffmpeg.exe');
+    const ffprobeExe = await findFile(dir, 'ffprobe.exe');
+    // Use isolated subdirectory so system DLLs from other bundled tools
+    // (e.g. the analyzer) don't shadow the system's own DLLs and cause
+    // STATUS_ENTRYPOINT_NOT_FOUND when ffprobe loads.
+    const ffmpegBinDir = getFfmpegBinDir();
+    fs.mkdirSync(ffmpegBinDir, { recursive: true });
+    fs.copyFileSync(ffmpegExe, getFfmpegRuntimePath());
+    fs.copyFileSync(ffprobeExe, getFfprobeRuntimePath());
+    // Copy sibling DLLs into the same isolated folder (needed for shared builds)
+    const ffmpegDir = path.dirname(ffmpegExe);
+    for (const entry of fs.readdirSync(ffmpegDir)) {
+      if (entry.toLowerCase().endsWith('.dll')) {
+        fs.copyFileSync(path.join(ffmpegDir, entry), path.join(ffmpegBinDir, entry));
+      }
+    }
   } else if (platform === 'darwin') {
     const ffmpegZip = path.join(tmp, 'ffmpeg-mac.zip');
     const ffprobeZip = path.join(tmp, 'ffprobe-mac.zip');
@@ -321,8 +342,28 @@ async function downloadAnalyzer(tmp, onProgress) {
   if (!src) throw new Error('mixxx-analyzer binary not found in archive');
   const bundleDir = path.dirname(src);
 
+  // Windows system DLLs that the analyzer bundle may include for portability
+  // but which must NOT be copied — shadowing them causes STATUS_ENTRYPOINT_NOT_FOUND
+  // when the system's own (newer) version of the DLL has entry points the local copy lacks.
+  const WIN_SYSTEM_DLLS = new Set([
+    'msvcp_win.dll',
+    'cfgmgr32.dll',
+    'dwrite.dll',
+    'iphlpapi.dll',
+    'usp10.dll',
+    'd2d1.dll',
+    'ncrypt.dll',
+    'kernel32.dll',
+    'user32.dll',
+    'ntdll.dll',
+    'advapi32.dll',
+    'shell32.dll',
+    'ole32.dll',
+  ]);
+
   // Copy all files from the bundle directory (binary + any .so or .dylib siblings)
   for (const entry of await fs.promises.readdir(bundleDir)) {
+    if (process.platform === 'win32' && WIN_SYSTEM_DLLS.has(entry.toLowerCase())) continue;
     const srcFile = path.join(bundleDir, entry);
     const dstFile = path.join(binDir, entry);
     fs.copyFileSync(srcFile, dstFile);

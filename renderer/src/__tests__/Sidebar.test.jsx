@@ -6,6 +6,8 @@ describe('Sidebar', () => {
   const defaultProps = {
     selectedMenuItemId: 'music',
     onMenuSelect: vi.fn(),
+    onExportPlaylistRekordboxUsb: vi.fn(),
+    onExportPlaylistAll: vi.fn(),
   };
 
   it('renders the Music menu item', () => {
@@ -75,5 +77,53 @@ describe('Sidebar', () => {
     expect(screen.getByText(/Rename/)).toBeInTheDocument();
     expect(screen.getByText(/Export as M3U/)).toBeInTheDocument();
     expect(screen.getByText(/Delete playlist/)).toBeInTheDocument();
+  });
+
+  it('context menu includes "Export Rekordbox USB…" and "Export All to USB…"', async () => {
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 1, name: 'Techno Set', color: null, track_count: 0, total_duration: 0 },
+    ]);
+
+    render(<Sidebar {...defaultProps} />);
+    await waitFor(() => screen.getByText('Techno Set'));
+    fireEvent.contextMenu(screen.getByText('Techno Set'));
+
+    expect(screen.getByText(/Export Rekordbox USB/)).toBeInTheDocument();
+    expect(screen.getByText(/Export All to USB/)).toBeInTheDocument();
+  });
+
+  it('calls onExportPlaylistRekordboxUsb with playlist id when "Export Rekordbox USB…" is clicked', async () => {
+    const onExportPlaylistRekordboxUsb = vi.fn();
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 42, name: 'My Set', color: null, track_count: 0, total_duration: 0 },
+    ]);
+
+    render(
+      <Sidebar {...defaultProps} onExportPlaylistRekordboxUsb={onExportPlaylistRekordboxUsb} />
+    );
+    await waitFor(() => screen.getByText('My Set'));
+    fireEvent.contextMenu(screen.getByText('My Set'));
+    fireEvent.click(screen.getByText(/Export Rekordbox USB/));
+
+    expect(onExportPlaylistRekordboxUsb).toHaveBeenCalledWith(42);
+  });
+
+  it('calls onExportPlaylistAll with playlist id when "Export All to USB…" is clicked', async () => {
+    const onExportPlaylistAll = vi.fn();
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 42, name: 'My Set', color: null, track_count: 0, total_duration: 0 },
+    ]);
+
+    render(<Sidebar {...defaultProps} onExportPlaylistAll={onExportPlaylistAll} />);
+    await waitFor(() => screen.getByText('My Set'));
+    fireEvent.contextMenu(screen.getByText('My Set'));
+    fireEvent.click(screen.getByText(/Export All to USB/));
+
+    expect(onExportPlaylistAll).toHaveBeenCalledWith(42);
+  });
+
+  it('does not render an "Export USB…" bottom button', () => {
+    render(<Sidebar {...defaultProps} />);
+    expect(screen.queryByText(/Export USB/)).toBeNull();
   });
 });

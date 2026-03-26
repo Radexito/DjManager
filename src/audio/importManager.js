@@ -66,6 +66,7 @@ async function extractArtwork(srcPath, hash) {
 
 function parseTags(ffprobeData) {
   const tags = ffprobeData.format?.tags || {};
+  const bpmTag = tags.bpm || tags.BPM || tags.TBPM || tags['tbpm'];
   return {
     title: tags.title || '',
     artist: tags.artist || '',
@@ -73,6 +74,7 @@ function parseTags(ffprobeData) {
     genre: tags.genre ? tags.genre.split(',').map((g) => g.trim()) : [],
     year: tags.date ? parseInt(tags.date.slice(0, 4)) : null,
     label: tags.label || '',
+    bpm: bpmTag ? parseFloat(bpmTag) || null : null,
   };
 }
 
@@ -144,7 +146,7 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
   const bitrate = Number(probe.format.bit_rate);
 
   // Extract tags
-  const { title, artist, album, genre, year, label } = parseTags(probe);
+  const { title, artist, album, genre, year, label, bpm } = parseTags(probe);
 
   // Extract embedded album art (best-effort, non-blocking)
   const artworkPath = await extractArtwork(dest, hash);
@@ -160,6 +162,7 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
     bitrate,
     year,
     label,
+    bpm,
     genres: JSON.stringify(genre),
     source_url: sourceMeta.source_url ?? null,
     source_platform: sourceMeta.source_platform ?? null,

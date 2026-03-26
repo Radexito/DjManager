@@ -158,14 +158,14 @@ export function addTrack(track) {
     INSERT INTO tracks (
       title, artist, album, duration,
       file_path, file_hash, format, bitrate,
-      year, label, genres,
+      year, label, genres, bpm,
       source_url, source_platform, source_quality, source_link,
       user_tags, has_artwork, artwork_path,
       created_at
     ) VALUES (
       @title, @artist, @album, @duration,
       @file_path, @file_hash, @format, @bitrate,
-      @year, @label, @genres,
+      @year, @label, @genres, @bpm,
       @source_url, @source_platform, @source_quality, @source_link,
       @user_tags, @has_artwork, @artwork_path,
       @created_at
@@ -184,6 +184,7 @@ export function addTrack(track) {
     year: track.year ?? null,
     label: track.label ?? null,
     genres: track.genres ?? null,
+    bpm: track.bpm ?? null,
     source_url: track.source_url ?? null,
     source_platform: track.source_platform ?? null,
     source_quality: track.source_quality ?? null,
