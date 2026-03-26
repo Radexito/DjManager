@@ -13,8 +13,8 @@ import { spawn } from 'child_process';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// 22050 Hz * 10 ms / 1000 = 220.5 → Math.round → 221 samples per column (matches waveformGenerator.js)
-const SAMPLES_PER_COL = Math.round((22050 * 10) / 1000); // 221
+// Must match waveformGenerator.js: SAMPLE_RATE / COLS_PER_SEC = 22050 / 150 = 147
+const SAMPLES_PER_COL = Math.round(22050 / 150); // 147
 
 /** Convert a JS number array (float32 values) to a raw Buffer as f32le */
 function makeF32leBuffer(floatValues) {

@@ -170,7 +170,7 @@ describe('writeSettingFiles', () => {
   it('all files are inside usbRoot/PIONEER/', () => {
     writeSettingFiles('/mnt/usb');
     for (const [filePath] of fs.writeFileSync.mock.calls) {
-      expect(filePath).toMatch(/\/mnt\/usb[/\\]PIONEER[/\\]/);
+      expect(filePath.replace(/\\/g, '/')).toContain('/mnt/usb/PIONEER/');
     }
   });
 
