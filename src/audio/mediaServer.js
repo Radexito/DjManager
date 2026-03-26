@@ -26,7 +26,11 @@ const IMAGE_MIME = {
 export function createMediaRequestHandler(audioBase, artworkBase = null) {
   return (req, res) => {
     try {
-      const urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+      let urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+      if (process.platform === 'win32') {
+        // URL pathname is '/C:/Users/...' — strip the leading slash and use OS separators
+        urlPath = urlPath.slice(1).replace(/\//g, '\\');
+      }
 
       // Security: only serve files inside the managed audio or artwork directories.
       const inAudio = urlPath.startsWith(audioBase);

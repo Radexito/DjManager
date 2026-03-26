@@ -50,4 +50,15 @@ window.api = {
   onYtDlpProgress: vi.fn().mockImplementation(() => () => {}),
   onYtDlpTrackUpdate: vi.fn().mockImplementation(() => () => {}),
   openExternal: vi.fn().mockResolvedValue(undefined),
+  checkUsbFormat: vi
+    .fn()
+    .mockResolvedValue({ needsFormat: false, fs: 'fat32', fsLabel: 'fat32', device: '/dev/sdb1' }),
+  formatUsb: vi.fn().mockResolvedValue({ ok: true }),
+  exportRekordbox: vi.fn().mockResolvedValue({ ok: true, trackCount: 5, usbRoot: '/tmp/usb' }),
+  exportAll: vi
+    .fn()
+    .mockResolvedValue({ ok: true, trackCount: 5, playlistCount: 2, usbRoot: '/tmp/usb' }),
+  onExportRekordboxProgress: vi.fn().mockImplementation(noop),
+  onExportAllProgress: vi.fn().mockImplementation(noop),
+  onFormatUsbProgress: vi.fn().mockImplementation(noop),
 };
