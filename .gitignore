@@ -169,6 +169,10 @@ samples/
 build-resources/analysis
 build-resources/analysis.exe
 
+# Shared libraries bundled at runtime (not source)
+*.so
+*.so.*
+
 # Playwright
 test-results/
 playwright-report/
@@ -177,3 +181,6 @@ playwright-report/
 *.so
 *.so.*
 .dev-url
+
+build-resources/rekordbox-exporter
+build-resources/rekordbox-exporter.exe

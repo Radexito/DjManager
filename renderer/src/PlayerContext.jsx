@@ -84,16 +84,19 @@ export function PlayerProvider({ children }) {
       const track = newQueue[index];
       if (!track) return;
       const gen = ++playGenRef.current;
-      const encodedPath = track.file_path
-        .split('/')
-        .map((seg) => encodeURIComponent(seg))
-        .join('/');
       const port = mediaPortRef.current;
       if (!port) {
         console.error('[player] media server not ready yet');
         return;
       }
-      const src = `http://127.0.0.1:${port}${encodedPath}?t=${gen}`; // cache-bust: same file reloaded = fresh pipeline
+      // Normalize to forward slashes (Windows paths use backslashes), then encode each segment
+      const posixPath = track.file_path.replace(/\\/g, '/');
+      const encodedPath = posixPath
+        .split('/')
+        .map((seg) => encodeURIComponent(seg))
+        .join('/');
+      // Always ensure exactly one leading slash (Unix paths already start with '/', Windows 'C:/...' don't)
+      const src = `http://127.0.0.1:${port}/${encodedPath.replace(/^\//, '')}?t=${gen}`; // cache-bust: same file reloaded = fresh pipeline
 
       // Push currently playing track to history before switching
       if (currentTrackRef.current) {
@@ -102,7 +105,6 @@ export function PlayerProvider({ children }) {
           return next.length > HISTORY_MAX ? next.slice(0, HISTORY_MAX) : next;
         });
       }
-
       audio.pause(); // cleanly stop current pipeline before swapping source
       audio.src = src;
       // Setting src triggers an implicit load; calling audio.load() would race with play()
