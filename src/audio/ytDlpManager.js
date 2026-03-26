@@ -7,7 +7,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { app } from 'electron';
-import { getYtDlpRuntimePath } from '../deps.js';
+import { getYtDlpRuntimePath, getFfmpegRuntimePath } from '../deps.js';
 
 const AUDIO_EXTS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.wav', '.ogg', '.opus']);
 
@@ -289,6 +289,9 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
     '-o',
     outTemplate,
   ];
+
+  // Tell yt-dlp where to find the bundled ffmpeg so post-processing works
+  args.push('--ffmpeg-location', path.dirname(getFfmpegRuntimePath()));
 
   if (platform === 'youtube') {
     args.push('--extractor-args', 'youtube:player_client=android_vr,web');
