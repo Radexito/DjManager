@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import './TrackDetails.css';
 import AutoTaggerModal from './AutoTaggerModal.jsx';
+import { usePlayer } from './PlayerContext.jsx';
+import { artworkUrl } from './artworkUrl.js';
 import RatingStars from './RatingStars.jsx';
 
 const EDITABLE_FIELDS = [
@@ -60,15 +62,18 @@ export default function TrackDetails({
   hasNext,
 }) {
   const isBulk = Array.isArray(tracks) && tracks.length > 1;
+  const { mediaPort } = usePlayer();
   const [form, setForm] = useState(() => (isBulk ? EMPTY_BULK_FORM : trackToForm(track)));
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [showAutoTagger, setShowAutoTagger] = useState(false);
+  const [artworkPath, setArtworkPath] = useState(() => track?.artwork_path ?? null);
 
   // Reset form when track/tracks changes
   useEffect(() => {
     setForm(isBulk ? EMPTY_BULK_FORM : trackToForm(track));
+    setArtworkPath(track?.artwork_path ?? null);
     setDirty(false);
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -160,6 +165,21 @@ export default function TrackDetails({
           ✕
         </button>
       </div>
+
+      {!isBulk && (
+        <div className="track-details__cover">
+          {artworkUrl(artworkPath, mediaPort) ? (
+            <img
+              className="track-details__cover-img"
+              src={artworkUrl(artworkPath, mediaPort)}
+              alt="Cover art"
+              draggable={false}
+            />
+          ) : (
+            <div className="track-details__cover-placeholder">♪</div>
+          )}
+        </div>
+      )}
 
       {isBulk && (
         <div className="track-details__bulk-hint">
@@ -289,7 +309,7 @@ export default function TrackDetails({
         <AutoTaggerModal
           track={track}
           onClose={() => setShowAutoTagger(false)}
-          onApply={(update) => {
+          onApply={async (update) => {
             // Merge result into form fields (convert genres array → comma string)
             const merged = { ...form };
             if (update.title != null) merged.title = update.title;
@@ -307,6 +327,14 @@ export default function TrackDetails({
             setForm(merged);
             setDirty(true);
             setShowAutoTagger(false);
+            // Download and save cover art if selected
+            if (update.coverUrl && track?.id) {
+              const res = await window.api.fetchArtworkUrl({
+                trackId: track.id,
+                url: update.coverUrl,
+              });
+              if (res.ok) setArtworkPath(res.artwork_path);
+            }
           }}
         />
       )}

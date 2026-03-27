@@ -16,7 +16,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { usePlayer } from './PlayerContext.jsx';
-import SearchBar from './SearchBar.jsx';
+import { artworkUrl } from './artworkUrl.js';
 import { parseQuery } from './searchParser.js';
 import TrackDetails from './TrackDetails.jsx';
 import RatingStars from './RatingStars.jsx';
@@ -158,6 +158,7 @@ function LibraryRow({
   visibleColumns,
   gridTemplate,
   minScrollWidth,
+  mediaPort,
 }) {
   const t = tracks[index];
   if (!t) {
@@ -184,11 +185,36 @@ function LibraryRow({
       {visibleColumns.map((col) =>
         col.key === 'index' ? (
           <div key="index" className="cell index">
-            {index + 1}
+            <span className="index-num">{index + 1}</span>
+            <button
+              className="index-play"
+              title="Play"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.currentTarget.blur();
+                onDoubleClick(t, index);
+              }}
+            >
+              ▶
+            </button>
           </div>
         ) : col.key === 'rating' ? (
           <div key="rating" className="cell rating" onClick={(e) => e.stopPropagation()}>
             <RatingStars value={t.rating ?? 0} onChange={(val) => onRatingChange(t.id, val)} />
+          </div>
+        ) : col.key === 'title' ? (
+          <div key="title" className="cell title">
+            {artworkUrl(t.has_artwork ? t.artwork_path : null, mediaPort) ? (
+              <img
+                className="cell-artwork"
+                src={artworkUrl(t.artwork_path, mediaPort)}
+                alt=""
+                draggable={false}
+              />
+            ) : (
+              <span className="cell-artwork cell-artwork--placeholder">♪</span>
+            )}
+            <span className="cell-title-text">{t.title}</span>
           </div>
         ) : (
           <div key={col.key} className={cellClass(col.key, t)}>
@@ -213,6 +239,7 @@ function SortableRow({
   visibleColumns,
   gridTemplate,
   minScrollWidth,
+  mediaPort,
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: t.id,
@@ -237,11 +264,36 @@ function SortableRow({
       {visibleColumns.map((col) =>
         col.key === 'index' ? (
           <div key="index" className="cell index drag-handle" {...attributes} {...listeners}>
-            ⠿
+            <span className="index-num">⠿</span>
+            <button
+              className="index-play"
+              title="Play"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.currentTarget.blur();
+                onDoubleClick(t, index);
+              }}
+            >
+              ▶
+            </button>
           </div>
         ) : col.key === 'rating' ? (
           <div key="rating" className="cell rating" onClick={(e) => e.stopPropagation()}>
             <RatingStars value={t.rating ?? 0} onChange={(val) => onRatingChange(t.id, val)} />
+          </div>
+        ) : col.key === 'title' ? (
+          <div key="title" className="cell title">
+            {artworkUrl(t.has_artwork ? t.artwork_path : null, mediaPort) ? (
+              <img
+                className="cell-artwork"
+                src={artworkUrl(t.artwork_path, mediaPort)}
+                alt=""
+                draggable={false}
+              />
+            ) : (
+              <span className="cell-artwork cell-artwork--placeholder">♪</span>
+            )}
+            <span className="cell-title-text">{t.title}</span>
           </div>
         ) : (
           <div key={col.key} className={cellClass(col.key, t)}>
@@ -274,9 +326,9 @@ function SortableColItem({ colKey, label, checked, onToggle }) {
   );
 }
 
-function MusicLibrary({ selectedPlaylist }) {
+function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const isPlaylistView = selectedPlaylist !== 'music';
-  const { play, stop, currentTrack, currentPlaylistId } = usePlayer();
+  const { play, stop, currentTrack, currentPlaylistId, mediaPort } = usePlayer();
 
   // Only highlight a track as "playing" when the source context matches this view.
   // Library view: only highlight when played from library (currentPlaylistId === null).
@@ -291,7 +343,7 @@ function MusicLibrary({ selectedPlaylist }) {
 
   const [tracks, setTracks] = useState([]);
   const [hasMore, setHasMore] = useState(true);
-  const [search, setSearch] = useState('');
+
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [contextMenu, setContextMenu] = useState(null); // { x, y, targetIds }
   const [drillStack, setDrillStack] = useState([]); // overlay drill-down stack [{ id, label, content }]
@@ -765,10 +817,13 @@ function MusicLibrary({ selectedPlaylist }) {
     [contextMenu]
   );
 
-  const handleFindSimilar = useCallback((queryText) => {
-    setContextMenu(null);
-    setSearch(queryText);
-  }, []);
+  const handleFindSimilar = useCallback(
+    (queryText) => {
+      setContextMenu(null);
+      onSearchChange(queryText);
+    },
+    [onSearchChange]
+  );
 
   // ── DnD (playlist view only) ───────────────────────────────────────────────
 
@@ -878,8 +933,6 @@ function MusicLibrary({ selectedPlaylist }) {
       className={`music-library${detailsTrack || detailsBulkTracks ? ' music-library--with-panel' : ''}`}
     >
       <div className="music-library__main">
-        <SearchBar value={search} onChange={setSearch} />
-
         {/* Playlist header bar */}
         {isPlaylistView && playlistInfo && (
           <div className="playlist-header-bar">
@@ -1002,6 +1055,7 @@ function MusicLibrary({ selectedPlaylist }) {
                         visibleColumns={visibleColumns}
                         gridTemplate={gridTemplate}
                         minScrollWidth={minScrollWidth}
+                        mediaPort={mediaPort}
                       />
                     ))}
                   </div>
@@ -1044,6 +1098,7 @@ function MusicLibrary({ selectedPlaylist }) {
                 visibleColumns,
                 gridTemplate,
                 minScrollWidth,
+                mediaPort,
               }}
             />
           )}
