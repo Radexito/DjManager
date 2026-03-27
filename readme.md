@@ -110,14 +110,17 @@ Right-click any playlist in the sidebar and choose **Export Rekordbox USB** to w
 
 ### Re-exporting and incremental behaviour
 
-| What gets written                | Behaviour                                                             |
-| -------------------------------- | --------------------------------------------------------------------- |
-| Audio files (`/music/`)          | **Skipped if already present** — existing files are never overwritten |
-| ANLZ files (waveform / beatgrid) | **Always regenerated** — overwritten on every export                  |
-| `export.pdb` (track database)    | **Always regenerated** — rebuilt from scratch each export             |
-| `PIONEER/MYSETTING.DAT` etc.     | **Always regenerated**                                                |
+Each export to the same USB folder **merges** with whatever was previously exported there. A manifest (`PIONEER/rekordbox/export-manifest.json`) records all tracks and playlists on the USB; subsequent exports read it and inject new content into the existing database without removing anything.
 
-**Important:** the PDB is rebuilt from only the tracks in the current export. If you export two different playlists to the same USB separately, the second export's PDB will only contain that playlist's tracks — CDJs won't see the first playlist's tracks even though the audio files are still on the drive. To keep multiple playlists on one USB, export them together using **Export All** or select multiple playlists at once.
+| What gets written                | Behaviour                                                                    |
+| -------------------------------- | ---------------------------------------------------------------------------- |
+| Audio files (`/music/`)          | **Skipped if already present** — existing files are never overwritten        |
+| ANLZ files (waveform / beatgrid) | **Regenerated for new tracks only** — existing ANLZ files are left untouched |
+| `export.pdb` (track database)    | **Rebuilt from all tracks** — current export merged with previous exports    |
+| `PIONEER/MYSETTING.DAT` etc.     | **Always regenerated**                                                       |
+| `export-manifest.json`           | **Always updated** — records the full set of tracks and playlists on the USB |
+
+You can export playlists to the same USB one at a time — each export adds its tracks and playlists to the CDJ database without touching the ones already there.
 
 ---
 
