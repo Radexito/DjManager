@@ -231,8 +231,20 @@ function ExportModal({ onClose, playlistId, initialMode }) {
             <div className="export-success-icon">✅</div>
             <p className="export-status-msg export-status-msg--success">Export complete!</p>
             <p className="export-status-sub">
-              {result.trackCount} track{result.trackCount !== 1 ? 's' : ''}
-              {result.playlistCount ? ` · ${result.playlistCount} playlists` : ''} exported to:
+              {result.newTrackCount != null && result.trackCount !== result.newTrackCount ? (
+                <>
+                  {result.newTrackCount} new track{result.newTrackCount !== 1 ? 's' : ''} added ·{' '}
+                  {result.trackCount} total on USB
+                </>
+              ) : (
+                <>
+                  {result.trackCount} track{result.trackCount !== 1 ? 's' : ''}
+                </>
+              )}
+              {result.playlistCount
+                ? ` · ${result.playlistCount} playlist${result.playlistCount !== 1 ? 's' : ''}`
+                : ''}{' '}
+              on USB
             </p>
             <p className="export-status-path">{result.usbRoot}</p>
             <button className="export-done-btn" onClick={onClose}>
