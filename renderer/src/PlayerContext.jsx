@@ -34,9 +34,11 @@ export function PlayerProvider({ children }) {
 
   // Port of the local HTTP media server (started in main process before window opens).
   const mediaPortRef = useRef(null);
+  const [mediaPort, setMediaPort] = useState(null);
   useEffect(() => {
     window.api.getMediaPort().then((port) => {
       mediaPortRef.current = port;
+      setMediaPort(port);
     });
   }, []);
 
@@ -315,6 +317,7 @@ export function PlayerProvider({ children }) {
   return (
     <PlayerContext.Provider
       value={{
+        mediaPort,
         currentTrack,
         currentPlaylistId,
         currentPlaylistName,

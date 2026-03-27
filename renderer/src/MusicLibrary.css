@@ -83,11 +83,86 @@
 
 .cell.index {
   font-weight: 500;
+  color: #aaa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+}
+
+.index-num {
+  line-height: 1;
+}
+
+.index-play {
+  display: none;
+  background: none;
+  border: none;
+  outline: none;
   color: #fff;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0;
+}
+
+.index-play:focus,
+.index-play:focus-visible {
+  outline: none;
+}
+
+.row:hover .index-num {
+  display: none;
+}
+
+.row:hover .index-play {
+  display: block;
+}
+
+/* Currently playing track — don't show play button on hover */
+.row--playing:hover .index-num {
+  display: block;
+}
+
+.row--playing:hover .index-play {
+  display: none;
 }
 
 .cell.title {
   color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.cell-artwork {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 3px;
+  display: block;
+}
+
+.cell-artwork--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: #2a2a2a;
+  border-radius: 3px;
+  font-size: 14px;
+  color: #444;
+  flex-shrink: 0;
+}
+
+.cell-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .cell.artist {
@@ -179,6 +254,12 @@
 }
 
 /* Selected rows */
+.row:hover {
+  background: #1a3a5c !important;
+  outline: 1px solid #2d6aa0;
+  outline-offset: -1px;
+}
+
 .row--selected {
   background: #1a3a5c !important;
   outline: 1px solid #2d6aa0;
