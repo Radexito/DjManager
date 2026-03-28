@@ -90,6 +90,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   // Auto-tagger
   autoTagSearch: (query) => ipcRenderer.invoke('auto-tag-search', { query }),
+  fetchArtworkUrl: ({ trackId, url }) => ipcRenderer.invoke('fetch-artwork-url', { trackId, url }),
 
   // yt-dlp URL download
   getMediaPort: () => ipcRenderer.invoke('get-media-port'),

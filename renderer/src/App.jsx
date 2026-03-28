@@ -5,6 +5,7 @@ import DownloadView from './DownloadView.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import ExportModal from './ExportModal.jsx';
 import PlayerBar from './PlayerBar.jsx';
+import TopBar from './TopBar.jsx';
 import { PlayerProvider } from './PlayerContext.jsx';
 import './App.css';
 
@@ -13,6 +14,12 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [exportState, setExportState] = useState(null); // { playlistId, mode } | null
   const [depsProgress, setDepsProgress] = useState(null); // { msg, pct } or null
+  const [search, setSearch] = useState('');
+
+  const handleArtistSearch = (artist) => {
+    setSelectedPlaylistId('music');
+    setSearch(`ARTIST is ${artist}`);
+  };
 
   useEffect(() => {
     const unsub = window.api.onOpenSettings(() => setShowSettings(true));
@@ -27,25 +34,36 @@ function App() {
 
   return (
     <PlayerProvider>
-      <div className="app-main">
-        <Sidebar
-          selectedMenuItemId={selectedPlaylistId}
-          onMenuSelect={setSelectedPlaylistId}
-          onExportPlaylistRekordboxUsb={(id) =>
-            setExportState({ playlistId: id, mode: 'rekordbox' })
-          }
-          onExportPlaylistAll={(id) => setExportState({ playlistId: id, mode: 'all' })}
+      <div className="app-body">
+        <TopBar
+          search={search}
+          onSearchChange={setSearch}
+          onOpenSettings={() => setShowSettings(true)}
         />
-        {selectedPlaylistId === 'download' ? (
-          <DownloadView
-            onGoToLibrary={() => setSelectedPlaylistId('music')}
-            onGoToPlaylist={(id) => setSelectedPlaylistId(id)}
+        <div className="app-main">
+          <Sidebar
+            selectedMenuItemId={selectedPlaylistId}
+            onMenuSelect={setSelectedPlaylistId}
+            onExportPlaylistRekordboxUsb={(id) =>
+              setExportState({ playlistId: id, mode: 'rekordbox' })
+            }
+            onExportPlaylistAll={(id) => setExportState({ playlistId: id, mode: 'all' })}
           />
-        ) : (
-          <MusicLibrary selectedPlaylist={selectedPlaylistId} />
-        )}
+          {selectedPlaylistId === 'download' ? (
+            <DownloadView
+              onGoToLibrary={() => setSelectedPlaylistId('music')}
+              onGoToPlaylist={(id) => setSelectedPlaylistId(id)}
+            />
+          ) : (
+            <MusicLibrary
+              selectedPlaylist={selectedPlaylistId}
+              search={search}
+              onSearchChange={setSearch}
+            />
+          )}
+        </div>
       </div>
-      <PlayerBar onNavigateToPlaylist={setSelectedPlaylistId} />
+      <PlayerBar onNavigateToPlaylist={setSelectedPlaylistId} onArtistSearch={handleArtistSearch} />
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {exportState != null && (
         <ExportModal

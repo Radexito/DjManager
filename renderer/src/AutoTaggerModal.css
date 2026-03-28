@@ -287,3 +287,69 @@
 .at-btn--secondary:hover {
   background: var(--bg-hover, #313244);
 }
+
+/* Cover art picker */
+.at-covers {
+  padding: 10px 16px 0;
+}
+.at-covers__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary, #888);
+  margin-bottom: 8px;
+}
+.at-covers__grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.at-cover-thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  background: var(--bg-tertiary, #2a2a3a);
+  flex-shrink: 0;
+}
+.at-cover-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.at-cover-thumb--selected {
+  border-color: var(--accent, #89b4fa);
+}
+.at-cover-thumb--none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: var(--text-secondary, #666);
+}
+.at-cover-thumb--none:hover {
+  background: var(--bg-hover, #313244);
+}
+
+/* Cover zoom lightbox */
+.at-zoom-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+}
+.at-zoom-img {
+  max-width: 90vw;
+  max-height: 90vh;
+  border-radius: 6px;
+  object-fit: contain;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.8);
+}
