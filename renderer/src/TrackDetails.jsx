@@ -62,7 +62,7 @@ export default function TrackDetails({
   hasNext,
 }) {
   const isBulk = Array.isArray(tracks) && tracks.length > 1;
-  const { mediaPort } = usePlayer();
+  const { mediaPort } = usePlayer() ?? {};
   const [form, setForm] = useState(() => (isBulk ? EMPTY_BULK_FORM : trackToForm(track)));
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
