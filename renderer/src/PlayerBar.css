@@ -28,6 +28,14 @@
   background: #2a2a2a;
 }
 
+.player-art--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: #444;
+}
+
 .player-track-info {
   overflow: hidden;
   flex: 1;
@@ -51,6 +59,15 @@
   margin-top: 2px;
 }
 
+.player-artist--clickable {
+  cursor: pointer;
+}
+
+.player-artist--clickable:hover {
+  color: #bbb;
+  text-decoration: underline;
+}
+
 .player-from {
   color: #555;
   font-size: 11px;
@@ -58,6 +75,15 @@
   overflow: hidden;
   text-overflow: ellipsis;
   margin-top: 2px;
+}
+
+.player-from--clickable {
+  cursor: pointer;
+}
+
+.player-from--clickable:hover {
+  color: #888;
+  text-decoration: underline;
 }
 
 .player-idle {

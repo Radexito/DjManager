@@ -55,7 +55,12 @@ import {
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import { importAudioFile, spawnAnalysis, getLibraryBase } from './audio/importManager.js';
 
-import { searchMusicBrainz, searchDiscogs } from './audio/autoTagger.js';
+import {
+  searchMusicBrainz,
+  searchDiscogs,
+  searchItunes,
+  searchDeezer,
+} from './audio/autoTagger.js';
 import {
   downloadUrl as ytDlpDownloadUrl,
   fetchPlaylistInfo as ytDlpFetchPlaylistInfo,
@@ -110,6 +115,7 @@ function createWindow() {
   });
 
   global.mainWindow = mainWindow; // make accessible to workers
+  mainWindow.maximize();
 
   if (process.env.E2E_TEST === '1') {
     mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'));
@@ -160,23 +166,7 @@ async function initApp() {
         });
     });
 
-  // Application menu
-  const menu = Menu.buildFromTemplate([
-    ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
-    {
-      label: 'Edit',
-      submenu: [
-        {
-          label: 'Settings',
-          accelerator: 'CmdOrCtrl+,',
-          click: () => {
-            if (global.mainWindow) global.mainWindow.webContents.send('open-settings');
-          },
-        },
-      ],
-    },
-  ]);
-  Menu.setApplicationMenu(menu);
+  Menu.setApplicationMenu(null);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -479,15 +469,41 @@ ipcMain.handle('update-all-deps', async (_event) => {
 
 ipcMain.handle('auto-tag-search', async (_, { query }) => {
   try {
-    const [mbRes, discogsRes] = await Promise.allSettled([
+    const [mbRes, discogsRes, itunesRes, deezerRes] = await Promise.allSettled([
       searchMusicBrainz(query),
       searchDiscogs(query),
+      searchItunes(query),
+      searchDeezer(query),
     ]);
     const results = [
       ...(mbRes.status === 'fulfilled' ? mbRes.value : []),
       ...(discogsRes.status === 'fulfilled' ? discogsRes.value : []),
+      ...(itunesRes.status === 'fulfilled' ? itunesRes.value : []),
+      ...(deezerRes.status === 'fulfilled' ? deezerRes.value : []),
     ];
     return { ok: true, results };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('fetch-artwork-url', async (_, { trackId, url }) => {
+  try {
+    const artworkBase = getArtworkBase();
+    fs.mkdirSync(artworkBase, { recursive: true });
+
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const contentType = res.headers.get('content-type') ?? '';
+    const ext = contentType.includes('png') ? '.png' : '.jpg';
+
+    const buf = Buffer.from(await res.arrayBuffer());
+    // Name file by track ID so it's easily associated
+    const artworkPath = path.join(artworkBase, `track_${trackId}${ext}`);
+    fs.writeFileSync(artworkPath, buf);
+
+    await updateTrack(trackId, { has_artwork: 1, artwork_path: artworkPath });
+    return { ok: true, artwork_path: artworkPath };
   } catch (err) {
     return { ok: false, error: err.message };
   }
