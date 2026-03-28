@@ -582,7 +582,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
         isPlaylistView ? (playlistInfo?.name ?? null) : null
       );
     },
-    [play, isPlaylistView, selectedPlaylist]
+    [play, isPlaylistView, selectedPlaylist, playlistInfo]
   );
 
   // ── Details panel ──────────────────────────────────────────────────────────
