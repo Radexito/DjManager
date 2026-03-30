@@ -468,6 +468,42 @@ export function buildTrackRow(params) {
   return result;
 }
 
+/**
+ * Normalize a key name from mixxx-analyzer format to Rekordbox abbreviated format.
+ *
+ * mixxx-analyzer outputs: "G major", "Eb minor", "C# major", etc.
+ * Rekordbox native format: "G", "Ebm", "C#", etc.
+ *   - Major keys: drop " major"           ("G major" → "G")
+ *   - Minor keys: replace " minor" with "m" ("Eb minor" → "Ebm")
+ *
+ * Returns the string unchanged if it doesn't match the expected pattern
+ * (e.g. already abbreviated, or empty string).
+ */
+export function normalizeKeyName(key) {
+  if (!key) return key;
+  if (key.endsWith(' major')) return key.slice(0, -6);
+  if (key.endsWith(' minor')) return key.slice(0, -6) + 'm';
+  return key;
+}
+
+/**
+ * Key row: SmallId(u16) + IndexShift(u16=0) + Id(u32) + dstring(name)
+ *
+ * Confirmed from native Rekordbox PDB binary: each key row is 8 bytes of header
+ * followed by a DeviceSQL-encoded key name string (e.g. "Em", "Gm", "Ebm").
+ * SmallId equals the ID value. hasIndexShift is false for Keys table, so the
+ * IndexShift u16 at bytes 2-3 is never rewritten by DataPage and stays 0.
+ */
+export function buildKeyRow(id, name) {
+  const nameEnc = encodeDeviceSQLString(name);
+  const buf = Buffer.alloc(8 + nameEnc.length);
+  buf.writeUInt16LE(id, 0); // SmallId (equals Id — observed in native files)
+  buf.writeUInt16LE(0, 2); // IndexShift placeholder (stays 0)
+  buf.writeUInt32LE(id, 4); // Id
+  nameEnc.copy(buf, 8);
+  return buf;
+}
+
 /** Color row: Unknown1(u32) + Unknown2(u8) + ID(u16) + Unknown3(u8) + dstring(Name) */
 export function buildColorRow({ Unknown1, Unknown2, ID, Unknown3, Name }) {
   const nameEnc = encodeDeviceSQLString(Name);
@@ -772,16 +808,20 @@ function buildPdbBuffer(input) {
   // ── Step 1: Assign IDs and collect lookup maps ──
   const artistMap = new Map(); // name → pdbId (1-indexed)
   const albumMap = new Map();
+  const keyMap = new Map(); // key name → pdbId (1-indexed)
   const trackPdbId = new Map(); // inputId → pdbId
 
   let artistIdCounter = 1;
   let albumIdCounter = 1;
+  let keyIdCounter = 1;
 
   for (let i = 0; i < tracks.length; i++) {
     const t = tracks[i];
     trackPdbId.set(t.id, i + 1);
     if (t.artist && !artistMap.has(t.artist)) artistMap.set(t.artist, artistIdCounter++);
     if (t.album && !albumMap.has(t.album)) albumMap.set(t.album, albumIdCounter++);
+    const keyName = normalizeKeyName(t.key_raw);
+    if (keyName && !keyMap.has(keyName)) keyMap.set(keyName, keyIdCounter++);
   }
 
   // ── Step 2: Build all row buffers grouped by table type ──
@@ -796,12 +836,14 @@ function buildPdbBuffer(input) {
     const pdbId = i + 1;
     const artistId = t.artist ? (artistMap.get(t.artist) ?? 0) : 0;
     const albumId = t.album ? (albumMap.get(t.album) ?? 0) : 0;
+    const keyId = t.key_raw ? (keyMap.get(normalizeKeyName(t.key_raw)) ?? 0) : 0;
 
     rowsByType.get(TABLE_TYPES.Tracks).push(
       buildTrackRow({
         id: pdbId,
         artistId,
         albumId,
+        keyId,
         title: t.title || '',
         filePath: t.file_path || '',
         filename: basename(t.file_path || ''),
@@ -831,6 +873,11 @@ function buildPdbBuffer(input) {
   // Album rows
   for (const [name, id] of albumMap) {
     rowsByType.get(TABLE_TYPES.Albums).push(buildAlbumRow(id, 0, name));
+  }
+
+  // Key rows
+  for (const [name, id] of keyMap) {
+    rowsByType.get(TABLE_TYPES.Keys).push(buildKeyRow(id, name));
   }
 
   // Playlist rows
