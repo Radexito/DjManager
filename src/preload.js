@@ -147,6 +147,21 @@ contextBridge.exposeInMainWorld('api', {
   updateYtDlp: (tag) => ipcRenderer.invoke('update-yt-dlp', tag ?? null),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
 
+  // TIDAL download
+  tidalCheck: () => ipcRenderer.invoke('tidal-check'),
+  tidalLogin: () => ipcRenderer.invoke('tidal-login'),
+  tidalDownloadUrl: (opts) => ipcRenderer.invoke('tidal-download-url', opts),
+  onTidalProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('tidal-progress', handler);
+    return () => ipcRenderer.removeListener('tidal-progress', handler);
+  },
+  onTidalLoginUrl: (cb) => {
+    const handler = (_, url) => cb(url);
+    ipcRenderer.on('tidal-login-url', handler);
+    return () => ipcRenderer.removeListener('tidal-login-url', handler);
+  },
+
   clearLibrary: () => ipcRenderer.invoke('clear-library'),
   clearUserData: () => ipcRenderer.invoke('clear-user-data'),
   getLogDir: () => ipcRenderer.invoke('get-log-dir'),

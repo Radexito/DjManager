@@ -1,0 +1,157 @@
+/* ── Install prompt ───────────────────────────────────────────────────────── */
+
+.tidal-install-box {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 520px;
+  padding: 24px;
+  background: var(--bg-secondary, #1e1e1e);
+  border: 1px solid var(--border, #333);
+  border-radius: 10px;
+}
+
+.tidal-install-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+}
+
+.tidal-install-cmd {
+  display: block;
+  padding: 10px 14px;
+  background: #111;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 13px;
+  color: #a6e3a1;
+  user-select: all;
+}
+
+.tidal-install-note {
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* ── Login box ────────────────────────────────────────────────────────────── */
+
+.tidal-login-box {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 520px;
+  padding: 24px;
+  background: var(--bg-secondary, #1e1e1e);
+  border: 1px solid var(--border, #333);
+  border-radius: 10px;
+}
+
+.tidal-login-desc {
+  font-size: 13px;
+  color: var(--text-secondary, #aaa);
+  margin: 0;
+  line-height: 1.6;
+}
+
+.tidal-login-btn {
+  align-self: flex-start;
+}
+
+.tidal-login-waiting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--text-primary, #e0e0e0);
+}
+
+.tidal-spinner {
+  font-size: 20px;
+  animation: tidal-blink 1s steps(1) infinite;
+}
+
+@keyframes tidal-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+
+.tidal-login-url-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(124, 92, 252, 0.08);
+  border: 1px solid rgba(124, 92, 252, 0.2);
+  border-radius: 6px;
+}
+
+.tidal-login-url-label {
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+  margin: 0;
+}
+
+.tidal-login-url-link {
+  font-size: 12px;
+  color: var(--accent, #7c5cfc);
+  word-break: break-all;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.tidal-login-url-link:hover {
+  opacity: 0.8;
+}
+
+/* ── Indeterminate progress ──────────────────────────────────────────────── */
+
+.tidal-progress-indeterminate {
+  height: 100%;
+  width: 40%;
+  background: var(--accent, #7c5cfc);
+  border-radius: 2px;
+  animation: tidal-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes tidal-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+/* ── Re-auth footer ──────────────────────────────────────────────────────── */
+
+.tidal-reauth {
+  margin-top: auto;
+  padding-top: 32px;
+}
+
+.tidal-reauth-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary, #555);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.tidal-reauth-btn:hover {
+  color: var(--text-secondary, #888);
+}
+
+.tidal-checking {
+  animation: tidal-blink 1.2s ease-in-out infinite;
+}
