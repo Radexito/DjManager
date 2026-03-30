@@ -16,9 +16,10 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { usePlayer } from './PlayerContext.jsx';
-import SearchBar from './SearchBar.jsx';
+import { artworkUrl } from './artworkUrl.js';
 import { parseQuery } from './searchParser.js';
 import TrackDetails from './TrackDetails.jsx';
+import RatingStars from './RatingStars.jsx';
 import './MusicLibrary.css';
 
 const PAGE_SIZE = 50;
@@ -30,18 +31,20 @@ const LS_ORDER_KEY = 'djman_column_order';
 
 // All possible columns — all are user-hideable.
 const ALL_COLUMNS = [
-  { key: 'index', label: '#', width: '44px' },
+  { key: 'index', label: '#', width: '40px' },
   { key: 'title', label: 'Title', width: 'minmax(120px, 2fr)' },
   { key: 'artist', label: 'Artist', width: 'minmax(90px, 1.5fr)' },
-  { key: 'bpm', label: 'BPM', width: '70px' },
-  { key: 'key_camelot', label: 'Key', width: '60px' },
-  { key: 'loudness', label: 'Loudness (LUFS)', width: '100px' },
+  { key: 'rating', label: 'Rating', width: '88px' },
+  { key: 'bpm', label: 'BPM', width: '62px' },
+  { key: 'key_camelot', label: 'Key', width: '52px' },
+  { key: 'loudness', label: 'Loudness (LUFS)', width: '115px' },
   { key: 'album', label: 'Album', width: 'minmax(80px, 1fr)' },
-  { key: 'year', label: 'Year', width: '55px' },
+  { key: 'year', label: 'Year', width: '50px' },
   { key: 'label', label: 'Label', width: '100px' },
   { key: 'genres', label: 'Genres', width: '120px' },
-  { key: 'bitrate', label: 'Bitrate', width: '80px' },
-  { key: 'duration', label: 'Duration', width: '70px' },
+  { key: 'user_tags', label: 'Tags', width: '120px' },
+  { key: 'bitrate', label: 'Bitrate', width: '92px' },
+  { key: 'duration', label: 'Duration', width: '65px' },
 ];
 
 const ALL_COLUMN_KEYS = ALL_COLUMNS.map((c) => c.key);
@@ -51,6 +54,7 @@ const DEFAULT_COL_VIS = {
   index: true,
   title: true,
   artist: true,
+  rating: true,
   bpm: true,
   key_camelot: true,
   loudness: true,
@@ -58,6 +62,7 @@ const DEFAULT_COL_VIS = {
   year: false,
   label: false,
   genres: false,
+  user_tags: false,
   bitrate: false,
   duration: false,
 };
@@ -118,6 +123,10 @@ function renderCell(t, colKey) {
         return '—';
       }
     }
+    case 'rating':
+      return null; // rendered as interactive RatingStars in LibraryRow
+    case 'user_tags':
+      return t.user_tags || '—';
     case 'duration':
       return fmtDuration(t.duration);
     case 'bitrate':
@@ -145,9 +154,11 @@ function LibraryRow({
   onRowClick,
   onDoubleClick,
   onContextMenu,
+  onRatingChange,
   visibleColumns,
   gridTemplate,
   minScrollWidth,
+  mediaPort,
 }) {
   const t = tracks[index];
   if (!t) {
@@ -174,7 +185,36 @@ function LibraryRow({
       {visibleColumns.map((col) =>
         col.key === 'index' ? (
           <div key="index" className="cell index">
-            {index + 1}
+            <span className="index-num">{index + 1}</span>
+            <button
+              className="index-play"
+              title="Play"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.currentTarget.blur();
+                onDoubleClick(t, index);
+              }}
+            >
+              ▶
+            </button>
+          </div>
+        ) : col.key === 'rating' ? (
+          <div key="rating" className="cell rating" onClick={(e) => e.stopPropagation()}>
+            <RatingStars value={t.rating ?? 0} onChange={(val) => onRatingChange(t.id, val)} />
+          </div>
+        ) : col.key === 'title' ? (
+          <div key="title" className="cell title">
+            {artworkUrl(t.has_artwork ? t.artwork_path : null, mediaPort) ? (
+              <img
+                className="cell-artwork"
+                src={artworkUrl(t.artwork_path, mediaPort)}
+                alt=""
+                draggable={false}
+              />
+            ) : (
+              <span className="cell-artwork cell-artwork--placeholder">♪</span>
+            )}
+            <span className="cell-title-text">{t.title}</span>
           </div>
         ) : (
           <div key={col.key} className={cellClass(col.key, t)}>
@@ -195,8 +235,11 @@ function SortableRow({
   onRowClick,
   onDoubleClick,
   onContextMenu,
+  onRatingChange,
   visibleColumns,
   gridTemplate,
+  minScrollWidth,
+  mediaPort,
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: t.id,
@@ -206,6 +249,7 @@ function SortableRow({
     transition,
     opacity: isDragging ? 0.4 : 1,
     gridTemplateColumns: gridTemplate,
+    minWidth: minScrollWidth,
   };
   return (
     <div
@@ -220,7 +264,36 @@ function SortableRow({
       {visibleColumns.map((col) =>
         col.key === 'index' ? (
           <div key="index" className="cell index drag-handle" {...attributes} {...listeners}>
-            ⠿
+            <span className="index-num">⠿</span>
+            <button
+              className="index-play"
+              title="Play"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.currentTarget.blur();
+                onDoubleClick(t, index);
+              }}
+            >
+              ▶
+            </button>
+          </div>
+        ) : col.key === 'rating' ? (
+          <div key="rating" className="cell rating" onClick={(e) => e.stopPropagation()}>
+            <RatingStars value={t.rating ?? 0} onChange={(val) => onRatingChange(t.id, val)} />
+          </div>
+        ) : col.key === 'title' ? (
+          <div key="title" className="cell title">
+            {artworkUrl(t.has_artwork ? t.artwork_path : null, mediaPort) ? (
+              <img
+                className="cell-artwork"
+                src={artworkUrl(t.artwork_path, mediaPort)}
+                alt=""
+                draggable={false}
+              />
+            ) : (
+              <span className="cell-artwork cell-artwork--placeholder">♪</span>
+            )}
+            <span className="cell-title-text">{t.title}</span>
           </div>
         ) : (
           <div key={col.key} className={cellClass(col.key, t)}>
@@ -253,9 +326,9 @@ function SortableColItem({ colKey, label, checked, onToggle }) {
   );
 }
 
-function MusicLibrary({ selectedPlaylist }) {
+function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const isPlaylistView = selectedPlaylist !== 'music';
-  const { play, currentTrack, currentPlaylistId } = usePlayer();
+  const { play, stop, currentTrack, currentPlaylistId, mediaPort } = usePlayer();
 
   // Only highlight a track as "playing" when the source context matches this view.
   // Library view: only highlight when played from library (currentPlaylistId === null).
@@ -270,7 +343,7 @@ function MusicLibrary({ selectedPlaylist }) {
 
   const [tracks, setTracks] = useState([]);
   const [hasMore, setHasMore] = useState(true);
-  const [search, setSearch] = useState('');
+
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [contextMenu, setContextMenu] = useState(null); // { x, y, targetIds }
   const [drillStack, setDrillStack] = useState([]); // overlay drill-down stack [{ id, label, content }]
@@ -294,6 +367,8 @@ function MusicLibrary({ selectedPlaylist }) {
   const lastSelectedIndexRef = useRef(null);
   const colDropdownRef = useRef(null);
   const headerRef = useRef(null);
+  const headerScrollRef = useRef(null); // syncs header horizontal scroll to content scroll
+  const dndScrollRef = useRef(null); // ref to playlist DnD scroll container
 
   const visibleColumns = useMemo(
     () => colOrder.map((k) => COL_BY_KEY[k]).filter((c) => c && colVis[c.key] !== false),
@@ -311,19 +386,9 @@ function MusicLibrary({ selectedPlaylist }) {
       if (px) return acc + parseInt(px[1], 10);
       return acc;
     }, 0);
-    return sum + 16; // 8px left + 8px right padding
+    const gapTotal = Math.max(0, visibleColumns.length - 1) * 6; // 6px column-gap
+    return sum + gapTotal + 16; // 8px left + 8px right padding
   }, [visibleColumns]);
-
-  // Sync header scrollLeft to List's horizontal scroll.
-  useEffect(() => {
-    const listEl = listRef.current?.element;
-    if (!listEl) return;
-    const sync = () => {
-      if (headerRef.current) headerRef.current.scrollLeft = listEl.scrollLeft;
-    };
-    listEl.addEventListener('scroll', sync, { passive: true });
-    return () => listEl.removeEventListener('scroll', sync);
-  }, [gridTemplate]); // re-attach when List remounts (key={gridTemplate})
 
   const [sortBy, setSortBy] = useState({ key: 'index', asc: true });
 
@@ -509,9 +574,15 @@ function MusicLibrary({ selectedPlaylist }) {
 
   const handleDoubleClick = useCallback(
     (track, index) => {
-      play(track, sortedTracksRef.current, index, isPlaylistView ? selectedPlaylist : null);
+      play(
+        track,
+        sortedTracksRef.current,
+        index,
+        isPlaylistView ? selectedPlaylist : null,
+        isPlaylistView ? (playlistInfo?.name ?? null) : null
+      );
     },
-    [play, isPlaylistView, selectedPlaylist]
+    [play, isPlaylistView, selectedPlaylist, playlistInfo]
   );
 
   // ── Details panel ──────────────────────────────────────────────────────────
@@ -595,6 +666,29 @@ function MusicLibrary({ selectedPlaylist }) {
     };
   }, [colMenuAnchor]);
 
+  // Sync header horizontal scroll with the scroll container (library or playlist)
+  useEffect(() => {
+    const el = isPlaylistView ? dndScrollRef.current : listRef.current?.element;
+    if (!el) return;
+    const sync = () => {
+      if (headerScrollRef.current) headerScrollRef.current.scrollLeft = el.scrollLeft;
+    };
+    el.addEventListener('scroll', sync, { passive: true });
+    return () => el.removeEventListener('scroll', sync);
+  });
+
+  const handleRatingChange = useCallback(
+    async (trackId, newRating) => {
+      try {
+        await window.api.updateTrack(trackId, { rating: newRating });
+        setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, rating: newRating } : t)));
+      } catch (e) {
+        console.error('Failed to save rating:', e);
+      }
+    },
+    [setTracks]
+  );
+
   const handleContextMenu = useCallback(
     async (e, track, index) => {
       e.preventDefault();
@@ -654,15 +748,27 @@ function MusicLibrary({ selectedPlaylist }) {
 
   const handleRemove = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
+    const n = targetIds.length;
+    const msg =
+      n === 1
+        ? 'Remove this track from your library? This cannot be undone.'
+        : `Remove ${n} tracks from your library? This cannot be undone.`;
+    if (!window.confirm(msg)) return;
+    if (currentTrack && targetIds.includes(currentTrack.id)) stop();
     setContextMenu(null);
     for (const id of targetIds) await window.api.removeTrack(id);
     setTracks((prev) => prev.filter((t) => !targetIds.includes(t.id)));
     setSelectedIds(new Set());
     offsetRef.current = Math.max(0, offsetRef.current - targetIds.length);
-  }, [contextMenu]);
+  }, [contextMenu, currentTrack, stop]);
 
   const handleRemoveFromPlaylist = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
+    const n = targetIds.length;
+    const msg =
+      n === 1 ? 'Remove this track from the playlist?' : `Remove ${n} tracks from the playlist?`;
+    if (!window.confirm(msg)) return;
+    if (currentTrack && targetIds.includes(currentTrack.id)) stop();
     setContextMenu(null);
     for (const id of targetIds) {
       await window.api.removeTrackFromPlaylist(Number(selectedPlaylist), id);
@@ -670,7 +776,7 @@ function MusicLibrary({ selectedPlaylist }) {
     setTracks((prev) => prev.filter((t) => !targetIds.includes(t.id)));
     setSelectedIds(new Set());
     offsetRef.current = Math.max(0, offsetRef.current - targetIds.length);
-  }, [contextMenu, selectedPlaylist]);
+  }, [contextMenu, selectedPlaylist, currentTrack, stop]);
 
   const handleAddToPlaylist = useCallback(async (playlistId, targetIds) => {
     setContextMenu(null);
@@ -711,10 +817,13 @@ function MusicLibrary({ selectedPlaylist }) {
     [contextMenu]
   );
 
-  const handleFindSimilar = useCallback((queryText) => {
-    setContextMenu(null);
-    setSearch(queryText);
-  }, []);
+  const handleFindSimilar = useCallback(
+    (queryText) => {
+      setContextMenu(null);
+      onSearchChange(queryText);
+    },
+    [onSearchChange]
+  );
 
   // ── DnD (playlist view only) ───────────────────────────────────────────────
 
@@ -824,8 +933,6 @@ function MusicLibrary({ selectedPlaylist }) {
       className={`music-library${detailsTrack || detailsBulkTracks ? ' music-library--with-panel' : ''}`}
     >
       <div className="music-library__main">
-        <SearchBar value={search} onChange={setSearch} />
-
         {/* Playlist header bar */}
         {isPlaylistView && playlistInfo && (
           <div className="playlist-header-bar">
@@ -841,127 +948,162 @@ function MusicLibrary({ selectedPlaylist }) {
           </div>
         )}
 
-        <div
-          ref={headerRef}
-          className="header"
-          style={{ gridTemplateColumns: gridTemplate }}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setColMenuAnchor({ x: e.clientX, y: e.clientY });
-          }}
-        >
-          {visibleColumns.map((col) => (
-            <div
-              key={col.key}
-              className={`header-cell ${['bpm', 'key_camelot', 'loudness', 'year', 'duration', 'bitrate'].includes(col.key) ? 'right' : ''}`}
-              onClick={() => handleSort(col.key)}
-            >
-              {col.label} {sortBy.key === col.key ? (sortBy.asc ? '▲' : '▼') : ''}
-            </div>
-          ))}
-        </div>
-
-        {colMenuAnchor && (
-          <div
-            className="col-dropdown"
-            ref={colDropdownRef}
-            style={{ position: 'fixed', left: colMenuAnchor.x, top: colMenuAnchor.y }}
-          >
-            <DndContext collisionDetection={closestCenter} onDragEnd={handleColDragEnd}>
-              <SortableContext items={colOrder} strategy={verticalListSortingStrategy}>
-                {colOrder.map((key) => {
-                  const col = COL_BY_KEY[key];
-                  if (!col) return null;
-                  return (
-                    <SortableColItem
-                      key={key}
-                      colKey={key}
-                      label={col.label}
-                      checked={colVis[key] !== false}
-                      onToggle={() => toggleCol(key)}
-                    />
-                  );
-                })}
-              </SortableContext>
-            </DndContext>
-          </div>
-        )}
-
-        {/* Playlist view: full DnD list */}
-        {isPlaylistView ? (
-          tracks.length === 0 ? (
-            <div className="playlist-empty-state">
-              No tracks in this playlist.
-              <br />
-              Right-click tracks in your library to add them.
+        <div className="table-scroll-wrap library-mode">
+          {isPlaylistView ? (
+            <div ref={headerScrollRef} style={{ overflow: 'hidden' }}>
+              <div
+                ref={headerRef}
+                className="header"
+                style={{ gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setColMenuAnchor({ x: e.clientX, y: e.clientY });
+                }}
+              >
+                {visibleColumns.map((col) => (
+                  <div
+                    key={col.key}
+                    className={`header-cell ${['bpm', 'key_camelot', 'loudness', 'year', 'duration', 'bitrate'].includes(col.key) ? 'right' : ''}`}
+                    onClick={() => handleSort(col.key)}
+                  >
+                    {col.label} {sortBy.key === col.key ? (sortBy.asc ? '▲' : '▼') : ''}
+                  </div>
+                ))}
+              </div>
             </div>
           ) : (
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragStart={handleDragStart}
-              onDragEnd={handleDragEnd}
-            >
-              <SortableContext
-                items={sortedTracks.map((t) => t.id)}
-                strategy={verticalListSortingStrategy}
+            <div ref={headerScrollRef} style={{ overflow: 'hidden' }}>
+              <div
+                ref={headerRef}
+                className="header"
+                style={{ gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setColMenuAnchor({ x: e.clientX, y: e.clientY });
+                }}
               >
-                <div className="playlist-dnd-list">
-                  {sortedTracks.map((t, index) => (
-                    <SortableRow
-                      key={t.id}
-                      t={t}
-                      index={index}
-                      isSelected={selectedIds.has(t.id)}
-                      isPlaying={playingTrackId === t.id}
-                      onRowClick={handleRowClick}
-                      onDoubleClick={handleDoubleClick}
-                      onContextMenu={handleContextMenu}
-                      visibleColumns={visibleColumns}
-                      gridTemplate={gridTemplate}
-                    />
-                  ))}
-                </div>
-              </SortableContext>
-              <DragOverlay>
-                {activeTrack && (
+                {visibleColumns.map((col) => (
                   <div
-                    className="row row-drag-overlay"
-                    style={{ gridTemplateColumns: gridTemplate }}
+                    key={col.key}
+                    className={`header-cell ${['bpm', 'key_camelot', 'loudness', 'year', 'duration', 'bitrate'].includes(col.key) ? 'right' : ''}`}
+                    onClick={() => handleSort(col.key)}
                   >
-                    <div className="cell index">⠿</div>
-                    <div className="cell title">{activeTrack.title}</div>
-                    <div className="cell artist">{activeTrack.artist || 'Unknown'}</div>
+                    {col.label} {sortBy.key === col.key ? (sortBy.asc ? '▲' : '▼') : ''}
                   </div>
-                )}
-              </DragOverlay>
-            </DndContext>
-          )
-        ) : (
-          /* Library view: virtualised list */
-          <List
-            key={gridTemplate}
-            listRef={listRef}
-            defaultHeight={600}
-            rowCount={sortedTracks.length + (hasMore ? 1 : 0)}
-            rowHeight={ROW_HEIGHT}
-            width="100%"
-            onRowsRendered={handleItemsRendered}
-            className="track-list"
-            rowComponent={LibraryRow}
-            rowProps={{
-              tracks: sortedTracks,
-              selectedIds,
-              currentTrackId: playingTrackId,
-              onRowClick: handleRowClick,
-              onDoubleClick: handleDoubleClick,
-              onContextMenu: handleContextMenu,
-              visibleColumns,
-              gridTemplate,
-              minScrollWidth,
-            }}
-          />
-        )}
+                ))}
+              </div>
+            </div>
+          )}
+
+          {colMenuAnchor && (
+            <div
+              className="col-dropdown"
+              ref={colDropdownRef}
+              style={{ position: 'fixed', left: colMenuAnchor.x, top: colMenuAnchor.y }}
+            >
+              <DndContext collisionDetection={closestCenter} onDragEnd={handleColDragEnd}>
+                <SortableContext items={colOrder} strategy={verticalListSortingStrategy}>
+                  {colOrder.map((key) => {
+                    const col = COL_BY_KEY[key];
+                    if (!col) return null;
+                    return (
+                      <SortableColItem
+                        key={key}
+                        colKey={key}
+                        label={col.label}
+                        checked={colVis[key] !== false}
+                        onToggle={() => toggleCol(key)}
+                      />
+                    );
+                  })}
+                </SortableContext>
+              </DndContext>
+            </div>
+          )}
+
+          {/* Playlist view: full DnD list */}
+          {isPlaylistView ? (
+            tracks.length === 0 ? (
+              <div className="playlist-empty-state">
+                No tracks in this playlist.
+                <br />
+                Right-click tracks in your library to add them.
+              </div>
+            ) : (
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext
+                  items={sortedTracks.map((t) => t.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div ref={dndScrollRef} className="playlist-dnd-list">
+                    {sortedTracks.map((t, index) => (
+                      <SortableRow
+                        key={t.id}
+                        t={t}
+                        index={index}
+                        isSelected={selectedIds.has(t.id)}
+                        isPlaying={playingTrackId === t.id}
+                        onRowClick={handleRowClick}
+                        onDoubleClick={handleDoubleClick}
+                        onContextMenu={handleContextMenu}
+                        onRatingChange={handleRatingChange}
+                        visibleColumns={visibleColumns}
+                        gridTemplate={gridTemplate}
+                        minScrollWidth={minScrollWidth}
+                        mediaPort={mediaPort}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+                <DragOverlay>
+                  {activeTrack && (
+                    <div
+                      className="row row-drag-overlay"
+                      style={{ gridTemplateColumns: gridTemplate }}
+                    >
+                      <div className="cell index">⠿</div>
+                      <div className="cell title">{activeTrack.title}</div>
+                      <div className="cell artist">{activeTrack.artist || 'Unknown'}</div>
+                    </div>
+                  )}
+                </DragOverlay>
+              </DndContext>
+            )
+          ) : (
+            /* Library view: virtualised list */
+            <List
+              key={gridTemplate}
+              listRef={listRef}
+              defaultHeight={600}
+              rowCount={sortedTracks.length + (hasMore ? 1 : 0)}
+              rowHeight={ROW_HEIGHT}
+              width="100%"
+              style={{}}
+              onRowsRendered={handleItemsRendered}
+              className="track-list"
+              rowComponent={LibraryRow}
+              rowProps={{
+                tracks: sortedTracks,
+                selectedIds,
+                currentTrackId: playingTrackId,
+                onRowClick: handleRowClick,
+                onDoubleClick: handleDoubleClick,
+                onContextMenu: handleContextMenu,
+                onRatingChange: handleRatingChange,
+                visibleColumns,
+                gridTemplate,
+                minScrollWidth,
+                mediaPort,
+              }}
+            />
+          )}
+        </div>
+        {/* end .table-scroll-wrap */}
 
         {contextMenu && (
           <>
@@ -1317,12 +1459,20 @@ function MusicLibrary({ selectedPlaylist }) {
 
                   {/* ── Remove ── */}
                   {isPlaylistView ? (
-                    <div
-                      className="context-menu-item context-menu-item--danger"
-                      onClick={handleRemoveFromPlaylist}
-                    >
-                      ➖ Remove from playlist{selectionLabel}
-                    </div>
+                    <>
+                      <div
+                        className="context-menu-item context-menu-item--danger"
+                        onClick={handleRemoveFromPlaylist}
+                      >
+                        ➖ Remove from playlist{selectionLabel}
+                      </div>
+                      <div
+                        className="context-menu-item context-menu-item--danger"
+                        onClick={handleRemove}
+                      >
+                        🗑️ Remove from library{selectionLabel}
+                      </div>
+                    </>
                   ) : (
                     <div
                       className="context-menu-item context-menu-item--danger"

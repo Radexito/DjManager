@@ -225,3 +225,55 @@ describe('context menu — submenu CSS classes', () => {
     expect(getSubmenuParent('➕ Add to playlist')).toBeNull();
   });
 });
+
+// ── Remove confirmation ───────────────────────────────────────────────────────
+
+describe('context menu — remove from library with confirmation', () => {
+  it('right-click → "Remove from library" calls window.confirm with a message containing "Remove"', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    renderLibrary();
+    await openContextMenu('Track One');
+    const removeItem = screen.getByText(/🗑️ Remove from library/);
+    fireEvent.click(removeItem);
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Remove'));
+  });
+
+  it('if window.confirm returns false, removeTrack is NOT called', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    renderLibrary();
+    await openContextMenu('Track One');
+    fireEvent.click(screen.getByText(/🗑️ Remove from library/));
+    expect(window.api.removeTrack).not.toHaveBeenCalled();
+  });
+
+  it('if window.confirm returns true, removeTrack IS called with the track ID', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    renderLibrary();
+    await openContextMenu('Track One');
+    fireEvent.click(screen.getByText(/🗑️ Remove from library/));
+    await waitFor(() => expect(window.api.removeTrack).toHaveBeenCalledWith(1));
+  });
+});
+
+// ── Playlist view context menu ────────────────────────────────────────────────
+
+describe('context menu — playlist view shows both remove options', () => {
+  function renderPlaylistLibrary() {
+    window.api.getPlaylist.mockResolvedValue({
+      id: 1,
+      name: 'Test Playlist',
+      color: null,
+      track_count: 2,
+      total_duration: 380,
+    });
+    return render(<MusicLibrary selectedPlaylist="1" />);
+  }
+
+  it('shows both "Remove from playlist" and "Remove from library" in playlist view', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    renderPlaylistLibrary();
+    await openContextMenu('Track One');
+    expect(screen.getByText(/➖ Remove from playlist/)).toBeInTheDocument();
+    expect(screen.getByText(/🗑️ Remove from library/)).toBeInTheDocument();
+  });
+});

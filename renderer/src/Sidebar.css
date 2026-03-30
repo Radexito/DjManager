@@ -192,6 +192,16 @@
   border-color: #666;
 }
 
+.playlist-rename-input.input-error {
+  border-color: #e05c5c;
+}
+
+.playlist-input-error {
+  font-size: 11px;
+  color: #e05c5c;
+  padding: 2px 4px 4px;
+}
+
 /* Color swatches in context submenu */
 .color-swatch {
   width: 18px;
@@ -242,4 +252,26 @@
 
 .scrollable-playlists::-webkit-scrollbar-thumb:hover {
   background: #555;
+}
+
+.export-usb-button {
+  margin-top: 8px;
+  margin-bottom: 0;
+  width: 100%;
+  padding: 10px;
+  background-color: transparent;
+  border: 2px solid #457b9d;
+  color: #7eb8f7;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.export-usb-button:hover {
+  background-color: #1a2d40;
+  color: #a8d4f7;
 }
