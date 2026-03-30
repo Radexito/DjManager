@@ -140,6 +140,27 @@ Audio is served over a local HTTP server (`src/audio/mediaServer.js`) instead of
 
 `--playlist-items "1,3,5"` is passed when the user deselects tracks in the selection step.
 
+### TIDAL Download
+
+`src/audio/tidalDlManager.js` wraps the `tdn` CLI from the [tidal-dl-ng](https://github.com/Radexito/tidal-dl-ng-For-DJ) Python package:
+
+- `findTidalDlPath()` — searches `~/.local/bin`, common platform paths, then falls back to `which tdn`
+- `checkTidalSetup()` — checks binary presence + reads `~/.config/tidal-dl-ng/token.json` for login state
+- `startLogin(onUrl)` — spawns `tdn login` with `NO_COLOR=1 TERM=dumb`, parses `link.tidal.com` URL from stdout via regex, resolves when the process exits 0
+- `downloadTidal(url, outputDir, onProgress)` — saves the tidal-dl-ng `settings.json`, patches `download_base_path` to `userData/tidal_tmp` and `quality_audio` to `HiRes_Lossless`, spawns `tdn dl <url>`, **always restores** the original config in both success and error paths, then scans the output dir for new audio files by mtime
+
+IPC channels: `tidal-check`, `tidal-login`, `tidal-download-url`. Events pushed to renderer: `tidal-progress` (per-line stdout), `tidal-login-url` (device-link URL for browser).
+
+### Top-level navigation
+
+`Sidebar.jsx` has a `MENU_ITEMS` array that drives the top nav. Each item has an `id` string. `App.jsx` receives `selectedPlaylistId` and branches on it:
+
+- `'download'` → `<DownloadView>` (yt-dlp)
+- `'tidal'` → `<TidalDownloadView>`
+- anything else → `<MusicLibrary selectedPlaylist={id}>` (handles both `'music'` and playlist UUIDs)
+
+**Adding a new top-level view**: add entry to `MENU_ITEMS`, add a branch in `App.jsx`, create the view component.
+
 ### Renderer / UI
 
 - Track list uses `react-window` (`FixedSizeList`) for virtualization — `ROW_HEIGHT = 50`, `PAGE_SIZE = 50`
@@ -170,6 +191,17 @@ Handled client-side by `renderer/src/searchParser.js`. Supports field-qualified 
 - **Renderer test mocks**: `renderer/src/__tests__/setup.js` defines the full `window.api` mock. When adding a new IPC method, add a corresponding `vi.fn()` entry there or renderer tests that mount components will fail.
 - **Platform-specific test stubs**: `usbUtils.test.js` stubs `process.platform` via `vi.stubGlobal` so Linux-branch tests run correctly on Windows. Use the same pattern for any test that branches on `process.platform`.
 - **Windows path in tests**: when constructing HTTP URLs from OS file paths in tests, convert with `'/' + filePath.replace(/\\/g, '/')` so paths are valid on Windows (e.g. `/C:/path/to/file`).
+
+## GitHub API
+
+`gh` CLI is **not installed** on this machine. Use `git credential fill` to retrieve the stored OAuth token, then call the GitHub REST API directly with `curl`:
+
+```bash
+TOKEN=$(git credential fill <<< $'protocol=https\nhost=github.com' | grep password | cut -d= -f2)
+curl -s -X POST "https://api.github.com/repos/Radexito/DjManager/issues" \
+  -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+  -d '{"title":"...", "body":"..."}'
+```
 
 ## Known Issues
 
