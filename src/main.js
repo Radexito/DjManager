@@ -74,6 +74,11 @@ import {
   downloadUrl as ytDlpDownloadUrl,
   fetchPlaylistInfo as ytDlpFetchPlaylistInfo,
 } from './audio/ytDlpManager.js';
+import {
+  checkTidalSetup,
+  startLogin as tidalStartLogin,
+  downloadTidal,
+} from './audio/tidalDlManager.js';
 import { ensureDeps, getFfmpegRuntimePath } from './deps.js';
 import {
   getInstalledVersions,
@@ -892,6 +897,84 @@ ipcMain.handle(
 ipcMain.handle('open-external', async (_event, url) => {
   shell.openExternal(url);
 });
+
+// ─── TIDAL download ───────────────────────────────────────────────────────────
+
+ipcMain.handle('tidal-check', async () => {
+  return checkTidalSetup();
+});
+
+ipcMain.handle('tidal-login', async () => {
+  try {
+    await tidalStartLogin((url) => {
+      if (global.mainWindow) global.mainWindow.webContents.send('tidal-login-url', url);
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle(
+  'tidal-download-url',
+  async (_event, { url, existingPlaylistId, newPlaylistName }) => {
+    const sendProgress = (msg) => {
+      if (global.mainWindow) global.mainWindow.webContents.send('tidal-progress', { msg });
+    };
+
+    try {
+      sendProgress('Starting download…');
+
+      const tmpDir = path.join(app.getPath('userData'), 'tidal_tmp');
+
+      const files = await downloadTidal(url, tmpDir, sendProgress);
+
+      if (files.length === 0) {
+        return { ok: false, error: 'Download finished but no audio files were found.' };
+      }
+
+      sendProgress('Importing to library…');
+
+      let playlistId = null;
+      const trackIds = [];
+
+      if (existingPlaylistId) {
+        playlistId = existingPlaylistId;
+      } else if (newPlaylistName) {
+        try {
+          const { id } = findOrCreatePlaylist(newPlaylistName, null, url);
+          playlistId = id;
+          if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+        } catch (err) {
+          console.error('[tidal] findOrCreatePlaylist failed:', err.message);
+        }
+      }
+
+      for (const filePath of files) {
+        try {
+          const trackId = await importAudioFile(filePath, {
+            source_url: url,
+            source_platform: 'tidal',
+          });
+          trackIds.push(trackId);
+          if (playlistId) {
+            addTrackToPlaylist(playlistId, trackId);
+            if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+          }
+          if (global.mainWindow) global.mainWindow.webContents.send('library-updated');
+        } catch (err) {
+          console.error('[tidal] importAudioFile failed:', err.message);
+        }
+      }
+
+      if (global.mainWindow) global.mainWindow.webContents.send('tidal-progress', null);
+      return { ok: true, trackIds, playlistId: playlistId ?? null };
+    } catch (err) {
+      if (global.mainWindow) global.mainWindow.webContents.send('tidal-progress', null);
+      return { ok: false, error: err.message };
+    }
+  }
+);
 
 // ─── USB / Rekordbox Export ────────────────────────────────────────────────────
 
