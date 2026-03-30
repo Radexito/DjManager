@@ -29,6 +29,8 @@ import {
   TABLE_ORDER,
   encodeRating,
   detectFileType,
+  normalizeKeyName,
+  buildKeyRow,
 } from '../usb/pdbWriter.js';
 
 // ── DeviceSQLString encoding ──────────────────────────────────────────────────
@@ -986,5 +988,189 @@ describe('writePdb', () => {
   it('uses mkdirSync to ensure output directory exists', () => {
     writePdb(makeInput(), '/usb/PIONEER/rekordbox/export.pdb');
     expect(fs.mkdirSync).toHaveBeenCalled();
+  });
+});
+
+// ── normalizeKeyName ──────────────────────────────────────────────────────────
+
+describe('normalizeKeyName', () => {
+  it('converts "X major" to "X" (drops " major")', () => {
+    expect(normalizeKeyName('G major')).toBe('G');
+    expect(normalizeKeyName('Db major')).toBe('Db');
+    expect(normalizeKeyName('Ab major')).toBe('Ab');
+    expect(normalizeKeyName('C# major')).toBe('C#');
+  });
+
+  it('converts "X minor" to "Xm" (replaces " minor" with "m")', () => {
+    expect(normalizeKeyName('G minor')).toBe('Gm');
+    expect(normalizeKeyName('Eb minor')).toBe('Ebm');
+    expect(normalizeKeyName('Bb minor')).toBe('Bbm');
+    expect(normalizeKeyName('A minor')).toBe('Am');
+  });
+
+  it('leaves already-abbreviated names unchanged', () => {
+    expect(normalizeKeyName('Em')).toBe('Em');
+    expect(normalizeKeyName('Gm')).toBe('Gm');
+    expect(normalizeKeyName('G')).toBe('G');
+    expect(normalizeKeyName('Db')).toBe('Db');
+  });
+
+  it('returns empty string unchanged', () => {
+    expect(normalizeKeyName('')).toBe('');
+  });
+
+  it('returns null/undefined unchanged', () => {
+    expect(normalizeKeyName(null)).toBeNull();
+    expect(normalizeKeyName(undefined)).toBeUndefined();
+  });
+});
+
+// ── buildKeyRow ───────────────────────────────────────────────────────────────
+
+describe('buildKeyRow', () => {
+  it('matches native Rekordbox binary format for "Em" (ID=1)', () => {
+    // Verified byte-for-byte against real CDJ/Rekordbox exported ANLZ files.
+    // Layout: SmallId(u16=1) + IndexShift(u16=0) + Id(u32=1) + DeviceSQL("Em")
+    // DeviceSQL short ASCII "Em": byte = ((2+1)<<1)|1 = 7, then 'E','m' → 07 45 6d
+    const row = buildKeyRow(1, 'Em');
+    const expected = Buffer.from([
+      0x01,
+      0x00, // SmallId = 1
+      0x00,
+      0x00, // IndexShift = 0
+      0x01,
+      0x00,
+      0x00,
+      0x00, // Id = 1
+      0x07,
+      0x45,
+      0x6d, // DeviceSQL "Em"
+    ]);
+    expect(row.subarray(0, expected.length)).toEqual(expected);
+  });
+
+  it('matches native Rekordbox binary format for "Ebm" (ID=2)', () => {
+    // DeviceSQL short ASCII "Ebm": byte = ((3+1)<<1)|1 = 9, then 'E','b','m' → 09 45 62 6d
+    const row = buildKeyRow(2, 'Ebm');
+    const expected = Buffer.from([
+      0x02,
+      0x00, // SmallId = 2
+      0x00,
+      0x00, // IndexShift = 0
+      0x02,
+      0x00,
+      0x00,
+      0x00, // Id = 2
+      0x09,
+      0x45,
+      0x62,
+      0x6d, // DeviceSQL "Ebm"
+    ]);
+    expect(row).toEqual(expected);
+  });
+
+  it('has SmallId equal to Id for each row', () => {
+    for (const id of [1, 5, 12, 24]) {
+      const row = buildKeyRow(id, 'G');
+      expect(row.readUInt16LE(0)).toBe(id); // SmallId
+      expect(row.readUInt32LE(4)).toBe(id); // Id
+    }
+  });
+});
+
+// ── writePdb key integration ──────────────────────────────────────────────────
+
+describe('writePdb key export', () => {
+  // Keys table is TABLE_ORDER index 5, so its index page is at page 11
+  // and its first data page is at page 12 (emptyCandidate = indexPage + 1).
+  const KEYS_INDEX_PAGE = 11;
+  const KEYS_DATA_PAGE = 12;
+  const PAGE = 4096;
+
+  // Tracks data page is at page 2 (emptyCandidate for Tracks table).
+  // Track row 0 is at heap offset 0 → buffer offset 2*PAGE + 40.
+  // KeyId is at byte 32 within the track row header.
+  const TRACK_DATA_PAGE = 2;
+  const HEAP_START = 40; // page header size
+  const KEY_ID_OFFSET_IN_ROW = 32;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function getPdb(tracks) {
+    writePdb({ tracks, playlists: [] }, '/usb/export.pdb');
+    return fs.writeFileSync.mock.calls[0][1];
+  }
+
+  it('Keys data page has one row per unique key_raw value', () => {
+    const pdb = getPdb([
+      { id: 1, title: 'A', artist: '', album: '', key_raw: 'G minor', file_path: '/a.mp3' },
+      { id: 2, title: 'B', artist: '', album: '', key_raw: 'Eb minor', file_path: '/b.mp3' },
+      { id: 3, title: 'C', artist: '', album: '', key_raw: 'G minor', file_path: '/c.mp3' }, // duplicate
+    ]);
+    const keysPage = pdb.subarray(KEYS_DATA_PAGE * PAGE, (KEYS_DATA_PAGE + 1) * PAGE);
+    expect(keysPage.readUInt32LE(8)).toBe(TABLE_TYPES.Keys); // correct page type
+    expect(keysPage[24]).toBe(2); // 2 unique keys: "Gm" and "Ebm"
+  });
+
+  it('key names are normalized to Rekordbox abbreviated format in the PDB', () => {
+    const pdb = getPdb([
+      { id: 1, title: 'A', artist: '', album: '', key_raw: 'G minor', file_path: '/a.mp3' },
+    ]);
+    const keysPage = pdb.subarray(KEYS_DATA_PAGE * PAGE, (KEYS_DATA_PAGE + 1) * PAGE);
+    // Heap starts at page offset 40. Row 0 at heap position 0.
+    // buildKeyRow: 8-byte header, then DeviceSQL string.
+    // "Gm" DeviceSQL: byte = ((2+1)<<1)|1 = 7, 'G'=0x47, 'm'=0x6d → 07 47 6d
+    const rowStart = HEAP_START;
+    const nameStart = rowStart + 8;
+    expect(keysPage[nameStart]).toBe(0x07); // DeviceSQL length byte for "Gm"
+    expect(keysPage[nameStart + 1]).toBe(0x47); // 'G'
+    expect(keysPage[nameStart + 2]).toBe(0x6d); // 'm'
+  });
+
+  it('track row keyId references the correct key table entry', () => {
+    const pdb = getPdb([
+      { id: 1, title: 'A', artist: '', album: '', key_raw: 'G minor', file_path: '/a.mp3' },
+    ]);
+    const trackPage = pdb.subarray(TRACK_DATA_PAGE * PAGE, (TRACK_DATA_PAGE + 1) * PAGE);
+    const keyId = trackPage.readUInt32LE(HEAP_START + KEY_ID_OFFSET_IN_ROW);
+    expect(keyId).toBe(1); // first unique key gets ID 1
+  });
+
+  it('two tracks with the same key share the same keyId', () => {
+    const pdb = getPdb([
+      { id: 1, title: 'A', artist: '', album: '', key_raw: 'G minor', file_path: '/a.mp3' },
+      { id: 2, title: 'B', artist: '', album: '', key_raw: 'G minor', file_path: '/b.mp3' },
+    ]);
+    // Find row positions via RowSet at end of track page
+    const trackPage = pdb.subarray(TRACK_DATA_PAGE * PAGE, (TRACK_DATA_PAGE + 1) * PAGE);
+    const rsBase = PAGE - 36; // RowSet at page end
+    const pos0 = trackPage.readUInt16LE(rsBase + 30); // pos[0]
+    const pos1 = trackPage.readUInt16LE(rsBase + 28); // pos[1]
+    const keyId0 = trackPage.readUInt32LE(HEAP_START + pos0 + KEY_ID_OFFSET_IN_ROW);
+    const keyId1 = trackPage.readUInt32LE(HEAP_START + pos1 + KEY_ID_OFFSET_IN_ROW);
+    expect(keyId0).toBe(1);
+    expect(keyId1).toBe(1); // same key → same keyId
+  });
+
+  it('track without key_raw gets keyId=0', () => {
+    const pdb = getPdb([
+      { id: 1, title: 'A', artist: '', album: '', key_raw: '', file_path: '/a.mp3' },
+    ]);
+    const trackPage = pdb.subarray(TRACK_DATA_PAGE * PAGE, (TRACK_DATA_PAGE + 1) * PAGE);
+    const keyId = trackPage.readUInt32LE(HEAP_START + KEY_ID_OFFSET_IN_ROW);
+    expect(keyId).toBe(0);
+  });
+
+  it('Keys table is empty when no tracks have key_raw', () => {
+    const pdb = getPdb([
+      { id: 1, title: 'A', artist: '', album: '', key_raw: '', file_path: '/a.mp3' },
+    ]);
+    // Keys index page (page 11) should still point to EMPTY_TABLE_SENTINEL (0x03ffffff)
+    // meaning no data pages were written for the Keys table.
+    const keysIndexPage = pdb.subarray(KEYS_INDEX_PAGE * PAGE, (KEYS_INDEX_PAGE + 1) * PAGE);
+    const nextPage = keysIndexPage.readUInt32LE(44); // IndexHeader.NextPage
+    expect(nextPage).toBe(0x03ffffff);
   });
 });
