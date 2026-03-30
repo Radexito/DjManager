@@ -68,4 +68,4 @@ npm run dist:linux          # or :mac / :win
 
 ## License
 
-ISC © [Radexito](https://github.com/Radexito)
+MIT © [Radexito](https://github.com/Radexito)
