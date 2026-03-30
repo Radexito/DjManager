@@ -12,7 +12,6 @@ A DJ-focused music library manager built with Electron. Manage your tracks, anal
 - **Auto-analysis** — BPM, key, loudness, intro/outro detection via mixxx-analyzer, waveform generation via FFmpeg. Runs in background worker threads.
 - **Rekordbox USB export** — full Pioneer CDJ-compatible export: ANLZ waveform/beatgrid files, PDB database, and SETTING.DAT files. Plug the USB into any CDJ and it just works.
 - **yt-dlp download** — paste any YouTube, SoundCloud, Bandcamp, or 1000+ supported URL. Preview playlist tracks, select a subset, and import directly to your library.
-- **TIDAL download** — download tracks, albums, playlists, and mixes at up to HiRes Lossless via [tidal-dl-ng](https://github.com/Radexito/tidal-dl-ng-For-DJ). Requires `pip install tidal-dl-ng`.
 - **Auto-tagging** — search MusicBrainz, Discogs, iTunes, and Deezer to fill in missing metadata and fetch cover art.
 - **Advanced search** — field-qualified queries directly in the search bar: `BPM >= 128 AND KEY:8A GENRE is Techno`.
 - **Playlist management** — create playlists, drag-and-drop reorder, export as M3U.
@@ -62,7 +61,6 @@ npm run dist:linux          # or :mac / :win
 - **mixxx-analyzer** — BPM, key, loudness, beatgrid analysis
 - **FFmpeg** — audio decode, waveform generation, format conversion
 - **yt-dlp** — streaming download backend
-- **tidal-dl-ng** — TIDAL download backend (optional, user-installed)
 - **@dnd-kit** — drag-and-drop playlist reordering
 - **react-window** — virtualized track list
 
