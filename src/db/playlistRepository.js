@@ -1,11 +1,30 @@
 // src/db/playlistRepository.js
 import db from './database.js';
 
-export function createPlaylist(name, color = null) {
+export function getPlaylistByName(name) {
+  return db.prepare(`SELECT id FROM playlists WHERE name = ?`).get(name) ?? null;
+}
+
+export function createPlaylist(name, color = null, sourceUrl = null) {
+  if (getPlaylistByName(name)) {
+    const err = new Error(`A playlist named "${name}" already exists.`);
+    err.code = 'DUPLICATE_PLAYLIST_NAME';
+    throw err;
+  }
   const info = db
-    .prepare(`INSERT INTO playlists (name, color, created_at) VALUES (?, ?, ?)`)
-    .run(name, color, Date.now());
+    .prepare(`INSERT INTO playlists (name, color, source_url, created_at) VALUES (?, ?, ?, ?)`)
+    .run(name, color, sourceUrl, Date.now());
   return info.lastInsertRowid;
+}
+
+/** Find existing playlist by name or create a new one. Returns { id, created }. */
+export function findOrCreatePlaylist(name, color = null, sourceUrl = null) {
+  const existing = getPlaylistByName(name);
+  if (existing) return { id: existing.id, created: false };
+  const id = db
+    .prepare(`INSERT INTO playlists (name, color, source_url, created_at) VALUES (?, ?, ?, ?)`)
+    .run(name, color, sourceUrl, Date.now()).lastInsertRowid;
+  return { id, created: true };
 }
 
 export function getPlaylists() {
@@ -48,6 +67,12 @@ export function getPlaylist(id) {
 }
 
 export function renamePlaylist(id, name) {
+  const existing = getPlaylistByName(name);
+  if (existing && existing.id !== id) {
+    const err = new Error(`A playlist named "${name}" already exists.`);
+    err.code = 'DUPLICATE_PLAYLIST_NAME';
+    throw err;
+  }
   db.prepare(`UPDATE playlists SET name = ? WHERE id = ?`).run(name, id);
 }
 

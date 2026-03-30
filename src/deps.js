@@ -19,16 +19,30 @@ function getBinDir() {
   return path.join(app.getPath('userData'), 'bin');
 }
 
+// On Windows, ffmpeg/ffprobe live in their own subdirectory so they don't
+// accidentally load conflicting system DLLs that the analyzer bundle places
+// alongside it in the shared bin/ directory.
+function getFfmpegBinDir() {
+  return process.platform === 'win32' ? path.join(getBinDir(), 'ffmpeg') : getBinDir();
+}
+
 const EXT = process.platform === 'win32' ? '.exe' : '';
 
 export function getFfmpegRuntimePath() {
-  return path.join(getBinDir(), `ffmpeg${EXT}`);
+  return path.join(getFfmpegBinDir(), `ffmpeg${EXT}`);
 }
 export function getFfprobeRuntimePath() {
-  return path.join(getBinDir(), `ffprobe${EXT}`);
+  return path.join(getFfmpegBinDir(), `ffprobe${EXT}`);
 }
 export function getAnalyzerRuntimePath() {
   return path.join(getBinDir(), `analysis${EXT}`);
+}
+
+export function getYtDlpRuntimePath() {
+  const platform = process.platform;
+  if (platform === 'win32') return path.join(getBinDir(), 'yt-dlp.exe');
+  if (platform === 'darwin') return path.join(getBinDir(), 'yt-dlp_macos');
+  return path.join(getBinDir(), 'yt-dlp');
 }
 
 function versionFile(name) {
@@ -52,6 +66,7 @@ export function getInstalledVersions() {
   return {
     ffmpeg: readVersion('ffmpeg'),
     analyzer: readVersion('analyzer'),
+    ytDlp: readVersion('yt-dlp'),
   };
 }
 
@@ -61,7 +76,8 @@ export function areDepsReady() {
   return (
     fs.existsSync(getFfmpegRuntimePath()) &&
     fs.existsSync(getFfprobeRuntimePath()) &&
-    fs.existsSync(getAnalyzerRuntimePath())
+    fs.existsSync(getAnalyzerRuntimePath()) &&
+    fs.existsSync(getYtDlpRuntimePath())
   );
 }
 
@@ -107,6 +123,33 @@ export function getLatestRelease(owner, repo) {
           res.on('end', () => {
             try {
               resolve(JSON.parse(body));
+            } catch (e) {
+              reject(e);
+            }
+          });
+          res.on('error', reject);
+        }
+      )
+      .on('error', reject);
+  });
+}
+
+export function getReleaseByTag(owner, repo, tag) {
+  return new Promise((resolve, reject) => {
+    https
+      .get(
+        `https://api.github.com/repos/${owner}/${repo}/releases/tags/${tag}`,
+        {
+          headers: { 'User-Agent': 'djman-dep-downloader', Accept: 'application/vnd.github+json' },
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (c) => (body += c));
+          res.on('end', () => {
+            try {
+              const data = JSON.parse(body);
+              if (data.message) reject(new Error(`GitHub: ${data.message} (tag: ${tag})`));
+              else resolve(data);
             } catch (e) {
               reject(e);
             }
@@ -195,8 +238,22 @@ async function downloadFFmpeg(tmp, onProgress) {
     onProgress?.('Extracting FFmpeg…', 99);
     const dir = path.join(tmp, 'ffmpeg-win-extracted');
     await extractZip(archive, dir);
-    fs.copyFileSync(await findFile(dir, 'ffmpeg.exe'), getFfmpegRuntimePath());
-    fs.copyFileSync(await findFile(dir, 'ffprobe.exe'), getFfprobeRuntimePath());
+    const ffmpegExe = await findFile(dir, 'ffmpeg.exe');
+    const ffprobeExe = await findFile(dir, 'ffprobe.exe');
+    // Use isolated subdirectory so system DLLs from other bundled tools
+    // (e.g. the analyzer) don't shadow the system's own DLLs and cause
+    // STATUS_ENTRYPOINT_NOT_FOUND when ffprobe loads.
+    const ffmpegBinDir = getFfmpegBinDir();
+    fs.mkdirSync(ffmpegBinDir, { recursive: true });
+    fs.copyFileSync(ffmpegExe, getFfmpegRuntimePath());
+    fs.copyFileSync(ffprobeExe, getFfprobeRuntimePath());
+    // Copy sibling DLLs into the same isolated folder (needed for shared builds)
+    const ffmpegDir = path.dirname(ffmpegExe);
+    for (const entry of fs.readdirSync(ffmpegDir)) {
+      if (entry.toLowerCase().endsWith('.dll')) {
+        fs.copyFileSync(path.join(ffmpegDir, entry), path.join(ffmpegBinDir, entry));
+      }
+    }
   } else if (platform === 'darwin') {
     const ffmpegZip = path.join(tmp, 'ffmpeg-mac.zip');
     const ffprobeZip = path.join(tmp, 'ffprobe-mac.zip');
@@ -285,8 +342,28 @@ async function downloadAnalyzer(tmp, onProgress) {
   if (!src) throw new Error('mixxx-analyzer binary not found in archive');
   const bundleDir = path.dirname(src);
 
+  // Windows system DLLs that the analyzer bundle may include for portability
+  // but which must NOT be copied — shadowing them causes STATUS_ENTRYPOINT_NOT_FOUND
+  // when the system's own (newer) version of the DLL has entry points the local copy lacks.
+  const WIN_SYSTEM_DLLS = new Set([
+    'msvcp_win.dll',
+    'cfgmgr32.dll',
+    'dwrite.dll',
+    'iphlpapi.dll',
+    'usp10.dll',
+    'd2d1.dll',
+    'ncrypt.dll',
+    'kernel32.dll',
+    'user32.dll',
+    'ntdll.dll',
+    'advapi32.dll',
+    'shell32.dll',
+    'ole32.dll',
+  ]);
+
   // Copy all files from the bundle directory (binary + any .so or .dylib siblings)
   for (const entry of await fs.promises.readdir(bundleDir)) {
+    if (process.platform === 'win32' && WIN_SYSTEM_DLLS.has(entry.toLowerCase())) continue;
     const srcFile = path.join(bundleDir, entry);
     const dstFile = path.join(binDir, entry);
     fs.copyFileSync(srcFile, dstFile);
@@ -310,20 +387,56 @@ async function downloadAnalyzer(tmp, onProgress) {
   });
 }
 
+// ── yt-dlp download ───────────────────────────────────────────────────────────
+
+async function downloadYtDlp(tmp, onProgress, tag = null) {
+  onProgress?.('Downloading yt-dlp…', 0);
+  const release = tag
+    ? await getReleaseByTag('yt-dlp', 'yt-dlp', tag)
+    : await getLatestRelease('yt-dlp', 'yt-dlp');
+
+  const platform = process.platform;
+  let assetName;
+  if (platform === 'win32') assetName = 'yt-dlp.exe';
+  else if (platform === 'darwin') assetName = 'yt-dlp_macos';
+  else assetName = 'yt-dlp';
+
+  const asset = release.assets.find((a) => a.name === assetName);
+  if (!asset) throw new Error(`No yt-dlp asset found for platform: ${platform}`);
+
+  const dest = getYtDlpRuntimePath();
+  await downloadFile(
+    asset.browser_download_url,
+    dest,
+    (r, t) =>
+      t > 0 &&
+      onProgress?.(`Downloading yt-dlp… ${Math.round((r / t) * 100)}%`, Math.round((r / t) * 100))
+  );
+
+  if (platform !== 'win32') fs.chmodSync(dest, 0o755);
+
+  writeVersion('yt-dlp', {
+    version: release.tag_name,
+    releaseUrl: release.html_url,
+    installedAt: new Date().toISOString(),
+  });
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export async function ensureDeps(onProgress) {
   const ffmpegReady =
     fs.existsSync(getFfmpegRuntimePath()) && fs.existsSync(getFfprobeRuntimePath());
   const analyzerReady = fs.existsSync(getAnalyzerRuntimePath());
-  if (ffmpegReady && analyzerReady) return;
+  const ytDlpReady = fs.existsSync(getYtDlpRuntimePath());
+  if (ffmpegReady && analyzerReady && ytDlpReady) return;
 
   const binDir = getBinDir();
   await fs.promises.mkdir(binDir, { recursive: true });
   const tmp = path.join(app.getPath('temp'), 'djman-deps');
   await fs.promises.mkdir(tmp, { recursive: true });
 
-  const totalSteps = (!ffmpegReady ? 1 : 0) + (!analyzerReady ? 1 : 0);
+  const totalSteps = (!ffmpegReady ? 1 : 0) + (!analyzerReady ? 1 : 0) + (!ytDlpReady ? 1 : 0);
   let step = 0;
   const stepCb = (msg, pct) => onProgress?.(`[${step}/${totalSteps}] ${msg}`, pct);
 
@@ -336,6 +449,10 @@ export async function ensureDeps(onProgress) {
       step++;
       await downloadAnalyzer(tmp, stepCb);
     }
+    if (!ytDlpReady) {
+      step++;
+      await downloadYtDlp(tmp, stepCb);
+    }
     onProgress?.('Setup complete.', 100);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -344,7 +461,7 @@ export async function ensureDeps(onProgress) {
 
 export async function checkForUpdates() {
   const installed = getInstalledVersions();
-  const result = { analyzer: null };
+  const result = { analyzer: null, ytDlp: null };
 
   try {
     const release = await getLatestRelease('Radexito', 'mixxx-analyzer');
@@ -356,6 +473,18 @@ export async function checkForUpdates() {
     };
   } catch {
     result.analyzer = { error: 'Could not check for updates' };
+  }
+
+  try {
+    const release = await getLatestRelease('yt-dlp', 'yt-dlp');
+    result.ytDlp = {
+      installedTag: installed.ytDlp?.version ?? null,
+      latestTag: release.tag_name,
+      hasUpdate: installed.ytDlp?.version !== release.tag_name,
+      releaseUrl: release.html_url,
+    };
+  } catch {
+    result.ytDlp = { error: 'Could not check for updates' };
   }
 
   return result;
@@ -374,14 +503,28 @@ export async function updateAnalyzer(onProgress) {
   }
 }
 
+export async function updateYtDlp(onProgress, tag = null) {
+  const binDir = getBinDir();
+  await fs.promises.mkdir(binDir, { recursive: true });
+  const tmp = path.join(app.getPath('temp'), 'djman-deps');
+  await fs.promises.mkdir(tmp, { recursive: true });
+  try {
+    await downloadYtDlp(tmp, onProgress, tag);
+    onProgress?.(tag ? `yt-dlp ${tag} installed.` : 'yt-dlp updated.', 100);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 export async function updateAll(onProgress) {
   const binDir = getBinDir();
   await fs.promises.mkdir(binDir, { recursive: true });
   const tmp = path.join(app.getPath('temp'), 'djman-deps');
   await fs.promises.mkdir(tmp, { recursive: true });
   try {
-    await downloadFFmpeg(tmp, (msg, pct) => onProgress?.(`[1/2] ${msg}`, pct));
-    await downloadAnalyzer(tmp, (msg, pct) => onProgress?.(`[2/2] ${msg}`, pct));
+    await downloadFFmpeg(tmp, (msg, pct) => onProgress?.(`[1/3] ${msg}`, pct));
+    await downloadAnalyzer(tmp, (msg, pct) => onProgress?.(`[2/3] ${msg}`, pct));
+    await downloadYtDlp(tmp, (msg, pct) => onProgress?.(`[3/3] ${msg}`, pct));
     onProgress?.('All dependencies updated.', 100);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

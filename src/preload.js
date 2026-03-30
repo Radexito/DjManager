@@ -34,6 +34,27 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('export-m3u-progress', handler);
   },
 
+  // USB / Rekordbox export
+  checkUsbFormat: (mountPath) => ipcRenderer.invoke('check-usb-format', mountPath),
+  formatUsb: (opts) => ipcRenderer.invoke('format-usb', opts),
+  exportRekordbox: (opts) => ipcRenderer.invoke('export-rekordbox', opts),
+  exportAll: (opts) => ipcRenderer.invoke('export-all', opts),
+  onFormatUsbProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('format-usb-progress', handler);
+    return () => ipcRenderer.removeListener('format-usb-progress', handler);
+  },
+  onExportRekordboxProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('export-rekordbox-progress', handler);
+    return () => ipcRenderer.removeListener('export-rekordbox-progress', handler);
+  },
+  onExportAllProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('export-all-progress', handler);
+    return () => ipcRenderer.removeListener('export-all-progress', handler);
+  },
+
   // Settings
   getSetting: (key, def) => ipcRenderer.invoke('get-setting', key, def),
   setSetting: (key, value) => ipcRenderer.invoke('set-setting', key, value),
@@ -67,6 +88,34 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('open-settings', handler);
     return () => ipcRenderer.removeListener('open-settings', handler);
   },
+  // Auto-tagger
+  autoTagSearch: (query) => ipcRenderer.invoke('auto-tag-search', { query }),
+  fetchArtworkUrl: ({ trackId, url }) => ipcRenderer.invoke('fetch-artwork-url', { trackId, url }),
+
+  // yt-dlp URL download
+  getMediaPort: () => ipcRenderer.invoke('get-media-port'),
+  ytDlpFetchInfo: (url) => ipcRenderer.invoke('ytdlp-fetch-info', url),
+  ytDlpDownloadUrl: ({ url, playlistItems, playlistTitle, existingPlaylistId, newPlaylistName }) =>
+    ipcRenderer.invoke('ytdlp-download-url', {
+      url,
+      playlistItems,
+      playlistTitle,
+      existingPlaylistId,
+      newPlaylistName,
+    }),
+  onYtDlpProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-progress', handler);
+    return () => ipcRenderer.removeListener('ytdlp-progress', handler);
+  },
+  onYtDlpTrackUpdate: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-track-update', handler);
+    return () => ipcRenderer.removeListener('ytdlp-track-update', handler);
+  },
+  updateYtDlp: (tag) => ipcRenderer.invoke('update-yt-dlp', tag ?? null),
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
+
   clearLibrary: () => ipcRenderer.invoke('clear-library'),
   clearUserData: () => ipcRenderer.invoke('clear-user-data'),
   getLogDir: () => ipcRenderer.invoke('get-log-dir'),

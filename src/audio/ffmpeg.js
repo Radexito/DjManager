@@ -1,12 +1,6 @@
 import { spawn } from 'child_process';
 import fs from 'fs';
-import { getFfmpegRuntimePath, getFfprobeRuntimePath } from '../deps.js';
-
-export function getFfmpegPath() {
-  const p = getFfmpegRuntimePath();
-  if (!fs.existsSync(p)) throw new Error(`FFmpeg not found at ${p} — still downloading?`);
-  return p;
-}
+import { getFfprobeRuntimePath } from '../deps.js';
 
 export function ffprobe(filePath) {
   const ffprobePath = getFfprobeRuntimePath();

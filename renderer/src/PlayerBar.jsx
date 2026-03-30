@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { usePlayer } from './PlayerContext.jsx';
+import { artworkUrl } from './artworkUrl.js';
 import './PlayerBar.css';
 
 function formatTime(s) {
@@ -9,16 +10,20 @@ function formatTime(s) {
   return `${m}:${sec}`;
 }
 
-export default function PlayerBar({ onNavigateToPlaylist }) {
+export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
   const {
+    mediaPort,
     currentTrack,
     currentPlaylistId,
+    currentPlaylistName,
     isPlaying,
     currentTime,
     duration,
     shuffle,
     repeat,
     outputDeviceId,
+    volume,
+    history,
     togglePlay,
     next,
     prev,
@@ -26,13 +31,17 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
     toggleShuffle,
     cycleRepeat,
     setDevice,
+    setVolume,
+    play,
   } = usePlayer();
 
   const [devices, setDevices] = useState([]);
   const [showDevices, setShowDevices] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const seekbarRef = useRef(); // uncontrolled range input
   const seekingRef = useRef(false); // true while user drags
   const deviceWrapRef = useRef();
+  const historyWrapRef = useRef();
 
   useEffect(() => {
     async function loadDevices() {
@@ -86,20 +95,58 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
     return () => document.removeEventListener('mousedown', handler);
   }, [showDevices]);
 
+  // Close history dropdown on outside click
+  useEffect(() => {
+    if (!showHistory) return;
+    const handler = (e) => {
+      if (historyWrapRef.current && !historyWrapRef.current.contains(e.target))
+        setShowHistory(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showHistory]);
+
+  const artSrc = artworkUrl(
+    currentTrack?.has_artwork ? currentTrack?.artwork_path : null,
+    mediaPort
+  );
+
   return (
     <div className="player-bar">
-      {/* Left: current track info */}
+      {/* Left: album art + current track info */}
       <div className="player-left">
-        {currentTrack ? (
-          <>
-            <div className="player-title" title={currentTrack.title}>
-              {currentTrack.title}
-            </div>
-            <div className="player-artist">{currentTrack.artist || 'Unknown'}</div>
-          </>
+        {artSrc ? (
+          <img className="player-art" src={artSrc} alt="Album art" draggable={false} />
         ) : (
-          <div className="player-idle">No track playing</div>
+          <div className="player-art player-art--placeholder">♪</div>
         )}
+        <div className="player-track-info">
+          {currentTrack ? (
+            <>
+              <div className="player-title" title={currentTrack.title}>
+                {currentTrack.title}
+              </div>
+              <div
+                className={`player-artist${currentTrack.artist ? ' player-artist--clickable' : ''}`}
+                title={currentTrack.artist ? `Search: ARTIST is ${currentTrack.artist}` : undefined}
+                onClick={() => currentTrack.artist && onArtistSearch?.(currentTrack.artist)}
+              >
+                {currentTrack.artist || 'Unknown'}
+              </div>
+              {currentPlaylistName && (
+                <div
+                  className="player-from player-from--clickable"
+                  title={`Go to playlist: ${currentPlaylistName}`}
+                  onClick={() => onNavigateToPlaylist(String(currentPlaylistId))}
+                >
+                  ▶ {currentPlaylistName}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="player-idle">No track playing</div>
+          )}
+        </div>
       </div>
 
       {/* Center: transport controls + seekbar */}
@@ -140,11 +187,14 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
             max={duration || 0}
             step={0.5}
             defaultValue={0}
-            onPointerDown={() => {
+            onPointerDown={(e) => {
+              console.log(`[seekbar] pointerDown value=${Number(e.target.value).toFixed(3)}`);
               seekingRef.current = true;
             }}
             onPointerUp={(e) => {
-              seek(Number(e.target.value));
+              const val = Number(e.target.value);
+              console.log(`[seekbar] pointerUp  value=${val.toFixed(3)}`);
+              seek(val);
               seekingRef.current = false;
             }}
           />
@@ -152,15 +202,33 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
         </div>
       </div>
 
-      {/* Right: device picker + navigate to playlist */}
+      {/* Right: volume + device picker + history + navigate to playlist */}
       <div className="player-right">
+        {/* Volume control */}
+        <div className="player-volume-wrap">
+          <span className="player-volume-icon" title="Volume">
+            {volume === 0 ? '🔇' : volume < 0.4 ? '🔉' : '🔊'}
+          </span>
+          <input
+            type="range"
+            className="player-volume-slider"
+            min={0}
+            max={1}
+            step={0.01}
+            value={volume}
+            onChange={(e) => setVolume(Number(e.target.value))}
+            title={`Volume: ${Math.round(volume * 100)}%`}
+          />
+        </div>
+
+        {/* Device picker */}
         <div className="player-device-wrap" ref={deviceWrapRef}>
           <button
             className="player-btn"
             onClick={() => setShowDevices((s) => !s)}
-            title="Audio output"
+            title="Audio output device"
           >
-            🔊
+            🎧
           </button>
           {showDevices && (
             <div className="player-device-menu">
@@ -183,14 +251,46 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
           )}
         </div>
 
-        <button
-          className="player-btn"
-          onClick={() => currentPlaylistId && onNavigateToPlaylist(String(currentPlaylistId))}
-          title="Go to current playlist"
-          disabled={!currentPlaylistId}
-        >
-          ☰
-        </button>
+        {/* Playback history */}
+        <div className="player-history-wrap" ref={historyWrapRef}>
+          <button
+            className={`player-btn${showHistory ? ' player-btn--active' : ''}`}
+            onClick={() => setShowHistory((s) => !s)}
+            title="Playback history"
+            disabled={history.length === 0}
+          >
+            🕐
+          </button>
+          {showHistory && history.length > 0 && (
+            <div className="player-history-menu">
+              <div className="player-history-header">Recent tracks</div>
+              {history.map((t, i) => (
+                <div
+                  key={`${t.id}-${i}`}
+                  className="player-history-item"
+                  title={`${t.title} — ${t.artist || 'Unknown'}`}
+                  onClick={() => {
+                    play(t, [t], 0, null, null);
+                    setShowHistory(false);
+                  }}
+                >
+                  <span className="player-history-title">{t.title}</span>
+                  <span className="player-history-artist">{t.artist || 'Unknown'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {currentPlaylistId && (
+          <button
+            className="player-btn"
+            onClick={() => onNavigateToPlaylist(String(currentPlaylistId))}
+            title="Go to current playlist"
+          >
+            ☰
+          </button>
+        )}
       </div>
     </div>
   );

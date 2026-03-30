@@ -3,12 +3,25 @@ import './SettingsModal.css';
 
 const DEFAULT_TARGET = -14;
 
+const COOKIE_BROWSERS = [
+  { value: '', label: 'None (not logged in)' },
+  { value: 'chrome', label: 'Chrome' },
+  { value: 'chromium', label: 'Chromium' },
+  { value: 'brave', label: 'Brave' },
+  { value: 'firefox', label: 'Firefox' },
+  { value: 'librewolf', label: 'LibreWolf' },
+  { value: 'edge', label: 'Edge' },
+];
+
 function SettingsModal({ onClose }) {
   const [activeSection, setActiveSection] = useState('library');
   const [targetInput, setTargetInput] = useState(String(DEFAULT_TARGET));
   const [confirmClear, setConfirmClear] = useState(null); // 'library' | 'userdata'
   const [depVersions, setDepVersions] = useState(null);
   const [updatingAll, setUpdatingAll] = useState(false);
+  const [ytdlpVersionInput, setYtdlpVersionInput] = useState('');
+  const [ytdlpUpdating, setYtdlpUpdating] = useState(false);
+  const [cookiesBrowser, setCookiesBrowser] = useState('');
 
   // Library location
   const [libraryPath, setLibraryPath] = useState('');
@@ -41,6 +54,9 @@ function SettingsModal({ onClose }) {
     if (activeSection === 'updates') {
       window.api.getDepVersions().then(setDepVersions);
     }
+    if (activeSection === 'downloads') {
+      window.api.getSetting('ytdlp_cookies_browser', '').then(setCookiesBrowser);
+    }
   }, [activeSection]);
 
   const handleUpdateAll = async () => {
@@ -51,12 +67,26 @@ function SettingsModal({ onClose }) {
     setUpdatingAll(false);
   };
 
+  const handleUpdateYtDlp = async (tag = null) => {
+    setYtdlpUpdating(true);
+    await window.api.updateYtDlp(tag);
+    const versions = await window.api.getDepVersions();
+    setDepVersions(versions);
+    setYtdlpUpdating(false);
+    if (tag) setYtdlpVersionInput('');
+  };
+
   const handleTargetChange = (raw) => {
     setTargetInput(raw);
     const num = Number(raw);
     if (Number.isFinite(num) && num >= -60 && num <= 0) {
       window.api.setSetting('normalize_target_lufs', raw);
     }
+  };
+
+  const handleCookiesBrowserChange = (value) => {
+    setCookiesBrowser(value);
+    window.api.setSetting('ytdlp_cookies_browser', value);
   };
 
   const handleClearLibrary = async () => {
@@ -94,6 +124,7 @@ function SettingsModal({ onClose }) {
 
   const sections = [
     { id: 'library', label: 'Library' },
+    { id: 'downloads', label: 'Downloads' },
     { id: 'updates', label: 'Dependencies' },
     { id: 'advanced', label: 'Advanced' },
   ];
@@ -185,6 +216,61 @@ function SettingsModal({ onClose }) {
             </>
           )}
 
+          {activeSection === 'downloads' && (
+            <>
+              <h3>Downloads</h3>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Audio Format</div>
+                <p className="settings-group-desc">
+                  yt-dlp always downloads the best available audio-only stream. YouTube and
+                  SoundCloud are converted to MP3 (VBR best ≈ 320 kbps). Bandcamp is saved as FLAC
+                  to preserve lossless quality when available.
+                </p>
+              </div>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Browser Cookies</div>
+                <p className="settings-group-desc">
+                  Use cookies from your browser so yt-dlp can access age-restricted content,
+                  Bandcamp purchases, and other authenticated sources. You must already be logged in
+                  to the site in that browser.
+                </p>
+                <div className="settings-row">
+                  <label>Browser</label>
+                  <select
+                    value={cookiesBrowser}
+                    onChange={(e) => handleCookiesBrowserChange(e.target.value)}
+                    className="settings-select"
+                  >
+                    {COOKIE_BROWSERS.map((b) => (
+                      <option key={b.value} value={b.value}>
+                        {b.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {cookiesBrowser && (
+                  <div
+                    className="settings-cookie-status settings-cookie-status--ok"
+                    style={{ marginTop: '0.5rem' }}
+                  >
+                    🟢 Cookies active — <strong>{cookiesBrowser}</strong>. Make sure the browser is
+                    closed or not actively using the cookie store when downloading.
+                  </div>
+                )}
+                {!cookiesBrowser && (
+                  <div
+                    className="settings-cookie-status settings-cookie-status--warn"
+                    style={{ marginTop: '0.5rem' }}
+                  >
+                    🔒 No browser selected — private or age-restricted content may fail.
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
           {activeSection === 'updates' && (
             <>
               <h3>Dependencies</h3>
@@ -192,8 +278,7 @@ function SettingsModal({ onClose }) {
               <div className="settings-group">
                 <div className="settings-group-title">Installed Versions</div>
                 <p className="settings-group-desc">
-                  FFmpeg and mixxx-analyzer are required dependencies downloaded automatically on
-                  first launch.
+                  FFmpeg, mixxx-analyzer, and yt-dlp are downloaded automatically on first launch.
                 </p>
                 <div className="dep-version-list">
                   <div className="dep-version-row">
@@ -204,6 +289,10 @@ function SettingsModal({ onClose }) {
                     <span className="dep-version-name">mixxx-analyzer</span>
                     <span className="dep-version-tag">{depVersions?.analyzer?.version ?? '…'}</span>
                   </div>
+                  <div className="dep-version-row">
+                    <span className="dep-version-name">yt-dlp</span>
+                    <span className="dep-version-tag">{depVersions?.ytDlp?.version ?? '…'}</span>
+                  </div>
                 </div>
               </div>
 
@@ -213,11 +302,65 @@ function SettingsModal({ onClose }) {
                   <div>
                     <div className="settings-action-label">Update All Dependencies</div>
                     <div className="settings-action-desc">
-                      Re-downloads the latest FFmpeg and mixxx-analyzer.
+                      Re-downloads the latest FFmpeg, mixxx-analyzer, and yt-dlp.
                     </div>
                   </div>
-                  <button className="btn-primary" onClick={handleUpdateAll} disabled={updatingAll}>
+                  <button
+                    className="btn-primary"
+                    onClick={handleUpdateAll}
+                    disabled={updatingAll || ytdlpUpdating}
+                  >
                     {updatingAll ? 'Updating…' : 'Update All'}
+                  </button>
+                </div>
+
+                <div className="settings-row settings-row-action" style={{ marginTop: '0.75rem' }}>
+                  <div>
+                    <div className="settings-action-label">Update yt-dlp</div>
+                    <div className="settings-action-desc">
+                      Re-downloads the latest yt-dlp binary independently.
+                    </div>
+                  </div>
+                  <button
+                    className="btn-secondary"
+                    onClick={() => handleUpdateYtDlp(null)}
+                    disabled={updatingAll || ytdlpUpdating}
+                  >
+                    {ytdlpUpdating && !ytdlpVersionInput ? 'Updating…' : 'Update yt-dlp'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Install Specific yt-dlp Version</div>
+                <p className="settings-group-desc">
+                  Enter a release tag from{' '}
+                  <a
+                    href="https://github.com/yt-dlp/yt-dlp/releases"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="settings-link"
+                  >
+                    yt-dlp/releases
+                  </a>{' '}
+                  to pin a specific version (e.g. <code className="settings-code">2025.01.15</code>
+                  ).
+                </p>
+                <div className="settings-row">
+                  <input
+                    type="text"
+                    placeholder="e.g. 2025.01.15"
+                    value={ytdlpVersionInput}
+                    onChange={(e) => setYtdlpVersionInput(e.target.value)}
+                    className="settings-version-input"
+                    disabled={ytdlpUpdating || updatingAll}
+                  />
+                  <button
+                    className="btn-secondary"
+                    onClick={() => handleUpdateYtDlp(ytdlpVersionInput.trim())}
+                    disabled={!ytdlpVersionInput.trim() || ytdlpUpdating || updatingAll}
+                  >
+                    {ytdlpUpdating && ytdlpVersionInput ? 'Installing…' : 'Install'}
                   </button>
                 </div>
               </div>

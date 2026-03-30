@@ -17,7 +17,6 @@
 
 /* Search */
 .search-input {
-  margin-bottom: 20px;
   padding: 8px;
   border: 1px solid #333;
   border-radius: 4px;
@@ -29,12 +28,12 @@
 /* Header — scrollLeft synced to list via JS; no visible scrollbar */
 .header {
   display: grid;
+  column-gap: 6px;
   padding: 12px 8px;
   background-color: #2a2a2a;
   color: #e0e0e0;
   font-weight: 600;
   border-bottom: 1px solid #404040;
-  overflow-x: hidden;
   position: relative; /* for col-dropdown positioning */
 }
 
@@ -53,6 +52,7 @@
   height: 50px;
   width: 100%;
   display: grid;
+  column-gap: 6px;
   align-items: center;
   padding: 0 8px;
   cursor: pointer;
@@ -82,11 +82,86 @@
 
 .cell.index {
   font-weight: 500;
+  color: #aaa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+}
+
+.index-num {
+  line-height: 1;
+}
+
+.index-play {
+  display: none;
+  background: none;
+  border: none;
+  outline: none;
   color: #fff;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0;
+}
+
+.index-play:focus,
+.index-play:focus-visible {
+  outline: none;
+}
+
+.row:hover .index-num {
+  display: none;
+}
+
+.row:hover .index-play {
+  display: block;
+}
+
+/* Currently playing track — don't show play button on hover */
+.row--playing:hover .index-num {
+  display: block;
+}
+
+.row--playing:hover .index-play {
+  display: none;
 }
 
 .cell.title {
   color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.cell-artwork {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 3px;
+  display: block;
+}
+
+.cell-artwork--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: #2a2a2a;
+  border-radius: 3px;
+  font-size: 14px;
+  color: #444;
+  flex-shrink: 0;
+}
+
+.cell-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .cell.artist {
@@ -102,6 +177,21 @@
   text-align: center;
   font-size: 16px;
   color: #4ade80;
+}
+
+/* Shared horizontal-scroll container for header + list */
+.table-scroll-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-width: 0;
+}
+
+/* In library mode the List manages its own scroll — wrapper must not clip it */
+.table-scroll-wrap.library-mode {
+  overflow-x: hidden;
 }
 
 /* react-window */
@@ -163,6 +253,12 @@
 }
 
 /* Selected rows */
+.row:hover {
+  background: #1a3a5c !important;
+  outline: 1px solid #2d6aa0;
+  outline-offset: -1px;
+}
+
 .row--selected {
   background: #1a3a5c !important;
   outline: 1px solid #2d6aa0;
@@ -254,8 +350,9 @@
 
 /* ── Playlist DnD list ─────────────────────────────────────────────────── */
 .playlist-dnd-list {
+  flex: 1;
   overflow-y: auto;
-  height: 600px;
+  overflow-x: auto;
 }
 
 .drag-handle {
