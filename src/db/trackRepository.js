@@ -309,6 +309,36 @@ export function normalizeLibrary(targetLufs) {
   return info.changes ?? 0;
 }
 
+export function normalizeTracksByIds(trackIds, targetLufs) {
+  const update = db.prepare(
+    `UPDATE tracks SET replay_gain = ROUND((? - loudness) * 10) / 10 WHERE id = ? AND loudness IS NOT NULL`
+  );
+  const read = db.prepare(`SELECT replay_gain FROM tracks WHERE id = ?`);
+  const gains = {};
+  db.transaction(() => {
+    for (const id of trackIds) {
+      const info = update.run(targetLufs, id);
+      if (info.changes) {
+        const row = read.get(id);
+        if (row) gains[id] = row.replay_gain;
+      }
+    }
+  })();
+  return gains;
+}
+
+export function resetNormalization(trackIds = null) {
+  if (trackIds && trackIds.length > 0) {
+    const stmt = db.prepare(`UPDATE tracks SET replay_gain = NULL WHERE id = ?`);
+    db.transaction(() => {
+      for (const id of trackIds) stmt.run(id);
+    })();
+    return trackIds.length;
+  }
+  const info = db.prepare(`UPDATE tracks SET replay_gain = NULL`).run();
+  return info.changes ?? 0;
+}
+
 export function clearTracks() {
   console.log('Clearing all tracks from database');
   db.prepare(`DELETE FROM tracks`).run();

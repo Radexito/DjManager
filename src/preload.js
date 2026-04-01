@@ -66,6 +66,8 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeAllListeners('move-library-progress');
   },
   normalizeLibrary: (payload) => ipcRenderer.invoke('normalize-library', payload),
+  normalizeTracks: (payload) => ipcRenderer.invoke('normalize-tracks', payload),
+  resetNormalization: (payload) => ipcRenderer.invoke('reset-normalization', payload),
 
   // Events
   onTrackUpdated: (callback) => {

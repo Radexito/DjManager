@@ -19,6 +19,8 @@ function SettingsModal({ onClose }) {
   const [confirmClear, setConfirmClear] = useState(null); // 'library' | 'userdata'
   const [normalizing, setNormalizing] = useState(false);
   const [normalizeResult, setNormalizeResult] = useState(null); // number | null
+  const [confirmNormalize, setConfirmNormalize] = useState(false);
+  const [resettingNorm, setResettingNorm] = useState(false);
   const [depVersions, setDepVersions] = useState(null);
   const [updatingAll, setUpdatingAll] = useState(false);
   const [ytdlpVersionInput, setYtdlpVersionInput] = useState('');
@@ -90,13 +92,25 @@ function SettingsModal({ onClose }) {
   const handleNormalize = async () => {
     const targetLufs = Number(targetInput);
     if (!Number.isFinite(targetLufs) || targetLufs < -60 || targetLufs > 0) return;
+    setConfirmNormalize(false);
     setNormalizing(true);
     setNormalizeResult(null);
     try {
       const { updated } = await window.api.normalizeLibrary({ targetLufs });
-      setNormalizeResult(updated);
+      setNormalizeResult({ type: 'normalize', count: updated });
     } finally {
       setNormalizing(false);
+    }
+  };
+
+  const handleResetAllNormalization = async () => {
+    setResettingNorm(true);
+    setNormalizeResult(null);
+    try {
+      const { updated } = await window.api.resetNormalization({});
+      setNormalizeResult({ type: 'reset', count: updated });
+    } finally {
+      setResettingNorm(false);
     }
   };
 
@@ -168,8 +182,9 @@ function SettingsModal({ onClose }) {
               <div className="settings-group">
                 <div className="settings-group-title">Loudness Normalization</div>
                 <p className="settings-group-desc">
-                  Calculates a gain adjustment for every analyzed track so it hits the target
-                  loudness during playback. Tracks without loudness data are skipped.
+                  Stores a gain value in the database for each analyzed track so playback hits the
+                  target loudness. <strong>Original audio files are never modified.</strong> You can
+                  also normalize or reset individual tracks via right-click → Analysis.
                 </p>
                 <div className="settings-row">
                   <label>Target loudness</label>
@@ -187,20 +202,59 @@ function SettingsModal({ onClose }) {
                 </div>
                 <div className="settings-row settings-row-action">
                   <div>
-                    <div className="settings-action-label">Apply to Library</div>
+                    <div className="settings-action-label">Normalize Whole Library</div>
                     <div className="settings-action-desc">
-                      Calculates and saves a gain value for every analyzed track.
+                      Calculates and saves a gain for every analyzed track.
                     </div>
                   </div>
-                  <button className="btn-primary" onClick={handleNormalize} disabled={normalizing}>
-                    {normalizing ? 'Normalizing…' : 'Normalize Library'}
+                  {confirmNormalize ? (
+                    <div className="settings-confirm-row">
+                      <span>Apply to entire library?</span>
+                      <button
+                        className="btn-primary"
+                        onClick={handleNormalize}
+                        disabled={normalizing}
+                      >
+                        {normalizing ? 'Normalizing…' : 'Yes, normalize'}
+                      </button>
+                      <button className="btn-secondary" onClick={() => setConfirmNormalize(false)}>
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="btn-primary"
+                      onClick={() => setConfirmNormalize(true)}
+                      disabled={normalizing}
+                    >
+                      Normalize Library
+                    </button>
+                  )}
+                </div>
+                <div className="settings-row settings-row-action">
+                  <div>
+                    <div className="settings-action-label">Reset All Normalization</div>
+                    <div className="settings-action-desc">
+                      Removes stored gain from every track — playback returns to original levels.
+                    </div>
+                  </div>
+                  <button
+                    className="btn-secondary"
+                    onClick={handleResetAllNormalization}
+                    disabled={resettingNorm || normalizing}
+                  >
+                    {resettingNorm ? 'Resetting…' : 'Reset All'}
                   </button>
                 </div>
                 {normalizeResult !== null && (
                   <div className="settings-normalize-result">
-                    {normalizeResult === 0
-                      ? 'No analyzed tracks found — import and analyze tracks first.'
-                      : `Done — gain set for ${normalizeResult} track${normalizeResult !== 1 ? 's' : ''}.`}
+                    {normalizeResult.type === 'reset'
+                      ? normalizeResult.count === 0
+                        ? 'Nothing to reset — no tracks had a gain stored.'
+                        : `Reset — removed gain from ${normalizeResult.count} track${normalizeResult.count !== 1 ? 's' : ''}.`
+                      : normalizeResult.count === 0
+                        ? 'No analyzed tracks found — import and analyze tracks first.'
+                        : `Done — gain set for ${normalizeResult.count} track${normalizeResult.count !== 1 ? 's' : ''}.`}
                   </div>
                 )}
               </div>

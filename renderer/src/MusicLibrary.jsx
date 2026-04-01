@@ -758,6 +758,24 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     for (const id of targetIds) await window.api.reanalyzeTrack(id);
   }, [contextMenu]);
 
+  const handleNormalizeTracks = useCallback(async () => {
+    const targetIds = contextMenu?.targetIds ?? [];
+    setContextMenu(null);
+    const { gains } = await window.api.normalizeTracks({ trackIds: targetIds });
+    setTracks((prev) =>
+      prev.map((t) => (gains[t.id] !== undefined ? { ...t, replay_gain: gains[t.id] } : t))
+    );
+  }, [contextMenu]);
+
+  const handleResetNormalization = useCallback(async () => {
+    const targetIds = contextMenu?.targetIds ?? [];
+    setContextMenu(null);
+    await window.api.resetNormalization({ trackIds: targetIds });
+    setTracks((prev) =>
+      prev.map((t) => (targetIds.includes(t.id) ? { ...t, replay_gain: null } : t))
+    );
+  }, [contextMenu]);
+
   const handleRemove = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
     const n = targetIds.length;
@@ -1468,6 +1486,13 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                   <SubItem id="analysis" label={`🔬 Analysis${selectionLabel}`}>
                     <div className="context-menu-item" onClick={handleReanalyze}>
                       🔄 Re-analyze
+                    </div>
+                    <div className="context-menu-separator" />
+                    <div className="context-menu-item" onClick={handleNormalizeTracks}>
+                      🔊 Normalize
+                    </div>
+                    <div className="context-menu-item" onClick={handleResetNormalization}>
+                      ↩ Reset normalization
                     </div>
                     <div className="context-menu-separator" />
                     <SubItem id="bpm" label="🎵 BPM">
