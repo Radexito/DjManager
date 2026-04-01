@@ -387,7 +387,7 @@ function SortableColItem({ colKey, label, checked, onToggle }) {
 
 function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const isPlaylistView = selectedPlaylist !== 'music';
-  const { play, stop, currentTrack, currentPlaylistId, mediaPort } = usePlayer();
+  const { play, stop, currentTrack, currentPlaylistId, mediaPort, patchCurrentTrack } = usePlayer();
 
   // Only highlight a track as "playing" when the source context matches this view.
   // Library view: only highlight when played from library (currentPlaylistId === null).
@@ -405,6 +405,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
 
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [contextMenu, setContextMenu] = useState(null); // { x, y, targetIds }
+  const [toast, setToast] = useState(null); // { msg, ok } | null
+  const toastTimerRef = useRef(null);
   const [drillStack, setDrillStack] = useState([]); // overlay drill-down stack [{ id, label, content }]
   const [playlistSubmenu, setPlaylistSubmenu] = useState(null); // [{ id, name, color, is_member }]
   const [loadKey, setLoadKey] = useState(0);
@@ -805,14 +807,34 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     for (const id of targetIds) await window.api.reanalyzeTrack(id);
   }, [contextMenu]);
 
+  const showToast = useCallback((msg, ok = true) => {
+    clearTimeout(toastTimerRef.current);
+    setToast({ msg, ok });
+    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+  }, []);
+
   const handleNormalizeTracks = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
     setContextMenu(null);
-    const { gains } = await window.api.normalizeTracks({ trackIds: targetIds });
+    const { gains, updated } = await window.api.normalizeTracks({ trackIds: targetIds });
     setTracks((prev) =>
       prev.map((t) => (gains[t.id] !== undefined ? { ...t, replay_gain: gains[t.id] } : t))
     );
-  }, [contextMenu]);
+    // Update currently playing track immediately
+    for (const [id, rg] of Object.entries(gains)) {
+      patchCurrentTrack(Number(id), { replay_gain: rg });
+    }
+    const skipped = targetIds.length - updated;
+    if (updated === 0) {
+      showToast('No analyzed tracks — analyze tracks first to get loudness data.', false);
+    } else if (skipped > 0) {
+      showToast(
+        `Normalized ${updated} track${updated !== 1 ? 's' : ''} (${skipped} skipped — no loudness data).`
+      );
+    } else {
+      showToast(`Normalized ${updated} track${updated !== 1 ? 's' : ''}.`);
+    }
+  }, [contextMenu, patchCurrentTrack, showToast]);
 
   const handleResetNormalization = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
@@ -821,7 +843,13 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     setTracks((prev) =>
       prev.map((t) => (targetIds.includes(t.id) ? { ...t, replay_gain: null } : t))
     );
-  }, [contextMenu]);
+    for (const id of targetIds) {
+      patchCurrentTrack(id, { replay_gain: null });
+    }
+    showToast(
+      `Reset normalization for ${targetIds.length} track${targetIds.length !== 1 ? 's' : ''}.`
+    );
+  }, [contextMenu, patchCurrentTrack, showToast]);
 
   const handleRemove = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
@@ -1557,6 +1585,11 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
               </div>
             </>
           </SubItemCtx.Provider>
+        )}
+        {toast && (
+          <div className={`music-library-toast${toast.ok ? '' : ' music-library-toast--warn'}`}>
+            {toast.msg}
+          </div>
         )}
       </div>
       {/* end .music-library__main */}

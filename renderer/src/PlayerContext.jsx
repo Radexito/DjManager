@@ -314,6 +314,11 @@ export function PlayerProvider({ children }) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [audio]);
 
+  const patchCurrentTrack = useCallback(
+    (id, fields) => setCurrentTrack((prev) => (prev?.id === id ? { ...prev, ...fields } : prev)),
+    []
+  );
+
   return (
     <PlayerContext.Provider
       value={{
@@ -341,6 +346,7 @@ export function PlayerProvider({ children }) {
         cycleRepeat,
         setDevice,
         setVolume,
+        patchCurrentTrack,
       }}
     >
       {children}
