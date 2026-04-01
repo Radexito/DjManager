@@ -172,6 +172,12 @@
   font-style: italic;
 }
 
+.playlist-item--drag-over {
+  background-color: #1db95433 !important;
+  outline: 1px solid #1db954;
+  outline-offset: -1px;
+}
+
 .playlist-new-form {
   padding: 2px 4px;
 }
