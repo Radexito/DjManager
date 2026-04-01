@@ -224,7 +224,7 @@ function LibraryRow({
   return (
     <div
       style={{ ...style, gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
-      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}`}
+      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}`}
       title={`${t.title} - ${t.artist || 'Unknown'}`}
       draggable={true}
       onDragStart={(e) => onDragStart(e, t)}
@@ -306,16 +306,7 @@ function SortableRow({
     <div
       ref={setNodeRef}
       style={style}
-      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}`}
-      title={`${t.title} - ${t.artist || 'Unknown'}`}
-      draggable={true}
-      onDragStart={(e) => {
-        if (e.target.closest('.drag-handle')) {
-          e.preventDefault(); // let @dnd-kit handle reorder from the drag handle
-          return;
-        }
-        onDragStart(e, t);
-      }}
+      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}`}
       onClick={(e) => onRowClick(e, t, index)}
       onDoubleClick={() => onDoubleClick(t, index)}
       onContextMenu={(e) => onContextMenu(e, t, index)}
@@ -387,7 +378,17 @@ function SortableColItem({ colKey, label, checked, onToggle }) {
 
 function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const isPlaylistView = selectedPlaylist !== 'music';
-  const { play, stop, currentTrack, currentPlaylistId, mediaPort, patchCurrentTrack } = usePlayer();
+  const {
+    play,
+    stop,
+    currentTrack,
+    isPlaying,
+    togglePlay,
+    currentPlaylistId,
+    mediaPort,
+    patchCurrentTrack,
+    reloadCurrentTrack,
+  } = usePlayer();
 
   // Only highlight a track as "playing" when the source context matches this view.
   // Library view: only highlight when played from library (currentPlaylistId === null).
@@ -430,6 +431,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const headerRef = useRef(null);
   const headerScrollRef = useRef(null); // syncs header horizontal scroll to content scroll
   const dndScrollRef = useRef(null); // ref to playlist DnD scroll container
+  // Tracks whether we should resume playback after normalization finishes re-analyzing
+  const normalizeResumeRef = useRef(null); // { id, shouldResume } | null
 
   const visibleColumns = useMemo(
     () => colOrder.map((k) => COL_BY_KEY[k]).filter((c) => c && colVis[c.key] !== false),
@@ -528,12 +531,42 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   // Listen for background analysis updates
   useEffect(() => {
     const unsub = window.api.onTrackUpdated(({ trackId, analysis }) => {
-      setTracks((prev) =>
-        prev.map((t) => (t.id === trackId ? { ...t, ...analysis, analyzed: 1 } : t))
-      );
+      // analyzed: 0 means an intermediate event (normalization done, re-analysis pending)
+      // analyzed: undefined or 1 means analysis is complete
+      const isAnalyzed = analysis.analyzed !== 0;
+      const merged = { ...analysis, analyzed: isAnalyzed ? 1 : 0 };
+
+      setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, ...merged } : t)));
+
+      // Keep PlayerContext's currentTrack in sync
+      patchCurrentTrack(trackId, merged);
+
+      // If this completes the full analysis of a track being normalized that was playing,
+      // reload the audio element to use the new normalized file, then optionally resume
+      if (isAnalyzed) {
+        console.log(
+          '[normalize] track-updated (full analysis) trackId=',
+          trackId,
+          'normalized_file_path=',
+          analysis.normalized_file_path,
+          'resume ref=',
+          normalizeResumeRef.current
+        );
+        if (analysis.normalized_file_path && normalizeResumeRef.current?.id === trackId) {
+          const { shouldResume } = normalizeResumeRef.current;
+          normalizeResumeRef.current = null;
+          console.log(
+            '[normalize] calling reloadCurrentTrack path=',
+            analysis.normalized_file_path,
+            'shouldResume=',
+            shouldResume
+          );
+          reloadCurrentTrack(analysis.normalized_file_path, shouldResume);
+        }
+      }
     });
     return unsub;
-  }, []);
+  }, [patchCurrentTrack, reloadCurrentTrack]);
 
   // Refresh list when new tracks are imported
   useEffect(() => {
@@ -816,38 +849,52 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const handleNormalizeTracks = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
     setContextMenu(null);
-    const { gains, updated } = await window.api.normalizeTracks({ trackIds: targetIds });
-    setTracks((prev) =>
-      prev.map((t) => (gains[t.id] !== undefined ? { ...t, replay_gain: gains[t.id] } : t))
-    );
-    // Update currently playing track immediately
-    for (const [id, rg] of Object.entries(gains)) {
-      patchCurrentTrack(Number(id), { replay_gain: rg });
+
+    // Pause if the currently-playing track is among those being normalized
+    const playingTarget = currentTrack && targetIds.includes(currentTrack.id);
+    if (playingTarget) {
+      normalizeResumeRef.current = { id: currentTrack.id, shouldResume: isPlaying };
+      if (isPlaying) togglePlay(); // pause
     }
-    const skipped = targetIds.length - updated;
-    if (updated === 0) {
-      showToast('No analyzed tracks — analyze tracks first to get loudness data.', false);
-    } else if (skipped > 0) {
+
+    // Gray out tracks immediately so there's instant visual feedback
+    setTracks((prev) => prev.map((t) => (targetIds.includes(t.id) ? { ...t, analyzed: 0 } : t)));
+    const { normalized, skipped } = await window.api.normalizeTracksAudio({ trackIds: targetIds });
+    if (normalized === 0) {
+      // Un-gray if nothing was normalized
+      setTracks((prev) => prev.map((t) => (targetIds.includes(t.id) ? { ...t, analyzed: 1 } : t)));
+      const wasPlaying = normalizeResumeRef.current?.shouldResume ?? false;
+      normalizeResumeRef.current = null;
+      // Resume if we paused for nothing
+      if (playingTarget && wasPlaying) togglePlay();
       showToast(
-        `Normalized ${updated} track${updated !== 1 ? 's' : ''} (${skipped} skipped — no loudness data).`
+        skipped > 0
+          ? 'No analyzed tracks — analyze tracks first to get loudness data.'
+          : 'Nothing to normalize.',
+        false
       );
-    } else {
-      showToast(`Normalized ${updated} track${updated !== 1 ? 's' : ''}.`);
     }
-  }, [contextMenu, patchCurrentTrack, showToast]);
+    // On success: track-updated IPC events (from normalization + re-analysis) update each row
+    // and reloadCurrentTrack resumes playback once re-analysis is done
+  }, [contextMenu, currentTrack, isPlaying, togglePlay, showToast]);
 
   const handleResetNormalization = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
     setContextMenu(null);
     await window.api.resetNormalization({ trackIds: targetIds });
+    // Clear gain + normalized path, mark as re-analyzing (analysis runs in background)
     setTracks((prev) =>
-      prev.map((t) => (targetIds.includes(t.id) ? { ...t, replay_gain: null } : t))
+      prev.map((t) =>
+        targetIds.includes(t.id)
+          ? { ...t, replay_gain: null, normalized_file_path: null, analyzed: 0 }
+          : t
+      )
     );
     for (const id of targetIds) {
-      patchCurrentTrack(id, { replay_gain: null });
+      patchCurrentTrack(id, { replay_gain: null, normalized_file_path: null });
     }
     showToast(
-      `Reset normalization for ${targetIds.length} track${targetIds.length !== 1 ? 's' : ''}.`
+      `Reset ${targetIds.length} track${targetIds.length !== 1 ? 's' : ''} — re-analyzing…`
     );
   }, [contextMenu, patchCurrentTrack, showToast]);
 
