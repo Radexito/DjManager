@@ -113,6 +113,16 @@ export function spawnAnalysis(trackId, filePath) {
     }
 
     const update = { ...analysisFields, bpm_override: null, ...mergedTags };
+
+    // Re-apply normalization if configured — prevents re-analysis from wiping manual gain
+    const normTarget = getSetting('normalize_target_lufs', null);
+    if (normTarget != null && update.loudness != null) {
+      const parsed = Number(normTarget);
+      if (Number.isFinite(parsed)) {
+        update.replay_gain = Math.round((parsed - update.loudness) * 10) / 10;
+      }
+    }
+
     updateTrack(trackId, update);
 
     // Notify renderer
