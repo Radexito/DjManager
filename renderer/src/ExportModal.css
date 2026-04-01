@@ -246,6 +246,14 @@
   margin-top: 4px;
 }
 
+/* Needs-format buttons are plain text — override the icon-grid layout */
+.export-needs-format-actions .export-option-btn {
+  display: block;
+  white-space: nowrap;
+  text-align: center;
+  padding: 12px 16px;
+}
+
 .export-option-btn--danger {
   border-color: #6b1f1f;
   color: #e07070;

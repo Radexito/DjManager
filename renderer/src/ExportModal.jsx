@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import FormatConfirmModal from './FormatConfirmModal.jsx';
 import './ExportModal.css';
 
@@ -23,8 +23,8 @@ function ProgressBar({ pct }) {
 }
 
 function ExportModal({ onClose, playlistId, initialMode }) {
-  const [step, setStep] = useState(STEPS.idle);
-  const [mode, setMode] = useState(null); // 'rekordbox' | 'all'
+  const [step, setStep] = useState(initialMode ? STEPS.confirm : STEPS.idle);
+  const [mode, setMode] = useState(initialMode ?? null);
   const [usbInfo, setUsbInfo] = useState(null);
   const [usbRoot, setUsbRoot] = useState(null);
   const [progress, setProgress] = useState(null); // { msg, pct }
@@ -43,19 +43,6 @@ function ExportModal({ onClose, playlistId, initialMode }) {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
-
-  const autoOpened = useRef(false);
-
-  // If opened with a pre-set mode (from playlist right-click), show confirm step first
-  // so the user can toggle the normalized-export option before picking a folder
-  useEffect(() => {
-    if (initialMode && !autoOpened.current) {
-      autoOpened.current = true;
-      setMode(initialMode);
-      setStep(STEPS.confirm);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Progress listeners
   useEffect(() => {
