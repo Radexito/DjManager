@@ -155,6 +155,7 @@ function LibraryRow({
   onDoubleClick,
   onContextMenu,
   onRatingChange,
+  onDragStart,
   visibleColumns,
   gridTemplate,
   minScrollWidth,
@@ -178,6 +179,8 @@ function LibraryRow({
       style={{ ...style, gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
       className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}`}
       title={`${t.title} - ${t.artist || 'Unknown'}`}
+      draggable={true}
+      onDragStart={(e) => onDragStart(e, t)}
       onClick={(e) => onRowClick(e, t, index)}
       onDoubleClick={() => onDoubleClick(t, index)}
       onContextMenu={(e) => onContextMenu(e, t, index)}
@@ -236,6 +239,7 @@ function SortableRow({
   onDoubleClick,
   onContextMenu,
   onRatingChange,
+  onDragStart,
   visibleColumns,
   gridTemplate,
   minScrollWidth,
@@ -257,6 +261,14 @@ function SortableRow({
       style={style}
       className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}`}
       title={`${t.title} - ${t.artist || 'Unknown'}`}
+      draggable={true}
+      onDragStart={(e) => {
+        if (e.target.closest('.drag-handle')) {
+          e.preventDefault(); // let @dnd-kit handle reorder from the drag handle
+          return;
+        }
+        onDragStart(e, t);
+      }}
       onClick={(e) => onRowClick(e, t, index)}
       onDoubleClick={() => onDoubleClick(t, index)}
       onContextMenu={(e) => onContextMenu(e, t, index)}
@@ -848,6 +860,15 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     [selectedPlaylist]
   );
 
+  const handleTrackDragStart = useCallback(
+    (e, track) => {
+      const ids = selectedIds.has(track.id) ? [...selectedIds] : [track.id];
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('application/dj-tracks', JSON.stringify(ids));
+    },
+    [selectedIds]
+  );
+
   const handleSaveOrder = useCallback(async () => {
     await window.api.reorderPlaylist(
       Number(selectedPlaylist),
@@ -1027,7 +1048,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
               <div className="playlist-empty-state">
                 No tracks in this playlist.
                 <br />
-                Right-click tracks in your library to add them.
+                Drag tracks from your library here, or right-click to add.
               </div>
             ) : (
               <DndContext
@@ -1052,6 +1073,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                         onDoubleClick={handleDoubleClick}
                         onContextMenu={handleContextMenu}
                         onRatingChange={handleRatingChange}
+                        onDragStart={handleTrackDragStart}
                         visibleColumns={visibleColumns}
                         gridTemplate={gridTemplate}
                         minScrollWidth={minScrollWidth}
@@ -1095,6 +1117,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                 onDoubleClick: handleDoubleClick,
                 onContextMenu: handleContextMenu,
                 onRatingChange: handleRatingChange,
+                onDragStart: handleTrackDragStart,
                 visibleColumns,
                 gridTemplate,
                 minScrollWidth,
