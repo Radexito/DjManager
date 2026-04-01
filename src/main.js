@@ -50,6 +50,8 @@ import {
   removeTrack,
   updateTrack,
   normalizeLibrary,
+  normalizeTracksByIds,
+  resetNormalization,
   clearTracks,
 } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
@@ -237,6 +239,17 @@ ipcMain.handle('normalize-library', (_, { targetLufs }) => {
   setSetting('normalize_target_lufs', String(parsed));
   return { updated };
 });
+ipcMain.handle('normalize-tracks', (_, { trackIds }) => {
+  const targetLufs = Number(getSetting('normalize_target_lufs', '-14'));
+  const gains = normalizeTracksByIds(trackIds, targetLufs);
+  return { updated: Object.keys(gains).length, gains };
+});
+
+ipcMain.handle('reset-normalization', (_, { trackIds } = {}) => {
+  const updated = resetNormalization(trackIds?.length ? trackIds : null);
+  return { updated };
+});
+
 ipcMain.handle('reanalyze-track', (_, trackId) => {
   const track = getTrackById(trackId);
   if (!track) throw new Error(`Track ${trackId} not found`);
