@@ -33,6 +33,7 @@ function Sidebar({
   const [playlistMenu, setPlaylistMenu] = useState(null); // { id, x, y }
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
+  const [dragOverPlaylistId, setDragOverPlaylistId] = useState(null);
   const newInputRef = useRef(null);
   const renameInputRef = useRef(null);
 
@@ -142,6 +143,32 @@ function Sidebar({
     await window.api.updatePlaylistColor(id, color);
   };
 
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleDragEnter = (e, playlistId) => {
+    if (e.dataTransfer.types.includes('application/dj-tracks')) {
+      setDragOverPlaylistId(playlistId);
+    }
+  };
+
+  const handleDragLeave = (e) => {
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      setDragOverPlaylistId(null);
+    }
+  };
+
+  const handleDrop = async (e, playlistId) => {
+    e.preventDefault();
+    setDragOverPlaylistId(null);
+    const raw = e.dataTransfer.getData('application/dj-tracks');
+    if (!raw) return;
+    const trackIds = JSON.parse(raw);
+    await window.api.addTracksToPlaylist(playlistId, trackIds);
+  };
+
   return (
     <div className="sidebar">
       <div className="fixed-top-section">
@@ -214,12 +241,16 @@ function Sidebar({
               </form>
             ) : (
               <div
-                className={`menu-item playlist-item ${selectedMenuItemId === String(pl.id) ? 'active' : ''}`}
+                className={`menu-item playlist-item ${selectedMenuItemId === String(pl.id) ? 'active' : ''}${dragOverPlaylistId === pl.id ? ' playlist-item--drag-over' : ''}`}
                 onClick={() => onMenuSelect(String(pl.id))}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setPlaylistMenu({ id: pl.id, x: e.clientX, y: e.clientY });
                 }}
+                onDragOver={handleDragOver}
+                onDragEnter={(e) => handleDragEnter(e, pl.id)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, pl.id)}
               >
                 {pl.color && (
                   <span className="playlist-color-dot" style={{ background: pl.color }} />
