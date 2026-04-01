@@ -592,3 +592,37 @@
   border-color: #f4a261;
   color: #f4a261;
 }
+
+/* ── Add to new playlist inline input ── */
+.ctx-new-playlist-item {
+  padding: 6px 12px;
+  cursor: default;
+}
+
+.ctx-new-playlist-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 12px;
+}
+
+.ctx-new-playlist-input {
+  background: #1a1a1a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ctx-new-playlist-input:focus {
+  border-color: #1db954;
+}
+
+.ctx-new-playlist-error {
+  font-size: 11px;
+  color: #e06c6c;
+}
