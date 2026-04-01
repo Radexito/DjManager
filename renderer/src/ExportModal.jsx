@@ -4,6 +4,7 @@ import './ExportModal.css';
 
 const STEPS = {
   idle: 'idle',
+  confirm: 'confirm',
   pickFolder: 'pickFolder',
   checkingFormat: 'checkingFormat',
   needsFormat: 'needsFormat',
@@ -30,10 +31,11 @@ function ExportModal({ onClose, playlistId, initialMode }) {
   const [formatProgress, setFormatProgress] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [useNormalized, setUseNormalized] = useState(true);
 
   const handleKeyDown = useCallback(
     (e) => {
-      if (e.key === 'Escape' && step === STEPS.idle) onClose();
+      if (e.key === 'Escape' && (step === STEPS.idle || step === STEPS.confirm)) onClose();
     },
     [onClose, step]
   );
@@ -44,11 +46,13 @@ function ExportModal({ onClose, playlistId, initialMode }) {
 
   const autoOpened = useRef(false);
 
-  // If opened with a pre-set mode (from playlist right-click), skip idle and go straight to folder picker
+  // If opened with a pre-set mode (from playlist right-click), show confirm step first
+  // so the user can toggle the normalized-export option before picking a folder
   useEffect(() => {
     if (initialMode && !autoOpened.current) {
       autoOpened.current = true;
-      pickFolder(initialMode);
+      setMode(initialMode);
+      setStep(STEPS.confirm);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -96,9 +100,17 @@ function ExportModal({ onClose, playlistId, initialMode }) {
     setProgress({ msg: 'Starting…', pct: 0 });
     let res;
     if (exportMode === 'rekordbox') {
-      res = await window.api.exportRekordbox({ usbRoot: dir, playlistId: playlistId ?? null });
+      res = await window.api.exportRekordbox({
+        usbRoot: dir,
+        playlistId: playlistId ?? null,
+        useNormalized,
+      });
     } else {
-      res = await window.api.exportAll({ usbRoot: dir, playlistId: playlistId ?? null });
+      res = await window.api.exportAll({
+        usbRoot: dir,
+        playlistId: playlistId ?? null,
+        useNormalized,
+      });
     }
     if (res.ok) {
       setResult(res);
@@ -136,6 +148,14 @@ function ExportModal({ onClose, playlistId, initialMode }) {
                 ? 'Export this playlist to a Pioneer-compatible USB drive for CDJ/XDJ players.'
                 : 'Choose an export format. Rekordbox USB creates a Pioneer-compatible drive you can plug directly into CDJ/XDJ players.'}
             </p>
+            <label className="export-normalized-option">
+              <input
+                type="checkbox"
+                checked={useNormalized}
+                onChange={(e) => setUseNormalized(e.target.checked)}
+              />
+              <span>Export normalized files when available</span>
+            </label>
             <div className="export-options">
               <button className="export-option-btn" onClick={() => pickFolder('rekordbox')}>
                 <span className="export-option-icon">💾</span>
@@ -154,6 +174,33 @@ function ExportModal({ onClose, playlistId, initialMode }) {
                 <span className="export-option-icon">📋</span>
                 <span className="export-option-label">Export M3U</span>
                 <span className="export-option-sub">Right-click a playlist in the sidebar</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === STEPS.confirm && (
+          <div className="export-modal-body">
+            <p className="export-modal-desc">
+              {mode === 'rekordbox'
+                ? 'Export this playlist to a Pioneer-compatible USB drive for CDJ/XDJ players.'
+                : 'Export Rekordbox USB + M3U playlists to a folder.'}
+            </p>
+            <label className="export-normalized-option">
+              <input
+                type="checkbox"
+                checked={useNormalized}
+                onChange={(e) => setUseNormalized(e.target.checked)}
+              />
+              <span>Export normalized files when available</span>
+            </label>
+            <div className="export-confirm-actions">
+              <button className="export-option-btn" onClick={() => pickFolder(mode)}>
+                <span className="export-option-icon">{mode === 'rekordbox' ? '💾' : '📦'}</span>
+                <span className="export-option-label">Choose folder &amp; Export</span>
+              </button>
+              <button className="export-cancel-btn" onClick={onClose}>
+                Cancel
               </button>
             </div>
           </div>

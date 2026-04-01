@@ -292,6 +292,20 @@ export function getTrackById(id) {
   return db.prepare('SELECT * FROM tracks WHERE id = ?').get(id);
 }
 
+/** Returns IDs of tracks that have loudness data but no normalized file yet. */
+export function getTrackIdsNeedingNormalization() {
+  return db
+    .prepare(`SELECT id FROM tracks WHERE loudness IS NOT NULL AND normalized_file_path IS NULL`)
+    .all()
+    .map((r) => r.id);
+}
+
+export function getNormalizedTrackCount() {
+  return db
+    .prepare(`SELECT COUNT(*) as cnt FROM tracks WHERE normalized_file_path IS NOT NULL`)
+    .get().cnt;
+}
+
 export function removeTrack(id) {
   db.prepare('DELETE FROM tracks WHERE id = ?').run(id);
 }
@@ -306,6 +320,42 @@ export function normalizeLibrary(targetLufs) {
   `
     )
     .run(targetLufs);
+  return info.changes ?? 0;
+}
+
+export function normalizeTracksByIds(trackIds, targetLufs) {
+  const update = db.prepare(
+    `UPDATE tracks SET replay_gain = ROUND((? - loudness) * 10) / 10 WHERE id = ? AND loudness IS NOT NULL`
+  );
+  const read = db.prepare(`SELECT replay_gain FROM tracks WHERE id = ?`);
+  const gains = {};
+  db.transaction(() => {
+    for (const id of trackIds) {
+      const info = update.run(targetLufs, id);
+      if (info.changes) {
+        const row = read.get(id);
+        if (row) gains[id] = row.replay_gain;
+      }
+    }
+  })();
+  return gains;
+}
+
+export function resetNormalization(trackIds = null) {
+  if (trackIds && trackIds.length > 0) {
+    const stmt = db.prepare(
+      `UPDATE tracks SET replay_gain = NULL, normalized_file_path = NULL, source_loudness = NULL WHERE id = ?`
+    );
+    db.transaction(() => {
+      for (const id of trackIds) stmt.run(id);
+    })();
+    return trackIds.length;
+  }
+  const info = db
+    .prepare(
+      `UPDATE tracks SET replay_gain = NULL, normalized_file_path = NULL, source_loudness = NULL`
+    )
+    .run();
   return info.changes ?? 0;
 }
 

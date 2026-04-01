@@ -25,6 +25,7 @@ function Sidebar({
 }) {
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
+  const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
   const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
@@ -107,6 +108,17 @@ function Sidebar({
 
   useEffect(() => {
     const unsub = window.api.onExportM3UProgress((data) => setExportProgress(data));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = window.api.onNormalizeProgress((data) => {
+      if (data.done) {
+        setTimeout(() => setNormalizeProgress(null), 1500);
+      } else {
+        setNormalizeProgress({ completed: data.completed, total: data.total });
+      }
+    });
     return unsub;
   }, []);
 
@@ -267,6 +279,24 @@ function Sidebar({
         {importProgress.total > 0 && (
           <div className="import-progress">
             Importing {importProgress.completed} / {importProgress.total}…
+          </div>
+        )}
+        {normalizeProgress && (
+          <div className="normalize-progress-wrap">
+            <div className="normalize-progress-label">
+              <span>Normalizing</span>
+              <span>
+                {normalizeProgress.completed} / {normalizeProgress.total}
+              </span>
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill"
+                style={{
+                  width: `${Math.round((normalizeProgress.completed / normalizeProgress.total) * 100)}%`,
+                }}
+              />
+            </div>
           </div>
         )}
         {exportProgress && (
