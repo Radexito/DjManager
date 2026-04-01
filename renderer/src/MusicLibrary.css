@@ -13,6 +13,7 @@
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  position: relative;
 }
 
 /* Search */
@@ -209,6 +210,7 @@
   padding: 4px 0;
   z-index: 1000;
   min-width: 170px;
+  width: max-content;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
   user-select: none;
   max-height: calc(100vh - 16px);
@@ -223,6 +225,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
 }
 
 .context-menu-item:hover {
@@ -272,6 +275,12 @@
 
 .row--playing.row--selected {
   background: #1a3a1a !important;
+}
+
+/* Track is being normalized or re-analyzed */
+.row--analyzing {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 /* BPM overridden indicator */
@@ -559,4 +568,27 @@
 /* ── Details panel layout ─────────────────────────────────────────────── */
 .music-library--with-panel .music-library__main {
   border-right: 1px solid #2a2a2a;
+}
+
+/* ── Toast notification ───────────────────────────────────────────────── */
+.music-library-toast {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #2a2a2a;
+  border: 1px solid #1db954;
+  color: #e0e0e0;
+  font-size: 13px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  z-index: 2000;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.music-library-toast--warn {
+  border-color: #f4a261;
+  color: #f4a261;
 }

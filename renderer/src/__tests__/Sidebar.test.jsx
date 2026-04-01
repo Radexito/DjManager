@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import Sidebar from '../Sidebar.jsx';
 
 describe('Sidebar', () => {
@@ -125,5 +125,51 @@ describe('Sidebar', () => {
   it('does not render an "Export USB…" bottom button', () => {
     render(<Sidebar {...defaultProps} />);
     expect(screen.queryByText(/Export USB/)).toBeNull();
+  });
+});
+
+describe('Sidebar — normalization progress bar', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const defaultProps = {
+    selectedMenuItemId: 'music',
+    onMenuSelect: vi.fn(),
+    onExportPlaylistRekordboxUsb: vi.fn(),
+    onExportPlaylistAll: vi.fn(),
+  };
+
+  it('shows normalize progress when onNormalizeProgress fires with progress data', async () => {
+    let progressCallback;
+    window.api.onNormalizeProgress.mockImplementation((cb) => {
+      progressCallback = cb;
+      return vi.fn(); // unsub
+    });
+
+    render(<Sidebar {...defaultProps} />);
+
+    act(() => {
+      progressCallback({ completed: 3, total: 10, done: false });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Normalizing')).toBeInTheDocument();
+      expect(screen.getByText('3 / 10')).toBeInTheDocument();
+    });
+  });
+
+  it('hides normalize progress bar when done event fires', async () => {
+    let progressCallback;
+    window.api.onNormalizeProgress.mockImplementation((cb) => {
+      progressCallback = cb;
+      return vi.fn();
+    });
+
+    render(<Sidebar {...defaultProps} />);
+
+    act(() => progressCallback({ completed: 5, total: 5, done: false }));
+    await waitFor(() => expect(screen.getByText('Normalizing')).toBeInTheDocument());
+
+    act(() => progressCallback({ done: true }));
+    await waitFor(() => expect(screen.queryByText('Normalizing')).toBeNull(), { timeout: 2000 });
   });
 });

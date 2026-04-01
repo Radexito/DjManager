@@ -215,25 +215,26 @@ describe('ExportModal', () => {
     });
   });
 
-  // ── initialMode (skip idle) ───────────────────────────────────────────────────
+  // ── initialMode (shows confirm step first) ───────────────────────────────────
 
-  it('calls openDirDialog immediately when initialMode is provided', async () => {
+  it('shows confirm step (not folder dialog) when initialMode is provided', async () => {
+    render(<ExportModal {...defaultProps} initialMode="rekordbox" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Choose folder & Export')).toBeInTheDocument();
+    });
+    expect(window.api.openDirDialog).not.toHaveBeenCalled();
+  });
+
+  it('calls openDirDialog after clicking proceed in confirm step', async () => {
     window.api.openDirDialog.mockResolvedValueOnce(null);
 
     render(<ExportModal {...defaultProps} initialMode="rekordbox" />);
+    await screen.findByText('Choose folder & Export');
+    fireEvent.click(screen.getByText('Choose folder & Export'));
 
     await waitFor(() => {
       expect(window.api.openDirDialog).toHaveBeenCalledOnce();
-    });
-  });
-
-  it('does not call openDirDialog more than once in StrictMode (ref guard)', async () => {
-    window.api.openDirDialog.mockResolvedValue(null);
-
-    render(<ExportModal {...defaultProps} initialMode="rekordbox" />);
-
-    await waitFor(() => {
-      expect(window.api.openDirDialog).toHaveBeenCalledTimes(1);
     });
   });
 
