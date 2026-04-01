@@ -17,6 +17,8 @@ function SettingsModal({ onClose }) {
   const [activeSection, setActiveSection] = useState('library');
   const [targetInput, setTargetInput] = useState(String(DEFAULT_TARGET));
   const [confirmClear, setConfirmClear] = useState(null); // 'library' | 'userdata'
+  const [normalizing, setNormalizing] = useState(false);
+  const [normalizeResult, setNormalizeResult] = useState(null); // number | null
   const [depVersions, setDepVersions] = useState(null);
   const [updatingAll, setUpdatingAll] = useState(false);
   const [ytdlpVersionInput, setYtdlpVersionInput] = useState('');
@@ -78,9 +80,23 @@ function SettingsModal({ onClose }) {
 
   const handleTargetChange = (raw) => {
     setTargetInput(raw);
+    setNormalizeResult(null);
     const num = Number(raw);
     if (Number.isFinite(num) && num >= -60 && num <= 0) {
       window.api.setSetting('normalize_target_lufs', raw);
+    }
+  };
+
+  const handleNormalize = async () => {
+    const targetLufs = Number(targetInput);
+    if (!Number.isFinite(targetLufs) || targetLufs < -60 || targetLufs > 0) return;
+    setNormalizing(true);
+    setNormalizeResult(null);
+    try {
+      const { updated } = await window.api.normalizeLibrary({ targetLufs });
+      setNormalizeResult(updated);
+    } finally {
+      setNormalizing(false);
     }
   };
 
@@ -169,6 +185,24 @@ function SettingsModal({ onClose }) {
                     <span className="settings-unit">LUFS</span>
                   </div>
                 </div>
+                <div className="settings-row settings-row-action">
+                  <div>
+                    <div className="settings-action-label">Apply to Library</div>
+                    <div className="settings-action-desc">
+                      Calculates and saves a gain value for every analyzed track.
+                    </div>
+                  </div>
+                  <button className="btn-primary" onClick={handleNormalize} disabled={normalizing}>
+                    {normalizing ? 'Normalizing…' : 'Normalize Library'}
+                  </button>
+                </div>
+                {normalizeResult !== null && (
+                  <div className="settings-normalize-result">
+                    {normalizeResult === 0
+                      ? 'No analyzed tracks found — import and analyze tracks first.'
+                      : `Done — gain set for ${normalizeResult} track${normalizeResult !== 1 ? 's' : ''}.`}
+                  </div>
+                )}
               </div>
 
               <div className="settings-group">
