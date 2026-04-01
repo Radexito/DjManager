@@ -286,7 +286,6 @@ function SortableRow({
   onDoubleClick,
   onContextMenu,
   onRatingChange,
-  onDragStart,
   visibleColumns,
   gridTemplate,
   minScrollWidth,
