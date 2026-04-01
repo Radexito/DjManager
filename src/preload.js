@@ -65,8 +65,9 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('move-library-progress', (_, data) => cb(data));
     return () => ipcRenderer.removeAllListeners('move-library-progress');
   },
-  normalizeLibrary: (payload) => ipcRenderer.invoke('normalize-library', payload),
-  normalizeTracks: (payload) => ipcRenderer.invoke('normalize-tracks', payload),
+  normalizeLibrary: () => ipcRenderer.invoke('normalize-library'),
+  getNormalizedCount: () => ipcRenderer.invoke('get-normalized-count'),
+  normalizeTracksAudio: (payload) => ipcRenderer.invoke('normalize-tracks-audio', payload),
   resetNormalization: (payload) => ipcRenderer.invoke('reset-normalization', payload),
 
   // Events
@@ -74,6 +75,11 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('track-updated', handler);
     return () => ipcRenderer.removeListener('track-updated', handler);
+  },
+  onNormalizeProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('normalize-progress', handler);
+    return () => ipcRenderer.removeListener('normalize-progress', handler);
   },
   onLibraryUpdated: (callback) => {
     const handler = () => callback();

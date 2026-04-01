@@ -210,6 +210,7 @@
   padding: 4px 0;
   z-index: 1000;
   min-width: 170px;
+  width: max-content;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
   user-select: none;
   max-height: calc(100vh - 16px);
@@ -224,6 +225,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
 }
 
 .context-menu-item:hover {
@@ -273,6 +275,12 @@
 
 .row--playing.row--selected {
   background: #1a3a1a !important;
+}
+
+/* Track is being normalized or re-analyzed */
+.row--analyzing {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 /* BPM overridden indicator */

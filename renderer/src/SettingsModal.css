@@ -383,3 +383,30 @@
   border: 1px solid rgba(72, 199, 116, 0.22);
   border-radius: 6px;
 }
+
+.settings-normalize-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 0.5rem;
+}
+
+.settings-normalize-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: #2a2a2a;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.settings-normalize-progress-fill {
+  height: 100%;
+  background: #1db954;
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
+
+.settings-action-count {
+  color: #888;
+  font-size: 11px;
+}
