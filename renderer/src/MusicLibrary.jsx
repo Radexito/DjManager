@@ -409,6 +409,10 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const toastTimerRef = useRef(null);
   const [drillStack, setDrillStack] = useState([]); // overlay drill-down stack [{ id, label, content }]
   const [playlistSubmenu, setPlaylistSubmenu] = useState(null); // [{ id, name, color, is_member }]
+  const [newPlaylistInputActive, setNewPlaylistInputActive] = useState(false);
+  const [newPlaylistName, setNewPlaylistName] = useState('');
+  const [newPlaylistError, setNewPlaylistError] = useState('');
+  const newPlaylistInputRef = useRef(null);
   const [loadKey, setLoadKey] = useState(0);
   const [playlistInfo, setPlaylistInfo] = useState(null); // { name, total_duration, track_count }
   const [activeId, setActiveId] = useState(null); // DnD active drag id
@@ -638,6 +642,9 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     const close = () => {
       setContextMenu(null);
       setDrillStack([]);
+      setNewPlaylistInputActive(false);
+      setNewPlaylistName('');
+      setNewPlaylistError('');
     };
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
@@ -938,6 +945,33 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
       console.error('addTracksToPlaylist failed:', err);
     }
   }, []);
+
+  const handleAddToNewPlaylist = useCallback(
+    async (e) => {
+      e?.preventDefault();
+      const name = newPlaylistName.trim();
+      if (!name) {
+        setNewPlaylistInputActive(false);
+        setNewPlaylistName('');
+        return;
+      }
+      const targetIds = contextMenu?.targetIds ?? [];
+      const result = await window.api.createPlaylist(name, null);
+      if (result?.error === 'duplicate') {
+        setNewPlaylistError('Name already exists');
+        newPlaylistInputRef.current?.focus();
+        return;
+      }
+      if (result?.id && targetIds.length) {
+        await window.api.addTracksToPlaylist(result.id, targetIds);
+      }
+      setNewPlaylistInputActive(false);
+      setNewPlaylistName('');
+      setNewPlaylistError('');
+      setContextMenu(null);
+    },
+    [contextMenu, newPlaylistName]
+  );
 
   const handleBpmAdjust = useCallback(
     async (factor) => {
@@ -1295,11 +1329,91 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                     {/* ── Add to playlist ── */}
                     {playlistSubmenu !== null &&
                       (playlistSubmenu.length === 0 ? (
-                        <div className="context-menu-item context-menu-item--disabled">
-                          ➕ No playlists
-                        </div>
+                        <>
+                          {newPlaylistInputActive ? (
+                            <form
+                              className="ctx-new-playlist-form"
+                              onSubmit={handleAddToNewPlaylist}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <input
+                                ref={newPlaylistInputRef}
+                                className="ctx-new-playlist-input"
+                                value={newPlaylistName}
+                                onChange={(e) => {
+                                  setNewPlaylistName(e.target.value);
+                                  setNewPlaylistError('');
+                                }}
+                                placeholder="Playlist name"
+                                autoFocus
+                                onBlur={handleAddToNewPlaylist}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Escape') {
+                                    setNewPlaylistInputActive(false);
+                                    setNewPlaylistName('');
+                                    setNewPlaylistError('');
+                                  }
+                                }}
+                              />
+                              {newPlaylistError && (
+                                <div className="ctx-new-playlist-error">{newPlaylistError}</div>
+                              )}
+                            </form>
+                          ) : (
+                            <div
+                              className="context-menu-item"
+                              onClick={() => {
+                                setNewPlaylistInputActive(true);
+                                setTimeout(() => newPlaylistInputRef.current?.focus(), 0);
+                              }}
+                            >
+                              ➕ Add to new playlist…
+                            </div>
+                          )}
+                        </>
                       ) : (
                         <SubItem id="add-to-playlist" label="➕ Add to playlist" scrollable>
+                          <div
+                            className="context-menu-item ctx-new-playlist-item"
+                            onClick={() => {
+                              setNewPlaylistInputActive(true);
+                              setTimeout(() => newPlaylistInputRef.current?.focus(), 0);
+                            }}
+                          >
+                            {newPlaylistInputActive ? (
+                              <form
+                                className="ctx-new-playlist-form"
+                                onSubmit={handleAddToNewPlaylist}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <input
+                                  ref={newPlaylistInputRef}
+                                  className="ctx-new-playlist-input"
+                                  value={newPlaylistName}
+                                  onChange={(e) => {
+                                    setNewPlaylistName(e.target.value);
+                                    setNewPlaylistError('');
+                                  }}
+                                  placeholder="Playlist name"
+                                  autoFocus
+                                  onBlur={handleAddToNewPlaylist}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Escape') {
+                                      setNewPlaylistInputActive(false);
+                                      setNewPlaylistName('');
+                                      setNewPlaylistError('');
+                                    }
+                                  }}
+                                />
+                                {newPlaylistError && (
+                                  <div className="ctx-new-playlist-error">{newPlaylistError}</div>
+                                )}
+                              </form>
+                            ) : (
+                              '✚ New playlist…'
+                            )}
+                          </div>
+                          <div className="context-menu-separator" />
                           {playlistSubmenu.map((pl) => (
                             <div
                               key={pl.id}
