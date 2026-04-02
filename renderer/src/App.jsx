@@ -7,6 +7,7 @@ import ExportModal from './ExportModal.jsx';
 import PlayerBar from './PlayerBar.jsx';
 import TopBar from './TopBar.jsx';
 import { PlayerProvider } from './PlayerContext.jsx';
+import { DownloadProvider } from './DownloadContext.jsx';
 import './App.css';
 
 function App() {
@@ -15,7 +16,6 @@ function App() {
   const [exportState, setExportState] = useState(null); // { playlistId, mode } | null
   const [depsProgress, setDepsProgress] = useState(null); // { msg, pct } or null
   const [search, setSearch] = useState('');
-  const [isDownloading, setIsDownloading] = useState(false);
 
   const handleArtistSearch = (artist) => {
     setSelectedPlaylistId('music');
@@ -35,59 +35,64 @@ function App() {
 
   return (
     <PlayerProvider>
-      <div className="app-body">
-        <TopBar
-          search={search}
-          onSearchChange={setSearch}
-          onOpenSettings={() => setShowSettings(true)}
-        />
-        <div className="app-main">
-          <Sidebar
-            selectedMenuItemId={selectedPlaylistId}
-            onMenuSelect={setSelectedPlaylistId}
-            isDownloading={isDownloading}
-            onExportPlaylistRekordboxUsb={(id) =>
-              setExportState({ playlistId: id, mode: 'rekordbox' })
-            }
-            onExportPlaylistAll={(id) => setExportState({ playlistId: id, mode: 'all' })}
+      <DownloadProvider>
+        <div className="app-body">
+          <TopBar
+            search={search}
+            onSearchChange={setSearch}
+            onOpenSettings={() => setShowSettings(true)}
           />
-          {selectedPlaylistId === 'download' ? (
+          <div className="app-main">
+            <Sidebar
+              selectedMenuItemId={selectedPlaylistId}
+              onMenuSelect={setSelectedPlaylistId}
+              activePlaylistId={selectedPlaylistId}
+              onExportPlaylistRekordboxUsb={(id) =>
+                setExportState({ playlistId: id, mode: 'rekordbox' })
+              }
+              onExportPlaylistAll={(id) => setExportState({ playlistId: id, mode: 'all' })}
+            />
+            {/* Always mounted so state persists when switching tabs */}
             <DownloadView
+              style={{ display: selectedPlaylistId === 'download' ? '' : 'none' }}
               onGoToLibrary={() => setSelectedPlaylistId('music')}
               onGoToPlaylist={(id) => setSelectedPlaylistId(id)}
-              onDownloadingChange={setIsDownloading}
             />
-          ) : (
-            <MusicLibrary
-              selectedPlaylist={selectedPlaylistId}
-              search={search}
-              onSearchChange={setSearch}
-            />
-          )}
-        </div>
-      </div>
-      <PlayerBar onNavigateToPlaylist={setSelectedPlaylistId} onArtistSearch={handleArtistSearch} />
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-      {exportState != null && (
-        <ExportModal
-          playlistId={exportState.playlistId}
-          initialMode={exportState.mode}
-          onClose={() => setExportState(null)}
-        />
-      )}
-      {depsProgress && (
-        <div className="deps-overlay">
-          <div className="deps-box">
-            <div className="deps-title">First-time setup</div>
-            <div className="deps-msg">{depsProgress.msg}</div>
-            {depsProgress.pct >= 0 && depsProgress.pct < 100 && (
-              <div className="deps-bar-track">
-                <div className="deps-bar-fill" style={{ width: `${depsProgress.pct}%` }} />
-              </div>
+            {selectedPlaylistId !== 'download' && (
+              <MusicLibrary
+                selectedPlaylist={selectedPlaylistId}
+                search={search}
+                onSearchChange={setSearch}
+              />
             )}
           </div>
         </div>
-      )}
+        <PlayerBar
+          onNavigateToPlaylist={setSelectedPlaylistId}
+          onArtistSearch={handleArtistSearch}
+        />
+        {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+        {exportState != null && (
+          <ExportModal
+            playlistId={exportState.playlistId}
+            initialMode={exportState.mode}
+            onClose={() => setExportState(null)}
+          />
+        )}
+        {depsProgress && (
+          <div className="deps-overlay">
+            <div className="deps-box">
+              <div className="deps-title">First-time setup</div>
+              <div className="deps-msg">{depsProgress.msg}</div>
+              {depsProgress.pct >= 0 && depsProgress.pct < 100 && (
+                <div className="deps-bar-track">
+                  <div className="deps-bar-fill" style={{ width: `${depsProgress.pct}%` }} />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </DownloadProvider>
     </PlayerProvider>
   );
 }
