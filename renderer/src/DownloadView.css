@@ -468,7 +468,7 @@
 
 .dl-select-item {
   display: grid;
-  grid-template-columns: auto 32px 1fr auto;
+  grid-template-columns: auto 32px 1fr auto auto;
   align-items: center;
   gap: 8px;
   padding: 7px 12px;
@@ -523,8 +523,6 @@
   color: #4caf50;
   white-space: nowrap;
   flex-shrink: 0;
-  margin-left: auto;
-  padding-left: 8px;
 }
 
 .dl-select-footer {
