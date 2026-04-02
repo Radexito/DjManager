@@ -50,6 +50,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
   // ── step: select ──────────────────────────────────────────────────────────
   const [playlistInfo, setPlaylistInfo] = useState(null); // { type, title, entries }
   const [selectedIndices, setSelectedIndices] = useState(new Set());
+  const [duplicateUrls, setDuplicateUrls] = useState(new Set()); // entry URLs already in library
   const [playlists, setPlaylists] = useState([]); // existing playlists for combobox
   const [targetPlaylistId, setTargetPlaylistId] = useState(null); // null = create new
   const [targetPlaylistName, setTargetPlaylistName] = useState('');
@@ -145,7 +146,26 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
         return;
       }
       setPlaylistInfo(res);
-      setSelectedIndices(new Set(res.entries.map((_, i) => i)));
+
+      // Check which entries are already in the library before showing selection
+      let dupUrls = new Set();
+      try {
+        const entryChecks = res.entries
+          .filter((e) => e.url || e.id)
+          .map((e) => ({ url: e.url, id: e.id }));
+        if (entryChecks.length > 0) {
+          const found = await window.api.checkDuplicateUrls(entryChecks);
+          dupUrls = new Set(found);
+        }
+      } catch {
+        // non-fatal — just skip pre-checking
+      }
+      setDuplicateUrls(dupUrls);
+
+      // Pre-select only non-duplicate entries
+      setSelectedIndices(
+        new Set(res.entries.filter((e) => !dupUrls.has(e.url)).map((e) => e.index))
+      );
       // Fetch existing playlists for the combobox
       let existingPlaylists = [];
       try {
@@ -179,6 +199,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
   const handleBack = useCallback(() => {
     setStep('url');
     setPlaylistInfo(null);
+    setDuplicateUrls(new Set());
     setFetchError(null);
   }, []);
 
@@ -425,22 +446,33 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
           )}
 
           <div className="dl-select-list">
-            {playlistInfo.entries.map((entry) => (
-              <label key={entry.index} className="dl-select-item">
-                {playlistInfo.type === 'playlist' && (
-                  <input
-                    type="checkbox"
-                    checked={selectedIndices.has(entry.index)}
-                    onChange={() => handleToggleEntry(entry.index)}
-                  />
-                )}
-                <span className="dl-select-item-num">{entry.index + 1}.</span>
-                <span className="dl-select-item-title">{entry.title}</span>
-                {entry.duration && (
-                  <span className="dl-select-item-dur">{fmtDuration(entry.duration)}</span>
-                )}
-              </label>
-            ))}
+            {playlistInfo.entries.map((entry) => {
+              const isDupe = duplicateUrls.has(entry.url);
+              return (
+                <label
+                  key={entry.index}
+                  className={`dl-select-item${isDupe ? ' dl-select-item--dupe' : ''}`}
+                >
+                  {playlistInfo.type === 'playlist' && (
+                    <input
+                      type="checkbox"
+                      checked={selectedIndices.has(entry.index)}
+                      onChange={() => handleToggleEntry(entry.index)}
+                    />
+                  )}
+                  <span className="dl-select-item-num">{entry.index + 1}.</span>
+                  <span className="dl-select-item-title">{entry.title}</span>
+                  {entry.duration && (
+                    <span className="dl-select-item-dur">{fmtDuration(entry.duration)}</span>
+                  )}
+                  {isDupe && (
+                    <span className="dl-select-item-dupe-badge" title="Already in your library">
+                      ✓ in library
+                    </span>
+                  )}
+                </label>
+              );
+            })}
           </div>
 
           <div className="dl-select-footer">
