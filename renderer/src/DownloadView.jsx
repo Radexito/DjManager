@@ -150,9 +150,11 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
       // Check which entries are already in the library before showing selection
       let dupUrls = new Set();
       try {
-        const entryUrls = res.entries.map((e) => e.url).filter(Boolean);
-        if (entryUrls.length > 0) {
-          const found = await window.api.checkDuplicateUrls(entryUrls);
+        const entryChecks = res.entries
+          .filter((e) => e.url || e.id)
+          .map((e) => ({ url: e.url, id: e.id }));
+        if (entryChecks.length > 0) {
+          const found = await window.api.checkDuplicateUrls(entryChecks);
           dupUrls = new Set(found);
         }
       } catch {

@@ -645,8 +645,8 @@ ipcMain.handle('ytdlp-fetch-info', async (_event, url) => {
   }
 });
 
-ipcMain.handle('check-duplicate-urls', (_event, urls) => {
-  const found = getExistingSourceUrls(urls);
+ipcMain.handle('check-duplicate-urls', (_event, entries) => {
+  const found = getExistingSourceUrls(entries);
   return [...found];
 });
 
