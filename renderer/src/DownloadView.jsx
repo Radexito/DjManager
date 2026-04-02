@@ -36,7 +36,12 @@ function fmtDuration(secs) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
+export default function DownloadView({
+  onGoToLibrary,
+  onGoToPlaylist,
+  onDownloadingChange,
+  style,
+}) {
   // ── shared state ─────────────────────────────────────────────────────────
   const [url, setUrl] = useState('');
   const [history, setHistory] = useState([]);
@@ -67,6 +72,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
     const unsubProgress = window.api.onYtDlpProgress((data) => {
       if (data === null) {
         setLoading(false);
+        onDownloadingChange?.(false);
         setProgress(null);
       } else setProgress(data);
     });
@@ -101,7 +107,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
       unsubProgress();
       unsubTrack();
     };
-  }, []);
+  }, [onDownloadingChange]);
 
   // ── handlers ──────────────────────────────────────────────────────────────
 
@@ -233,6 +239,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
 
     setStep('download');
     setLoading(true);
+    onDownloadingChange?.(true);
     setResult(null);
     setTrackStatuses(
       selectedEntries.map((e, i) => ({
@@ -270,6 +277,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
           : null,
     });
     setLoading(false);
+    onDownloadingChange?.(false);
     setProgress(null);
     setResult(res);
     if (res.ok) setHistory((prev) => [{ url, at: Date.now() }, ...prev.slice(0, 19)]);
