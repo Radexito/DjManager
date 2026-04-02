@@ -73,7 +73,6 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
 
   const inputRef = useRef(null);
 
-
   // ── handlers ──────────────────────────────────────────────────────────────
 
   const openLink = (e, href) => {
