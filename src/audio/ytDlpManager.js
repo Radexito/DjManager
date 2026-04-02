@@ -437,6 +437,8 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
       for (const line of text.split('\n')) processLine(line.trim());
     });
 
+    let unavailableCount = 0;
+
     proc.on('close', async (code) => {
       // Parse unavailable/error videos from stderr and fire callbacks for them
       const unavailablePattern = /ERROR: \[[\w:]+\] ([^:]+): (.+)/g;
@@ -446,11 +448,13 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
         const reason = match[2].trim();
         console.warn(`[ytdlp] unavailable: ${videoId} — ${reason}`);
         options.onTrackUnavailable?.({ videoId, reason });
+        unavailableCount++;
       }
 
-      // Exit code 1 with --ignore-errors means some tracks were unavailable but
-      // others may have downloaded fine — treat as partial success if we got files.
-      if (code !== 0 && destinationFiles.length === 0) {
+      // Exit code 1 with --ignore-errors: if all failures were unavailable videos
+      // (already reported via onTrackUnavailable), resolve gracefully so the UI
+      // can show per-track ✗ marks rather than a raw error string.
+      if (code !== 0 && destinationFiles.length === 0 && unavailableCount === 0) {
         reject(new Error(`yt-dlp exited with code ${code}:\n${stderr}`));
         return;
       }
@@ -492,7 +496,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
         }
       }
 
-      if (destinationFiles.length === 0) {
+      if (destinationFiles.length === 0 && unavailableCount === 0) {
         reject(new Error('yt-dlp finished but no output file found'));
         return;
       }
