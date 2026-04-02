@@ -22,6 +22,7 @@ function Sidebar({
   onMenuSelect,
   onExportPlaylistRekordboxUsb,
   onExportPlaylistAll,
+  activePlaylistId,
 }) {
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
@@ -71,7 +72,7 @@ function Sidebar({
     const files = await window.api.selectAudioFiles();
     if (!files.length) return;
     setImportProgress({ total: files.length, completed: 0 });
-    await window.api.importAudioFiles(files);
+    await window.api.importAudioFiles(files, activePlaylistId);
     setImportProgress({ total: 0, completed: 0 });
   };
 
