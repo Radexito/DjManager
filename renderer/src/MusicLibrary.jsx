@@ -207,6 +207,8 @@ function LibraryRow({
   gridTemplate,
   minScrollWidth,
   mediaPort,
+  newTrackIds,
+  onAnimationEnd,
 }) {
   const t = tracks[index];
   if (!t) {
@@ -221,16 +223,18 @@ function LibraryRow({
   }
   const isSelected = selectedIds.has(t.id);
   const isPlaying = currentTrackId === t.id;
+  const isNew = newTrackIds?.has(t.id);
   return (
     <div
       style={{ ...style, gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
-      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}`}
+      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}${isNew ? ' row--new' : ''}`}
       title={`${t.title} - ${t.artist || 'Unknown'}`}
       draggable={true}
       onDragStart={(e) => onDragStart(e, t)}
       onClick={(e) => onRowClick(e, t, index)}
       onDoubleClick={() => onDoubleClick(t, index)}
       onContextMenu={(e) => onContextMenu(e, t, index)}
+      onAnimationEnd={isNew ? () => onAnimationEnd?.(t.id) : undefined}
     >
       {visibleColumns.map((col) =>
         col.key === 'index' ? (
@@ -290,6 +294,8 @@ function SortableRow({
   gridTemplate,
   minScrollWidth,
   mediaPort,
+  isNew,
+  onAnimationEnd,
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: t.id,
@@ -305,10 +311,11 @@ function SortableRow({
     <div
       ref={setNodeRef}
       style={style}
-      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}`}
+      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}${isNew ? ' row--new' : ''}`}
       onClick={(e) => onRowClick(e, t, index)}
       onDoubleClick={() => onDoubleClick(t, index)}
       onContextMenu={(e) => onContextMenu(e, t, index)}
+      onAnimationEnd={isNew ? () => onAnimationEnd?.(t.id) : undefined}
     >
       {visibleColumns.map((col) =>
         col.key === 'index' ? (
@@ -402,6 +409,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
 
   const [tracks, setTracks] = useState([]);
   const [hasMore, setHasMore] = useState(true);
+  const [newTrackIds, setNewTrackIds] = useState(new Set()); // IDs of rows to animate in
 
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [contextMenu, setContextMenu] = useState(null); // { x, y, targetIds }
@@ -436,6 +444,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const dndScrollRef = useRef(null); // ref to playlist DnD scroll container
   // Tracks whether we should resume playback after normalization finishes re-analyzing
   const normalizeResumeRef = useRef(null); // { id, shouldResume } | null
+  // When set to true, the next loadTracks call will animate incoming rows as "new"
+  const animateNextLoadRef = useRef(false);
 
   const visibleColumns = useMemo(
     () => colOrder.map((k) => COL_BY_KEY[k]).filter((c) => c && colVis[c.key] !== false),
@@ -479,6 +489,13 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
       });
 
       if (token !== resetTokenRef.current) return; // stale — reset happened mid-flight
+
+      // Animate rows that arrive on first-page loads triggered by import
+      if (animateNextLoadRef.current && offsetRef.current === 0) {
+        animateNextLoadRef.current = false;
+        const incomingIds = new Set(rows.map((r) => r.id));
+        setNewTrackIds((prev) => new Set([...prev, ...incomingIds]));
+      }
 
       setTracks((prev) => [...prev, ...rows]);
       offsetRef.current += rows.length;
@@ -573,7 +590,10 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
 
   // Refresh list when new tracks are imported
   useEffect(() => {
-    const unsub = window.api.onLibraryUpdated(() => setLoadKey((k) => k + 1));
+    const unsub = window.api.onLibraryUpdated(() => {
+      animateNextLoadRef.current = true;
+      setLoadKey((k) => k + 1);
+    });
     return unsub;
   }, []);
 
@@ -1042,6 +1062,15 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     [selectedIds]
   );
 
+  const handleRowAnimationEnd = useCallback((trackId) => {
+    setNewTrackIds((prev) => {
+      if (!prev.has(trackId)) return prev;
+      const next = new Set(prev);
+      next.delete(trackId);
+      return next;
+    });
+  }, []);
+
   const handleSaveOrder = useCallback(async () => {
     await window.api.reorderPlaylist(
       Number(selectedPlaylist),
@@ -1225,6 +1254,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                         gridTemplate={gridTemplate}
                         minScrollWidth={minScrollWidth}
                         mediaPort={mediaPort}
+                        isNew={newTrackIds.has(t.id)}
+                        onAnimationEnd={handleRowAnimationEnd}
                       />
                     ))}
                   </div>
@@ -1269,6 +1300,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                 gridTemplate,
                 minScrollWidth,
                 mediaPort,
+                newTrackIds,
+                onAnimationEnd: handleRowAnimationEnd,
               }}
             />
           )}
