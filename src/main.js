@@ -508,8 +508,8 @@ ipcMain.handle('open-dir-dialog', async () => {
   const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
   return result.canceled ? null : result.filePaths[0];
 });
-ipcMain.handle('import-audio-files', async (event, filePaths) => {
-  console.log('Importing audio files:', filePaths);
+ipcMain.handle('import-audio-files', async (event, filePaths, playlistId) => {
+  console.log('Importing audio files:', filePaths, playlistId ? `→ playlist ${playlistId}` : '');
   const trackIds = [];
 
   for (const filePath of filePaths) {
@@ -521,8 +521,12 @@ ipcMain.handle('import-audio-files', async (event, filePaths) => {
     }
   }
 
-  if (trackIds.length > 0 && global.mainWindow) {
-    global.mainWindow.webContents.send('library-updated');
+  if (trackIds.length > 0) {
+    if (playlistId && playlistId !== 'music') {
+      addTracksToPlaylist(playlistId, trackIds);
+      if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+    }
+    if (global.mainWindow) global.mainWindow.webContents.send('library-updated');
   }
 
   return trackIds;

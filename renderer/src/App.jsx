@@ -44,6 +44,7 @@ function App() {
           <Sidebar
             selectedMenuItemId={selectedPlaylistId}
             onMenuSelect={setSelectedPlaylistId}
+            activePlaylistId={selectedPlaylistId}
             onExportPlaylistRekordboxUsb={(id) =>
               setExportState({ playlistId: id, mode: 'rekordbox' })
             }
