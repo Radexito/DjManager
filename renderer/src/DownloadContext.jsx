@@ -69,11 +69,19 @@ export function DownloadProvider({ children }) {
   }, []);
 
   // ── derived ──────────────────────────────────────────────────────────────────
-  // Progress summary for the sidebar progress bar
+  // Progress summary for the sidebar progress bar.
+  // Use trackStatuses.length as authoritative total — it's pre-populated from the
+  // user's selection before any IPC event arrives, so it stays correct even when
+  // early yt-dlp output reports overallTotal=1 before the playlist counter line.
+  const completedCount = trackStatuses.filter(
+    (s) => s.status === 'done' || s.status === 'failed'
+  ).length;
+  const sbTotal = Math.max(trackStatuses.length, progress?.overallTotal ?? 0, 1);
+  const sbCurrent = loading ? Math.min(completedCount + 1, sbTotal) : completedCount;
   const sidebarProgress = loading
     ? {
-        current: progress?.overallCurrent ?? 0,
-        total: progress?.overallTotal ?? (trackStatuses.length || 1),
+        current: sbCurrent,
+        total: sbTotal,
         pct: progress?.pct ?? 0,
         msg: progress?.msg ?? 'Downloading…',
       }
