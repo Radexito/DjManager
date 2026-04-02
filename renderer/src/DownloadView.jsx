@@ -567,7 +567,10 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
                 {trackStatuses.map((t) => (
                   <div key={t.index} className="dl-track-row">
                     <span className="dl-track-title">{t.title}</span>
-                    <span className={`dl-track-status dl-track-status--${t.status}`}>
+                    <span
+                      className={`dl-track-status dl-track-status--${t.status}`}
+                      title={t.error || STATUS_ICON[t.status]?.label}
+                    >
                       {STATUS_ICON[t.status]?.icon ?? '□'}
                     </span>
                   </div>
@@ -605,7 +608,11 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
           )}
           {result?.error && (
             <div className="dl-result dl-result--err">
-              <span>✗ {result.error}</span>
+              {trackStatuses.length > 0 && trackStatuses.every((t) => t.status === 'failed') ? (
+                <span>✗ All tracks were unavailable (deleted, private, or geo-restricted)</span>
+              ) : (
+                <span>✗ {result.error}</span>
+              )}
               {result.error.includes('400') && (
                 <span className="dl-result-hint">
                   YouTube blocked the request. Try setting a browser in Settings → Downloads →
