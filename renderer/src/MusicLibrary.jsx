@@ -1067,8 +1067,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   // ── Misc ───────────────────────────────────────────────────────────────────
 
   const handleItemsRendered = useCallback(
-    ({ visibleStopIndex }) => {
-      if (visibleStopIndex >= sortedTracksRef.current.length - PRELOAD_TRIGGER) {
+    ({ stopIndex }) => {
+      if (stopIndex >= sortedTracksRef.current.length - PRELOAD_TRIGGER) {
         loadTracks(); // loadTracks checks hasMoreRef and loadingRef internally
       }
     },
