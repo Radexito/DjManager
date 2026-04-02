@@ -15,6 +15,7 @@ function App() {
   const [exportState, setExportState] = useState(null); // { playlistId, mode } | null
   const [depsProgress, setDepsProgress] = useState(null); // { msg, pct } or null
   const [search, setSearch] = useState('');
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const handleArtistSearch = (artist) => {
     setSelectedPlaylistId('music');
@@ -44,6 +45,7 @@ function App() {
           <Sidebar
             selectedMenuItemId={selectedPlaylistId}
             onMenuSelect={setSelectedPlaylistId}
+            isDownloading={isDownloading}
             onExportPlaylistRekordboxUsb={(id) =>
               setExportState({ playlistId: id, mode: 'rekordbox' })
             }
@@ -53,6 +55,7 @@ function App() {
             <DownloadView
               onGoToLibrary={() => setSelectedPlaylistId('music')}
               onGoToPlaylist={(id) => setSelectedPlaylistId(id)}
+              onDownloadingChange={setIsDownloading}
             />
           ) : (
             <MusicLibrary

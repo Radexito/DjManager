@@ -22,6 +22,7 @@ function Sidebar({
   onMenuSelect,
   onExportPlaylistRekordboxUsb,
   onExportPlaylistAll,
+  isDownloading,
 }) {
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
@@ -188,11 +189,22 @@ function Sidebar({
           {MENU_ITEMS.map((item) => (
             <div
               key={item.id}
-              className={`menu-item ${selectedMenuItemId === item.id ? 'active' : ''}`}
-              onClick={() => onMenuSelect(item.id)}
+              className={`menu-item ${selectedMenuItemId === item.id ? 'active' : ''}${isDownloading && item.id !== 'download' ? ' menu-item--disabled' : ''}`}
+              title={
+                isDownloading && item.id !== 'download' ? 'A download is in progress' : undefined
+              }
+              onClick={() => {
+                if (isDownloading && item.id !== 'download') return;
+                onMenuSelect(item.id);
+              }}
             >
               <span className="menu-icon">{item.icon}</span>
               <span className="menu-text">{item.name}</span>
+              {isDownloading && item.id === 'download' && (
+                <span className="menu-item-downloading" title="Download in progress">
+                  ⏳
+                </span>
+              )}
             </div>
           ))}
         </div>
