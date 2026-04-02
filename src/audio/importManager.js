@@ -197,12 +197,24 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
   // Extract tags
   const { title, artist, album, genre, year, label, bpm } = parseTags(probe);
 
+  // Fallback: parse "Artist - Title" from filename when artist tag is absent
+  const basename = path.basename(filePath, ext);
+  let resolvedArtist = artist;
+  let resolvedTitle = title;
+  if (!artist) {
+    const dashIdx = basename.indexOf(' - ');
+    if (dashIdx !== -1) {
+      resolvedArtist = basename.slice(0, dashIdx).trim();
+      resolvedTitle = resolvedTitle || basename.slice(dashIdx + 3).trim();
+    }
+  }
+
   // Extract embedded album art (best-effort, non-blocking)
   const artworkPath = await extractArtwork(dest, hash);
 
   const trackId = addTrack({
-    title: title || path.basename(filePath, ext),
-    artist,
+    title: resolvedTitle || basename,
+    artist: resolvedArtist,
     album,
     duration,
     file_path: dest,
@@ -221,7 +233,7 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
     artwork_path: artworkPath ?? null,
   });
 
-  console.log(`Added track ID ${trackId}: ${title || path.basename(filePath, ext)}`);
+  console.log(`Added track ID ${trackId}: ${resolvedTitle || basename}`);
 
   spawnAnalysis(trackId, dest);
   return trackId;
