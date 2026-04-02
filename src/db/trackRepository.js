@@ -366,22 +366,25 @@ export function clearTracks() {
 }
 
 /**
- * Given an array of URLs, returns a Set of those URLs that are already stored
- * in the library (matched against source_link OR source_url).
+ * Given an array of { url, id } entry objects, returns a Set of URLs whose
+ * video ID (or exact URL) already exists in the library.
+ * Checks source_link and source_url with LIKE '%id%' so URL format differences
+ * (query params, short URLs, etc.) don't cause false negatives.
  */
-export function getExistingSourceUrls(urls) {
-  if (!urls || urls.length === 0) return new Set();
-  const placeholders = urls.map(() => '?').join(', ');
-  const rows = db
-    .prepare(
-      `SELECT source_link, source_url FROM tracks
-       WHERE source_link IN (${placeholders}) OR source_url IN (${placeholders})`
-    )
-    .all(...urls, ...urls);
+export function getExistingSourceUrls(entries) {
+  if (!entries || entries.length === 0) return new Set();
   const found = new Set();
-  for (const row of rows) {
-    if (row.source_link && urls.includes(row.source_link)) found.add(row.source_link);
-    if (row.source_url && urls.includes(row.source_url)) found.add(row.source_url);
+  const stmt = db.prepare(
+    `SELECT 1 FROM tracks
+     WHERE source_link LIKE ? OR source_url LIKE ?
+     LIMIT 1`
+  );
+  for (const { url, id } of entries) {
+    if (!id && !url) continue;
+    // Use the raw video ID for pattern matching — most reliable across URL formats
+    const pattern = id ? `%${id}%` : `%${url}%`;
+    const row = stmt.get(pattern, pattern);
+    if (row) found.add(url);
   }
   return found;
 }
