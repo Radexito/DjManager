@@ -364,3 +364,26 @@ export function clearTracks() {
   db.prepare(`DELETE FROM tracks`).run();
   db.prepare(`VACUUM`).run();
 }
+
+/**
+ * Given an array of { url, id } entry objects, returns a Set of URLs whose
+ * video ID already exists in the library.
+ * Checks source_link, source_url, AND title (yt-dlp stores the video ID in
+ * brackets at the end of the title when source_link is not captured).
+ */
+export function getExistingSourceUrls(entries) {
+  if (!entries || entries.length === 0) return new Set();
+  const found = new Set();
+  const stmt = db.prepare(
+    `SELECT 1 FROM tracks
+     WHERE source_link LIKE ? OR source_url LIKE ? OR title LIKE ?
+     LIMIT 1`
+  );
+  for (const { url, id } of entries) {
+    if (!id && !url) continue;
+    const pattern = `%${id || url}%`;
+    const row = stmt.get(pattern, pattern, pattern);
+    if (row) found.add(url);
+  }
+  return found;
+}

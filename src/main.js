@@ -53,6 +53,7 @@ import {
   clearTracks,
   getTrackIdsNeedingNormalization,
   getNormalizedTrackCount,
+  getExistingSourceUrls,
 } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import {
@@ -642,6 +643,11 @@ ipcMain.handle('ytdlp-fetch-info', async (_event, url) => {
     console.error('[ytdlp-fetch-info] error:', err.message);
     return { ok: false, error: err.message };
   }
+});
+
+ipcMain.handle('check-duplicate-urls', (_event, entries) => {
+  const found = getExistingSourceUrls(entries);
+  return [...found];
 });
 
 // ─── yt-dlp URL download ──────────────────────────────────────────────────────
