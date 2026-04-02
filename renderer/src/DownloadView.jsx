@@ -83,6 +83,15 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
             status: 'pending',
           }));
         });
+      } else if (update.type === 'unavailable') {
+        // Mark the track matching this videoId as failed
+        setTrackStatuses((prev) =>
+          prev.map((t) =>
+            t.title?.includes(update.videoId) || t.url?.includes(update.videoId)
+              ? { ...t, status: 'failed', error: update.reason }
+              : t
+          )
+        );
       } else {
         setTrackStatuses((prev) => {
           const next = [...prev];

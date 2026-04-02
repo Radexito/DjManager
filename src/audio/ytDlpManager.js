@@ -280,6 +280,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
     '0',
     '--no-warnings',
     '--newline',
+    '--ignore-errors', // skip unavailable/deleted/restricted videos instead of aborting
     '--progress-template',
     'download:[download] %(progress._percent_str)s of %(progress._total_bytes_str)s at %(progress._speed_str)s',
     // --print after_move gives us the definitive final filepath after all post-processors
@@ -437,7 +438,19 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
     });
 
     proc.on('close', async (code) => {
-      if (code !== 0) {
+      // Parse unavailable/error videos from stderr and fire callbacks for them
+      const unavailablePattern = /ERROR: \[[\w:]+\] ([^:]+): (.+)/g;
+      let match;
+      while ((match = unavailablePattern.exec(stderr)) !== null) {
+        const videoId = match[1].trim();
+        const reason = match[2].trim();
+        console.warn(`[ytdlp] unavailable: ${videoId} — ${reason}`);
+        options.onTrackUnavailable?.({ videoId, reason });
+      }
+
+      // Exit code 1 with --ignore-errors means some tracks were unavailable but
+      // others may have downloaded fine — treat as partial success if we got files.
+      if (code !== 0 && destinationFiles.length === 0) {
         reject(new Error(`yt-dlp exited with code ${code}:\n${stderr}`));
         return;
       }

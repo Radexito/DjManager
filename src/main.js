@@ -753,6 +753,10 @@ ipcMain.handle(
           onTrackMeta: ({ index, title }) => {
             sendTrackUpdate({ type: 'update', index, title, status: 'downloading' });
           },
+          onTrackUnavailable: ({ videoId, reason }) => {
+            // Find the track index by matching videoId in the pre-populated track list
+            sendTrackUpdate({ type: 'unavailable', videoId, reason, status: 'failed' });
+          },
           onPlaylistDetected: ({ name, total }) => {
             if (total > 1) {
               // Create playlist if not already assigned (fallback for non-interactive downloads)
