@@ -498,7 +498,11 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
       // For BPM, prefer the override value
       const va = sortBy.key === 'bpm' ? (a.bpm_override ?? a.bpm ?? '') : (a[sortBy.key] ?? '');
       const vb = sortBy.key === 'bpm' ? (b.bpm_override ?? b.bpm ?? '') : (b[sortBy.key] ?? '');
-      if (typeof va === 'string') return sortBy.asc ? va.localeCompare(vb) : vb.localeCompare(va);
+      if (typeof va === 'string' || typeof vb === 'string') {
+        const sa = String(va ?? '');
+        const sb = String(vb ?? '');
+        return sortBy.asc ? sa.localeCompare(sb) : sb.localeCompare(sa);
+      }
       if (typeof va === 'number') return sortBy.asc ? va - vb : vb - va;
       return 0;
     });
