@@ -364,3 +364,24 @@ export function clearTracks() {
   db.prepare(`DELETE FROM tracks`).run();
   db.prepare(`VACUUM`).run();
 }
+
+/**
+ * Given an array of URLs, returns a Set of those URLs that are already stored
+ * in the library (matched against source_link OR source_url).
+ */
+export function getExistingSourceUrls(urls) {
+  if (!urls || urls.length === 0) return new Set();
+  const placeholders = urls.map(() => '?').join(', ');
+  const rows = db
+    .prepare(
+      `SELECT source_link, source_url FROM tracks
+       WHERE source_link IN (${placeholders}) OR source_url IN (${placeholders})`
+    )
+    .all(...urls, ...urls);
+  const found = new Set();
+  for (const row of rows) {
+    if (row.source_link && urls.includes(row.source_link)) found.add(row.source_link);
+    if (row.source_url && urls.includes(row.source_url)) found.add(row.source_url);
+  }
+  return found;
+}

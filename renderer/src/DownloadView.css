@@ -514,6 +514,19 @@
   flex-shrink: 0;
 }
 
+.dl-select-item--dupe {
+  opacity: 0.55;
+}
+
+.dl-select-item-dupe-badge {
+  font-size: 11px;
+  color: #4caf50;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 8px;
+}
+
 .dl-select-footer {
   padding-top: 4px;
   display: flex;
