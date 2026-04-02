@@ -16,6 +16,7 @@ const COOKIE_BROWSERS = [
 function SettingsModal({ onClose }) {
   const [activeSection, setActiveSection] = useState('library');
   const [targetInput, setTargetInput] = useState(String(DEFAULT_TARGET));
+  const [autoNormalizeOnImport, setAutoNormalizeOnImport] = useState(false);
   const [confirmClear, setConfirmClear] = useState(null); // 'library' | 'userdata'
   const [normalizing, setNormalizing] = useState(false);
   const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
@@ -51,6 +52,9 @@ function SettingsModal({ onClose }) {
     window.api
       .getSetting('normalize_target_lufs', String(DEFAULT_TARGET))
       .then((v) => setTargetInput(v));
+    window.api
+      .getSetting('auto_normalize_on_import', 'false')
+      .then((v) => setAutoNormalizeOnImport(v === 'true'));
   }, []);
 
   useEffect(() => {
@@ -124,6 +128,11 @@ function SettingsModal({ onClose }) {
     } finally {
       setResettingNorm(false);
     }
+  };
+
+  const handleAutoNormalizeToggle = (checked) => {
+    setAutoNormalizeOnImport(checked);
+    window.api.setSetting('auto_normalize_on_import', String(checked));
   };
 
   const handleCookiesBrowserChange = (value) => {
@@ -258,6 +267,21 @@ function SettingsModal({ onClose }) {
                       onChange={(e) => handleTargetChange(e.target.value)}
                     />
                     <span className="settings-unit">LUFS</span>
+                  </div>
+                </div>
+                <div className="settings-row">
+                  <label htmlFor="auto-normalize-toggle">Auto-normalize on import</label>
+                  <div className="settings-toggle-row">
+                    <input
+                      id="auto-normalize-toggle"
+                      type="checkbox"
+                      checked={autoNormalizeOnImport}
+                      onChange={(e) => handleAutoNormalizeToggle(e.target.checked)}
+                    />
+                    <span className="settings-toggle-desc">
+                      Automatically normalize every imported track (MP3 import, YT-DLP, TIDAL) after
+                      its analysis finishes. Off by default.
+                    </span>
                   </div>
                 </div>
                 <div className="settings-row settings-row-action">
