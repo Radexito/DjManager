@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useDownload } from './DownloadContext.jsx';
 import './Sidebar.css';
 
 const MENU_ITEMS = [
@@ -22,8 +23,8 @@ function Sidebar({
   onMenuSelect,
   onExportPlaylistRekordboxUsb,
   onExportPlaylistAll,
-  isDownloading,
 }) {
+  const { sidebarProgress: ytDlpSidebarProgress } = useDownload();
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
   const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
@@ -189,22 +190,11 @@ function Sidebar({
           {MENU_ITEMS.map((item) => (
             <div
               key={item.id}
-              className={`menu-item ${selectedMenuItemId === item.id ? 'active' : ''}${isDownloading && item.id !== 'download' ? ' menu-item--disabled' : ''}`}
-              title={
-                isDownloading && item.id !== 'download' ? 'A download is in progress' : undefined
-              }
-              onClick={() => {
-                if (isDownloading && item.id !== 'download') return;
-                onMenuSelect(item.id);
-              }}
+              className={`menu-item ${selectedMenuItemId === item.id ? 'active' : ''}`}
+              onClick={() => onMenuSelect(item.id)}
             >
               <span className="menu-icon">{item.icon}</span>
               <span className="menu-text">{item.name}</span>
-              {isDownloading && item.id === 'download' && (
-                <span className="menu-item-downloading" title="Download in progress">
-                  ⏳
-                </span>
-              )}
             </div>
           ))}
         </div>
@@ -314,6 +304,22 @@ function Sidebar({
         {exportProgress && (
           <div className="import-progress">
             Exporting {exportProgress.copied} / {exportProgress.total}… ({exportProgress.pct}%)
+          </div>
+        )}
+        {ytDlpSidebarProgress && (
+          <div className="normalize-progress-wrap">
+            <div className="normalize-progress-label">
+              <span>YT-DLP</span>
+              <span>
+                {ytDlpSidebarProgress.current} / {ytDlpSidebarProgress.total}
+              </span>
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill"
+                style={{ width: `${Math.round(ytDlpSidebarProgress.pct)}%` }}
+              />
+            </div>
           </div>
         )}
         <button className="import-button" onClick={handleImport}>
