@@ -405,9 +405,8 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
     '0',
     '--no-warnings',
     '--newline',
+    '--no-colors',
     '--ignore-errors', // skip unavailable/deleted/restricted videos instead of aborting
-    '--progress-template',
-    'download:[download] %(progress._percent_str)s of %(progress._total_bytes_str)s at %(progress._speed_str)s',
     // --print after_move gives us the definitive final filepath after all post-processors
     // (audio extraction, remux, etc.) have run. This is our primary file detection mechanism.
     '--print',
@@ -467,6 +466,15 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
     /**
      * Process a single output line from yt-dlp (stdout or stderr).
      */
+    let lastProgressSent = 0;
+    const throttledProgress = (data) => {
+      const now = Date.now();
+      if (now - lastProgressSent >= 200) {
+        lastProgressSent = now;
+        onProgress?.(data);
+      }
+    };
+
     const processLine = (trimmed) => {
       if (!trimmed) return;
 
@@ -477,7 +485,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
         return;
       }
 
-      // Download progress: [download] 42.5% of 5.20MiB at 1.20MiB/s
+      // Download progress with known size: [download]  42.5% of   5.20MiB at  1.20MiB/s ETA 00:03
       const pctMatch = trimmed.match(/\[download\]\s+([\d.]+)%/);
       if (pctMatch) {
         currentTrackPct = Math.round(parseFloat(pctMatch[1]));
@@ -485,13 +493,27 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
         const current = playlistCurrent || 1;
         const overallPct =
           total > 1 ? Math.round(((current - 1) * 100 + currentTrackPct) / total) : currentTrackPct;
-        onProgress?.({
-          msg: trimmed
-            .replace(/^download:/, '')
-            .replace('[download] ', '')
-            .trim(),
+        throttledProgress({
+          msg: trimmed.replace(/^\[download\]\s+/, '').trim(),
           pct: overallPct,
           trackPct: currentTrackPct,
+          overallCurrent: current,
+          overallTotal: total,
+        });
+        return;
+      }
+
+      // Download progress with unknown size: [download] 5.20MiB at 1.20MiB/s
+      const unknownSizeMatch = trimmed.match(
+        /\[download\]\s+([\d.]+\s*\w+iB)\s+at\s+([\d.]+\s*\w+iB\/s)/
+      );
+      if (unknownSizeMatch) {
+        const total = playlistTotal ?? 1;
+        const current = playlistCurrent || 1;
+        throttledProgress({
+          msg: `${unknownSizeMatch[1]} at ${unknownSizeMatch[2]}`,
+          pct: total > 1 ? Math.round(((current - 1) / total) * 100) : 50,
+          trackPct: 50,
           overallCurrent: current,
           overallTotal: total,
         });
