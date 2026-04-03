@@ -474,20 +474,40 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
     let unavailableCount = 0;
 
     proc.on('close', async (code) => {
-      // Parse unavailable/error videos from stderr and fire callbacks for them
-      const unavailablePattern = /ERROR: \[[\w:]+\] ([^:]+): (.+)/g;
+      // Parse unavailable/error videos from stderr and fire callbacks.
+      // With --ignore-errors, yt-dlp may emit these as WARNING: lines instead of ERROR:.
+      const unavailablePattern = /(?:ERROR|WARNING): \[[\w:]+\] ([^:\s][^:]*): (.+)/g;
       let match;
       while ((match = unavailablePattern.exec(stderr)) !== null) {
         const videoId = match[1].trim();
         const reason = match[2].trim();
-        console.warn(`[ytdlp] unavailable: ${videoId} — ${reason}`);
-        options.onTrackUnavailable?.({ videoId, reason });
-        unavailableCount++;
+        // Only fire for actual unavailability reasons, not generic yt-dlp messages
+        if (
+          reason.toLowerCase().includes('unavailable') ||
+          reason.toLowerCase().includes('private') ||
+          reason.toLowerCase().includes('deleted') ||
+          reason.toLowerCase().includes('removed') ||
+          reason.toLowerCase().includes('not available')
+        ) {
+          console.warn(`[ytdlp] unavailable: ${videoId} — ${reason}`);
+          options.onTrackUnavailable?.({ videoId, reason });
+          unavailableCount++;
+        }
       }
 
-      // Exit code 1 with --ignore-errors: if all failures were unavailable videos
-      // (already reported via onTrackUnavailable), resolve gracefully so the UI
-      // can show per-track ✗ marks rather than a raw error string.
+      // Secondary heuristic: if stderr mentions unavailability but regex found nothing,
+      // treat it as an all-unavailable run so we don't show a raw error.
+      const stderrHasUnavailable =
+        unavailableCount === 0 &&
+        (stderr.includes('Video unavailable') ||
+          stderr.includes('Private video') ||
+          stderr.includes('Deleted video') ||
+          stderr.includes('This video is not available'));
+      if (stderrHasUnavailable) unavailableCount = 1; // sentinel — at least one unavailable
+
+      // Exit code 1 with --ignore-errors means some videos failed. If ALL failures were
+      // unavailability errors (already reported via onTrackUnavailable), resolve gracefully
+      // so the UI can show per-track ✗ marks rather than a raw error string.
       if (code !== 0 && destinationFiles.length === 0 && unavailableCount === 0) {
         reject(new Error(`yt-dlp exited with code ${code}:\n${stderr}`));
         return;
@@ -548,6 +568,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
             index: i,
           })),
         playlistName: playlistName || null,
+        unavailableCount,
       });
     });
 

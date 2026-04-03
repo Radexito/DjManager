@@ -730,7 +730,11 @@ ipcMain.handle(
 
       let lastOverallCurrent = 0;
 
-      const { files, playlistName: detectedPlaylistName } = await ytDlpDownloadUrl(
+      const {
+        files,
+        playlistName: detectedPlaylistName,
+        unavailableCount = 0,
+      } = await ytDlpDownloadUrl(
         url,
         (data) => {
           // When a new playlist item starts downloading, emit a 'downloading' track update
@@ -830,7 +834,7 @@ ipcMain.handle(
         }
       }
 
-      return { ok: true, trackIds, playlistId: playlistId ?? null };
+      return { ok: true, trackIds, playlistId: playlistId ?? null, unavailableCount };
     } catch (err) {
       if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-progress', null);
       return { ok: false, error: err.message };
