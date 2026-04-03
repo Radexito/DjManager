@@ -282,20 +282,27 @@
   opacity: 0.45;
 }
 
-/* New row slide-in + fade animation */
+/* New row: space slides open (scaleY), then content fades in */
 @keyframes rowSlideIn {
-  from {
+  0% {
+    transform: scaleY(0);
+    transform-origin: top center;
     opacity: 0;
-    transform: translateY(-8px);
   }
-  to {
+  45% {
+    transform: scaleY(1);
+    transform-origin: top center;
+    opacity: 0;
+  }
+  100% {
+    transform: scaleY(1);
+    transform-origin: top center;
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
 .row--new {
-  animation: rowSlideIn 0.3s ease-out forwards;
+  animation: rowSlideIn 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
 }
 
 /* BPM overridden indicator */
