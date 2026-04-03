@@ -49,8 +49,13 @@ window.api = {
   onNormalizeProgress: vi.fn().mockImplementation(noop),
   getMediaPort: vi.fn().mockResolvedValue(19876),
   ytDlpFetchInfo: vi.fn().mockResolvedValue({ ok: false, error: 'not configured' }),
+  checkDuplicateUrls: vi.fn().mockResolvedValue([]),
+  getPlaylistSourceUrls: vi.fn().mockResolvedValue([]),
   ytDlpDownloadUrl: vi.fn().mockResolvedValue({ ok: true, trackIds: [] }),
   onYtDlpProgress: vi.fn().mockImplementation(() => () => {}),
+  onYtDlpCheckProgress: vi.fn().mockImplementation(() => () => {}),
+  onYtDlpEntriesReady: vi.fn().mockImplementation(() => () => {}),
+  onYtDlpEntryChecked: vi.fn().mockImplementation(() => () => {}),
   onYtDlpTrackUpdate: vi.fn().mockImplementation(() => () => {}),
   openExternal: vi.fn().mockResolvedValue(undefined),
   checkUsbFormat: vi
