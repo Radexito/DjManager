@@ -112,7 +112,8 @@ export function DownloadProvider({ children }) {
     (s) => s.status === 'done' || s.status === 'failed'
   ).length;
   const sbTotal = Math.max(trackStatuses.length, progress?.overallTotal ?? 0, 1);
-  const sbCurrent = loading ? Math.min(completedCount + 1, sbTotal) : completedCount;
+  // Show how many tracks have fully completed (done/failed), starting at 0.
+  const sbCurrent = completedCount;
   const sidebarProgress = loading
     ? {
         current: sbCurrent,
