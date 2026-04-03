@@ -410,7 +410,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
     '--ignore-errors', // skip unavailable/deleted/restricted videos instead of aborting
     // Reliable per-track progress: fires before each download starts, goes to stdout
     '--print',
-    `before_dl:${TRACK_MARKER}%(playlist_index|1)s/%(n_entries|1)s:%(title)s`,
+    `before_dl:${TRACK_MARKER}%(n_entries|1)s:%(title)s`,
     // --print after_move gives us the definitive final filepath after all post-processors
     // (audio extraction, remux, etc.) have run. This is our primary file detection mechanism.
     '--print',
@@ -440,6 +440,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
     let currentQuality = 'unknown';
     let playlistTotal = null;
     let playlistCurrent = 0;
+    let trackStartCount = 0; // own sequential counter, unaffected by original playlist positions
     let playlistName = null;
     let currentTrackUrl = null;
     let currentTrackPct = 0;
@@ -489,25 +490,28 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
         return;
       }
 
-      // Reliable track-start marker: --print before_dl emits TRACK_MARKER:<idx>/<total>:<title>
+      // Reliable track-start marker: --print before_dl emits TRACK_MARKER:<total>:<title>
+      // We use our own sequential counter (trackStartCount) so the index is always 1,2,3,4
+      // regardless of the original playlist positions (%(playlist_index)s would give 70 for
+      // a track at position 70 in a 70-item playlist, even if only 4 tracks are selected).
       if (trimmed.startsWith(TRACK_MARKER)) {
         const rest = trimmed.slice(TRACK_MARKER.length);
-        const slashIdx = rest.indexOf('/');
         const colonIdx = rest.indexOf(':');
-        if (slashIdx !== -1 && colonIdx !== -1 && colonIdx > slashIdx) {
-          const idx = parseInt(rest.slice(0, slashIdx), 10);
-          const total = parseInt(rest.slice(slashIdx + 1, colonIdx), 10);
+        if (colonIdx !== -1) {
+          const total = parseInt(rest.slice(0, colonIdx), 10);
           const title = rest.slice(colonIdx + 1).trim();
-          if (!isNaN(idx) && !isNaN(total)) {
+          if (!isNaN(total)) {
+            trackStartCount++;
+            const idx = trackStartCount;
             playlistCurrent = idx;
             playlistTotal = total;
             currentTrackPct = 0;
+            currentTrackTitle = title || null;
             if (!playlistDetectedFired && total > 1) {
               playlistDetectedFired = true;
               options.onPlaylistDetected?.({ name: playlistName, total });
             }
-            if (!currentTrackTitle && title) {
-              currentTrackTitle = title;
+            if (title) {
               options.onTrackMeta?.({ index: idx - 1, title });
             }
             onProgress?.({

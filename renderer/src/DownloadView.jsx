@@ -23,6 +23,7 @@ const STATUS_ICON = {
   pending: { icon: '□', label: 'Pending' },
   downloading: { icon: '⋯', label: 'Downloading' },
   importing: { icon: '↓', label: 'Importing' },
+  linking: { icon: '⊟', label: 'Linking to playlist' },
   done: { icon: '✓', label: 'Done' },
   failed: { icon: '✗', label: 'Failed' },
 };
@@ -51,7 +52,12 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
   // ── step: select ──────────────────────────────────────────────────────────
   const [playlistInfo, setPlaylistInfo] = useState(null); // { type, title, entries }
   const [selectedIndices, setSelectedIndices] = useState(new Set());
-  const [duplicateUrls, setDuplicateUrls] = useState(new Set()); // entry URLs already in library
+  // libraryMap: Map<entryUrl, trackId> — tracks already in the library
+  const [libraryMap, setLibraryMap] = useState(new Map());
+  // linkIndices: Set<entryIndex> — tracks to link (in library, user wants to add to playlist)
+  const [linkIndices, setLinkIndices] = useState(new Set());
+  // playlistMemberUrls: Set<entryUrl> — tracks already in the TARGET playlist
+  const [playlistMemberUrls, setPlaylistMemberUrls] = useState(new Set());
   const [playlists, setPlaylists] = useState([]); // existing playlists for combobox
   const [targetPlaylistId, setTargetPlaylistId] = useState(null); // null = create new
   const [targetPlaylistName, setTargetPlaylistName] = useState('');
@@ -165,27 +171,36 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
       }
       setPlaylistInfo(res);
 
-      // Check which entries are already in the library before showing selection
-      let dupUrls = new Set();
+      // Check which entries are already in the library
+      let newLibraryMap = new Map();
       try {
         const entryChecks = res.entries
           .filter((e) => e.url || e.id)
           .map((e) => ({ url: e.url, id: e.id }));
         if (entryChecks.length > 0) {
           const found = await window.api.checkDuplicateUrls(entryChecks);
-          dupUrls = new Set(found);
+          // found = [{url, trackId}]
+          for (const { url: u, trackId } of found) {
+            if (u) newLibraryMap.set(u, trackId);
+          }
         }
       } catch {
-        // non-fatal — just skip pre-checking
+        // non-fatal
       }
-      setDuplicateUrls(dupUrls);
+      setLibraryMap(newLibraryMap);
 
-      // Pre-select only non-duplicate entries
+      // Pre-select non-library entries; pre-link library entries that aren't in the target playlist
       setSelectedIndices(
         new Set(
-          res.entries.filter((e) => !e.unavailable && !dupUrls.has(e.url)).map((e) => e.index)
+          res.entries.filter((e) => !e.unavailable && !newLibraryMap.has(e.url)).map((e) => e.index)
         )
       );
+      setLinkIndices(
+        new Set(
+          res.entries.filter((e) => !e.unavailable && newLibraryMap.has(e.url)).map((e) => e.index)
+        )
+      );
+
       // Fetch existing playlists for the combobox
       let existingPlaylists = [];
       try {
@@ -199,13 +214,42 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
       const match = existingPlaylists.find(
         (p) => p.name.toLowerCase() === detectedTitle.toLowerCase()
       );
+      let matchedPlaylistId = null;
       if (match) {
+        matchedPlaylistId = match.id;
         setTargetPlaylistId(match.id);
         setTargetPlaylistName('');
       } else {
         setTargetPlaylistId(null);
         setTargetPlaylistName(detectedTitle);
       }
+
+      // Check which library entries are already in the matched playlist
+      if (matchedPlaylistId && newLibraryMap.size > 0) {
+        try {
+          const memberRows = await window.api.getPlaylistSourceUrls(matchedPlaylistId);
+          const memberTrackIds = new Set(memberRows.map((r) => r.trackId));
+          const inPlaylist = new Set(
+            [...newLibraryMap.entries()]
+              .filter(([, tid]) => memberTrackIds.has(tid))
+              .map(([url]) => url)
+          );
+          setPlaylistMemberUrls(inPlaylist);
+          // Remove "already in playlist" entries from linkIndices
+          setLinkIndices((prev) => {
+            const next = new Set(prev);
+            for (const entry of res.entries) {
+              if (inPlaylist.has(entry.url)) next.delete(entry.index);
+            }
+            return next;
+          });
+        } catch {
+          setPlaylistMemberUrls(new Set());
+        }
+      } else {
+        setPlaylistMemberUrls(new Set());
+      }
+
       setStep('select');
     } catch (err) {
       console.error('[DownloadView] handleLoad error:', err);
@@ -215,88 +259,205 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
     }
   };
 
+  // When the target playlist changes, re-check which library entries are already in it
+  const handleTargetPlaylistChange = useCallback(
+    async (newPlaylistId) => {
+      setTargetPlaylistId(newPlaylistId);
+      if (!newPlaylistId || libraryMap.size === 0) {
+        setPlaylistMemberUrls(new Set());
+        // Restore all library entries to linkIndices
+        if (playlistInfo) {
+          setLinkIndices(
+            new Set(
+              playlistInfo.entries
+                .filter((e) => !e.unavailable && libraryMap.has(e.url))
+                .map((e) => e.index)
+            )
+          );
+        }
+        return;
+      }
+      try {
+        const memberRows = await window.api.getPlaylistSourceUrls(newPlaylistId);
+        const memberTrackIds = new Set(memberRows.map((r) => r.trackId));
+        const inPlaylist = new Set(
+          [...libraryMap.entries()].filter(([, tid]) => memberTrackIds.has(tid)).map(([url]) => url)
+        );
+        setPlaylistMemberUrls(inPlaylist);
+        if (playlistInfo) {
+          setLinkIndices(
+            new Set(
+              playlistInfo.entries
+                .filter((e) => !e.unavailable && libraryMap.has(e.url) && !inPlaylist.has(e.url))
+                .map((e) => e.index)
+            )
+          );
+        }
+      } catch {
+        setPlaylistMemberUrls(new Set());
+      }
+    },
+    [libraryMap, playlistInfo]
+  );
+
   // Step 2 → 1: go back
   const handleBack = useCallback(() => {
     setStep('url');
     setPlaylistInfo(null);
-    setDuplicateUrls(new Set());
+    setLibraryMap(new Map());
+    setLinkIndices(new Set());
+    setPlaylistMemberUrls(new Set());
     setFetchError(null);
   }, []);
 
-  // Step 2: toggle a single entry
-  const handleToggleEntry = useCallback((index) => {
-    setSelectedIndices((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return next;
-    });
-  }, []);
+  // Step 2: toggle a single entry — 3-state cycle for library entries
+  // library + not-in-playlist: indeterminate (link) → unchecked → indeterminate
+  // normal (not in library): checked → unchecked → checked
+  const handleToggleEntry = useCallback(
+    (index, entry) => {
+      const isInLibrary = libraryMap.has(entry.url);
+      const isInPlaylist = playlistMemberUrls.has(entry.url);
+      if (isInLibrary && !isInPlaylist) {
+        // 3-state: link ↔ skip
+        setLinkIndices((prev) => {
+          const next = new Set(prev);
+          if (next.has(index)) next.delete(index);
+          else next.add(index);
+          return next;
+        });
+      } else {
+        setSelectedIndices((prev) => {
+          const next = new Set(prev);
+          if (next.has(index)) next.delete(index);
+          else next.add(index);
+          return next;
+        });
+      }
+    },
+    [libraryMap, playlistMemberUrls]
+  );
 
-  // Step 2: select / deselect all — only toggles available entries
+  // Step 2: select / deselect all — toggles download entries; link entries follow separately
   const handleToggleAll = useCallback(() => {
-    const available = playlistInfo.entries.filter((e) => !e.unavailable);
-    setSelectedIndices((prev) =>
-      prev.size === available.length ? new Set() : new Set(available.map((e) => e.index))
+    if (!playlistInfo) return;
+    const downloadable = playlistInfo.entries.filter(
+      (e) => !e.unavailable && !libraryMap.has(e.url)
     );
-  }, [playlistInfo]);
+    const linkable = playlistInfo.entries.filter(
+      (e) => !e.unavailable && libraryMap.has(e.url) && !playlistMemberUrls.has(e.url)
+    );
+    const allDownloadSelected = downloadable.every((e) => selectedIndices.has(e.index));
+    const allLinkSelected = linkable.every((e) => linkIndices.has(e.index));
+    const allSelected = allDownloadSelected && allLinkSelected;
+    if (allSelected) {
+      setSelectedIndices(new Set());
+      setLinkIndices(new Set());
+    } else {
+      setSelectedIndices(new Set(downloadable.map((e) => e.index)));
+      setLinkIndices(new Set(linkable.map((e) => e.index)));
+    }
+  }, [playlistInfo, libraryMap, playlistMemberUrls, selectedIndices, linkIndices]);
 
   // Step 2 → 3: start download
   const handleDownload = async () => {
-    if (selectedIndices.size === 0) return;
+    if (selectedIndices.size === 0 && linkIndices.size === 0) return;
 
-    // Pre-populate the track list with real titles from the selection, in playlist order
-    const selectedEntries = playlistInfo.entries
+    // Entries to actually download via yt-dlp (not already in library)
+    const downloadEntries = playlistInfo.entries
       .filter((e) => selectedIndices.has(e.index))
       .sort((a, b) => a.index - b.index);
 
-    setStep('download');
-    setLoading(true);
-    setResult(null);
-    setTrackStatuses(
-      selectedEntries.map((e, i) => ({
+    // Entries to link (already in library, user wants to add to playlist)
+    const linkEntries = playlistInfo.entries
+      .filter((e) => linkIndices.has(e.index))
+      .sort((a, b) => a.index - b.index);
+
+    // Combined display list: downloads first, then links
+    const allDisplayEntries = [
+      ...downloadEntries.map((e, i) => ({
         index: i,
         title: e.title,
         url: e.url,
         status: 'pending',
-      }))
-    );
+      })),
+      ...linkEntries.map((e, i) => ({
+        index: downloadEntries.length + i,
+        title: e.title,
+        url: e.url,
+        status: linkIndices.has(e.index) ? 'linking' : 'pending',
+      })),
+    ];
+
+    setStep('download');
+    setLoading(true);
+    setResult(null);
+    setTrackStatuses(allDisplayEntries);
     setProgress({
       msg: 'Starting download…',
       pct: 0,
       trackPct: 0,
       overallCurrent: 1,
-      overallTotal: selectedEntries.length,
+      overallTotal: downloadEntries.length,
     });
 
-    // Always pass --playlist-items when:
-    // - user deselected some available tracks, OR
-    // - there are unavailable entries that must be excluded (even if user selected all available)
-    let playlistItems = null;
-    if (
-      playlistInfo.type === 'playlist' &&
-      (selectedIndices.size < availableEntries.length || unavailableCount > 0)
-    ) {
-      playlistItems = Array.from(selectedIndices)
-        .sort((a, b) => a - b)
-        .map((i) => i + 1)
-        .join(',');
+    // Determine effective playlist ID for linking (may be created by the download step)
+    let effectivePlaylistId = targetPlaylistId;
+
+    if (downloadEntries.length > 0) {
+      // Always pass --playlist-items when user excluded some tracks or there are unavailable ones
+      let playlistItems = null;
+      const downloadOnlyEntries = downloadEntries.length;
+      const totalAvailable = availableEntries.filter((e) => !libraryMap.has(e.url)).length;
+      if (
+        playlistInfo.type === 'playlist' &&
+        (downloadOnlyEntries < totalAvailable || unavailableCount > 0 || libraryMap.size > 0)
+      ) {
+        playlistItems = downloadEntries
+          .map((e) => e.index + 1) // original 1-based playlist indices
+          .join(',');
+      }
+
+      const res = await window.api.ytDlpDownloadUrl({
+        url,
+        playlistItems,
+        playlistTitle: playlistInfo?.title || null,
+        existingPlaylistId: playlistInfo?.type === 'playlist' ? targetPlaylistId : null,
+        newPlaylistName:
+          playlistInfo?.type === 'playlist' && !targetPlaylistId
+            ? targetPlaylistName || playlistInfo?.title || 'Imported Playlist'
+            : null,
+      });
+
+      effectivePlaylistId = res.playlistId ?? targetPlaylistId;
+      setLoading(false);
+      setProgress(null);
+      setResult(res);
+      if (res.ok) setHistory((prev) => [{ url, at: Date.now() }, ...prev.slice(0, 19)]);
     }
 
-    const res = await window.api.ytDlpDownloadUrl({
-      url,
-      playlistItems,
-      playlistTitle: playlistInfo?.title || null,
-      existingPlaylistId: playlistInfo?.type === 'playlist' ? targetPlaylistId : null,
-      newPlaylistName:
-        playlistInfo?.type === 'playlist' && !targetPlaylistId
-          ? targetPlaylistName || playlistInfo?.title || 'Imported Playlist'
-          : null,
-    });
-    setLoading(false);
-    setProgress(null);
-    setResult(res);
-    if (res.ok) setHistory((prev) => [{ url, at: Date.now() }, ...prev.slice(0, 19)]);
+    // Link already-downloaded tracks to the playlist (no re-download)
+    if (linkEntries.length > 0 && effectivePlaylistId) {
+      const trackIds = linkEntries.map((e) => libraryMap.get(e.url)).filter(Boolean);
+      if (trackIds.length > 0) {
+        try {
+          await window.api.addTracksToPlaylist(effectivePlaylistId, trackIds);
+          setTrackStatuses((prev) =>
+            prev.map((t) => {
+              const isLink = linkEntries.some((e) => e.url === t.url);
+              return isLink ? { ...t, status: 'done' } : t;
+            })
+          );
+        } catch (err) {
+          console.error('[DownloadView] link tracks failed:', err);
+        }
+      }
+    }
+
+    if (downloadEntries.length === 0) {
+      setLoading(false);
+      setProgress(null);
+      setResult({ ok: true, imported: 0 });
+    }
   };
 
   // Step 3 → 1: start fresh
@@ -310,6 +471,9 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
     setPlaylists([]);
     setTargetPlaylistId(null);
     setTargetPlaylistName('');
+    setLibraryMap(new Map());
+    setLinkIndices(new Set());
+    setPlaylistMemberUrls(new Set());
     setTimeout(() => inputRef.current?.focus(), 50);
   };
 
@@ -327,9 +491,18 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
   const unavailableCount = playlistInfo
     ? playlistInfo.entries.filter((e) => e.unavailable).length
     : 0;
+  // "All selected" means: every downloadable AND every linkable entry is active
+  const downloadableEntries = availableEntries.filter((e) => !libraryMap.has(e.url));
+  const linkableEntries = availableEntries.filter(
+    (e) => libraryMap.has(e.url) && !playlistMemberUrls.has(e.url)
+  );
   const allSelected =
-    playlistInfo && selectedIndices.size === availableEntries.length && availableEntries.length > 0;
-  const someSelected = playlistInfo && selectedIndices.size > 0 && !allSelected;
+    playlistInfo &&
+    downloadableEntries.every((e) => selectedIndices.has(e.index)) &&
+    linkableEntries.every((e) => linkIndices.has(e.index)) &&
+    downloadableEntries.length + linkableEntries.length > 0;
+  const someSelected =
+    playlistInfo && (selectedIndices.size > 0 || linkIndices.size > 0) && !allSelected;
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
@@ -482,7 +655,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
                 {allSelected ? 'Deselect all' : 'Select all'}
               </label>
               <span className="dl-select-selected-count">
-                {selectedIndices.size} / {availableEntries.length} selected
+                {selectedIndices.size + linkIndices.size} / {availableEntries.length} selected
               </span>
             </div>
           )}
@@ -491,17 +664,24 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
             {playlistInfo.entries
               .filter((entry) => !entry.unavailable)
               .map((entry) => {
-                const isDupe = duplicateUrls.has(entry.url);
+                const isInLibrary = libraryMap.has(entry.url);
+                const isInPlaylist = playlistMemberUrls.has(entry.url);
+                const isLink = linkIndices.has(entry.index);
+                const isSelected = selectedIndices.has(entry.index);
                 return (
                   <label
                     key={entry.index}
-                    className={`dl-select-item${isDupe ? ' dl-select-item--dupe' : ''}`}
+                    className={`dl-select-item${isInLibrary ? ' dl-select-item--dupe' : ''}`}
                   >
                     {playlistInfo.type === 'playlist' && (
                       <input
                         type="checkbox"
-                        checked={selectedIndices.has(entry.index)}
-                        onChange={() => handleToggleEntry(entry.index)}
+                        checked={isSelected || isLink}
+                        disabled={isInPlaylist}
+                        ref={(el) => {
+                          if (el) el.indeterminate = isLink && !isSelected;
+                        }}
+                        onChange={() => handleToggleEntry(entry.index, entry)}
                       />
                     )}
                     <span className="dl-select-item-num">{entry.index + 1}.</span>
@@ -509,9 +689,24 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
                     {entry.duration && (
                       <span className="dl-select-item-dur">{fmtDuration(entry.duration)}</span>
                     )}
-                    {isDupe && (
-                      <span className="dl-select-item-dupe-badge" title="Already in your library">
-                        ✓ in library
+                    {isInPlaylist && (
+                      <span
+                        className="dl-select-item-dupe-badge dl-select-item-badge--playlist"
+                        title="Already in the selected playlist"
+                      >
+                        ✓ in playlist
+                      </span>
+                    )}
+                    {isInLibrary && !isInPlaylist && (
+                      <span
+                        className="dl-select-item-dupe-badge"
+                        title={
+                          isLink
+                            ? 'Will be linked to playlist (no re-download)'
+                            : 'In your library — click checkbox to link to playlist'
+                        }
+                      >
+                        {isLink ? '⊟ link' : '○ in library'}
                       </span>
                     )}
                   </label>
@@ -532,7 +727,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
                 <select
                   className="dl-playlist-select"
                   value={targetPlaylistId ?? ''}
-                  onChange={(e) => setTargetPlaylistId(e.target.value || null)}
+                  onChange={(e) => handleTargetPlaylistChange(e.target.value || null)}
                 >
                   <option value="">New playlist</option>
                   {playlists.map((pl) => (
@@ -555,11 +750,17 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
             <button
               className="dl-btn"
               onClick={handleDownload}
-              disabled={selectedIndices.size === 0}
+              disabled={selectedIndices.size === 0 && linkIndices.size === 0}
             >
-              {allSelected
-                ? `Download all (${selectedIndices.size})`
-                : `Download selected (${selectedIndices.size})`}
+              {(() => {
+                const dl = selectedIndices.size;
+                const lk = linkIndices.size;
+                if (dl > 0 && lk > 0) return `Download ${dl} + link ${lk}`;
+                if (dl > 0)
+                  return allSelected ? `Download all (${dl})` : `Download selected (${dl})`;
+                if (lk > 0) return `Link ${lk} to playlist`;
+                return 'Download';
+              })()}
             </button>
           </div>
         </div>
