@@ -152,6 +152,12 @@
   opacity: 0.9;
 }
 
+.dl-result-unavailable-note {
+  font-size: 12px;
+  color: #e57373;
+  opacity: 0.9;
+}
+
 /* ── History ─────────────────────────────────────────────────────────────── */
 
 .dl-history {

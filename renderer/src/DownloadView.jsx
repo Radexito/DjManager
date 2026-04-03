@@ -608,39 +608,62 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
           )}
 
           {result?.ok && (
-            <div className="dl-result dl-result--ok">
-              <span>
-                {result.trackIds.length === 1
-                  ? '✓ Track added to your library'
-                  : `✓ ${result.trackIds.length} tracks added to your library`}
-              </span>
-              <div className="dl-result-actions">
-                {result.playlistId ? (
-                  <button
-                    type="button"
-                    className="dl-goto-btn"
-                    onClick={() => onGoToPlaylist(result.playlistId)}
-                  >
-                    Go to Playlist →
+            <div
+              className={`dl-result ${result.trackIds.length === 0 ? 'dl-result--err' : 'dl-result--ok'}`}
+            >
+              {result.trackIds.length === 0 ? (
+                <span>
+                  ✗ All {result.unavailableCount > 0 ? result.unavailableCount + ' ' : ''}tracks
+                  were unavailable (deleted, private, or geo-restricted)
+                </span>
+              ) : (
+                <span>
+                  {result.trackIds.length === 1
+                    ? '✓ Track added to your library'
+                    : `✓ ${result.trackIds.length} tracks added to your library`}
+                  {result.unavailableCount > 0 && (
+                    <span className="dl-result-unavailable-note">
+                      {' '}
+                      · {result.unavailableCount} unavailable (skipped)
+                    </span>
+                  )}
+                </span>
+              )}
+              {result.trackIds.length > 0 && (
+                <div className="dl-result-actions">
+                  {result.playlistId ? (
+                    <button
+                      type="button"
+                      className="dl-goto-btn"
+                      onClick={() => onGoToPlaylist(result.playlistId)}
+                    >
+                      Go to Playlist →
+                    </button>
+                  ) : (
+                    <button type="button" className="dl-goto-btn" onClick={onGoToLibrary}>
+                      View in Music →
+                    </button>
+                  )}
+                  <button type="button" className="dl-goto-btn" onClick={handleDownloadAnother}>
+                    ← New download
                   </button>
-                ) : (
-                  <button type="button" className="dl-goto-btn" onClick={onGoToLibrary}>
-                    View in Music →
-                  </button>
-                )}
-                <button type="button" className="dl-goto-btn" onClick={handleDownloadAnother}>
-                  ← New download
+                </div>
+              )}
+              {result.trackIds.length === 0 && (
+                <button
+                  type="button"
+                  className="dl-back-btn"
+                  onClick={handleBack}
+                  style={{ marginTop: 8, alignSelf: 'flex-start' }}
+                >
+                  ← Try again
                 </button>
-              </div>
+              )}
             </div>
           )}
           {result?.error && (
             <div className="dl-result dl-result--err">
-              {trackStatuses.length > 0 && trackStatuses.every((t) => t.status === 'failed') ? (
-                <span>✗ All tracks were unavailable (deleted, private, or geo-restricted)</span>
-              ) : (
-                <span>✗ {result.error}</span>
-              )}
+              <span>✗ {result.error}</span>
               {result.error.includes('400') && (
                 <span className="dl-result-hint">
                   YouTube blocked the request. Try setting a browser in Settings → Downloads →
