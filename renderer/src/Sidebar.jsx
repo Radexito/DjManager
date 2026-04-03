@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useDownload } from './DownloadContext.jsx';
 import './Sidebar.css';
 
 const MENU_ITEMS = [
@@ -23,6 +24,7 @@ function Sidebar({
   onExportPlaylistRekordboxUsb,
   onExportPlaylistAll,
 }) {
+  const { sidebarProgress: ytDlpSidebarProgress } = useDownload();
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
   const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
@@ -302,6 +304,22 @@ function Sidebar({
         {exportProgress && (
           <div className="import-progress">
             Exporting {exportProgress.copied} / {exportProgress.total}… ({exportProgress.pct}%)
+          </div>
+        )}
+        {ytDlpSidebarProgress && (
+          <div className="normalize-progress-wrap">
+            <div className="normalize-progress-label">
+              <span>YT-DLP</span>
+              <span>
+                {ytDlpSidebarProgress.current} / {ytDlpSidebarProgress.total}
+              </span>
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill"
+                style={{ width: `${Math.round(ytDlpSidebarProgress.pct)}%` }}
+              />
+            </div>
           </div>
         )}
         <button className="import-button" onClick={handleImport}>
