@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect } from 'react';
+import { useRef, useCallback } from 'react';
 import { useDownload } from './DownloadContext.jsx';
 import './DownloadView.css';
 
@@ -86,18 +86,6 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
     setFetchError(null);
     setCheckProgress(null);
   }, [setFetching, setFetchError, setCheckProgress]);
-
-  // Auto-reset fetching when the user switches away from the tab while loading
-  const prevStyleRef = useRef(style);
-  useEffect(() => {
-    const wasHidden = prevStyleRef.current?.display === 'none';
-    const isHidden = style?.display === 'none';
-    prevStyleRef.current = style;
-    if (!wasHidden && isHidden && fetching) {
-      setFetching(false);
-      setCheckProgress(null);
-    }
-  }, [style, fetching, setFetching, setCheckProgress]);
 
   // ── handlers ──────────────────────────────────────────────────────────────
 
