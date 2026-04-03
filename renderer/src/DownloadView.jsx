@@ -68,6 +68,25 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
   const [trackStatuses, setTrackStatuses] = useState([]);
   const [result, setResult] = useState(null);
 
+  // Cancel an in-progress fetch — the IPC call will still complete but we ignore the result
+  const handleCancelFetch = useCallback(() => {
+    setFetching(false);
+    setFetchError(null);
+    setCheckProgress(null);
+  }, []);
+
+  // When the view is hidden (user switches tabs) while fetching, reset so they can retry
+  const prevStyleRef = useRef(style);
+  useEffect(() => {
+    const wasHidden = prevStyleRef.current?.display === 'none';
+    const isHidden = style?.display === 'none';
+    prevStyleRef.current = style;
+    if (!wasHidden && isHidden && fetching) {
+      setFetching(false);
+      setCheckProgress(null);
+    }
+  }, [style, fetching]);
+
   useEffect(() => {
     inputRef.current?.focus();
 
@@ -566,6 +585,11 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
                   'Load →'
                 )}
               </button>
+              {fetching && (
+                <button type="button" className="dl-btn dl-btn--cancel" onClick={handleCancelFetch}>
+                  ✕
+                </button>
+              )}
             </div>
             {fetchError && (
               <div className="dl-result dl-result--err">
