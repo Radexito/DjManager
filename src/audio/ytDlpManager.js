@@ -156,27 +156,30 @@ export async function fetchPlaylistInfo(url, options = {}) {
 
 const INNERTUBE_CONCURRENCY = 6;
 const INNERTUBE_TIMEOUT_MS = 8000;
-// YouTube InnerTube player endpoint — same API YouTube uses internally to check playability.
-// The ANDROID client reliably returns playabilityStatus for geo-restricted, content-match,
-// private, deleted, and all other unavailability types that oEmbed misses.
-const INNERTUBE_URL =
-  'https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false';
-const INNERTUBE_CONTEXT = {
-  client: {
-    clientName: 'ANDROID',
-    clientVersion: '17.31.35',
-    androidSdkVersion: 30,
-    userAgent: 'com.google.android.youtube/17.31.35 (Linux; U; Android 11) gzip',
+// YouTube InnerTube player endpoint.
+// We check with two clients because no single client catches everything:
+//  - WEB: conservative, matches what yt-dlp's primary scraper sees
+//  - TVHTML5_SIMPLY_EMBEDDED_PLAYER: catches videos restricted on web but playable on TV embed
+// Any non-OK status from either marks the video as unavailable.
+const INNERTUBE_URL = 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
+const INNERTUBE_CLIENTS = [
+  {
+    clientName: 'WEB',
+    clientVersion: '2.20240101.00.00',
     hl: 'en',
-    gl: 'US',
   },
-};
+  {
+    clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+    clientVersion: '2.0',
+    hl: 'en',
+  },
+];
 
 /**
  * Batch-check YouTube video availability via the InnerTube player API.
+ * Checks with two clients (WEB + TV_EMBEDDED) to catch geo-restricted,
+ * content-match-removed, private, deleted, and other unplayable states.
  * Mutates each entry in-place: sets entry.unavailable and entry.unavailableReason.
- * Catches private, deleted, geo-restricted, content-match-removed, and all other
- * unplayable states — unlike oEmbed which misses geo-restricted / content-match videos.
  */
 async function checkYouTubeAvailability(entries) {
   const toCheck = entries.filter((e) => !e.unavailable && e.id);
@@ -184,29 +187,48 @@ async function checkYouTubeAvailability(entries) {
 
   console.log(`[ytdlp] InnerTube availability check for ${toCheck.length} entries…`);
 
+  async function checkOne(videoId) {
+    for (const clientCtx of INNERTUBE_CLIENTS) {
+      try {
+        const res = await fetch(INNERTUBE_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ videoId, context: { client: clientCtx } }),
+          signal: AbortSignal.timeout(INNERTUBE_TIMEOUT_MS),
+        });
+        if (!res.ok) continue;
+        const data = await res.json();
+        const ps = data?.playabilityStatus;
+        const status = ps?.status;
+        console.log(`[ytdlp] ${videoId} [${clientCtx.clientName}] → ${status}`);
+        if (status && status !== 'OK') {
+          return {
+            unavailable: true,
+            reason:
+              ps.reason ||
+              (status === 'LOGIN_REQUIRED'
+                ? 'Private video'
+                : status === 'UNPLAYABLE'
+                  ? 'Video unavailable'
+                  : 'Video unavailable'),
+          };
+        }
+      } catch {
+        // Timeout or network error for this client — try next
+      }
+    }
+    return { unavailable: false };
+  }
+
   const queue = [...toCheck];
 
   async function worker() {
     while (queue.length > 0) {
       const entry = queue.shift();
-      try {
-        const res = await fetch(INNERTUBE_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ videoId: entry.id, context: INNERTUBE_CONTEXT }),
-          signal: AbortSignal.timeout(INNERTUBE_TIMEOUT_MS),
-        });
-        if (!res.ok) continue; // network-level error, assume available
-        const data = await res.json();
-        const status = data?.playabilityStatus?.status;
-        if (status && status !== 'OK') {
-          entry.unavailable = true;
-          entry.unavailableReason =
-            data.playabilityStatus.reason ||
-            (status === 'LOGIN_REQUIRED' ? 'Private video' : 'Video unavailable');
-        }
-      } catch {
-        // Timeout or network error — assume available, yt-dlp will report if not
+      const result = await checkOne(entry.id);
+      if (result.unavailable) {
+        entry.unavailable = true;
+        entry.unavailableReason = result.reason;
       }
     }
   }
