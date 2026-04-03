@@ -34,6 +34,27 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('export-m3u-progress', handler);
   },
 
+  // USB / Rekordbox export
+  checkUsbFormat: (mountPath) => ipcRenderer.invoke('check-usb-format', mountPath),
+  formatUsb: (opts) => ipcRenderer.invoke('format-usb', opts),
+  exportRekordbox: (opts) => ipcRenderer.invoke('export-rekordbox', opts),
+  exportAll: (opts) => ipcRenderer.invoke('export-all', opts),
+  onFormatUsbProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('format-usb-progress', handler);
+    return () => ipcRenderer.removeListener('format-usb-progress', handler);
+  },
+  onExportRekordboxProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('export-rekordbox-progress', handler);
+    return () => ipcRenderer.removeListener('export-rekordbox-progress', handler);
+  },
+  onExportAllProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('export-all-progress', handler);
+    return () => ipcRenderer.removeListener('export-all-progress', handler);
+  },
+
   // Settings
   getSetting: (key, def) => ipcRenderer.invoke('get-setting', key, def),
   setSetting: (key, value) => ipcRenderer.invoke('set-setting', key, value),
@@ -44,13 +65,21 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('move-library-progress', (_, data) => cb(data));
     return () => ipcRenderer.removeAllListeners('move-library-progress');
   },
-  normalizeLibrary: (payload) => ipcRenderer.invoke('normalize-library', payload),
+  normalizeLibrary: () => ipcRenderer.invoke('normalize-library'),
+  getNormalizedCount: () => ipcRenderer.invoke('get-normalized-count'),
+  normalizeTracksAudio: (payload) => ipcRenderer.invoke('normalize-tracks-audio', payload),
+  resetNormalization: (payload) => ipcRenderer.invoke('reset-normalization', payload),
 
   // Events
   onTrackUpdated: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('track-updated', handler);
     return () => ipcRenderer.removeListener('track-updated', handler);
+  },
+  onNormalizeProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('normalize-progress', handler);
+    return () => ipcRenderer.removeListener('normalize-progress', handler);
   },
   onLibraryUpdated: (callback) => {
     const handler = () => callback();
@@ -69,10 +98,13 @@ contextBridge.exposeInMainWorld('api', {
   },
   // Auto-tagger
   autoTagSearch: (query) => ipcRenderer.invoke('auto-tag-search', { query }),
+  fetchArtworkUrl: ({ trackId, url }) => ipcRenderer.invoke('fetch-artwork-url', { trackId, url }),
 
   // yt-dlp URL download
   getMediaPort: () => ipcRenderer.invoke('get-media-port'),
   ytDlpFetchInfo: (url) => ipcRenderer.invoke('ytdlp-fetch-info', url),
+  checkDuplicateUrls: (urls) => ipcRenderer.invoke('check-duplicate-urls', urls),
+  getPlaylistSourceUrls: (playlistId) => ipcRenderer.invoke('get-playlist-source-urls', playlistId),
   ytDlpDownloadUrl: ({ url, playlistItems, playlistTitle, existingPlaylistId, newPlaylistName }) =>
     ipcRenderer.invoke('ytdlp-download-url', {
       url,
@@ -85,6 +117,21 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('ytdlp-progress', handler);
     return () => ipcRenderer.removeListener('ytdlp-progress', handler);
+  },
+  onYtDlpCheckProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-check-progress', handler);
+    return () => ipcRenderer.removeListener('ytdlp-check-progress', handler);
+  },
+  onYtDlpEntriesReady: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-entries-ready', handler);
+    return () => ipcRenderer.removeListener('ytdlp-entries-ready', handler);
+  },
+  onYtDlpEntryChecked: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-entry-checked', handler);
+    return () => ipcRenderer.removeListener('ytdlp-entry-checked', handler);
   },
   onYtDlpTrackUpdate: (cb) => {
     const handler = (_, data) => cb(data);

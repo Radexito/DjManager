@@ -158,14 +158,16 @@ export function addTrack(track) {
     INSERT INTO tracks (
       title, artist, album, duration,
       file_path, file_hash, format, bitrate,
-      year, label, genres,
+      year, label, genres, bpm,
       source_url, source_platform, source_quality, source_link,
+      user_tags, has_artwork, artwork_path,
       created_at
     ) VALUES (
       @title, @artist, @album, @duration,
       @file_path, @file_hash, @format, @bitrate,
-      @year, @label, @genres,
+      @year, @label, @genres, @bpm,
       @source_url, @source_platform, @source_quality, @source_link,
+      @user_tags, @has_artwork, @artwork_path,
       @created_at
     )
   `);
@@ -182,10 +184,14 @@ export function addTrack(track) {
     year: track.year ?? null,
     label: track.label ?? null,
     genres: track.genres ?? null,
+    bpm: track.bpm ?? null,
     source_url: track.source_url ?? null,
     source_platform: track.source_platform ?? null,
     source_quality: track.source_quality ?? null,
     source_link: track.source_link ?? null,
+    user_tags: track.user_tags ?? null,
+    has_artwork: track.has_artwork ?? 0,
+    artwork_path: track.artwork_path ?? null,
     created_at: Date.now(),
   });
 
@@ -286,6 +292,20 @@ export function getTrackById(id) {
   return db.prepare('SELECT * FROM tracks WHERE id = ?').get(id);
 }
 
+/** Returns IDs of tracks that have loudness data but no normalized file yet. */
+export function getTrackIdsNeedingNormalization() {
+  return db
+    .prepare(`SELECT id FROM tracks WHERE loudness IS NOT NULL AND normalized_file_path IS NULL`)
+    .all()
+    .map((r) => r.id);
+}
+
+export function getNormalizedTrackCount() {
+  return db
+    .prepare(`SELECT COUNT(*) as cnt FROM tracks WHERE normalized_file_path IS NOT NULL`)
+    .get().cnt;
+}
+
 export function removeTrack(id) {
   db.prepare('DELETE FROM tracks WHERE id = ?').run(id);
 }
@@ -303,8 +323,86 @@ export function normalizeLibrary(targetLufs) {
   return info.changes ?? 0;
 }
 
+export function normalizeTracksByIds(trackIds, targetLufs) {
+  const update = db.prepare(
+    `UPDATE tracks SET replay_gain = ROUND((? - loudness) * 10) / 10 WHERE id = ? AND loudness IS NOT NULL`
+  );
+  const read = db.prepare(`SELECT replay_gain FROM tracks WHERE id = ?`);
+  const gains = {};
+  db.transaction(() => {
+    for (const id of trackIds) {
+      const info = update.run(targetLufs, id);
+      if (info.changes) {
+        const row = read.get(id);
+        if (row) gains[id] = row.replay_gain;
+      }
+    }
+  })();
+  return gains;
+}
+
+export function resetNormalization(trackIds = null) {
+  if (trackIds && trackIds.length > 0) {
+    const stmt = db.prepare(
+      `UPDATE tracks SET replay_gain = NULL, normalized_file_path = NULL, source_loudness = NULL WHERE id = ?`
+    );
+    db.transaction(() => {
+      for (const id of trackIds) stmt.run(id);
+    })();
+    return trackIds.length;
+  }
+  const info = db
+    .prepare(
+      `UPDATE tracks SET replay_gain = NULL, normalized_file_path = NULL, source_loudness = NULL`
+    )
+    .run();
+  return info.changes ?? 0;
+}
+
 export function clearTracks() {
   console.log('Clearing all tracks from database');
   db.prepare(`DELETE FROM tracks`).run();
   db.prepare(`VACUUM`).run();
+}
+
+/**
+ * Given an array of { url, id } entry objects, returns a Set of URLs whose
+ * video ID already exists in the library.
+ * Checks source_link, source_url, AND title (yt-dlp stores the video ID in
+ * brackets at the end of the title when source_link is not captured).
+ */
+/**
+ * For each entry check whether a track already exists in the library.
+ * Returns an array of { url, trackId } for every entry that matches.
+ */
+export function getExistingSourceUrls(entries) {
+  if (!entries || entries.length === 0) return [];
+  const results = [];
+  const stmt = db.prepare(
+    `SELECT id FROM tracks
+     WHERE source_link LIKE ? OR source_url LIKE ? OR title LIKE ?
+     LIMIT 1`
+  );
+  for (const { url, id } of entries) {
+    if (!id && !url) continue;
+    const pattern = `%${id || url}%`;
+    const row = stmt.get(pattern, pattern, pattern);
+    if (row) results.push({ url, trackId: row.id });
+  }
+  return results;
+}
+
+/**
+ * Returns all tracks in a playlist with their source URL fields,
+ * used to determine "already in playlist" status on the selection screen.
+ */
+export function getPlaylistSourceUrls(playlistId) {
+  return db
+    .prepare(
+      `SELECT t.id AS trackId, t.source_url, t.source_link
+       FROM playlist_tracks pt
+       JOIN tracks t ON t.id = pt.track_id
+       WHERE pt.playlist_id = ?`
+    )
+    .all(playlistId);
 }

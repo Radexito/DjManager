@@ -104,6 +104,26 @@ Upcoming work is tracked on the [**Issues**](https://github.com/Radexito/DjManag
 
 ---
 
+## Rekordbox USB export
+
+Right-click any playlist in the sidebar and choose **Export Rekordbox USB** to write a Pioneer CDJ-compatible USB drive — no Rekordbox software required. DJ Manager writes the binary formats CDJs read directly: `export.pdb` (track database), `ANLZ0000.DAT/.EXT/.2EX` (waveforms and beat grids), and `PIONEER/MYSETTING.DAT` (player settings).
+
+### Re-exporting and incremental behaviour
+
+Each export to the same USB folder **merges** with whatever was previously exported there. A manifest (`PIONEER/rekordbox/export-manifest.json`) records all tracks and playlists on the USB; subsequent exports read it and inject new content into the existing database without removing anything.
+
+| What gets written                | Behaviour                                                                    |
+| -------------------------------- | ---------------------------------------------------------------------------- |
+| Audio files (`/music/`)          | **Skipped if already present** — existing files are never overwritten        |
+| ANLZ files (waveform / beatgrid) | **Regenerated for new tracks only** — existing ANLZ files are left untouched |
+| `export.pdb` (track database)    | **Rebuilt from all tracks** — current export merged with previous exports    |
+| `PIONEER/MYSETTING.DAT` etc.     | **Always regenerated**                                                       |
+| `export-manifest.json`           | **Always updated** — records the full set of tracks and playlists on the USB |
+
+You can export playlists to the same USB one at a time — each export adds its tracks and playlists to the CDJ database without touching the ones already there.
+
+---
+
 ## How files are stored
 
 Audio is stored at `~/.config/dj_manager/audio/<xx>/<hash>.<ext>` (configurable via Settings → Library). The two-character hash prefix keeps directory sizes manageable. Playlists reference tracks by ID — no duplicates, no copies.

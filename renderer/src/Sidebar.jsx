@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import ImportPlaylistModal from './ImportPlaylistModal.jsx';
+import { useDownload } from './DownloadContext.jsx';
 import './Sidebar.css';
 
 const MENU_ITEMS = [
@@ -18,16 +19,29 @@ const PRESET_COLORS = [
   '#adb5bd',
 ];
 
-function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistNml, onExportNmlAll }) {
+function Sidebar({
+  selectedMenuItemId,
+  onMenuSelect,
+  onExportPlaylistRekordboxUsb,
+  onExportPlaylistAll,
+  onExportPlaylistNml,
+  onExportNmlAll,
+}) {
+  const { sidebarProgress: ytDlpSidebarProgress } = useDownload();
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
+  const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
   const [pendingImportFiles, setPendingImportFiles] = useState(null); // files waiting for playlist choice
   const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
+  const [ytDlpCheckProgress, setYtDlpCheckProgress] = useState(null); // { checked, total } | null during fetch/check
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [renameError, setRenameError] = useState('');
   const [playlistMenu, setPlaylistMenu] = useState(null); // { id, x, y }
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
+  const [dragOverPlaylistId, setDragOverPlaylistId] = useState(null);
   const newInputRef = useRef(null);
   const renameInputRef = useRef(null);
 
@@ -95,20 +109,50 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistNml, onExpo
       setCreatingPlaylist(false);
       return;
     }
-    await window.api.createPlaylist(name, null);
+    const result = await window.api.createPlaylist(name, null);
+    if (result?.error === 'duplicate') {
+      setCreateError('A playlist with this name already exists.');
+      return;
+    }
     setNewPlaylistName('');
+    setCreateError('');
     setCreatingPlaylist(false);
   };
 
   const handleRenameSubmit = async (e) => {
     e.preventDefault();
     const name = renameValue.trim();
-    if (name) await window.api.renamePlaylist(renamingId, name);
+    if (name) {
+      const result = await window.api.renamePlaylist(renamingId, name);
+      if (result?.error === 'duplicate') {
+        setRenameError('A playlist with this name already exists.');
+        return;
+      }
+    }
+    setRenameError('');
     setRenamingId(null);
   };
 
   useEffect(() => {
     const unsub = window.api.onExportM3UProgress((data) => setExportProgress(data));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = window.api.onNormalizeProgress((data) => {
+      if (data.done) {
+        setTimeout(() => setNormalizeProgress(null), 1500);
+      } else {
+        setNormalizeProgress({ completed: data.completed, total: data.total });
+      }
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = window.api.onYtDlpCheckProgress((data) => {
+      setYtDlpCheckProgress(data); // null when done
+    });
     return unsub;
   }, []);
 
@@ -123,14 +167,24 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistNml, onExpo
     }
   };
 
+  const handleExportPlaylistRekordboxUsb = (id) => {
+    setPlaylistMenu(null);
+    onExportPlaylistRekordboxUsb(id);
+  };
+
+  const handleExportPlaylistAll = (id) => {
+    setPlaylistMenu(null);
+    onExportPlaylistAll(id);
+  };
+
   const handleExportPlaylistNml = (id) => {
     setPlaylistMenu(null);
-    onExportPlaylistNml(id);
+    onExportPlaylistNml?.(id);
   };
 
   const handleExportNmlAll = (id) => {
     setPlaylistMenu(null);
-    onExportNmlAll(id);
+    onExportNmlAll?.(id);
   };
 
   const handleDeletePlaylist = async (id) => {
@@ -143,6 +197,32 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistNml, onExpo
   const handleColorPick = async (id, color) => {
     setPlaylistMenu(null);
     await window.api.updatePlaylistColor(id, color);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleDragEnter = (e, playlistId) => {
+    if (e.dataTransfer.types.includes('application/dj-tracks')) {
+      setDragOverPlaylistId(playlistId);
+    }
+  };
+
+  const handleDragLeave = (e) => {
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      setDragOverPlaylistId(null);
+    }
+  };
+
+  const handleDrop = async (e, playlistId) => {
+    e.preventDefault();
+    setDragOverPlaylistId(null);
+    const raw = e.dataTransfer.getData('application/dj-tracks');
+    if (!raw) return;
+    const trackIds = JSON.parse(raw);
+    await window.api.addTracksToPlaylist(playlistId, trackIds);
   };
 
   return (
@@ -180,13 +260,17 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistNml, onExpo
           <form className="playlist-new-form" onSubmit={handleCreatePlaylist}>
             <input
               ref={newInputRef}
-              className="playlist-rename-input"
+              className={`playlist-rename-input${createError ? ' input-error' : ''}`}
               value={newPlaylistName}
-              onChange={(e) => setNewPlaylistName(e.target.value)}
+              onChange={(e) => {
+                setNewPlaylistName(e.target.value);
+                setCreateError('');
+              }}
               placeholder="Playlist name"
               onBlur={handleCreatePlaylist}
               onKeyDown={(e) => e.key === 'Escape' && setCreatingPlaylist(false)}
             />
+            {createError && <div className="playlist-input-error">{createError}</div>}
           </form>
         )}
 
@@ -200,21 +284,29 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistNml, onExpo
               <form className="playlist-new-form" onSubmit={handleRenameSubmit}>
                 <input
                   ref={renameInputRef}
-                  className="playlist-rename-input"
+                  className={`playlist-rename-input${renameError ? ' input-error' : ''}`}
                   value={renameValue}
-                  onChange={(e) => setRenameValue(e.target.value)}
+                  onChange={(e) => {
+                    setRenameValue(e.target.value);
+                    setRenameError('');
+                  }}
                   onBlur={handleRenameSubmit}
                   onKeyDown={(e) => e.key === 'Escape' && setRenamingId(null)}
                 />
+                {renameError && <div className="playlist-input-error">{renameError}</div>}
               </form>
             ) : (
               <div
-                className={`menu-item playlist-item ${selectedMenuItemId === String(pl.id) ? 'active' : ''}`}
+                className={`menu-item playlist-item ${selectedMenuItemId === String(pl.id) ? 'active' : ''}${dragOverPlaylistId === pl.id ? ' playlist-item--drag-over' : ''}`}
                 onClick={() => onMenuSelect(String(pl.id))}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setPlaylistMenu({ id: pl.id, x: e.clientX, y: e.clientY });
                 }}
+                onDragOver={handleDragOver}
+                onDragEnter={(e) => handleDragEnter(e, pl.id)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, pl.id)}
               >
                 {pl.color && (
                   <span className="playlist-color-dot" style={{ background: pl.color }} />
@@ -232,6 +324,83 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistNml, onExpo
           <div className="import-progress">
             Importing {importProgress.completed} / {importProgress.total}…
           </div>
+        )}
+        {normalizeProgress && (
+          <div className="normalize-progress-wrap">
+            <div className="normalize-progress-label">
+              <span>Normalizing</span>
+              <span>
+                {normalizeProgress.completed} / {normalizeProgress.total}
+              </span>
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill"
+                style={{
+                  width: `${Math.round((normalizeProgress.completed / normalizeProgress.total) * 100)}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
+        {ytDlpCheckProgress && !ytDlpSidebarProgress && (
+          <button
+            className="normalize-progress-wrap ytdlp-progress-clickable"
+            onClick={() => onMenuSelect('download')}
+            title="Go to YT-DLP"
+          >
+            <div className="normalize-progress-label">
+              <span>Checking tracks…</span>
+              {ytDlpCheckProgress.total > 0 && (
+                <span>
+                  {ytDlpCheckProgress.checked} / {ytDlpCheckProgress.total}
+                </span>
+              )}
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill ytdlp-progress-fill"
+                style={{
+                  width: `${ytDlpCheckProgress.total > 0 ? Math.round((ytDlpCheckProgress.checked / ytDlpCheckProgress.total) * 100) : 0}%`,
+                }}
+              />
+            </div>
+          </button>
+        )}
+        {ytDlpSidebarProgress && (
+          <button
+            className="normalize-progress-wrap ytdlp-progress-clickable"
+            onClick={() => onMenuSelect('download')}
+            title="Go to YT-DLP"
+          >
+            <div className="normalize-progress-label">
+              <span>Downloading</span>
+              <span>
+                {ytDlpSidebarProgress.current} / {ytDlpSidebarProgress.total}
+              </span>
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill ytdlp-progress-fill"
+                style={{ width: `${Math.round(ytDlpSidebarProgress.pct)}%` }}
+              />
+            </div>
+            {ytDlpSidebarProgress.msg && (
+              <div className="normalize-progress-label" style={{ marginTop: 4, opacity: 0.7 }}>
+                <span
+                  style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: '100%',
+                    fontSize: 11,
+                  }}
+                >
+                  {ytDlpSidebarProgress.msg}
+                </span>
+              </div>
+            )}
+          </button>
         )}
         {exportProgress && (
           <div className="import-progress">
@@ -283,6 +452,18 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistNml, onExpo
           <div className="context-menu-separator" />
           <div className="context-menu-item" onClick={() => handleExportM3U(playlistMenu.id)}>
             📤 Export as M3U…
+          </div>
+          <div
+            className="context-menu-item"
+            onClick={() => handleExportPlaylistRekordboxUsb(playlistMenu.id)}
+          >
+            💾 Export Rekordbox USB…
+          </div>
+          <div
+            className="context-menu-item"
+            onClick={() => handleExportPlaylistAll(playlistMenu.id)}
+          >
+            📦 Export All to USB…
           </div>
           <div
             className="context-menu-item"

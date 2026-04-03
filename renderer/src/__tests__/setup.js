@@ -25,7 +25,9 @@ window.api = {
   exportPlaylistAsM3U: vi.fn().mockResolvedValue({ canceled: true }),
   getSetting: vi.fn().mockResolvedValue(null),
   setSetting: vi.fn().mockResolvedValue(undefined),
-  normalizeLibrary: vi.fn().mockResolvedValue({ updated: 0 }),
+  normalizeLibrary: vi.fn().mockResolvedValue({ normalized: 0, skipped: 0, total: 0 }),
+  normalizeTracksAudio: vi.fn().mockResolvedValue({ normalized: 0, skipped: 0 }),
+  getNormalizedCount: vi.fn().mockResolvedValue(0),
   getLibraryPath: vi.fn().mockResolvedValue('/tmp/audio'),
   moveLibrary: vi.fn().mockResolvedValue({ moved: 0, total: 0 }),
   openDirDialog: vi.fn().mockResolvedValue(null),
@@ -44,10 +46,27 @@ window.api = {
   onDepsProgress: vi.fn().mockImplementation(noop),
   onMoveLibraryProgress: vi.fn().mockImplementation(noop),
   onExportM3UProgress: vi.fn().mockImplementation(noop),
+  onNormalizeProgress: vi.fn().mockImplementation(noop),
   getMediaPort: vi.fn().mockResolvedValue(19876),
   ytDlpFetchInfo: vi.fn().mockResolvedValue({ ok: false, error: 'not configured' }),
+  checkDuplicateUrls: vi.fn().mockResolvedValue([]),
+  getPlaylistSourceUrls: vi.fn().mockResolvedValue([]),
   ytDlpDownloadUrl: vi.fn().mockResolvedValue({ ok: true, trackIds: [] }),
   onYtDlpProgress: vi.fn().mockImplementation(() => () => {}),
+  onYtDlpCheckProgress: vi.fn().mockImplementation(() => () => {}),
+  onYtDlpEntriesReady: vi.fn().mockImplementation(() => () => {}),
+  onYtDlpEntryChecked: vi.fn().mockImplementation(() => () => {}),
   onYtDlpTrackUpdate: vi.fn().mockImplementation(() => () => {}),
   openExternal: vi.fn().mockResolvedValue(undefined),
+  checkUsbFormat: vi
+    .fn()
+    .mockResolvedValue({ needsFormat: false, fs: 'fat32', fsLabel: 'fat32', device: '/dev/sdb1' }),
+  formatUsb: vi.fn().mockResolvedValue({ ok: true }),
+  exportRekordbox: vi.fn().mockResolvedValue({ ok: true, trackCount: 5, usbRoot: '/tmp/usb' }),
+  exportAll: vi
+    .fn()
+    .mockResolvedValue({ ok: true, trackCount: 5, playlistCount: 2, usbRoot: '/tmp/usb' }),
+  onExportRekordboxProgress: vi.fn().mockImplementation(noop),
+  onExportAllProgress: vi.fn().mockImplementation(noop),
+  onFormatUsbProgress: vi.fn().mockImplementation(noop),
 };

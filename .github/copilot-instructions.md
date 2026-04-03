@@ -133,6 +133,34 @@ Audio files are served over a local HTTP server (`src/audio/mediaServer.js`) ins
 - Drag-and-drop via `@dnd-kit` — `SortableRow` is defined outside `MusicLibrary` to prevent remounts
 - Player state (queue, playback, shuffle/repeat) lives in `PlayerContext.jsx` using React Context + `Audio` element
 
+### Auto-Tagger
+
+`src/audio/autoTagger.js` queries MusicBrainz and Discogs to fill missing track metadata.
+
+- **MusicBrainz**: enforces ≥1 s between requests (rate-limit). Entry point: `searchMusicBrainz(query)`.
+- **Discogs**: `searchDiscogs(query)` — falls back when MusicBrainz has no results.
+- Both return a normalised object: `{ source, url, title, artist, album, label, year, genres[], key }`.
+- Called from the `auto-tag-search` IPC handler in `main.js` → `window.api.autoTagSearch(query)`.
+- UI lives in `AutoTaggerModal.jsx`.
+
+### Settings
+
+`src/db/settingsRepository.js` is a thin key-value store backed by the `settings` table.
+
+```js
+getSetting(key, defaultValue); // returns string or defaultValue
+setSetting(key, value); // INSERT OR REPLACE; value is coerced to string
+```
+
+All persistent user preferences (e.g. library path, output device) go through this API via the `get-setting` / `set-setting` IPC handlers.
+
+### Key Utilities
+
+`src/audio/keyUtils.js` converts musical key names to Camelot notation.
+
+- `toCamelot(key, mode)` — maps e.g. `('A', 'minor')` → `'11A'`, `('C', 'major')` → `'8B'`.
+- Used by `analysisWorker.js` to populate `key_camelot` alongside the raw analyzer output in `key_raw`.
+
 ### Dependencies & Auto-download
 
 - On first launch, `src/deps.js` downloads FFmpeg and the mixxx-analyzer binary
@@ -141,6 +169,7 @@ Audio files are served over a local HTTP server (`src/audio/mediaServer.js`) ins
 
 ## Key Conventions
 
+- **Linux/Wayland**: `src/main.js` disables GPU acceleration and sets `--ozone-platform=wayland` only when `WAYLAND_DISPLAY` is present. It also passes `--disable-shared-texture-dmabuf` to prevent crashes on AMD radeonsi/Mesa. Do not remove these flags.
 - **ESM throughout**: root `package.json` has `"type": "module"`; `src/` uses `import/export`. Preload uses `require()` (CommonJS, Electron requirement).
 - **Code style**: Prettier (100-char width, 2-space indent, single quotes) enforced via Husky pre-commit hook with lint-staged.
 - **FFmpeg binaries**: `analysisWorker.js` and `src/audio/ffmpeg.js` check `./ffmpeg/<binary>` first, then fall back to system PATH. Local binaries installed via `scripts/install-ffmpeg.sh`.

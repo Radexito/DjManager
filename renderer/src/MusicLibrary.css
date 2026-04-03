@@ -13,11 +13,11 @@
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  position: relative;
 }
 
 /* Search */
 .search-input {
-  margin-bottom: 20px;
   padding: 8px;
   border: 1px solid #333;
   border-radius: 4px;
@@ -29,12 +29,12 @@
 /* Header — scrollLeft synced to list via JS; no visible scrollbar */
 .header {
   display: grid;
+  column-gap: 6px;
   padding: 12px 8px;
   background-color: #2a2a2a;
   color: #e0e0e0;
   font-weight: 600;
   border-bottom: 1px solid #404040;
-  overflow-x: hidden;
   position: relative; /* for col-dropdown positioning */
 }
 
@@ -53,6 +53,7 @@
   height: 50px;
   width: 100%;
   display: grid;
+  column-gap: 6px;
   align-items: center;
   padding: 0 8px;
   cursor: pointer;
@@ -82,11 +83,86 @@
 
 .cell.index {
   font-weight: 500;
+  color: #aaa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+}
+
+.index-num {
+  line-height: 1;
+}
+
+.index-play {
+  display: none;
+  background: none;
+  border: none;
+  outline: none;
   color: #fff;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0;
+}
+
+.index-play:focus,
+.index-play:focus-visible {
+  outline: none;
+}
+
+.row:hover .index-num {
+  display: none;
+}
+
+.row:hover .index-play {
+  display: block;
+}
+
+/* Currently playing track — don't show play button on hover */
+.row--playing:hover .index-num {
+  display: block;
+}
+
+.row--playing:hover .index-play {
+  display: none;
 }
 
 .cell.title {
   color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.cell-artwork {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 3px;
+  display: block;
+}
+
+.cell-artwork--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: #2a2a2a;
+  border-radius: 3px;
+  font-size: 14px;
+  color: #444;
+  flex-shrink: 0;
+}
+
+.cell-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .cell.artist {
@@ -104,6 +180,21 @@
   color: #4ade80;
 }
 
+/* Shared horizontal-scroll container for header + list */
+.table-scroll-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-width: 0;
+}
+
+/* In library mode the List manages its own scroll — wrapper must not clip it */
+.table-scroll-wrap.library-mode {
+  overflow-x: hidden;
+}
+
 /* react-window */
 .track-list {
   flex: 1;
@@ -119,6 +210,7 @@
   padding: 4px 0;
   z-index: 1000;
   min-width: 170px;
+  width: max-content;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
   user-select: none;
   max-height: calc(100vh - 16px);
@@ -133,6 +225,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
 }
 
 .context-menu-item:hover {
@@ -163,6 +256,12 @@
 }
 
 /* Selected rows */
+.row:hover {
+  background: #1a3a5c !important;
+  outline: 1px solid #2d6aa0;
+  outline-offset: -1px;
+}
+
 .row--selected {
   background: #1a3a5c !important;
   outline: 1px solid #2d6aa0;
@@ -176,6 +275,11 @@
 
 .row--playing.row--selected {
   background: #1a3a1a !important;
+}
+
+/* Track is being normalized or re-analyzed */
+.row--analyzing {
+  opacity: 0.45;
 }
 
 /* BPM overridden indicator */
@@ -254,8 +358,9 @@
 
 /* ── Playlist DnD list ─────────────────────────────────────────────────── */
 .playlist-dnd-list {
+  flex: 1;
   overflow-y: auto;
-  height: 600px;
+  overflow-x: auto;
 }
 
 .drag-handle {
@@ -462,4 +567,61 @@
 /* ── Details panel layout ─────────────────────────────────────────────── */
 .music-library--with-panel .music-library__main {
   border-right: 1px solid #2a2a2a;
+}
+
+/* ── Toast notification ───────────────────────────────────────────────── */
+.music-library-toast {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #2a2a2a;
+  border: 1px solid #1db954;
+  color: #e0e0e0;
+  font-size: 13px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  z-index: 2000;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.music-library-toast--warn {
+  border-color: #f4a261;
+  color: #f4a261;
+}
+
+/* ── Add to new playlist inline input ── */
+.ctx-new-playlist-item {
+  padding: 6px 12px;
+  cursor: default;
+}
+
+.ctx-new-playlist-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 12px;
+}
+
+.ctx-new-playlist-input {
+  background: #1a1a1a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ctx-new-playlist-input:focus {
+  border-color: #1db954;
+}
+
+.ctx-new-playlist-error {
+  font-size: 11px;
+  color: #e06c6c;
 }

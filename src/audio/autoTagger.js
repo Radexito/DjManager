@@ -1,5 +1,7 @@
 const MB_BASE = 'https://musicbrainz.org/ws/2';
 const DISCOGS_BASE = 'https://api.discogs.com';
+const ITUNES_BASE = 'https://itunes.apple.com';
+const DEEZER_BASE = 'https://api.deezer.com';
 const USER_AGENT = 'DjManager/1.0 (https://github.com/Radexito/DjManager)';
 
 // MusicBrainz requires ≥1s between requests
@@ -34,6 +36,7 @@ function normalise(fields) {
     year: fields.year ? String(fields.year) : '',
     genres: Array.isArray(fields.genres) ? fields.genres : [],
     key: fields.key ?? '',
+    coverUrl: fields.coverUrl ?? '',
   };
 }
 
@@ -60,6 +63,11 @@ export async function searchMusicBrainz(query) {
 
     const year = release.date?.slice(0, 4) ?? rec['first-release-date']?.slice(0, 4) ?? '';
 
+    // Cover Art Archive: free, no key, uses MusicBrainz release ID
+    const coverUrl = release.id
+      ? `https://coverartarchive.org/release/${release.id}/front-500`
+      : '';
+
     return normalise({
       source: 'MusicBrainz',
       url: `https://musicbrainz.org/recording/${rec.id}`,
@@ -69,6 +77,7 @@ export async function searchMusicBrainz(query) {
       label,
       year,
       genres,
+      coverUrl,
     });
   });
 }
@@ -91,6 +100,9 @@ export async function searchDiscogs(query) {
     const label = Array.isArray(r.label) ? (r.label[0] ?? '') : (r.label ?? '');
     const year = r.year ? String(r.year) : '';
 
+    // Discogs provides cover_image directly in search results
+    const coverUrl = r.cover_image ?? '';
+
     return normalise({
       source: 'Discogs',
       url: r.resource_url ? `https://www.discogs.com/release/${r.id}` : '',
@@ -100,6 +112,62 @@ export async function searchDiscogs(query) {
       label,
       year,
       genres,
+      coverUrl,
+    });
+  });
+}
+
+// ─── iTunes Search API ────────────────────────────────────────────────────────
+// Free, no API key. Primarily used for cover art — returns high-quality artwork.
+
+export async function searchItunes(query) {
+  const q = encodeURIComponent(query);
+  const url = `${ITUNES_BASE}/search?term=${q}&media=music&limit=10&entity=song`;
+  const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+  if (!res.ok) throw new Error(`iTunes error ${res.status}`);
+  const data = await res.json();
+
+  return (data.results ?? []).map((r) => {
+    // artworkUrl100 can be scaled up by replacing the size segment
+    const coverUrl = r.artworkUrl100 ? r.artworkUrl100.replace('100x100bb', '600x600bb') : '';
+
+    return normalise({
+      source: 'iTunes',
+      url: r.trackViewUrl ?? '',
+      title: r.trackName ?? '',
+      artist: r.artistName ?? '',
+      album: r.collectionName ?? '',
+      label: '',
+      year: r.releaseDate ? String(new Date(r.releaseDate).getFullYear()) : '',
+      genres: r.primaryGenreName ? [r.primaryGenreName] : [],
+      coverUrl,
+    });
+  });
+}
+
+// ─── Deezer ───────────────────────────────────────────────────────────────────
+// Free, no API key. Strong catalog for electronic/dance/DJ music.
+// Returns cover_xl (1000×1000) — best quality of all free sources.
+
+export async function searchDeezer(query) {
+  const q = encodeURIComponent(query);
+  const url = `${DEEZER_BASE}/search?q=${q}&limit=10`;
+  const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+  if (!res.ok) throw new Error(`Deezer error ${res.status}`);
+  const data = await res.json();
+
+  return (data.data ?? []).map((r) => {
+    const coverUrl = r.album?.cover_xl ?? r.album?.cover_big ?? '';
+    return normalise({
+      source: 'Deezer',
+      url: r.link ?? '',
+      title: r.title ?? '',
+      artist: r.artist?.name ?? '',
+      album: r.album?.title ?? '',
+      label: '',
+      year: '',
+      genres: [],
+      coverUrl,
     });
   });
 }

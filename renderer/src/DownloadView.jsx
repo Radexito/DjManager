@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useRef, useCallback } from 'react';
+import { useDownload } from './DownloadContext.jsx';
 import './DownloadView.css';
 
 const SUPPORTED_SOURCES = [
@@ -23,6 +24,7 @@ const STATUS_ICON = {
   pending: { icon: '□', label: 'Pending' },
   downloading: { icon: '⋯', label: 'Downloading' },
   importing: { icon: '↓', label: 'Importing' },
+  linking: { icon: '⊟', label: 'Linking to playlist' },
   done: { icon: '✓', label: 'Done' },
   failed: { icon: '✗', label: 'Failed' },
 };
@@ -36,71 +38,54 @@ function fmtDuration(secs) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
-  // ── shared state ─────────────────────────────────────────────────────────
-  const [url, setUrl] = useState('');
-  const [history, setHistory] = useState([]);
-  const [step, setStep] = useState('url'); // 'url' | 'select' | 'download'
+export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
+  const {
+    url,
+    setUrl,
+    downloadHistory,
+    setDownloadHistory,
+    step,
+    setStep,
+    fetching,
+    setFetching,
+    fetchError,
+    setFetchError,
+    checkProgress,
+    setCheckProgress,
+    playlistInfo,
+    setPlaylistInfo,
+    selectedIndices,
+    setSelectedIndices,
+    libraryMap,
+    setLibraryMap,
+    linkIndices,
+    setLinkIndices,
+    playlistMemberUrls,
+    setPlaylistMemberUrls,
+    playlists,
+    setPlaylists,
+    targetPlaylistId,
+    setTargetPlaylistId,
+    targetPlaylistName,
+    setTargetPlaylistName,
+    loading,
+    setLoading,
+    progress,
+    setProgress,
+    trackStatuses,
+    setTrackStatuses,
+    result,
+    setResult,
+  } = useDownload();
 
-  // ── step: url ─────────────────────────────────────────────────────────────
-  const [fetching, setFetching] = useState(false);
-  const [fetchError, setFetchError] = useState(null);
   const inputRef = useRef(null);
 
-  // ── step: select ──────────────────────────────────────────────────────────
-  const [playlistInfo, setPlaylistInfo] = useState(null); // { type, title, entries }
-  const [selectedIndices, setSelectedIndices] = useState(new Set());
-  const [playlists, setPlaylists] = useState([]); // existing playlists for combobox
-  const [targetPlaylistId, setTargetPlaylistId] = useState(null); // null = create new
-  const [targetPlaylistName, setTargetPlaylistName] = useState('');
-
-  // ── step: download ────────────────────────────────────────────────────────
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(null);
-  const [trackStatuses, setTrackStatuses] = useState([]);
-  const [result, setResult] = useState(null);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-
-    const unsubProgress = window.api.onYtDlpProgress((data) => {
-      if (data === null) {
-        setLoading(false);
-        setProgress(null);
-      } else setProgress(data);
-    });
-
-    const unsubTrack = window.api.onYtDlpTrackUpdate((update) => {
-      if (update.type === 'init') {
-        // Only use 'init' to populate if the list isn't already pre-populated from step 2
-        setTrackStatuses((prev) => {
-          if (prev.length >= update.total) return prev;
-          return Array.from({ length: update.total }, (_, i) => ({
-            index: i,
-            title: `Track ${i + 1}`,
-            url: '',
-            status: 'pending',
-          }));
-        });
-      } else {
-        setTrackStatuses((prev) => {
-          const next = [...prev];
-          const i = update.index;
-          while (next.length <= i) {
-            const n = next.length;
-            next.push({ index: n, title: `Track ${n + 1}`, url: '', status: 'pending' });
-          }
-          next[i] = { ...next[i], ...update };
-          return next;
-        });
-      }
-    });
-
-    return () => {
-      unsubProgress();
-      unsubTrack();
-    };
-  }, []);
+  // Cancel an in-progress fetch — the IPC call will still complete but result is ignored
+  const handleCancelFetch = useCallback(() => {
+    setFetching(false);
+    setFetchError(null);
+    setCheckProgress(null);
+  }, [setFetching, setFetchError, setCheckProgress]);
 
   // ── handlers ──────────────────────────────────────────────────────────────
 
@@ -129,7 +114,10 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
     e.preventDefault();
     const trimmed = url.trim();
     if (!trimmed || fetching) return;
-    console.log('[DownloadView] handleLoad start, url=', trimmed);
+    // Auto-prepend https:// if no protocol is present
+    const normalizedUrl = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    console.log('[DownloadView] handleLoad start, url=', normalizedUrl);
+    if (normalizedUrl !== trimmed) setUrl(normalizedUrl); // update input to show normalised form
     setFetching(true);
     setFetchError(null);
     try {
@@ -138,24 +126,93 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
           'ytDlpFetchInfo is not available — please restart the app to load the latest preload changes.'
         );
       }
-      const res = await window.api.ytDlpFetchInfo(trimmed);
+      const res = await window.api.ytDlpFetchInfo(normalizedUrl);
       console.log('[DownloadView] ytDlpFetchInfo result:', res);
       if (!res.ok) {
         setFetchError(res.error);
         return;
       }
       setPlaylistInfo(res);
-      setSelectedIndices(new Set(res.entries.map((_, i) => i)));
-      // Initialise playlist target defaults
-      setTargetPlaylistId(null);
-      setTargetPlaylistName(res.title || '');
-      // Fetch existing playlists for the combobox
+
+      // Check which entries are already in the library
+      let newLibraryMap = new Map();
       try {
-        const existingPlaylists = await window.api.getPlaylists();
-        setPlaylists(existingPlaylists || []);
+        const entryChecks = res.entries
+          .filter((e) => e.url || e.id)
+          .map((e) => ({ url: e.url, id: e.id }));
+        if (entryChecks.length > 0) {
+          const found = await window.api.checkDuplicateUrls(entryChecks);
+          // found = [{url, trackId}]
+          for (const { url: u, trackId } of found) {
+            if (u) newLibraryMap.set(u, trackId);
+          }
+        }
+      } catch {
+        // non-fatal
+      }
+      setLibraryMap(newLibraryMap);
+
+      // Pre-select non-library entries; pre-link library entries that aren't in the target playlist
+      setSelectedIndices(
+        new Set(
+          res.entries.filter((e) => !e.unavailable && !newLibraryMap.has(e.url)).map((e) => e.index)
+        )
+      );
+      setLinkIndices(
+        new Set(
+          res.entries.filter((e) => !e.unavailable && newLibraryMap.has(e.url)).map((e) => e.index)
+        )
+      );
+
+      // Fetch existing playlists for the combobox
+      let existingPlaylists = [];
+      try {
+        existingPlaylists = (await window.api.getPlaylists()) || [];
+        setPlaylists(existingPlaylists);
       } catch {
         setPlaylists([]);
       }
+      // Auto-select existing playlist if name matches the detected title
+      const detectedTitle = res.title || '';
+      const match = existingPlaylists.find(
+        (p) => p.name.toLowerCase() === detectedTitle.toLowerCase()
+      );
+      let matchedPlaylistId = null;
+      if (match) {
+        matchedPlaylistId = match.id;
+        setTargetPlaylistId(match.id);
+        setTargetPlaylistName('');
+      } else {
+        setTargetPlaylistId(null);
+        setTargetPlaylistName(detectedTitle);
+      }
+
+      // Check which library entries are already in the matched playlist
+      if (matchedPlaylistId && newLibraryMap.size > 0) {
+        try {
+          const memberRows = await window.api.getPlaylistSourceUrls(matchedPlaylistId);
+          const memberTrackIds = new Set(memberRows.map((r) => r.trackId));
+          const inPlaylist = new Set(
+            [...newLibraryMap.entries()]
+              .filter(([, tid]) => memberTrackIds.has(tid))
+              .map(([url]) => url)
+          );
+          setPlaylistMemberUrls(inPlaylist);
+          // Remove "already in playlist" entries from linkIndices
+          setLinkIndices((prev) => {
+            const next = new Set(prev);
+            for (const entry of res.entries) {
+              if (inPlaylist.has(entry.url)) next.delete(entry.index);
+            }
+            return next;
+          });
+        } catch {
+          setPlaylistMemberUrls(new Set());
+        }
+      } else {
+        setPlaylistMemberUrls(new Set());
+      }
+
       setStep('select');
     } catch (err) {
       console.error('[DownloadView] handleLoad error:', err);
@@ -165,83 +222,205 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
     }
   };
 
+  // When the target playlist changes, re-check which library entries are already in it
+  const handleTargetPlaylistChange = useCallback(
+    async (newPlaylistId) => {
+      setTargetPlaylistId(newPlaylistId);
+      if (!newPlaylistId || libraryMap.size === 0) {
+        setPlaylistMemberUrls(new Set());
+        // Restore all library entries to linkIndices
+        if (playlistInfo) {
+          setLinkIndices(
+            new Set(
+              playlistInfo.entries
+                .filter((e) => !e.unavailable && libraryMap.has(e.url))
+                .map((e) => e.index)
+            )
+          );
+        }
+        return;
+      }
+      try {
+        const memberRows = await window.api.getPlaylistSourceUrls(newPlaylistId);
+        const memberTrackIds = new Set(memberRows.map((r) => r.trackId));
+        const inPlaylist = new Set(
+          [...libraryMap.entries()].filter(([, tid]) => memberTrackIds.has(tid)).map(([url]) => url)
+        );
+        setPlaylistMemberUrls(inPlaylist);
+        if (playlistInfo) {
+          setLinkIndices(
+            new Set(
+              playlistInfo.entries
+                .filter((e) => !e.unavailable && libraryMap.has(e.url) && !inPlaylist.has(e.url))
+                .map((e) => e.index)
+            )
+          );
+        }
+      } catch {
+        setPlaylistMemberUrls(new Set());
+      }
+    },
+    [libraryMap, playlistInfo]
+  );
+
   // Step 2 → 1: go back
   const handleBack = useCallback(() => {
     setStep('url');
     setPlaylistInfo(null);
+    setLibraryMap(new Map());
+    setLinkIndices(new Set());
+    setPlaylistMemberUrls(new Set());
     setFetchError(null);
   }, []);
 
-  // Step 2: toggle a single entry
-  const handleToggleEntry = useCallback((index) => {
-    setSelectedIndices((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return next;
-    });
-  }, []);
+  // Step 2: toggle a single entry — 3-state cycle for library entries
+  // library + not-in-playlist: indeterminate (link) → unchecked → indeterminate
+  // normal (not in library): checked → unchecked → checked
+  const handleToggleEntry = useCallback(
+    (index, entry) => {
+      const isInLibrary = libraryMap.has(entry.url);
+      const isInPlaylist = playlistMemberUrls.has(entry.url);
+      if (isInLibrary && !isInPlaylist) {
+        // 3-state: link ↔ skip
+        setLinkIndices((prev) => {
+          const next = new Set(prev);
+          if (next.has(index)) next.delete(index);
+          else next.add(index);
+          return next;
+        });
+      } else {
+        setSelectedIndices((prev) => {
+          const next = new Set(prev);
+          if (next.has(index)) next.delete(index);
+          else next.add(index);
+          return next;
+        });
+      }
+    },
+    [libraryMap, playlistMemberUrls]
+  );
 
-  // Step 2: select / deselect all
+  // Step 2: select / deselect all — toggles download entries; link entries follow separately
   const handleToggleAll = useCallback(() => {
-    setSelectedIndices((prev) =>
-      prev.size === playlistInfo.entries.length
-        ? new Set()
-        : new Set(playlistInfo.entries.map((_, i) => i))
+    if (!playlistInfo) return;
+    const downloadable = playlistInfo.entries.filter(
+      (e) => !e.unavailable && !libraryMap.has(e.url)
     );
-  }, [playlistInfo]);
+    const linkable = playlistInfo.entries.filter(
+      (e) => !e.unavailable && libraryMap.has(e.url) && !playlistMemberUrls.has(e.url)
+    );
+    const allDownloadSelected = downloadable.every((e) => selectedIndices.has(e.index));
+    const allLinkSelected = linkable.every((e) => linkIndices.has(e.index));
+    const allSelected = allDownloadSelected && allLinkSelected;
+    if (allSelected) {
+      setSelectedIndices(new Set());
+      setLinkIndices(new Set());
+    } else {
+      setSelectedIndices(new Set(downloadable.map((e) => e.index)));
+      setLinkIndices(new Set(linkable.map((e) => e.index)));
+    }
+  }, [playlistInfo, libraryMap, playlistMemberUrls, selectedIndices, linkIndices]);
 
   // Step 2 → 3: start download
   const handleDownload = async () => {
-    if (selectedIndices.size === 0) return;
+    if (selectedIndices.size === 0 && linkIndices.size === 0) return;
 
-    // Pre-populate the track list with real titles from the selection, in playlist order
-    const selectedEntries = playlistInfo.entries
+    // Entries to actually download via yt-dlp (not already in library)
+    const downloadEntries = playlistInfo.entries
       .filter((e) => selectedIndices.has(e.index))
       .sort((a, b) => a.index - b.index);
 
-    setStep('download');
-    setLoading(true);
-    setResult(null);
-    setTrackStatuses(
-      selectedEntries.map((e, i) => ({
+    // Entries to link (already in library, user wants to add to playlist)
+    const linkEntries = playlistInfo.entries
+      .filter((e) => linkIndices.has(e.index))
+      .sort((a, b) => a.index - b.index);
+
+    // Combined display list: downloads first, then links
+    const allDisplayEntries = [
+      ...downloadEntries.map((e, i) => ({
         index: i,
         title: e.title,
         url: e.url,
         status: 'pending',
-      }))
-    );
+      })),
+      ...linkEntries.map((e, i) => ({
+        index: downloadEntries.length + i,
+        title: e.title,
+        url: e.url,
+        status: 'linking',
+      })),
+    ];
+
+    setStep('download');
+    setLoading(true);
+    setResult(null);
+    setTrackStatuses(allDisplayEntries);
     setProgress({
       msg: 'Starting download…',
       pct: 0,
       trackPct: 0,
       overallCurrent: 1,
-      overallTotal: selectedEntries.length,
+      overallTotal: downloadEntries.length,
     });
 
-    // Build --playlist-items string (1-based) only when a subset is selected
-    let playlistItems = null;
-    if (playlistInfo.type === 'playlist' && selectedIndices.size < playlistInfo.entries.length) {
-      playlistItems = Array.from(selectedIndices)
-        .sort((a, b) => a - b)
-        .map((i) => i + 1)
-        .join(',');
+    // Determine effective playlist ID for linking (may be created by the download step)
+    let effectivePlaylistId = targetPlaylistId;
+
+    if (downloadEntries.length > 0) {
+      // Always pass --playlist-items when user excluded some tracks or there are unavailable ones
+      let playlistItems = null;
+      const downloadOnlyEntries = downloadEntries.length;
+      const totalAvailable = availableEntries.filter((e) => !libraryMap.has(e.url)).length;
+      if (
+        playlistInfo.type === 'playlist' &&
+        (downloadOnlyEntries < totalAvailable || unavailableCount > 0 || libraryMap.size > 0)
+      ) {
+        playlistItems = downloadEntries
+          .map((e) => e.index + 1) // original 1-based playlist indices
+          .join(',');
+      }
+
+      const res = await window.api.ytDlpDownloadUrl({
+        url,
+        playlistItems,
+        playlistTitle: playlistInfo?.title || null,
+        existingPlaylistId: playlistInfo?.type === 'playlist' ? targetPlaylistId : null,
+        newPlaylistName:
+          playlistInfo?.type === 'playlist' && !targetPlaylistId
+            ? targetPlaylistName || playlistInfo?.title || 'Imported Playlist'
+            : null,
+      });
+
+      effectivePlaylistId = res.playlistId ?? targetPlaylistId;
+      setLoading(false);
+      setProgress(null);
+      setResult(res);
+      if (res.ok) setDownloadHistory((prev) => [{ url, at: Date.now() }, ...prev.slice(0, 19)]);
     }
 
-    const res = await window.api.ytDlpDownloadUrl({
-      url,
-      playlistItems,
-      playlistTitle: playlistInfo?.title || null,
-      existingPlaylistId: playlistInfo?.type === 'playlist' ? targetPlaylistId : null,
-      newPlaylistName:
-        playlistInfo?.type === 'playlist' && !targetPlaylistId
-          ? targetPlaylistName || playlistInfo?.title || 'Imported Playlist'
-          : null,
-    });
-    setLoading(false);
-    setProgress(null);
-    setResult(res);
-    if (res.ok) setHistory((prev) => [{ url, at: Date.now() }, ...prev.slice(0, 19)]);
+    // Link already-downloaded tracks to the playlist (no re-download)
+    if (linkEntries.length > 0 && effectivePlaylistId) {
+      const trackIds = linkEntries.map((e) => libraryMap.get(e.url)).filter(Boolean);
+      if (trackIds.length > 0) {
+        try {
+          await window.api.addTracksToPlaylist(effectivePlaylistId, trackIds);
+          setTrackStatuses((prev) =>
+            prev.map((t) => {
+              const isLink = linkEntries.some((e) => e.url === t.url);
+              return isLink ? { ...t, status: 'done' } : t;
+            })
+          );
+        } catch (err) {
+          console.error('[DownloadView] link tracks failed:', err);
+        }
+      }
+    }
+
+    if (downloadEntries.length === 0) {
+      setLoading(false);
+      setProgress(null);
+      setResult({ ok: true, imported: 0 });
+    }
   };
 
   // Step 3 → 1: start fresh
@@ -255,6 +434,9 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
     setPlaylists([]);
     setTargetPlaylistId(null);
     setTargetPlaylistName('');
+    setLibraryMap(new Map());
+    setLinkIndices(new Set());
+    setPlaylistMemberUrls(new Set());
     setTimeout(() => inputRef.current?.focus(), 50);
   };
 
@@ -268,19 +450,33 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
   const overallCurrent = loading ? Math.min(completedCount + 1, overallTotal) : completedCount;
   const overallPct = overallTotal > 0 ? Math.round((overallCurrent / overallTotal) * 100) : 0;
 
-  const allSelected = playlistInfo && selectedIndices.size === playlistInfo.entries.length;
-  const someSelected = playlistInfo && selectedIndices.size > 0 && !allSelected;
+  const availableEntries = playlistInfo ? playlistInfo.entries.filter((e) => !e.unavailable) : [];
+  const unavailableCount = playlistInfo
+    ? playlistInfo.entries.filter((e) => e.unavailable).length
+    : 0;
+  // "All selected" means: every downloadable AND every linkable entry is active
+  const downloadableEntries = availableEntries.filter((e) => !libraryMap.has(e.url));
+  const linkableEntries = availableEntries.filter(
+    (e) => libraryMap.has(e.url) && !playlistMemberUrls.has(e.url)
+  );
+  const allSelected =
+    playlistInfo &&
+    downloadableEntries.every((e) => selectedIndices.has(e.index)) &&
+    linkableEntries.every((e) => linkIndices.has(e.index)) &&
+    downloadableEntries.length + linkableEntries.length > 0;
+  const someSelected =
+    playlistInfo && (selectedIndices.size > 0 || linkIndices.size > 0) && !allSelected;
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
-    <div className="dl-view">
+    <div className="dl-view" style={style}>
       <div className="dl-header">
         <h2 className="dl-title">YT-DLP Download</h2>
         <p className="dl-subtitle">
           {step === 'url' && 'Paste a URL to preview and choose tracks before downloading.'}
           {step === 'select' &&
             (playlistInfo?.type === 'playlist'
-              ? `${playlistInfo.entries.length} tracks found — select what to download.`
+              ? `${availableEntries.length} track${availableEntries.length !== 1 ? 's' : ''} found${unavailableCount > 0 ? ` (${unavailableCount} unavailable)` : ''} — select what to download.`
               : 'Ready to download.')}
           {step === 'download' && 'Downloading and importing to your library…'}
         </p>
@@ -294,7 +490,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
               <input
                 ref={inputRef}
                 className="dl-input"
-                type="url"
+                type="text"
                 placeholder="https://www.youtube.com/watch?v=…"
                 value={url}
                 onChange={(e) => {
@@ -325,12 +521,19 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
                         strokeLinecap="round"
                       />
                     </svg>
-                    Loading…
+                    {checkProgress
+                      ? `Checking ${checkProgress.checked}/${checkProgress.total}…`
+                      : 'Loading…'}
                   </span>
                 ) : (
                   'Load →'
                 )}
               </button>
+              {fetching && (
+                <button type="button" className="dl-btn dl-btn--cancel" onClick={handleCancelFetch}>
+                  ✕
+                </button>
+              )}
             </div>
             {fetchError && (
               <div className="dl-result dl-result--err">
@@ -363,10 +566,36 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
             </div>
           </div>
 
-          {history.length > 0 && (
+          {/* Live track list during availability check */}
+          {fetching && checkProgress && playlistInfo?.entries?.length > 0 && (
+            <div className="dl-checking-list">
+              <div className="dl-checking-list-title">
+                Checking availability… {checkProgress.checked}/{checkProgress.total}
+              </div>
+              <div className="dl-select-list">
+                {playlistInfo.entries.map((entry) => (
+                  <div
+                    key={entry.index}
+                    className={`dl-check-item${entry.unavailable ? ' dl-check-item--unavailable' : entry.checked ? ' dl-check-item--ok' : ''}`}
+                  >
+                    <span className="dl-check-item-icon">
+                      {entry.unavailable ? '✗' : entry.checked ? '✓' : '⋯'}
+                    </span>
+                    <span className="dl-select-item-num">{entry.index + 1}.</span>
+                    <span className="dl-select-item-title">{entry.title}</span>
+                    {entry.duration && (
+                      <span className="dl-select-item-dur">{fmtDuration(entry.duration)}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {downloadHistory.length > 0 && !fetching && (
             <div className="dl-history">
               <div className="dl-history-title">Session downloads</div>
-              {history.map((item, i) => (
+              {downloadHistory.map((item, i) => (
                 <div key={i} className="dl-history-item">
                   <span className="dl-history-icon">{detectIcon(item.url)}</span>
                   <span className="dl-history-url">{item.url}</span>
@@ -390,7 +619,18 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
                 {playlistInfo.title || (playlistInfo.type === 'playlist' ? 'Playlist' : 'Track')}
               </span>
               {playlistInfo.type === 'playlist' && (
-                <span className="dl-select-count">{playlistInfo.entries.length} tracks</span>
+                <span className="dl-select-count">
+                  {availableEntries.length} track{availableEntries.length !== 1 ? 's' : ''}
+                  {unavailableCount > 0 && (
+                    <span
+                      className="dl-select-count-unavailable"
+                      title={`${unavailableCount} video${unavailableCount !== 1 ? 's' : ''} are unavailable (private, deleted, or restricted)`}
+                    >
+                      {' '}
+                      · {unavailableCount} unavailable
+                    </span>
+                  )}
+                </span>
               )}
             </div>
           </div>
@@ -408,29 +648,98 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
                 />
                 {allSelected ? 'Deselect all' : 'Select all'}
               </label>
+              <div className="dl-select-filter-btns">
+                {downloadableEntries.length > 0 && (
+                  <button
+                    type="button"
+                    className="dl-filter-btn"
+                    title="Select only tracks not in your library (will download)"
+                    onClick={() => {
+                      setSelectedIndices(new Set(downloadableEntries.map((e) => e.index)));
+                      setLinkIndices(new Set());
+                    }}
+                  >
+                    ↓ Downloads only
+                  </button>
+                )}
+                {linkableEntries.length > 0 && (
+                  <button
+                    type="button"
+                    className="dl-filter-btn"
+                    title="Select only tracks already in your library (will link to playlist)"
+                    onClick={() => {
+                      setSelectedIndices(new Set());
+                      setLinkIndices(new Set(linkableEntries.map((e) => e.index)));
+                    }}
+                  >
+                    ⊟ Link only
+                  </button>
+                )}
+              </div>
               <span className="dl-select-selected-count">
-                {selectedIndices.size} / {playlistInfo.entries.length} selected
+                {selectedIndices.size + linkIndices.size} / {availableEntries.length} selected
               </span>
             </div>
           )}
 
           <div className="dl-select-list">
-            {playlistInfo.entries.map((entry) => (
-              <label key={entry.index} className="dl-select-item">
-                {playlistInfo.type === 'playlist' && (
-                  <input
-                    type="checkbox"
-                    checked={selectedIndices.has(entry.index)}
-                    onChange={() => handleToggleEntry(entry.index)}
-                  />
-                )}
-                <span className="dl-select-item-num">{entry.index + 1}.</span>
-                <span className="dl-select-item-title">{entry.title}</span>
-                {entry.duration && (
-                  <span className="dl-select-item-dur">{fmtDuration(entry.duration)}</span>
-                )}
-              </label>
-            ))}
+            {playlistInfo.entries
+              .filter((entry) => !entry.unavailable)
+              .map((entry) => {
+                const isInLibrary = libraryMap.has(entry.url);
+                const isInPlaylist = playlistMemberUrls.has(entry.url);
+                const isLink = linkIndices.has(entry.index);
+                const isSelected = selectedIndices.has(entry.index);
+                return (
+                  <label
+                    key={entry.index}
+                    className={`dl-select-item${isInLibrary ? ' dl-select-item--dupe' : ''}`}
+                  >
+                    {playlistInfo.type === 'playlist' && (
+                      <input
+                        type="checkbox"
+                        checked={isSelected || isLink}
+                        disabled={isInPlaylist}
+                        ref={(el) => {
+                          if (el) el.indeterminate = isLink && !isSelected;
+                        }}
+                        onChange={() => handleToggleEntry(entry.index, entry)}
+                      />
+                    )}
+                    <span className="dl-select-item-num">{entry.index + 1}.</span>
+                    <span className="dl-select-item-title">{entry.title}</span>
+                    {entry.duration && (
+                      <span className="dl-select-item-dur">{fmtDuration(entry.duration)}</span>
+                    )}
+                    {isInPlaylist && (
+                      <span
+                        className="dl-select-item-dupe-badge dl-select-item-badge--playlist"
+                        title="Already in the selected playlist"
+                      >
+                        ✓ in playlist
+                      </span>
+                    )}
+                    {isInLibrary && !isInPlaylist && (
+                      <span
+                        className="dl-select-item-dupe-badge"
+                        title={
+                          isLink
+                            ? 'Will be linked to playlist (no re-download)'
+                            : 'In your library — click checkbox to link to playlist'
+                        }
+                      >
+                        {isLink ? '⊟ link' : '○ in library'}
+                      </span>
+                    )}
+                  </label>
+                );
+              })}
+            {unavailableCount > 0 && (
+              <div className="dl-select-unavailable-note">
+                {unavailableCount} video{unavailableCount !== 1 ? 's' : ''} unavailable (private,
+                deleted, or restricted) — not shown
+              </div>
+            )}
           </div>
 
           <div className="dl-select-footer">
@@ -440,7 +749,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
                 <select
                   className="dl-playlist-select"
                   value={targetPlaylistId ?? ''}
-                  onChange={(e) => setTargetPlaylistId(e.target.value || null)}
+                  onChange={(e) => handleTargetPlaylistChange(e.target.value || null)}
                 >
                   <option value="">New playlist</option>
                   {playlists.map((pl) => (
@@ -463,11 +772,17 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
             <button
               className="dl-btn"
               onClick={handleDownload}
-              disabled={selectedIndices.size === 0}
+              disabled={selectedIndices.size === 0 && linkIndices.size === 0}
             >
-              {allSelected
-                ? `Download all (${selectedIndices.size})`
-                : `Download selected (${selectedIndices.size})`}
+              {(() => {
+                const dl = selectedIndices.size;
+                const lk = linkIndices.size;
+                if (dl > 0 && lk > 0) return `Download ${dl} + link ${lk}`;
+                if (dl > 0)
+                  return allSelected ? `Download all (${dl})` : `Download selected (${dl})`;
+                if (lk > 0) return `Link ${lk} to playlist`;
+                return 'Download';
+              })()}
             </button>
           </div>
         </div>
@@ -487,13 +802,14 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
               <div className="dl-progress-bar">
                 <div className="dl-progress-fill" style={{ width: `${overallPct}%` }} />
               </div>
+              {progress?.msg && <span className="dl-progress-msg">{progress.msg}</span>}
             </div>
           )}
 
-          {progress && (
+          {!isPlaylist && progress && (
             <div className="dl-progress">
               <div className="dl-progress-label">
-                <span>{isPlaylist ? 'Current track' : 'Download'}</span>
+                <span>Download</span>
                 <span>{progress.trackPct ?? progress.pct ?? 0}%</span>
               </div>
               <div className="dl-progress-bar">
@@ -502,7 +818,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
                   style={{ width: `${progress.trackPct ?? progress.pct ?? 0}%` }}
                 />
               </div>
-              <span className="dl-progress-msg">{progress.msg}</span>
+              {progress.msg && <span className="dl-progress-msg">{progress.msg}</span>}
             </div>
           )}
 
@@ -516,7 +832,10 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
                 {trackStatuses.map((t) => (
                   <div key={t.index} className="dl-track-row">
                     <span className="dl-track-title">{t.title}</span>
-                    <span className={`dl-track-status dl-track-status--${t.status}`}>
+                    <span
+                      className={`dl-track-status dl-track-status--${t.status}`}
+                      title={t.error || STATUS_ICON[t.status]?.label}
+                    >
                       {STATUS_ICON[t.status]?.icon ?? '□'}
                     </span>
                   </div>
@@ -526,30 +845,57 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist }) {
           )}
 
           {result?.ok && (
-            <div className="dl-result dl-result--ok">
-              <span>
-                {result.trackIds.length === 1
-                  ? '✓ Track added to your library'
-                  : `✓ ${result.trackIds.length} tracks added to your library`}
-              </span>
-              <div className="dl-result-actions">
-                {result.playlistId ? (
-                  <button
-                    type="button"
-                    className="dl-goto-btn"
-                    onClick={() => onGoToPlaylist(result.playlistId)}
-                  >
-                    Go to Playlist →
+            <div
+              className={`dl-result ${result.trackIds.length === 0 ? 'dl-result--err' : 'dl-result--ok'}`}
+            >
+              {result.trackIds.length === 0 ? (
+                <span>
+                  ✗ All {result.unavailableCount > 0 ? result.unavailableCount + ' ' : ''}tracks
+                  were unavailable (deleted, private, or geo-restricted)
+                </span>
+              ) : (
+                <span>
+                  {result.trackIds.length === 1
+                    ? '✓ Track added to your library'
+                    : `✓ ${result.trackIds.length} tracks added to your library`}
+                  {result.unavailableCount > 0 && (
+                    <span className="dl-result-unavailable-note">
+                      {' '}
+                      · {result.unavailableCount} unavailable (skipped)
+                    </span>
+                  )}
+                </span>
+              )}
+              {result.trackIds.length > 0 && (
+                <div className="dl-result-actions">
+                  {result.playlistId ? (
+                    <button
+                      type="button"
+                      className="dl-goto-btn"
+                      onClick={() => onGoToPlaylist(result.playlistId)}
+                    >
+                      Go to Playlist →
+                    </button>
+                  ) : (
+                    <button type="button" className="dl-goto-btn" onClick={onGoToLibrary}>
+                      View in Music →
+                    </button>
+                  )}
+                  <button type="button" className="dl-goto-btn" onClick={handleDownloadAnother}>
+                    ← New download
                   </button>
-                ) : (
-                  <button type="button" className="dl-goto-btn" onClick={onGoToLibrary}>
-                    View in Music →
-                  </button>
-                )}
-                <button type="button" className="dl-goto-btn" onClick={handleDownloadAnother}>
-                  ← New download
+                </div>
+              )}
+              {result.trackIds.length === 0 && (
+                <button
+                  type="button"
+                  className="dl-back-btn"
+                  onClick={handleBack}
+                  style={{ marginTop: 8, alignSelf: 'flex-start' }}
+                >
+                  ← Try again
                 </button>
-              </div>
+              )}
             </div>
           )}
           {result?.error && (

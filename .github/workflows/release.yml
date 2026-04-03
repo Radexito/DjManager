@@ -55,7 +55,7 @@ jobs:
         run: npm ci
 
       - name: Install renderer dependencies
-        run: cd renderer && npm ci
+        run: cd renderer && npm ci --legacy-peer-deps
 
       - name: Build renderer
         run: npm run build-renderer
