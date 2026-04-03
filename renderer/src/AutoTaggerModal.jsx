@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import './AutoTaggerModal.css';
 
 const APPLY_FIELDS = [
@@ -47,6 +47,8 @@ export default function AutoTaggerModal({ track, onApply, onClose }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selections, setSelections] = useState({});
+  const [selectedCoverUrl, setSelectedCoverUrl] = useState('');
+  const [zoomedCover, setZoomedCover] = useState(null);
   const inputRef = useRef(null);
 
   useEffect(() => {
@@ -81,6 +83,9 @@ export default function AutoTaggerModal({ track, onApply, onClose }) {
         init[key] = firstVal;
       });
       setSelections(init);
+      // Pre-select first available cover
+      const firstCover = res.results.find((r) => r.coverUrl)?.coverUrl ?? '';
+      setSelectedCoverUrl(firstCover);
     } catch (e) {
       setError(e.message ?? 'Search failed');
     } finally {
@@ -115,6 +120,19 @@ export default function AutoTaggerModal({ track, onApply, onClose }) {
     return track[key] != null ? String(track[key]) : '';
   }
 
+  // Deduplicated cover URLs across all results
+  const coverOptions = useMemo(() => {
+    const seen = new Set();
+    const options = [];
+    for (const r of results) {
+      if (r.coverUrl && !seen.has(r.coverUrl)) {
+        seen.add(r.coverUrl);
+        options.push({ url: r.coverUrl, source: r.source });
+      }
+    }
+    return options;
+  }, [results]);
+
   const handleApply = useCallback(() => {
     const update = {};
     APPLY_FIELDS.forEach(({ key }) => {
@@ -133,84 +151,126 @@ export default function AutoTaggerModal({ track, onApply, onClose }) {
         update[key] = val;
       }
     });
+    if (selectedCoverUrl) update.coverUrl = selectedCoverUrl;
     onApply(update);
-  }, [selections, onApply]);
+  }, [selections, selectedCoverUrl, onApply]);
 
-  const hasChanges = APPLY_FIELDS.some(({ key }) => {
-    const val = selections[key];
-    return val && val !== currentVal(key);
-  });
+  const hasChanges =
+    APPLY_FIELDS.some(({ key }) => {
+      const val = selections[key];
+      return val && val !== currentVal(key);
+    }) || !!selectedCoverUrl;
 
   return (
-    <div className="at-overlay" onClick={onClose}>
-      <div className="at-modal" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="at-header">
-          <span className="at-header__title">🔍 Auto-tag</span>
-          <button className="at-header__close" onClick={onClose}>
-            ✕
-          </button>
-        </div>
-
-        {/* Search bar */}
-        <div className="at-search-bar">
-          <div className="at-search-input-row">
-            <input
-              ref={inputRef}
-              className="at-search-input"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && search()}
-              placeholder="Artist - Title"
-            />
-            <button className="at-search-btn" onClick={search} disabled={loading}>
-              {loading ? '…' : 'Search'}
+    <>
+      <div className="at-overlay" onClick={onClose}>
+        <div className="at-modal" onClick={(e) => e.stopPropagation()}>
+          {/* Header */}
+          <div className="at-header">
+            <span className="at-header__title">🔍 Auto-tag</span>
+            <button className="at-header__close" onClick={onClose}>
+              ✕
             </button>
           </div>
-          {loading && <div className="at-sources-label">Searching MusicBrainz &amp; Discogs…</div>}
-          {error && <div className="at-error at-error--inline">{error}</div>}
-        </div>
 
-        {/* Per-field dropdowns */}
-        <div className="at-diff">
-          <div className="at-diff-header">
-            <span className="at-diff-col">Field</span>
-            <span className="at-diff-col">Current</span>
-            <span className="at-diff-col at-diff-col--arrow"></span>
-            <span className="at-diff-col at-diff-col--new">New value</span>
+          {/* Search bar */}
+          <div className="at-search-bar">
+            <div className="at-search-input-row">
+              <input
+                ref={inputRef}
+                className="at-search-input"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && search()}
+                placeholder="Artist - Title"
+              />
+              <button className="at-search-btn" onClick={search} disabled={loading}>
+                {loading ? '…' : 'Search'}
+              </button>
+            </div>
+            {loading && (
+              <div className="at-sources-label">Searching MusicBrainz &amp; Discogs…</div>
+            )}
+            {error && <div className="at-error at-error--inline">{error}</div>}
           </div>
-          {APPLY_FIELDS.map(({ key, label }) => (
-            <DiffRow
-              key={key}
-              label={label}
-              oldVal={currentVal(key)}
-              options={getOptions(key)}
-              value={selections[key] ?? ''}
-              onChange={(val) => setSelections((s) => ({ ...s, [key]: val }))}
-            />
-          ))}
-        </div>
 
-        {results.length === 0 && !loading && (
-          <div className="at-diff-hint">Search to populate options for each field.</div>
-        )}
-        {results.length > 0 && (
-          <div className="at-diff-hint">
-            {results.length} result{results.length !== 1 ? 's' : ''} from MusicBrainz &amp; Discogs.
-            Highlighted rows will be updated.
+          {/* Per-field dropdowns */}
+          <div className="at-diff">
+            <div className="at-diff-header">
+              <span className="at-diff-col">Field</span>
+              <span className="at-diff-col">Current</span>
+              <span className="at-diff-col at-diff-col--arrow"></span>
+              <span className="at-diff-col at-diff-col--new">New value</span>
+            </div>
+            {APPLY_FIELDS.map(({ key, label }) => (
+              <DiffRow
+                key={key}
+                label={label}
+                oldVal={currentVal(key)}
+                options={getOptions(key)}
+                value={selections[key] ?? ''}
+                onChange={(val) => setSelections((s) => ({ ...s, [key]: val }))}
+              />
+            ))}
           </div>
-        )}
 
-        {/* Actions */}
-        <div className="at-diff-actions">
-          <button className="at-btn at-btn--secondary" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="at-btn at-btn--primary" onClick={handleApply} disabled={!hasChanges}>
-            Apply
-          </button>
+          {results.length === 0 && !loading && (
+            <div className="at-diff-hint">Search to populate options for each field.</div>
+          )}
+          {results.length > 0 && (
+            <div className="at-diff-hint">
+              {results.length} result{results.length !== 1 ? 's' : ''} from MusicBrainz, Discogs,
+              iTunes &amp; Deezer. Highlighted rows will be updated.
+            </div>
+          )}
+
+          {/* Cover art picker */}
+          {coverOptions.length > 0 && (
+            <div className="at-covers">
+              <div className="at-covers__label">Cover art</div>
+              <div className="at-covers__grid">
+                <button
+                  className={`at-cover-thumb at-cover-thumb--none${!selectedCoverUrl ? ' at-cover-thumb--selected' : ''}`}
+                  onClick={() => setSelectedCoverUrl('')}
+                  title="No cover / keep existing"
+                >
+                  ✕
+                </button>
+                {coverOptions.map(({ url, source }) => (
+                  <button
+                    key={url}
+                    className={`at-cover-thumb${selectedCoverUrl === url ? ' at-cover-thumb--selected' : ''}`}
+                    onClick={() => {
+                      setSelectedCoverUrl(url);
+                      setZoomedCover(url);
+                    }}
+                    title={`${source} — click to select and zoom`}
+                  >
+                    <img src={url} alt={source} loading="lazy" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="at-diff-actions">
+            <button className="at-btn at-btn--secondary" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="at-btn at-btn--primary" onClick={handleApply} disabled={!hasChanges}>
+              Apply
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+
+      {/* Cover zoom lightbox */}
+      {zoomedCover && (
+        <div className="at-zoom-overlay" onClick={() => setZoomedCover(null)}>
+          <img className="at-zoom-img" src={zoomedCover} alt="Cover art" />
+        </div>
+      )}
+    </>
   );
 }

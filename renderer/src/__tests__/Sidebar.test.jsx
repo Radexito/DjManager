@@ -1,25 +1,36 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import Sidebar from '../Sidebar.jsx';
+import { DownloadProvider } from '../DownloadContext.jsx';
+
+function renderSidebar(props = {}) {
+  return render(
+    <DownloadProvider>
+      <Sidebar {...props} />
+    </DownloadProvider>
+  );
+}
 
 describe('Sidebar', () => {
   const defaultProps = {
     selectedMenuItemId: 'music',
     onMenuSelect: vi.fn(),
+    onExportPlaylistRekordboxUsb: vi.fn(),
+    onExportPlaylistAll: vi.fn(),
   };
 
   it('renders the Music menu item', () => {
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
     expect(screen.getByText('Music')).toBeInTheDocument();
   });
 
   it('renders the PLAYLISTS heading', () => {
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
     expect(screen.getByText('PLAYLISTS')).toBeInTheDocument();
   });
 
   it('shows empty state when no playlists exist', async () => {
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
     await waitFor(() => {
       expect(screen.getByText('No playlists yet')).toBeInTheDocument();
     });
@@ -31,7 +42,7 @@ describe('Sidebar', () => {
       { id: 2, name: 'House Vibes', color: null, track_count: 8, total_duration: 2400 },
     ]);
 
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
     await waitFor(() => {
       expect(screen.getByText('Techno Set')).toBeInTheDocument();
       expect(screen.getByText('House Vibes')).toBeInTheDocument();
@@ -40,7 +51,7 @@ describe('Sidebar', () => {
 
   it('calls onMenuSelect when Music is clicked', () => {
     const onMenuSelect = vi.fn();
-    render(<Sidebar {...defaultProps} onMenuSelect={onMenuSelect} />);
+    renderSidebar({ ...defaultProps, onMenuSelect });
     fireEvent.click(screen.getByText('Music'));
     expect(onMenuSelect).toHaveBeenCalledWith('music');
   });
@@ -51,14 +62,14 @@ describe('Sidebar', () => {
       { id: 42, name: 'My Set', color: null, track_count: 5, total_duration: 1500 },
     ]);
 
-    render(<Sidebar {...defaultProps} onMenuSelect={onMenuSelect} />);
+    renderSidebar({ ...defaultProps, onMenuSelect });
     await waitFor(() => screen.getByText('My Set'));
     fireEvent.click(screen.getByText('My Set'));
     expect(onMenuSelect).toHaveBeenCalledWith('42');
   });
 
   it('shows new playlist input when + button is clicked', () => {
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
     fireEvent.click(screen.getByTitle('New playlist'));
     expect(screen.getByPlaceholderText('Playlist name')).toBeInTheDocument();
   });
@@ -68,12 +79,107 @@ describe('Sidebar', () => {
       { id: 1, name: 'Techno Set', color: null, track_count: 0, total_duration: 0 },
     ]);
 
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
     await waitFor(() => screen.getByText('Techno Set'));
     fireEvent.contextMenu(screen.getByText('Techno Set'));
 
     expect(screen.getByText(/Rename/)).toBeInTheDocument();
     expect(screen.getByText(/Export as M3U/)).toBeInTheDocument();
     expect(screen.getByText(/Delete playlist/)).toBeInTheDocument();
+  });
+
+  it('context menu includes "Export Rekordbox USB…" and "Export All to USB…"', async () => {
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 1, name: 'Techno Set', color: null, track_count: 0, total_duration: 0 },
+    ]);
+
+    renderSidebar({ ...defaultProps });
+    await waitFor(() => screen.getByText('Techno Set'));
+    fireEvent.contextMenu(screen.getByText('Techno Set'));
+
+    expect(screen.getByText(/Export Rekordbox USB/)).toBeInTheDocument();
+    expect(screen.getByText(/Export All to USB/)).toBeInTheDocument();
+  });
+
+  it('calls onExportPlaylistRekordboxUsb with playlist id when "Export Rekordbox USB…" is clicked', async () => {
+    const onExportPlaylistRekordboxUsb = vi.fn();
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 42, name: 'My Set', color: null, track_count: 0, total_duration: 0 },
+    ]);
+
+    renderSidebar({
+      ...defaultProps,
+      onExportPlaylistRekordboxUsb,
+    });
+    await waitFor(() => screen.getByText('My Set'));
+    fireEvent.contextMenu(screen.getByText('My Set'));
+    fireEvent.click(screen.getByText(/Export Rekordbox USB/));
+
+    expect(onExportPlaylistRekordboxUsb).toHaveBeenCalledWith(42);
+  });
+
+  it('calls onExportPlaylistAll with playlist id when "Export All to USB…" is clicked', async () => {
+    const onExportPlaylistAll = vi.fn();
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 42, name: 'My Set', color: null, track_count: 0, total_duration: 0 },
+    ]);
+
+    renderSidebar({ ...defaultProps, onExportPlaylistAll });
+    await waitFor(() => screen.getByText('My Set'));
+    fireEvent.contextMenu(screen.getByText('My Set'));
+    fireEvent.click(screen.getByText(/Export All to USB/));
+
+    expect(onExportPlaylistAll).toHaveBeenCalledWith(42);
+  });
+
+  it('does not render an "Export USB…" bottom button', () => {
+    renderSidebar({ ...defaultProps });
+    expect(screen.queryByText(/Export USB/)).toBeNull();
+  });
+});
+
+describe('Sidebar — normalization progress bar', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const defaultProps = {
+    selectedMenuItemId: 'music',
+    onMenuSelect: vi.fn(),
+    onExportPlaylistRekordboxUsb: vi.fn(),
+    onExportPlaylistAll: vi.fn(),
+  };
+
+  it('shows normalize progress when onNormalizeProgress fires with progress data', async () => {
+    let progressCallback;
+    window.api.onNormalizeProgress.mockImplementation((cb) => {
+      progressCallback = cb;
+      return vi.fn(); // unsub
+    });
+
+    renderSidebar({ ...defaultProps });
+
+    act(() => {
+      progressCallback({ completed: 3, total: 10, done: false });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Normalizing')).toBeInTheDocument();
+      expect(screen.getByText('3 / 10')).toBeInTheDocument();
+    });
+  });
+
+  it('hides normalize progress bar when done event fires', async () => {
+    let progressCallback;
+    window.api.onNormalizeProgress.mockImplementation((cb) => {
+      progressCallback = cb;
+      return vi.fn();
+    });
+
+    renderSidebar({ ...defaultProps });
+
+    act(() => progressCallback({ completed: 5, total: 5, done: false }));
+    await waitFor(() => expect(screen.getByText('Normalizing')).toBeInTheDocument());
+
+    act(() => progressCallback({ done: true }));
+    await waitFor(() => expect(screen.queryByText('Normalizing')).toBeNull(), { timeout: 2000 });
   });
 });

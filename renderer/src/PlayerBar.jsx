@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { usePlayer } from './PlayerContext.jsx';
+import { artworkUrl } from './artworkUrl.js';
 import './PlayerBar.css';
 
 function formatTime(s) {
@@ -9,8 +10,9 @@ function formatTime(s) {
   return `${m}:${sec}`;
 }
 
-export default function PlayerBar({ onNavigateToPlaylist }) {
+export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
   const {
+    mediaPort,
     currentTrack,
     currentPlaylistId,
     currentPlaylistName,
@@ -104,16 +106,19 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
     return () => document.removeEventListener('mousedown', handler);
   }, [showHistory]);
 
-  // Album art URL via media server (same port, absolute path as URL path)
-  const artworkUrl =
-    currentTrack?.has_artwork && currentTrack?.artwork_path ? `${currentTrack.artwork_path}` : null;
+  const artSrc = artworkUrl(
+    currentTrack?.has_artwork ? currentTrack?.artwork_path : null,
+    mediaPort
+  );
 
   return (
     <div className="player-bar">
       {/* Left: album art + current track info */}
       <div className="player-left">
-        {artworkUrl && (
-          <img className="player-art" src={artworkUrl} alt="Album art" draggable={false} />
+        {artSrc ? (
+          <img className="player-art" src={artSrc} alt="Album art" draggable={false} />
+        ) : (
+          <div className="player-art player-art--placeholder">♪</div>
         )}
         <div className="player-track-info">
           {currentTrack ? (
@@ -121,9 +126,19 @@ export default function PlayerBar({ onNavigateToPlaylist }) {
               <div className="player-title" title={currentTrack.title}>
                 {currentTrack.title}
               </div>
-              <div className="player-artist">{currentTrack.artist || 'Unknown'}</div>
+              <div
+                className={`player-artist${currentTrack.artist ? ' player-artist--clickable' : ''}`}
+                title={currentTrack.artist ? `Search: ARTIST is ${currentTrack.artist}` : undefined}
+                onClick={() => currentTrack.artist && onArtistSearch?.(currentTrack.artist)}
+              >
+                {currentTrack.artist || 'Unknown'}
+              </div>
               {currentPlaylistName && (
-                <div className="player-from" title={`Playing from: ${currentPlaylistName}`}>
+                <div
+                  className="player-from player-from--clickable"
+                  title={`Go to playlist: ${currentPlaylistName}`}
+                  onClick={() => onNavigateToPlaylist(String(currentPlaylistId))}
+                >
                   ▶ {currentPlaylistName}
                 </div>
               )}

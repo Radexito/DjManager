@@ -13,11 +13,11 @@
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  position: relative;
 }
 
 /* Search */
 .search-input {
-  margin-bottom: 20px;
   padding: 8px;
   border: 1px solid #333;
   border-radius: 4px;
@@ -83,11 +83,86 @@
 
 .cell.index {
   font-weight: 500;
+  color: #aaa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+}
+
+.index-num {
+  line-height: 1;
+}
+
+.index-play {
+  display: none;
+  background: none;
+  border: none;
+  outline: none;
   color: #fff;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0;
+}
+
+.index-play:focus,
+.index-play:focus-visible {
+  outline: none;
+}
+
+.row:hover .index-num {
+  display: none;
+}
+
+.row:hover .index-play {
+  display: block;
+}
+
+/* Currently playing track — don't show play button on hover */
+.row--playing:hover .index-num {
+  display: block;
+}
+
+.row--playing:hover .index-play {
+  display: none;
 }
 
 .cell.title {
   color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.cell-artwork {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 3px;
+  display: block;
+}
+
+.cell-artwork--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: #2a2a2a;
+  border-radius: 3px;
+  font-size: 14px;
+  color: #444;
+  flex-shrink: 0;
+}
+
+.cell-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .cell.artist {
@@ -135,6 +210,7 @@
   padding: 4px 0;
   z-index: 1000;
   min-width: 170px;
+  width: max-content;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
   user-select: none;
   max-height: calc(100vh - 16px);
@@ -149,6 +225,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
 }
 
 .context-menu-item:hover {
@@ -179,6 +256,12 @@
 }
 
 /* Selected rows */
+.row:hover {
+  background: #1a3a5c !important;
+  outline: 1px solid #2d6aa0;
+  outline-offset: -1px;
+}
+
 .row--selected {
   background: #1a3a5c !important;
   outline: 1px solid #2d6aa0;
@@ -192,6 +275,34 @@
 
 .row--playing.row--selected {
   background: #1a3a1a !important;
+}
+
+/* Track is being normalized or re-analyzed */
+.row--analyzing {
+  opacity: 0.45;
+}
+
+/* New row: space slides open (scaleY), then content fades in */
+@keyframes rowSlideIn {
+  0% {
+    transform: scaleY(0);
+    transform-origin: top center;
+    opacity: 0;
+  }
+  45% {
+    transform: scaleY(1);
+    transform-origin: top center;
+    opacity: 0;
+  }
+  100% {
+    transform: scaleY(1);
+    transform-origin: top center;
+    opacity: 1;
+  }
+}
+
+.row--new {
+  animation: rowSlideIn 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
 }
 
 /* BPM overridden indicator */
@@ -479,4 +590,61 @@
 /* ── Details panel layout ─────────────────────────────────────────────── */
 .music-library--with-panel .music-library__main {
   border-right: 1px solid #2a2a2a;
+}
+
+/* ── Toast notification ───────────────────────────────────────────────── */
+.music-library-toast {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #2a2a2a;
+  border: 1px solid #1db954;
+  color: #e0e0e0;
+  font-size: 13px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  z-index: 2000;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.music-library-toast--warn {
+  border-color: #f4a261;
+  color: #f4a261;
+}
+
+/* ── Add to new playlist inline input ── */
+.ctx-new-playlist-item {
+  padding: 6px 12px;
+  cursor: default;
+}
+
+.ctx-new-playlist-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 12px;
+}
+
+.ctx-new-playlist-input {
+  background: #1a1a1a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ctx-new-playlist-input:focus {
+  border-color: #1db954;
+}
+
+.ctx-new-playlist-error {
+  font-size: 11px;
+  color: #e06c6c;
 }

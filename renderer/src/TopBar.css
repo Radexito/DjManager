@@ -1,0 +1,71 @@
+.top-bar {
+  height: 68px;
+  flex-shrink: 0;
+  background: #111;
+  border-bottom: 1px solid #2a2a2a;
+  display: flex;
+  align-items: stretch;
+  padding: 0 16px;
+  gap: 16px;
+  z-index: 100;
+}
+
+/* ── Logo ── */
+.top-bar__logo {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 160px;
+}
+
+.top-bar__logo-img {
+  height: 36px;
+  width: auto;
+  object-fit: contain;
+}
+
+/* ── Search ── */
+.top-bar__search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.top-bar__search .search-bar {
+  width: 100%;
+  margin: 0 !important;
+}
+
+.top-bar__search .search-bar__input-row {
+  position: relative;
+}
+
+/* ── Actions ── */
+.top-bar__actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  min-width: 160px;
+  justify-content: flex-end;
+}
+
+.top-bar__settings-btn {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 4px;
+  line-height: 1;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+
+.top-bar__settings-btn:hover {
+  color: #fff;
+  background: #2a2a2a;
+}
