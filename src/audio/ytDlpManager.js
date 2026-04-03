@@ -154,64 +154,71 @@ export async function fetchPlaylistInfo(url, options = {}) {
   }
 }
 
-const INNERTUBE_CONCURRENCY = 6;
-const INNERTUBE_TIMEOUT_MS = 8000;
-// YouTube InnerTube player endpoint using the WEB client.
-// The WEB client is what yt-dlp's primary scraper uses, so if it returns UNPLAYABLE/ERROR
-// the download will also fail. HTTP non-200 means auth/quota issue → assume available.
-const INNERTUBE_URL = 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
-const INNERTUBE_WEB_CLIENT = {
-  clientName: 'WEB',
-  clientVersion: '2.20231219.01.00', // yt-dlp WEB client version
-  hl: 'en',
-};
+const YTDLP_CHECK_CONCURRENCY = 4;
+const YTDLP_CHECK_TIMEOUT_MS = 15000;
+// Availability values from yt-dlp that mean the video cannot be downloaded
+const UNAVAILABLE_STATUSES = new Set(['private', 'premium_only', 'subscriber_only', 'needs_auth']);
 
 /**
- * Batch-check YouTube video availability via the InnerTube player API (WEB client).
- * Mutates each entry in-place: sets entry.unavailable and entry.unavailableReason.
- * Only marks unavailable when InnerTube explicitly returns a non-OK playabilityStatus.
- * HTTP errors (auth/quota) are treated as "can't determine → assume available".
+ * Batch-check YouTube video availability by running yt-dlp --print availability
+ * for each entry. This is the most reliable approach since it uses the exact same
+ * mechanism as the actual download. Mutates entries in-place.
  */
 async function checkYouTubeAvailability(entries) {
   const toCheck = entries.filter((e) => !e.unavailable && e.id);
   if (toCheck.length === 0) return;
 
-  console.log(`[ytdlp] InnerTube availability check for ${toCheck.length} entries…`);
+  const ytDlp = getYtDlpRuntimePath();
+  if (!fs.existsSync(ytDlp)) return; // binary not ready yet — skip check
 
-  async function checkOne(videoId) {
-    try {
-      const res = await fetch(INNERTUBE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ videoId, context: { client: INNERTUBE_WEB_CLIENT } }),
-        signal: AbortSignal.timeout(INNERTUBE_TIMEOUT_MS),
-      });
-      if (!res.ok) {
-        // HTTP error (auth/quota) — can't determine, assume available
-        console.log(`[ytdlp] ${videoId} [WEB] HTTP ${res.status} — assuming available`);
-        return { unavailable: false };
-      }
-      const data = await res.json();
-      const ps = data?.playabilityStatus;
-      const status = ps?.status;
-      console.log(`[ytdlp] ${videoId} [WEB] → ${status}`);
-      if (status && status !== 'OK') {
-        return {
-          unavailable: true,
-          reason:
-            ps.reason ||
-            (status === 'LOGIN_REQUIRED'
+  console.log(`[ytdlp] availability check for ${toCheck.length} entries via yt-dlp…`);
+
+  async function checkOne(entry) {
+    return new Promise((resolve) => {
+      const args = [
+        '--no-playlist',
+        '--print',
+        'availability',
+        '--no-warnings',
+        '--extractor-args',
+        'youtube:player_client=web',
+        `https://www.youtube.com/watch?v=${entry.id}`,
+      ];
+      const proc = spawn(ytDlp, args);
+      let stdout = '';
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        proc.kill();
+        resolve(); // timeout → assume available
+      }, YTDLP_CHECK_TIMEOUT_MS);
+
+      proc.stdout.on('data', (d) => (stdout += d.toString()));
+      proc.on('close', (code) => {
+        clearTimeout(timer);
+        if (timedOut) return;
+        const availability = stdout.trim().toLowerCase();
+        console.log(`[ytdlp] ${entry.id} availability=${availability || '(exit ' + code + ')'}`);
+        if (
+          code !== 0 ||
+          UNAVAILABLE_STATUSES.has(availability) ||
+          availability === 'unavailable'
+        ) {
+          entry.unavailable = true;
+          entry.unavailableReason =
+            availability === 'private'
               ? 'Private video'
-              : status === 'UNPLAYABLE'
-                ? 'Video unavailable'
-                : 'Video unavailable'),
-        };
-      }
-    } catch {
-      // Timeout or network error — assume available, yt-dlp will report if not
-      console.log(`[ytdlp] ${videoId} [WEB] network error — assuming available`);
-    }
-    return { unavailable: false };
+              : availability === 'premium_only'
+                ? 'YouTube Premium only'
+                : 'Video unavailable';
+        }
+        resolve();
+      });
+      proc.on('error', () => {
+        clearTimeout(timer);
+        resolve(); // spawn error → assume available
+      });
+    });
   }
 
   const queue = [...toCheck];
@@ -219,17 +226,13 @@ async function checkYouTubeAvailability(entries) {
   async function worker() {
     while (queue.length > 0) {
       const entry = queue.shift();
-      const result = await checkOne(entry.id);
-      if (result.unavailable) {
-        entry.unavailable = true;
-        entry.unavailableReason = result.reason;
-      }
+      await checkOne(entry);
     }
   }
 
-  await Promise.allSettled(Array.from({ length: INNERTUBE_CONCURRENCY }, worker));
+  await Promise.allSettled(Array.from({ length: YTDLP_CHECK_CONCURRENCY }, worker));
   const unavailCount = entries.filter((e) => e.unavailable).length;
-  console.log(`[ytdlp] InnerTube check done — ${unavailCount}/${entries.length} unavailable`);
+  console.log(`[ytdlp] availability check done — ${unavailCount}/${entries.length} unavailable`);
 }
 
 const UNAVAILABLE_TITLE_RE = /^\[(Private|Deleted|Unavailable|Removed)\s*(video|track)?\]$/i;
