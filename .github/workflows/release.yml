@@ -157,7 +157,7 @@ jobs:
       - name: Generate chocolateyInstall.ps1 from template
         shell: pwsh
         run: |
-          $script = Get-Content chocolatey/tools/chocolateyInstall.ps1.template -Raw
+          $script = Get-Content chocolatey/chocolateyInstall.ps1.template -Raw
           $script = $script -replace '{{INSTALLER_URL}}',    '${{ steps.installer.outputs.url }}'
           $script = $script -replace '{{INSTALLER_SHA256}}', '${{ steps.installer.outputs.sha256 }}'
           Set-Content chocolatey/tools/chocolateyInstall.ps1 $script
