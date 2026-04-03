@@ -13,6 +13,13 @@ body {
   background-color: #0f0f0f;
 }
 
+.app-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .app-main {
   flex: 1;
   display: flex;

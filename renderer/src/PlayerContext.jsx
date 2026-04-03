@@ -34,9 +34,11 @@ export function PlayerProvider({ children }) {
 
   // Port of the local HTTP media server (started in main process before window opens).
   const mediaPortRef = useRef(null);
+  const [mediaPort, setMediaPort] = useState(null);
   useEffect(() => {
     window.api.getMediaPort().then((port) => {
       mediaPortRef.current = port;
+      setMediaPort(port);
     });
   }, []);
 
@@ -84,16 +86,21 @@ export function PlayerProvider({ children }) {
       const track = newQueue[index];
       if (!track) return;
       const gen = ++playGenRef.current;
-      const encodedPath = track.file_path
-        .split('/')
-        .map((seg) => encodeURIComponent(seg))
-        .join('/');
       const port = mediaPortRef.current;
       if (!port) {
         console.error('[player] media server not ready yet');
         return;
       }
-      const src = `http://127.0.0.1:${port}${encodedPath}?t=${gen}`; // cache-bust: same file reloaded = fresh pipeline
+      // Prefer the normalized file for playback if available
+      const filePath = track.normalized_file_path || track.file_path;
+      // Normalize to forward slashes (Windows paths use backslashes), then encode each segment
+      const posixPath = filePath.replace(/\\/g, '/');
+      const encodedPath = posixPath
+        .split('/')
+        .map((seg) => encodeURIComponent(seg))
+        .join('/');
+      // Always ensure exactly one leading slash (Unix paths already start with '/', Windows 'C:/...' don't)
+      const src = `http://127.0.0.1:${port}/${encodedPath.replace(/^\//, '')}?t=${gen}`; // cache-bust: same file reloaded = fresh pipeline
 
       // Push currently playing track to history before switching
       if (currentTrackRef.current) {
@@ -102,7 +109,6 @@ export function PlayerProvider({ children }) {
           return next.length > HISTORY_MAX ? next.slice(0, HISTORY_MAX) : next;
         });
       }
-
       audio.pause(); // cleanly stop current pipeline before swapping source
       audio.src = src;
       // Setting src triggers an implicit load; calling audio.load() would race with play()
@@ -310,9 +316,64 @@ export function PlayerProvider({ children }) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [audio]);
 
+  const patchCurrentTrack = useCallback(
+    (id, fields) => setCurrentTrack((prev) => (prev?.id === id ? { ...prev, ...fields } : prev)),
+    []
+  );
+
+  // Reload audio src for the current track (e.g. after normalization produces a new file).
+  // Pass the new file path explicitly so we don't race with pending React state updates.
+  // Seeks back to the position the player was at before the reload.
+  const reloadCurrentTrack = useCallback(
+    (newFilePath, shouldPlay = false) => {
+      const port = mediaPortRef.current;
+      console.log(
+        '[reloadCurrentTrack] called with path=',
+        newFilePath,
+        'shouldPlay=',
+        shouldPlay,
+        'port=',
+        port
+      );
+      if (!port || !newFilePath) return;
+      const posixPath = newFilePath.replace(/\\/g, '/');
+      const encodedPath = posixPath
+        .split('/')
+        .map((seg) => encodeURIComponent(seg))
+        .join('/');
+      const gen = ++playGenRef.current;
+      const savedTime = audio.currentTime;
+      const src = `http://127.0.0.1:${port}/${encodedPath.replace(/^\//, '')}?t=${gen}`;
+      console.log('[reloadCurrentTrack] setting audio.src =', src, 'savedTime=', savedTime);
+      audio.pause();
+      audio.src = src;
+      audio.addEventListener(
+        'canplay',
+        () => {
+          console.log(
+            '[reloadCurrentTrack] canplay fired, seeking to',
+            savedTime,
+            'shouldPlay=',
+            shouldPlay
+          );
+          audio.currentTime = savedTime;
+          if (shouldPlay) {
+            audio.play().catch((err) => {
+              if (gen === playGenRef.current && err.name !== 'AbortError')
+                console.error('[player] reloadCurrentTrack play error:', err);
+            });
+          }
+        },
+        { once: true }
+      );
+    },
+    [audio]
+  );
+
   return (
     <PlayerContext.Provider
       value={{
+        mediaPort,
         currentTrack,
         currentPlaylistId,
         currentPlaylistName,
@@ -336,6 +397,8 @@ export function PlayerProvider({ children }) {
         cycleRepeat,
         setDevice,
         setVolume,
+        patchCurrentTrack,
+        reloadCurrentTrack,
       }}
     >
       {children}
