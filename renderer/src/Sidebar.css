@@ -121,6 +121,10 @@
   transition: width 0.2s ease;
 }
 
+.ytdlp-progress-fill {
+  background-color: #5865f2;
+}
+
 .import-button {
   margin-top: 12px;
   margin-bottom: 25px;

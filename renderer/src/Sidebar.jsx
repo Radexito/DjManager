@@ -27,6 +27,7 @@ function Sidebar({
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
   const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
   const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
+  const [ytDlpProgress, setYtDlpProgress] = useState(null); // { msg, pct, overallCurrent, overallTotal } | null
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -117,6 +118,17 @@ function Sidebar({
         setTimeout(() => setNormalizeProgress(null), 1500);
       } else {
         setNormalizeProgress({ completed: data.completed, total: data.total });
+      }
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = window.api.onYtDlpProgress((data) => {
+      if (data === null) {
+        setTimeout(() => setYtDlpProgress(null), 800);
+      } else {
+        setYtDlpProgress(data);
       }
     });
     return unsub;
@@ -297,6 +309,39 @@ function Sidebar({
                 }}
               />
             </div>
+          </div>
+        )}
+        {ytDlpProgress && (
+          <div className="normalize-progress-wrap">
+            <div className="normalize-progress-label">
+              <span>Downloading</span>
+              {ytDlpProgress.overallTotal > 1 && (
+                <span>
+                  {ytDlpProgress.overallCurrent} / {ytDlpProgress.overallTotal}
+                </span>
+              )}
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill ytdlp-progress-fill"
+                style={{ width: `${Math.round(ytDlpProgress.pct ?? 0)}%` }}
+              />
+            </div>
+            {ytDlpProgress.msg && (
+              <div className="normalize-progress-label" style={{ marginTop: 4, opacity: 0.7 }}>
+                <span
+                  style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: '100%',
+                    fontSize: 11,
+                  }}
+                >
+                  {ytDlpProgress.msg}
+                </span>
+              </div>
+            )}
           </div>
         )}
         {exportProgress && (
