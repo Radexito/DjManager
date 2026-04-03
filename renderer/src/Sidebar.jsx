@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useDownload } from './DownloadContext.jsx';
 import './Sidebar.css';
 
 const MENU_ITEMS = [
@@ -24,10 +25,12 @@ function Sidebar({
   onExportPlaylistAll,
   activePlaylistId,
 }) {
+  const { sidebarProgress: ytDlpSidebarProgress } = useDownload();
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
   const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
   const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
+  const [ytDlpCheckProgress, setYtDlpCheckProgress] = useState(null); // { checked, total } | null during fetch/check
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -119,6 +122,13 @@ function Sidebar({
       } else {
         setNormalizeProgress({ completed: data.completed, total: data.total });
       }
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = window.api.onYtDlpCheckProgress((data) => {
+      setYtDlpCheckProgress(data); // null when done
     });
     return unsub;
   }, []);
@@ -299,6 +309,65 @@ function Sidebar({
               />
             </div>
           </div>
+        )}
+        {ytDlpCheckProgress && !ytDlpSidebarProgress && (
+          <button
+            className="normalize-progress-wrap ytdlp-progress-clickable"
+            onClick={() => onMenuSelect('download')}
+            title="Go to YT-DLP"
+          >
+            <div className="normalize-progress-label">
+              <span>Checking tracks…</span>
+              {ytDlpCheckProgress.total > 0 && (
+                <span>
+                  {ytDlpCheckProgress.checked} / {ytDlpCheckProgress.total}
+                </span>
+              )}
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill ytdlp-progress-fill"
+                style={{
+                  width: `${ytDlpCheckProgress.total > 0 ? Math.round((ytDlpCheckProgress.checked / ytDlpCheckProgress.total) * 100) : 0}%`,
+                }}
+              />
+            </div>
+          </button>
+        )}
+        {ytDlpSidebarProgress && (
+          <button
+            className="normalize-progress-wrap ytdlp-progress-clickable"
+            onClick={() => onMenuSelect('download')}
+            title="Go to YT-DLP"
+          >
+            <div className="normalize-progress-label">
+              <span>Downloading</span>
+              <span>
+                {ytDlpSidebarProgress.current} / {ytDlpSidebarProgress.total}
+              </span>
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill ytdlp-progress-fill"
+                style={{ width: `${Math.round(ytDlpSidebarProgress.pct)}%` }}
+              />
+            </div>
+            {ytDlpSidebarProgress.msg && (
+              <div className="normalize-progress-label" style={{ marginTop: 4, opacity: 0.7 }}>
+                <span
+                  style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: '100%',
+                    fontSize: 11,
+                  }}
+                >
+                  {ytDlpSidebarProgress.msg}
+                </span>
+              </div>
+            )}
+          </button>
         )}
         {exportProgress && (
           <div className="import-progress">

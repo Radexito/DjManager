@@ -1,7 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, MenuItem, shell } from 'electron';
 
 // Fix for Linux/Wayland + AMD radeonsi/Mesa stability issues.
 // Root cause chain (diagnosed 2025-03):
@@ -53,6 +53,8 @@ import {
   clearTracks,
   getTrackIdsNeedingNormalization,
   getNormalizedTrackCount,
+  getExistingSourceUrls,
+  getPlaylistSourceUrls,
 } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import {
@@ -123,6 +125,27 @@ function createWindow() {
 
   global.mainWindow = mainWindow; // make accessible to workers
   mainWindow.maximize();
+
+  // Native right-click context menu for editable inputs and text selections
+  mainWindow.webContents.on('context-menu', (_e, params) => {
+    const menu = new Menu();
+    if (params.isEditable) {
+      if (params.editFlags.canUndo) menu.append(new MenuItem({ role: 'undo', label: 'Undo' }));
+      if (params.editFlags.canRedo) menu.append(new MenuItem({ role: 'redo', label: 'Redo' }));
+      if (params.editFlags.canUndo || params.editFlags.canRedo)
+        menu.append(new MenuItem({ type: 'separator' }));
+      menu.append(new MenuItem({ role: 'cut', label: 'Cut', enabled: params.editFlags.canCut }));
+      menu.append(new MenuItem({ role: 'copy', label: 'Copy', enabled: params.editFlags.canCopy }));
+      menu.append(
+        new MenuItem({ role: 'paste', label: 'Paste', enabled: params.editFlags.canPaste })
+      );
+      menu.append(new MenuItem({ type: 'separator' }));
+      menu.append(new MenuItem({ role: 'selectAll', label: 'Select All' }));
+    } else if (params.selectionText) {
+      menu.append(new MenuItem({ role: 'copy', label: 'Copy' }));
+    }
+    if (menu.items.length > 0) menu.popup();
+  });
 
   if (process.env.E2E_TEST === '1') {
     mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'));
@@ -639,13 +662,35 @@ ipcMain.handle('ytdlp-fetch-info', async (_event, url) => {
     const cookiesBrowser = getSetting('ytdlp_cookies_browser', '') || null;
     if (cookiesBrowser)
       console.log('[ytdlp-fetch-info] using cookies from browser:', cookiesBrowser);
-    const info = await ytDlpFetchPlaylistInfo(url, { cookiesBrowser });
+    const info = await ytDlpFetchPlaylistInfo(url, {
+      cookiesBrowser,
+      onBeforeCheck: (entries) => {
+        if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-entries-ready', entries);
+      },
+      onCheckProgress: ({ checked, total }) => {
+        if (global.mainWindow)
+          global.mainWindow.webContents.send('ytdlp-check-progress', { checked, total });
+      },
+      onEntryChecked: (entry) => {
+        if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-entry-checked', entry);
+      },
+    });
+    if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-check-progress', null);
     console.log(`[ytdlp-fetch-info] ok — type=${info.type} entries=${info.entries?.length}`);
     return { ok: true, ...info };
   } catch (err) {
+    if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-check-progress', null);
     console.error('[ytdlp-fetch-info] error:', err.message);
     return { ok: false, error: err.message };
   }
+});
+
+ipcMain.handle('check-duplicate-urls', (_event, entries) => {
+  return getExistingSourceUrls(entries); // [{url, trackId}]
+});
+
+ipcMain.handle('get-playlist-source-urls', (_event, playlistId) => {
+  return getPlaylistSourceUrls(playlistId); // [{trackId, source_url, source_link}]
 });
 
 // ─── yt-dlp URL download ──────────────────────────────────────────────────────
@@ -728,7 +773,11 @@ ipcMain.handle(
 
       let lastOverallCurrent = 0;
 
-      const { files, playlistName: detectedPlaylistName } = await ytDlpDownloadUrl(
+      const {
+        files,
+        playlistName: detectedPlaylistName,
+        unavailableCount = 0,
+      } = await ytDlpDownloadUrl(
         url,
         (data) => {
           // When a new playlist item starts downloading, emit a 'downloading' track update
@@ -750,6 +799,10 @@ ipcMain.handle(
           },
           onTrackMeta: ({ index, title }) => {
             sendTrackUpdate({ type: 'update', index, title, status: 'downloading' });
+          },
+          onTrackUnavailable: ({ videoId, reason }) => {
+            // Find the track index by matching videoId in the pre-populated track list
+            sendTrackUpdate({ type: 'unavailable', videoId, reason, status: 'failed' });
           },
           onPlaylistDetected: ({ name, total }) => {
             if (total > 1) {
@@ -824,7 +877,7 @@ ipcMain.handle(
         }
       }
 
-      return { ok: true, trackIds, playlistId: playlistId ?? null };
+      return { ok: true, trackIds, playlistId: playlistId ?? null, unavailableCount };
     } catch (err) {
       if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-progress', null);
       return { ok: false, error: err.message };

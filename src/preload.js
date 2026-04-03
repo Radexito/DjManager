@@ -104,6 +104,8 @@ contextBridge.exposeInMainWorld('api', {
   // yt-dlp URL download
   getMediaPort: () => ipcRenderer.invoke('get-media-port'),
   ytDlpFetchInfo: (url) => ipcRenderer.invoke('ytdlp-fetch-info', url),
+  checkDuplicateUrls: (urls) => ipcRenderer.invoke('check-duplicate-urls', urls),
+  getPlaylistSourceUrls: (playlistId) => ipcRenderer.invoke('get-playlist-source-urls', playlistId),
   ytDlpDownloadUrl: ({ url, playlistItems, playlistTitle, existingPlaylistId, newPlaylistName }) =>
     ipcRenderer.invoke('ytdlp-download-url', {
       url,
@@ -116,6 +118,21 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('ytdlp-progress', handler);
     return () => ipcRenderer.removeListener('ytdlp-progress', handler);
+  },
+  onYtDlpCheckProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-check-progress', handler);
+    return () => ipcRenderer.removeListener('ytdlp-check-progress', handler);
+  },
+  onYtDlpEntriesReady: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-entries-ready', handler);
+    return () => ipcRenderer.removeListener('ytdlp-entries-ready', handler);
+  },
+  onYtDlpEntryChecked: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-entry-checked', handler);
+    return () => ipcRenderer.removeListener('ytdlp-entry-checked', handler);
   },
   onYtDlpTrackUpdate: (cb) => {
     const handler = (_, data) => cb(data);

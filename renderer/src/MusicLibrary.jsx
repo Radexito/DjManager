@@ -225,7 +225,11 @@ function LibraryRow({
     <div
       style={{ ...style, gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
       className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}`}
-      title={`${t.title} - ${t.artist || 'Unknown'}`}
+      title={
+        t.analyzed === 0
+          ? `⏳ Analyzing / processing — "${t.title}" will be available shortly`
+          : `${t.title} - ${t.artist || 'Unknown'}`
+      }
       draggable={true}
       onDragStart={(e) => onDragStart(e, t)}
       onClick={(e) => onRowClick(e, t, index)}
@@ -306,6 +310,11 @@ function SortableRow({
       ref={setNodeRef}
       style={style}
       className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}`}
+      title={
+        t.analyzed === 0
+          ? `⏳ Analyzing / processing — "${t.title}" will be available shortly`
+          : `${t.title} - ${t.artist || 'Unknown'}`
+      }
       onClick={(e) => onRowClick(e, t, index)}
       onDoubleClick={() => onDoubleClick(t, index)}
       onContextMenu={(e) => onContextMenu(e, t, index)}
@@ -498,7 +507,11 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
       // For BPM, prefer the override value
       const va = sortBy.key === 'bpm' ? (a.bpm_override ?? a.bpm ?? '') : (a[sortBy.key] ?? '');
       const vb = sortBy.key === 'bpm' ? (b.bpm_override ?? b.bpm ?? '') : (b[sortBy.key] ?? '');
-      if (typeof va === 'string') return sortBy.asc ? va.localeCompare(vb) : vb.localeCompare(va);
+      if (typeof va === 'string' || typeof vb === 'string') {
+        const sa = String(va ?? '');
+        const sb = String(vb ?? '');
+        return sortBy.asc ? sa.localeCompare(sb) : sb.localeCompare(sa);
+      }
       if (typeof va === 'number') return sortBy.asc ? va - vb : vb - va;
       return 0;
     });
@@ -1054,8 +1067,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   // ── Misc ───────────────────────────────────────────────────────────────────
 
   const handleItemsRendered = useCallback(
-    ({ visibleStopIndex }) => {
-      if (visibleStopIndex >= sortedTracksRef.current.length - PRELOAD_TRIGGER) {
+    ({ stopIndex }) => {
+      if (stopIndex >= sortedTracksRef.current.length - PRELOAD_TRIGGER) {
         loadTracks(); // loadTracks checks hasMoreRef and loadingRef internally
       }
     },
