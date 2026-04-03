@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useDownload } from './DownloadContext.jsx';
 import './Sidebar.css';
+import ImportPlaylistDialog from './ImportPlaylistDialog';
 
 const MENU_ITEMS = [
   { id: 'music', name: 'Music', icon: '🎵' },
@@ -38,6 +39,7 @@ function Sidebar({
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
   const [dragOverPlaylistId, setDragOverPlaylistId] = useState(null);
+  const [importDialogFiles, setImportDialogFiles] = useState(null); // pending files waiting for playlist selection
   const newInputRef = useRef(null);
   const renameInputRef = useRef(null);
 
@@ -73,8 +75,25 @@ function Sidebar({
   const handleImport = async () => {
     const files = await window.api.selectAudioFiles();
     if (!files.length) return;
+    setImportDialogFiles(files);
+  };
+
+  const handleImportConfirm = async (choice) => {
+    const files = importDialogFiles;
+    setImportDialogFiles(null);
+    if (!files?.length) return;
+
+    let playlistId = null;
+
+    if (choice.type === 'create') {
+      const id = await window.api.createPlaylist(choice.name);
+      playlistId = id;
+    } else if (choice.type === 'existing') {
+      playlistId = choice.id;
+    }
+
     setImportProgress({ total: files.length, completed: 0 });
-    await window.api.importAudioFiles(files);
+    await window.api.importAudioFiles(files, playlistId);
     setImportProgress({ total: 0, completed: 0 });
   };
 
@@ -439,6 +458,14 @@ function Sidebar({
             🗑️ Delete playlist
           </div>
         </div>
+      )}
+
+      {importDialogFiles && (
+        <ImportPlaylistDialog
+          playlists={playlists}
+          onConfirm={handleImportConfirm}
+          onCancel={() => setImportDialogFiles(null)}
+        />
       )}
     </div>
   );
