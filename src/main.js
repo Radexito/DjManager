@@ -535,13 +535,17 @@ ipcMain.handle('open-dir-dialog', async () => {
 ipcMain.handle('import-audio-files', async (event, filePaths, playlistId) => {
   console.log('Importing audio files:', filePaths);
   const trackIds = [];
+  const total = filePaths.length;
 
-  for (const filePath of filePaths) {
+  for (let i = 0; i < total; i++) {
     try {
-      const trackId = await importAudioFile(filePath);
+      const trackId = await importAudioFile(filePaths[i]);
       trackIds.push(trackId);
     } catch (err) {
-      console.error('Import failed:', filePath, err);
+      console.error('Import failed:', filePaths[i], err);
+    }
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('import-progress', { completed: i + 1, total });
     }
   }
 

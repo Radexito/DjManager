@@ -98,7 +98,8 @@ function Sidebar({
 
     setImportProgress({ total: files.length, completed: 0 });
     await window.api.importAudioFiles(files, playlistId);
-    setImportProgress({ total: 0, completed: 0 });
+    // Small delay so the user sees 100% before the bar disappears
+    setTimeout(() => setImportProgress({ total: 0, completed: 0 }), 800);
   };
 
   const handleCreatePlaylist = async (e) => {
@@ -134,6 +135,13 @@ function Sidebar({
 
   useEffect(() => {
     const unsub = window.api.onExportM3UProgress((data) => setExportProgress(data));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = window.api.onImportProgress(({ completed, total }) => {
+      setImportProgress({ completed, total });
+    });
     return unsub;
   }, []);
 
