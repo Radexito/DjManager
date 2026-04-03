@@ -579,13 +579,14 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
               <div className="dl-progress-bar">
                 <div className="dl-progress-fill" style={{ width: `${overallPct}%` }} />
               </div>
+              {progress?.msg && <span className="dl-progress-msg">{progress.msg}</span>}
             </div>
           )}
 
-          {progress && (
+          {!isPlaylist && progress && (
             <div className="dl-progress">
               <div className="dl-progress-label">
-                <span>{isPlaylist ? 'Current track' : 'Download'}</span>
+                <span>Download</span>
                 <span>{progress.trackPct ?? progress.pct ?? 0}%</span>
               </div>
               <div className="dl-progress-bar">
@@ -594,7 +595,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
                   style={{ width: `${progress.trackPct ?? progress.pct ?? 0}%` }}
                 />
               </div>
-              <span className="dl-progress-msg">{progress.msg}</span>
+              {progress.msg && <span className="dl-progress-msg">{progress.msg}</span>}
             </div>
           )}
 
