@@ -574,14 +574,14 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
     };
 
     proc.stdout.on('data', (chunk) => {
-      for (const line of chunk.toString().split('\n')) processLine(line.trim());
+      for (const line of chunk.toString().split(/[\r\n]+/)) processLine(line.trim());
     });
 
     proc.stderr.on('data', (chunk) => {
       const text = chunk.toString();
       stderr += text;
       // Also scan stderr — some yt-dlp builds emit info lines there
-      for (const line of text.split('\n')) processLine(line.trim());
+      for (const line of text.split(/[\r\n]+/)) processLine(line.trim());
     });
 
     let unavailableCount = 0;
