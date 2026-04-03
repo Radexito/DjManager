@@ -154,52 +154,66 @@ export async function fetchPlaylistInfo(url, options = {}) {
   }
 }
 
-const OEMBED_CONCURRENCY = 6;
-const OEMBED_TIMEOUT_MS = 6000;
+const INNERTUBE_CONCURRENCY = 6;
+const INNERTUBE_TIMEOUT_MS = 8000;
+// YouTube InnerTube player endpoint — same API YouTube uses internally to check playability.
+// The ANDROID client reliably returns playabilityStatus for geo-restricted, content-match,
+// private, deleted, and all other unavailability types that oEmbed misses.
+const INNERTUBE_URL =
+  'https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false';
+const INNERTUBE_CONTEXT = {
+  client: {
+    clientName: 'ANDROID',
+    clientVersion: '17.31.35',
+    androidSdkVersion: 30,
+    userAgent: 'com.google.android.youtube/17.31.35 (Linux; U; Android 11) gzip',
+    hl: 'en',
+    gl: 'US',
+  },
+};
 
 /**
- * Batch-check YouTube video availability via the oEmbed API.
+ * Batch-check YouTube video availability via the InnerTube player API.
  * Mutates each entry in-place: sets entry.unavailable and entry.unavailableReason.
- * 200 → available, 401 → private, 403 → restricted, 404 → deleted/unavailable.
- * Network errors are ignored — entries stay marked as available so yt-dlp can decide.
+ * Catches private, deleted, geo-restricted, content-match-removed, and all other
+ * unplayable states — unlike oEmbed which misses geo-restricted / content-match videos.
  */
 async function checkYouTubeAvailability(entries) {
-  // Only check entries that don't already have an unavailability flag from flat-playlist
   const toCheck = entries.filter((e) => !e.unavailable && e.id);
   if (toCheck.length === 0) return;
 
-  console.log(`[ytdlp] oEmbed availability check for ${toCheck.length} entries…`);
+  console.log(`[ytdlp] InnerTube availability check for ${toCheck.length} entries…`);
 
   const queue = [...toCheck];
 
   async function worker() {
     while (queue.length > 0) {
       const entry = queue.shift();
-      const oembed = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${encodeURIComponent(entry.id)}&format=json`;
       try {
-        const res = await fetch(oembed, { signal: AbortSignal.timeout(OEMBED_TIMEOUT_MS) });
-        if (res.status === 200) {
-          // Available — nothing to do
-        } else if (res.status === 401) {
+        const res = await fetch(INNERTUBE_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ videoId: entry.id, context: INNERTUBE_CONTEXT }),
+          signal: AbortSignal.timeout(INNERTUBE_TIMEOUT_MS),
+        });
+        if (!res.ok) continue; // network-level error, assume available
+        const data = await res.json();
+        const status = data?.playabilityStatus?.status;
+        if (status && status !== 'OK') {
           entry.unavailable = true;
-          entry.unavailableReason = 'Private video';
-        } else if (res.status === 404) {
-          entry.unavailable = true;
-          entry.unavailableReason = 'Video unavailable';
-        } else if (res.status === 403) {
-          entry.unavailable = true;
-          entry.unavailableReason = 'Restricted video';
+          entry.unavailableReason =
+            data.playabilityStatus.reason ||
+            (status === 'LOGIN_REQUIRED' ? 'Private video' : 'Video unavailable');
         }
-        // Any other status: assume available, let yt-dlp handle it
       } catch {
         // Timeout or network error — assume available, yt-dlp will report if not
       }
     }
   }
 
-  await Promise.allSettled(Array.from({ length: OEMBED_CONCURRENCY }, worker));
+  await Promise.allSettled(Array.from({ length: INNERTUBE_CONCURRENCY }, worker));
   const unavailCount = entries.filter((e) => e.unavailable).length;
-  console.log(`[ytdlp] oEmbed check done — ${unavailCount}/${entries.length} unavailable`);
+  console.log(`[ytdlp] InnerTube check done — ${unavailCount}/${entries.length} unavailable`);
 }
 
 const UNAVAILABLE_TITLE_RE = /^\[(Private|Deleted|Unavailable|Removed)\s*(video|track)?\]$/i;
