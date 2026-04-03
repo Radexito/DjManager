@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
+import { useDownload } from './DownloadContext.jsx';
 import './DownloadView.css';
 
 const SUPPORTED_SOURCES = [
@@ -38,44 +39,55 @@ function fmtDuration(secs) {
 }
 
 export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
-  // ── shared state ─────────────────────────────────────────────────────────
-  const [url, setUrl] = useState('');
-  const [history, setHistory] = useState([]);
-  const [step, setStep] = useState('url'); // 'url' | 'select' | 'download'
+  const {
+    url,
+    setUrl,
+    downloadHistory,
+    setDownloadHistory,
+    step,
+    setStep,
+    fetching,
+    setFetching,
+    fetchError,
+    setFetchError,
+    checkProgress,
+    setCheckProgress,
+    playlistInfo,
+    setPlaylistInfo,
+    selectedIndices,
+    setSelectedIndices,
+    libraryMap,
+    setLibraryMap,
+    linkIndices,
+    setLinkIndices,
+    playlistMemberUrls,
+    setPlaylistMemberUrls,
+    playlists,
+    setPlaylists,
+    targetPlaylistId,
+    setTargetPlaylistId,
+    targetPlaylistName,
+    setTargetPlaylistName,
+    loading,
+    setLoading,
+    progress,
+    setProgress,
+    trackStatuses,
+    setTrackStatuses,
+    result,
+    setResult,
+  } = useDownload();
 
-  // ── step: url ─────────────────────────────────────────────────────────────
-  const [fetching, setFetching] = useState(false);
-  const [fetchError, setFetchError] = useState(null);
-  const [checkProgress, setCheckProgress] = useState(null); // { checked, total } | null
   const inputRef = useRef(null);
 
-  // ── step: select ──────────────────────────────────────────────────────────
-  const [playlistInfo, setPlaylistInfo] = useState(null); // { type, title, entries }
-  const [selectedIndices, setSelectedIndices] = useState(new Set());
-  // libraryMap: Map<entryUrl, trackId> — tracks already in the library
-  const [libraryMap, setLibraryMap] = useState(new Map());
-  // linkIndices: Set<entryIndex> — tracks to link (in library, user wants to add to playlist)
-  const [linkIndices, setLinkIndices] = useState(new Set());
-  // playlistMemberUrls: Set<entryUrl> — tracks already in the TARGET playlist
-  const [playlistMemberUrls, setPlaylistMemberUrls] = useState(new Set());
-  const [playlists, setPlaylists] = useState([]); // existing playlists for combobox
-  const [targetPlaylistId, setTargetPlaylistId] = useState(null); // null = create new
-  const [targetPlaylistName, setTargetPlaylistName] = useState('');
-
-  // ── step: download ────────────────────────────────────────────────────────
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(null);
-  const [trackStatuses, setTrackStatuses] = useState([]);
-  const [result, setResult] = useState(null);
-
-  // Cancel an in-progress fetch — the IPC call will still complete but we ignore the result
+  // Cancel an in-progress fetch — the IPC call will still complete but result is ignored
   const handleCancelFetch = useCallback(() => {
     setFetching(false);
     setFetchError(null);
     setCheckProgress(null);
-  }, []);
+  }, [setFetching, setFetchError, setCheckProgress]);
 
-  // When the view is hidden (user switches tabs) while fetching, reset so they can retry
+  // Auto-reset fetching when the user switches away from the tab while loading
   const prevStyleRef = useRef(style);
   useEffect(() => {
     const wasHidden = prevStyleRef.current?.display === 'none';
@@ -85,63 +97,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
       setFetching(false);
       setCheckProgress(null);
     }
-  }, [style, fetching]);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-
-    const unsubProgress = window.api.onYtDlpProgress((data) => {
-      if (data === null) {
-        setLoading(false);
-        setProgress(null);
-      } else setProgress(data);
-    });
-
-    const unsubCheckProgress = window.api.onYtDlpCheckProgress((data) => {
-      setCheckProgress(data); // null when done
-    });
-
-    const unsubTrack = window.api.onYtDlpTrackUpdate((update) => {
-      if (update.type === 'init') {
-        // Only use 'init' to populate if the list isn't already pre-populated from step 2
-        setTrackStatuses((prev) => {
-          if (prev.length >= update.total) return prev;
-          return Array.from({ length: update.total }, (_, i) => ({
-            index: i,
-            title: `Track ${i + 1}`,
-            url: '',
-            status: 'pending',
-          }));
-        });
-      } else if (update.type === 'unavailable') {
-        // Mark the track matching this videoId as failed
-        setTrackStatuses((prev) =>
-          prev.map((t) =>
-            t.title?.includes(update.videoId) || t.url?.includes(update.videoId)
-              ? { ...t, status: 'failed', error: update.reason }
-              : t
-          )
-        );
-      } else {
-        setTrackStatuses((prev) => {
-          const next = [...prev];
-          const i = update.index;
-          while (next.length <= i) {
-            const n = next.length;
-            next.push({ index: n, title: `Track ${n + 1}`, url: '', status: 'pending' });
-          }
-          next[i] = { ...next[i], ...update };
-          return next;
-        });
-      }
-    });
-
-    return () => {
-      unsubProgress();
-      unsubCheckProgress();
-      unsubTrack();
-    };
-  }, []);
+  }, [style, fetching, setFetching, setCheckProgress]);
 
   // ── handlers ──────────────────────────────────────────────────────────────
 
@@ -403,7 +359,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
         index: downloadEntries.length + i,
         title: e.title,
         url: e.url,
-        status: linkIndices.has(e.index) ? 'linking' : 'pending',
+        status: 'linking',
       })),
     ];
 
@@ -451,7 +407,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
       setLoading(false);
       setProgress(null);
       setResult(res);
-      if (res.ok) setHistory((prev) => [{ url, at: Date.now() }, ...prev.slice(0, 19)]);
+      if (res.ok) setDownloadHistory((prev) => [{ url, at: Date.now() }, ...prev.slice(0, 19)]);
     }
 
     // Link already-downloaded tracks to the playlist (no re-download)
@@ -622,10 +578,10 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
             </div>
           </div>
 
-          {history.length > 0 && (
+          {downloadHistory.length > 0 && (
             <div className="dl-history">
               <div className="dl-history-title">Session downloads</div>
-              {history.map((item, i) => (
+              {downloadHistory.map((item, i) => (
                 <div key={i} className="dl-history-item">
                   <span className="dl-history-icon">{detectIcon(item.url)}</span>
                   <span className="dl-history-url">{item.url}</span>
