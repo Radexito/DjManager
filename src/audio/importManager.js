@@ -156,7 +156,8 @@ export function spawnAnalysis(trackId, filePath) {
     updateTrack(trackId, update);
 
     // Include normalized_file_path from DB so renderer knows to switch playback to the normalized file
-    const normalized_file_path = getTrackById(trackId)?.normalized_file_path ?? null;
+    const trackAfterUpdate = getTrackById(trackId);
+    const normalized_file_path = trackAfterUpdate?.normalized_file_path ?? null;
     console.log(
       `[importManager] track-updated for ${trackId}: normalized_file_path=${normalized_file_path}`
     );
@@ -167,6 +168,29 @@ export function spawnAnalysis(trackId, filePath) {
         trackId,
         analysis: { ...update, normalized_file_path },
       });
+    }
+
+    // Auto-normalize on import: only when setting is enabled AND this is a fresh (non-normalized) track
+    const autoNormalize = getSetting('auto_normalize_on_import', 'false') === 'true';
+    const alreadyNormalized = trackAfterUpdate?.normalized_file_path != null;
+    if (autoNormalize && !alreadyNormalized && update.loudness != null) {
+      const targetLufs = Number(getSetting('normalize_target_lufs', '-9'));
+      normalizeAudioFile(trackAfterUpdate, targetLufs)
+        .then((normalizedPath) => {
+          const dbUpdate = { normalized_file_path: normalizedPath };
+          if (trackAfterUpdate.source_loudness == null) dbUpdate.source_loudness = update.loudness;
+          updateTrack(trackId, dbUpdate);
+          if (global.mainWindow) {
+            global.mainWindow.webContents.send('track-updated', {
+              trackId,
+              analysis: { normalized_file_path: normalizedPath, analyzed: 0 },
+            });
+          }
+          spawnAnalysis(trackId, normalizedPath);
+        })
+        .catch((err) => {
+          console.error(`[auto-normalize] failed for track ${trackId}:`, err.message);
+        });
     }
   });
 }
