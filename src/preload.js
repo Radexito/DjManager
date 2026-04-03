@@ -123,6 +123,16 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('ytdlp-check-progress', handler);
     return () => ipcRenderer.removeListener('ytdlp-check-progress', handler);
   },
+  onYtDlpEntriesReady: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-entries-ready', handler);
+    return () => ipcRenderer.removeListener('ytdlp-entries-ready', handler);
+  },
+  onYtDlpEntryChecked: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-entry-checked', handler);
+    return () => ipcRenderer.removeListener('ytdlp-entry-checked', handler);
+  },
   onYtDlpTrackUpdate: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('ytdlp-track-update', handler);

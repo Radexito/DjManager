@@ -140,7 +140,8 @@ export async function fetchPlaylistInfo(url, options = {}) {
     // For YouTube playlists, do a fast parallel oEmbed availability check so
     // unavailable/private/deleted videos are flagged before the selection screen.
     if (detectPlatform(url) === 'youtube' && info.type === 'playlist') {
-      await checkYouTubeAvailability(info.entries, options.onCheckProgress);
+      options.onBeforeCheck?.(info.entries);
+      await checkYouTubeAvailability(info.entries, options.onCheckProgress, options.onEntryChecked);
     }
     return info;
   } catch (err) {
@@ -164,7 +165,7 @@ const UNAVAILABLE_STATUSES = new Set(['private', 'premium_only', 'subscriber_onl
  * for each entry. This is the most reliable approach since it uses the exact same
  * mechanism as the actual download. Mutates entries in-place.
  */
-async function checkYouTubeAvailability(entries, onProgress) {
+async function checkYouTubeAvailability(entries, onProgress, onEntryChecked) {
   const toCheck = entries.filter((e) => !e.unavailable && e.id);
   if (toCheck.length === 0) return;
 
@@ -231,6 +232,11 @@ async function checkYouTubeAvailability(entries, onProgress) {
       await checkOne(entry);
       checked++;
       onProgress?.({ checked, total });
+      onEntryChecked?.({
+        id: entry.id,
+        index: entry.index,
+        unavailable: entry.unavailable ?? false,
+      });
     }
   }
 

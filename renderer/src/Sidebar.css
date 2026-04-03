@@ -119,6 +119,7 @@ button.normalize-progress-wrap.ytdlp-progress-clickable {
   width: 100%;
   text-align: left;
   border: none;
+  outline: none;
   color: inherit;
   cursor: pointer;
   transition: background-color 0.15s;
@@ -126,6 +127,11 @@ button.normalize-progress-wrap.ytdlp-progress-clickable {
 
 button.normalize-progress-wrap.ytdlp-progress-clickable:hover {
   background-color: #333;
+}
+
+button.normalize-progress-wrap.ytdlp-progress-clickable:focus-visible {
+  outline: 2px solid #5865f2;
+  outline-offset: 1px;
 }
 
 .normalize-progress-label {

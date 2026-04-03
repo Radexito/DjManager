@@ -47,6 +47,24 @@ export function DownloadProvider({ children }) {
       setCheckProgress(data); // null when done
     });
 
+    // Fires once the flat-playlist fetch is done — populate entries before availability check
+    const unsubEntriesReady = window.api.onYtDlpEntriesReady((entries) => {
+      setPlaylistInfo((prev) =>
+        prev ? { ...prev, entries } : { type: 'playlist', title: null, entries }
+      );
+    });
+
+    // Fires after each individual entry is checked — flip unavailable flag in-place
+    const unsubEntryChecked = window.api.onYtDlpEntryChecked(({ id, unavailable }) => {
+      setPlaylistInfo((prev) => {
+        if (!prev?.entries) return prev;
+        const updated = prev.entries.map((e) =>
+          e.id === id ? { ...e, unavailable, checked: true } : e
+        );
+        return { ...prev, entries: updated };
+      });
+    });
+
     const unsubTrack = window.api.onYtDlpTrackUpdate((update) => {
       if (update.type === 'init') {
         setTrackStatuses((prev) => {
@@ -83,6 +101,8 @@ export function DownloadProvider({ children }) {
     return () => {
       unsubProgress();
       unsubCheckProgress();
+      unsubEntriesReady();
+      unsubEntryChecked();
       unsubTrack();
     };
   }, []);
