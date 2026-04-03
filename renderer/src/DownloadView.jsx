@@ -68,7 +68,6 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
     setTargetPlaylistId,
     targetPlaylistName,
     setTargetPlaylistName,
-    loading,
     setLoading,
     progress,
     setProgress,
