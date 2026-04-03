@@ -392,6 +392,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
 
   // Unique marker so we can reliably identify --print output lines among other stdout noise
   const FILE_MARKER = '__YTDLP_FILE__:';
+  const TRACK_MARKER = '__YTDLP_TRACK__:';
 
   const args = [
     '-f',
@@ -407,6 +408,9 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
     '--newline',
     '--no-colors',
     '--ignore-errors', // skip unavailable/deleted/restricted videos instead of aborting
+    // Reliable per-track progress: fires before each download starts, goes to stdout
+    '--print',
+    `before_dl:${TRACK_MARKER}%(playlist_index|1)s/%(n_entries|1)s:%(title)s`,
     // --print after_move gives us the definitive final filepath after all post-processors
     // (audio extraction, remux, etc.) have run. This is our primary file detection mechanism.
     '--print',
@@ -482,6 +486,39 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
       if (trimmed.startsWith(FILE_MARKER)) {
         const f = trimmed.slice(FILE_MARKER.length).trim();
         if (f) fireFileReady(f);
+        return;
+      }
+
+      // Reliable track-start marker: --print before_dl emits TRACK_MARKER:<idx>/<total>:<title>
+      if (trimmed.startsWith(TRACK_MARKER)) {
+        const rest = trimmed.slice(TRACK_MARKER.length);
+        const slashIdx = rest.indexOf('/');
+        const colonIdx = rest.indexOf(':');
+        if (slashIdx !== -1 && colonIdx !== -1 && colonIdx > slashIdx) {
+          const idx = parseInt(rest.slice(0, slashIdx), 10);
+          const total = parseInt(rest.slice(slashIdx + 1, colonIdx), 10);
+          const title = rest.slice(colonIdx + 1).trim();
+          if (!isNaN(idx) && !isNaN(total)) {
+            playlistCurrent = idx;
+            playlistTotal = total;
+            currentTrackPct = 0;
+            if (!playlistDetectedFired && total > 1) {
+              playlistDetectedFired = true;
+              options.onPlaylistDetected?.({ name: playlistName, total });
+            }
+            if (!currentTrackTitle && title) {
+              currentTrackTitle = title;
+              options.onTrackMeta?.({ index: idx - 1, title });
+            }
+            onProgress?.({
+              msg: title || `Track ${idx} / ${total}`,
+              pct: Math.round(((idx - 1) / total) * 100),
+              trackPct: 0,
+              overallCurrent: idx,
+              overallTotal: total,
+            });
+          }
+        }
         return;
       }
 
