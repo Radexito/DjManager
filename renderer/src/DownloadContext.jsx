@@ -112,11 +112,8 @@ export function DownloadProvider({ children }) {
     (s) => s.status === 'done' || s.status === 'failed'
   ).length;
   const sbTotal = Math.max(trackStatuses.length, progress?.overallTotal ?? 0, 1);
-  // Prefer overallCurrent from yt-dlp progress so the counter advances immediately when a
-  // new track starts (before_dl), instead of waiting for the async import to finish.
-  const sbCurrent = loading
-    ? (progress?.overallCurrent ?? Math.min(completedCount + 1, sbTotal))
-    : completedCount;
+  // Show how many tracks have fully completed (done/failed), starting at 0.
+  const sbCurrent = completedCount;
   const sidebarProgress = loading
     ? {
         current: sbCurrent,
