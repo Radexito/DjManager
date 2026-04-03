@@ -472,44 +472,41 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
           )}
 
           <div className="dl-select-list">
-            {playlistInfo.entries.map((entry) => {
-              const isDupe = duplicateUrls.has(entry.url);
-              const isUnavailable = !!entry.unavailable;
-              return (
-                <label
-                  key={entry.index}
-                  className={`dl-select-item${isDupe ? ' dl-select-item--dupe' : ''}${isUnavailable ? ' dl-select-item--unavailable' : ''}`}
-                  title={isUnavailable ? entry.unavailableReason || 'Unavailable' : undefined}
-                >
-                  {playlistInfo.type === 'playlist' && (
-                    <input
-                      type="checkbox"
-                      checked={!isUnavailable && selectedIndices.has(entry.index)}
-                      disabled={isUnavailable}
-                      onChange={() => !isUnavailable && handleToggleEntry(entry.index)}
-                    />
-                  )}
-                  <span className="dl-select-item-num">{entry.index + 1}.</span>
-                  <span className="dl-select-item-title">{entry.title}</span>
-                  {entry.duration && !isUnavailable && (
-                    <span className="dl-select-item-dur">{fmtDuration(entry.duration)}</span>
-                  )}
-                  {isUnavailable && (
-                    <span
-                      className="dl-select-item-unavailable-badge"
-                      title={entry.unavailableReason || 'Unavailable'}
-                    >
-                      ✗ {entry.unavailableReason || 'Unavailable'}
-                    </span>
-                  )}
-                  {isDupe && !isUnavailable && (
-                    <span className="dl-select-item-dupe-badge" title="Already in your library">
-                      ✓ in library
-                    </span>
-                  )}
-                </label>
-              );
-            })}
+            {playlistInfo.entries
+              .filter((entry) => !entry.unavailable)
+              .map((entry) => {
+                const isDupe = duplicateUrls.has(entry.url);
+                return (
+                  <label
+                    key={entry.index}
+                    className={`dl-select-item${isDupe ? ' dl-select-item--dupe' : ''}`}
+                  >
+                    {playlistInfo.type === 'playlist' && (
+                      <input
+                        type="checkbox"
+                        checked={selectedIndices.has(entry.index)}
+                        onChange={() => handleToggleEntry(entry.index)}
+                      />
+                    )}
+                    <span className="dl-select-item-num">{entry.index + 1}.</span>
+                    <span className="dl-select-item-title">{entry.title}</span>
+                    {entry.duration && (
+                      <span className="dl-select-item-dur">{fmtDuration(entry.duration)}</span>
+                    )}
+                    {isDupe && (
+                      <span className="dl-select-item-dupe-badge" title="Already in your library">
+                        ✓ in library
+                      </span>
+                    )}
+                  </label>
+                );
+              })}
+            {unavailableCount > 0 && (
+              <div className="dl-select-unavailable-note">
+                {unavailableCount} video{unavailableCount !== 1 ? 's' : ''} unavailable (private,
+                deleted, or restricted) — not shown
+              </div>
+            )}
           </div>
 
           <div className="dl-select-footer">

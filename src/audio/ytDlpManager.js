@@ -136,7 +136,13 @@ function isFormatUnavailableError(err) {
 
 export async function fetchPlaylistInfo(url, options = {}) {
   try {
-    return await _fetchPlaylistInfoOnce(url, options);
+    const info = await _fetchPlaylistInfoOnce(url, options);
+    // For YouTube playlists, do a fast parallel oEmbed availability check so
+    // unavailable/private/deleted videos are flagged before the selection screen.
+    if (detectPlatform(url) === 'youtube' && info.type === 'playlist') {
+      await checkYouTubeAvailability(info.entries);
+    }
+    return info;
   } catch (err) {
     if (isFormatUnavailableError(err) && options.cookiesBrowser) {
       console.warn(
@@ -146,6 +152,54 @@ export async function fetchPlaylistInfo(url, options = {}) {
     }
     throw err;
   }
+}
+
+const OEMBED_CONCURRENCY = 6;
+const OEMBED_TIMEOUT_MS = 6000;
+
+/**
+ * Batch-check YouTube video availability via the oEmbed API.
+ * Mutates each entry in-place: sets entry.unavailable and entry.unavailableReason.
+ * 200 → available, 401 → private, 403 → restricted, 404 → deleted/unavailable.
+ * Network errors are ignored — entries stay marked as available so yt-dlp can decide.
+ */
+async function checkYouTubeAvailability(entries) {
+  // Only check entries that don't already have an unavailability flag from flat-playlist
+  const toCheck = entries.filter((e) => !e.unavailable && e.id);
+  if (toCheck.length === 0) return;
+
+  console.log(`[ytdlp] oEmbed availability check for ${toCheck.length} entries…`);
+
+  const queue = [...toCheck];
+
+  async function worker() {
+    while (queue.length > 0) {
+      const entry = queue.shift();
+      const oembed = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${encodeURIComponent(entry.id)}&format=json`;
+      try {
+        const res = await fetch(oembed, { signal: AbortSignal.timeout(OEMBED_TIMEOUT_MS) });
+        if (res.status === 200) {
+          // Available — nothing to do
+        } else if (res.status === 401) {
+          entry.unavailable = true;
+          entry.unavailableReason = 'Private video';
+        } else if (res.status === 404) {
+          entry.unavailable = true;
+          entry.unavailableReason = 'Video unavailable';
+        } else if (res.status === 403) {
+          entry.unavailable = true;
+          entry.unavailableReason = 'Restricted video';
+        }
+        // Any other status: assume available, let yt-dlp handle it
+      } catch {
+        // Timeout or network error — assume available, yt-dlp will report if not
+      }
+    }
+  }
+
+  await Promise.allSettled(Array.from({ length: OEMBED_CONCURRENCY }, worker));
+  const unavailCount = entries.filter((e) => e.unavailable).length;
+  console.log(`[ytdlp] oEmbed check done — ${unavailCount}/${entries.length} unavailable`);
 }
 
 const UNAVAILABLE_TITLE_RE = /^\[(Private|Deleted|Unavailable|Removed)\s*(video|track)?\]$/i;
