@@ -280,7 +280,6 @@
 /* Track is being normalized or re-analyzed */
 .row--analyzing {
   opacity: 0.45;
-  pointer-events: none;
 }
 
 /* BPM overridden indicator */
