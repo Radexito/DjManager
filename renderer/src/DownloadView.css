@@ -518,11 +518,33 @@
   opacity: 0.55;
 }
 
+.dl-select-item--unavailable {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+
+.dl-select-item--unavailable .dl-select-item-title {
+  text-decoration: line-through;
+  color: var(--text-secondary, #666);
+}
+
 .dl-select-item-dupe-badge {
   font-size: 11px;
   color: #4caf50;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.dl-select-item-unavailable-badge {
+  font-size: 11px;
+  color: #e57373;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dl-select-count-unavailable {
+  color: #e57373;
 }
 
 .dl-select-footer {

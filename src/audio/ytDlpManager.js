@@ -148,6 +148,35 @@ export async function fetchPlaylistInfo(url, options = {}) {
   }
 }
 
+const UNAVAILABLE_TITLE_RE = /^\[(Private|Deleted|Unavailable|Removed)\s*(video|track)?\]$/i;
+
+const UNAVAILABLE_AVAILABILITY = new Set([
+  'private',
+  'premium_only',
+  'subscriber_only',
+  'needs_auth',
+  'exclusive_content',
+]);
+
+function isEntryUnavailable(entry) {
+  if (UNAVAILABLE_AVAILABILITY.has(entry.availability)) return true;
+  if (entry.title && UNAVAILABLE_TITLE_RE.test(entry.title.trim())) return true;
+  return false;
+}
+
+function describeUnavailability(entry) {
+  if (entry.availability === 'private') return 'Private video';
+  if (entry.availability === 'premium_only') return 'YouTube Premium only';
+  if (entry.availability === 'subscriber_only') return 'Channel members only';
+  if (entry.availability === 'needs_auth') return 'Sign-in required';
+  if (entry.availability === 'exclusive_content') return 'Exclusive content';
+  if (entry.title && UNAVAILABLE_TITLE_RE.test(entry.title.trim())) {
+    const m = entry.title.match(UNAVAILABLE_TITLE_RE);
+    return `${m[1]} video`;
+  }
+  return 'Unavailable';
+}
+
 function _fetchPlaylistInfoOnce(url, options = {}) {
   const ytDlp = getYtDlpRuntimePath();
   if (!fs.existsSync(ytDlp)) throw new Error('yt-dlp binary not found. Please reinstall deps.');
@@ -193,13 +222,18 @@ function _fetchPlaylistInfoOnce(url, options = {}) {
           resolve({
             type: 'playlist',
             title: data.title || data.playlist_title || null,
-            entries: entries.map((e, i) => ({
-              index: i,
-              id: e.id || String(i),
-              title: e.title || `Track ${i + 1}`,
-              url: e.url || e.webpage_url || url,
-              duration: e.duration ?? null,
-            })),
+            entries: entries.map((e, i) => {
+              const unavailable = isEntryUnavailable(e);
+              return {
+                index: i,
+                id: e.id || String(i),
+                title: e.title || `Track ${i + 1}`,
+                url: e.url || e.webpage_url || url,
+                duration: e.duration ?? null,
+                unavailable,
+                unavailableReason: unavailable ? describeUnavailability(e) : null,
+              };
+            }),
           });
         } else {
           resolve({
