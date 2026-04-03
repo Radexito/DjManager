@@ -154,7 +154,7 @@ export async function fetchPlaylistInfo(url, options = {}) {
   }
 }
 
-const YTDLP_CHECK_CONCURRENCY = 4;
+const YTDLP_CHECK_CONCURRENCY = 16;
 const YTDLP_CHECK_TIMEOUT_MS = 15000;
 // Availability values from yt-dlp that mean the video cannot be downloaded
 const UNAVAILABLE_STATUSES = new Set(['private', 'premium_only', 'subscriber_only', 'needs_auth']);
