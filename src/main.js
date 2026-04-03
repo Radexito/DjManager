@@ -1,7 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, MenuItem, shell } from 'electron';
 
 // Fix for Linux/Wayland + AMD radeonsi/Mesa stability issues.
 // Root cause chain (diagnosed 2025-03):
@@ -49,11 +49,20 @@ import {
   getTrackById,
   removeTrack,
   updateTrack,
-  normalizeLibrary,
+  resetNormalization,
   clearTracks,
+  getTrackIdsNeedingNormalization,
+  getNormalizedTrackCount,
+  getExistingSourceUrls,
+  getPlaylistSourceUrls,
 } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
-import { importAudioFile, spawnAnalysis, getLibraryBase } from './audio/importManager.js';
+import {
+  importAudioFile,
+  spawnAnalysis,
+  getLibraryBase,
+  normalizeAudioFile,
+} from './audio/importManager.js';
 
 import {
   searchMusicBrainz,
@@ -116,6 +125,27 @@ function createWindow() {
 
   global.mainWindow = mainWindow; // make accessible to workers
   mainWindow.maximize();
+
+  // Native right-click context menu for editable inputs and text selections
+  mainWindow.webContents.on('context-menu', (_e, params) => {
+    const menu = new Menu();
+    if (params.isEditable) {
+      if (params.editFlags.canUndo) menu.append(new MenuItem({ role: 'undo', label: 'Undo' }));
+      if (params.editFlags.canRedo) menu.append(new MenuItem({ role: 'redo', label: 'Redo' }));
+      if (params.editFlags.canUndo || params.editFlags.canRedo)
+        menu.append(new MenuItem({ type: 'separator' }));
+      menu.append(new MenuItem({ role: 'cut', label: 'Cut', enabled: params.editFlags.canCut }));
+      menu.append(new MenuItem({ role: 'copy', label: 'Copy', enabled: params.editFlags.canCopy }));
+      menu.append(
+        new MenuItem({ role: 'paste', label: 'Paste', enabled: params.editFlags.canPaste })
+      );
+      menu.append(new MenuItem({ type: 'separator' }));
+      menu.append(new MenuItem({ role: 'selectAll', label: 'Select All' }));
+    } else if (params.selectionText) {
+      menu.append(new MenuItem({ role: 'copy', label: 'Copy' }));
+    }
+    if (menu.items.length > 0) menu.popup();
+  });
 
   if (process.env.E2E_TEST === '1') {
     mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'));
@@ -228,15 +258,126 @@ ipcMain.handle('move-library', async (event, newDir) => {
   return { moved, total };
 });
 
-ipcMain.handle('normalize-library', (_, { targetLufs }) => {
-  const parsed = Number(targetLufs);
-  if (!Number.isFinite(parsed) || parsed < -60 || parsed > 0) {
-    throw new Error(`Invalid targetLufs: must be a finite number between -60 and 0`);
+ipcMain.handle('normalize-library', async () => {
+  const targetLufs = Number(getSetting('normalize_target_lufs', '-9'));
+  const trackIds = getTrackIdsNeedingNormalization();
+  const total = trackIds.length;
+  let completed = 0;
+  let normalized = 0;
+  let skipped = 0;
+
+  const sendProgress = (done = false) => {
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('normalize-progress', { completed, total, done });
+    }
+  };
+
+  const notifyTrack = (trackId, extra = {}) => {
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('track-updated', { trackId, analysis: extra });
+    }
+  };
+
+  sendProgress();
+
+  for (const trackId of trackIds) {
+    const track = getTrackById(trackId);
+    if (!track || track.loudness == null) {
+      skipped++;
+      completed++;
+      sendProgress();
+      continue;
+    }
+    try {
+      const normalizedPath = await normalizeAudioFile(track, targetLufs);
+      console.log(`[normalize-library] created: ${normalizedPath}`);
+      const dbUpdate = { normalized_file_path: normalizedPath };
+      if (track.source_loudness == null) dbUpdate.source_loudness = track.loudness;
+      updateTrack(trackId, dbUpdate);
+      notifyTrack(trackId, { normalized_file_path: normalizedPath, analyzed: 0 });
+      spawnAnalysis(trackId, normalizedPath);
+      normalized++;
+    } catch (err) {
+      console.error(`normalize-library failed for track ${trackId}:`, err.message);
+      skipped++;
+    }
+    completed++;
+    sendProgress();
   }
-  const updated = normalizeLibrary(parsed);
-  setSetting('normalize_target_lufs', String(parsed));
+
+  sendProgress(true);
+  return { normalized, skipped, total };
+});
+
+ipcMain.handle('reset-normalization', (_, { trackIds } = {}) => {
+  const ids = trackIds?.length ? trackIds : null;
+  const updated = resetNormalization(ids);
+
+  // Re-analyze affected tracks on their original files to restore loudness data
+  if (ids) {
+    for (const id of ids) {
+      const track = getTrackById(id);
+      if (track?.file_path) spawnAnalysis(id, track.file_path);
+    }
+  }
+
   return { updated };
 });
+
+ipcMain.handle('get-normalized-count', () => getNormalizedTrackCount());
+
+ipcMain.handle('normalize-tracks-audio', async (_, { trackIds }) => {
+  const targetLufs = Number(getSetting('normalize_target_lufs', '-9'));
+  const total = trackIds.length;
+  let completed = 0;
+  let normalized = 0;
+  let skipped = 0;
+
+  const sendProgress = (done = false) => {
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('normalize-progress', { completed, total, done });
+    }
+  };
+
+  const notifyTrack = (trackId, extra = {}) => {
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('track-updated', { trackId, analysis: extra });
+    }
+  };
+
+  sendProgress();
+
+  for (const trackId of trackIds) {
+    const track = getTrackById(trackId);
+    if (!track || (track.source_loudness == null && track.loudness == null)) {
+      skipped++;
+      completed++;
+      sendProgress();
+      continue;
+    }
+    try {
+      const normalizedPath = await normalizeAudioFile(track, targetLufs);
+      console.log(`[normalize] created normalized file: ${normalizedPath}`);
+      // Persist source_loudness once so re-normalization always uses the original baseline
+      const dbUpdate = { normalized_file_path: normalizedPath };
+      if (track.source_loudness == null) dbUpdate.source_loudness = track.loudness;
+      updateTrack(trackId, dbUpdate);
+      // Immediately tell renderer about the normalized file and mark as re-analyzing
+      notifyTrack(trackId, { normalized_file_path: normalizedPath, analyzed: 0 });
+      spawnAnalysis(trackId, normalizedPath);
+      normalized++;
+    } catch (err) {
+      console.error(`Audio normalization failed for track ${trackId}:`, err.message);
+      skipped++;
+    }
+    completed++;
+    sendProgress();
+  }
+
+  sendProgress(true);
+  return { normalized, skipped };
+});
+
 ipcMain.handle('reanalyze-track', (_, trackId) => {
   const track = getTrackById(trackId);
   if (!track) throw new Error(`Track ${trackId} not found`);
@@ -390,20 +531,28 @@ ipcMain.handle('open-dir-dialog', async () => {
   const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
   return result.canceled ? null : result.filePaths[0];
 });
-ipcMain.handle('import-audio-files', async (event, filePaths) => {
+ipcMain.handle('import-audio-files', async (event, filePaths, playlistId) => {
   console.log('Importing audio files:', filePaths);
   const trackIds = [];
+  const total = filePaths.length;
 
-  for (const filePath of filePaths) {
+  for (let i = 0; i < total; i++) {
     try {
-      const trackId = await importAudioFile(filePath);
+      const trackId = await importAudioFile(filePaths[i]);
       trackIds.push(trackId);
     } catch (err) {
-      console.error('Import failed:', filePath, err);
+      console.error('Import failed:', filePaths[i], err);
+    }
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('import-progress', { completed: i + 1, total });
     }
   }
 
   if (trackIds.length > 0 && global.mainWindow) {
+    if (playlistId) {
+      addTracksToPlaylist(playlistId, trackIds);
+      global.mainWindow.webContents.send('playlists-updated');
+    }
     global.mainWindow.webContents.send('library-updated');
   }
 
@@ -517,13 +666,35 @@ ipcMain.handle('ytdlp-fetch-info', async (_event, url) => {
     const cookiesBrowser = getSetting('ytdlp_cookies_browser', '') || null;
     if (cookiesBrowser)
       console.log('[ytdlp-fetch-info] using cookies from browser:', cookiesBrowser);
-    const info = await ytDlpFetchPlaylistInfo(url, { cookiesBrowser });
+    const info = await ytDlpFetchPlaylistInfo(url, {
+      cookiesBrowser,
+      onBeforeCheck: (entries) => {
+        if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-entries-ready', entries);
+      },
+      onCheckProgress: ({ checked, total }) => {
+        if (global.mainWindow)
+          global.mainWindow.webContents.send('ytdlp-check-progress', { checked, total });
+      },
+      onEntryChecked: (entry) => {
+        if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-entry-checked', entry);
+      },
+    });
+    if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-check-progress', null);
     console.log(`[ytdlp-fetch-info] ok — type=${info.type} entries=${info.entries?.length}`);
     return { ok: true, ...info };
   } catch (err) {
+    if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-check-progress', null);
     console.error('[ytdlp-fetch-info] error:', err.message);
     return { ok: false, error: err.message };
   }
+});
+
+ipcMain.handle('check-duplicate-urls', (_event, entries) => {
+  return getExistingSourceUrls(entries); // [{url, trackId}]
+});
+
+ipcMain.handle('get-playlist-source-urls', (_event, playlistId) => {
+  return getPlaylistSourceUrls(playlistId); // [{trackId, source_url, source_link}]
 });
 
 // ─── yt-dlp URL download ──────────────────────────────────────────────────────
@@ -606,7 +777,11 @@ ipcMain.handle(
 
       let lastOverallCurrent = 0;
 
-      const { files, playlistName: detectedPlaylistName } = await ytDlpDownloadUrl(
+      const {
+        files,
+        playlistName: detectedPlaylistName,
+        unavailableCount = 0,
+      } = await ytDlpDownloadUrl(
         url,
         (data) => {
           // When a new playlist item starts downloading, emit a 'downloading' track update
@@ -628,6 +803,10 @@ ipcMain.handle(
           },
           onTrackMeta: ({ index, title }) => {
             sendTrackUpdate({ type: 'update', index, title, status: 'downloading' });
+          },
+          onTrackUnavailable: ({ videoId, reason }) => {
+            // Find the track index by matching videoId in the pre-populated track list
+            sendTrackUpdate({ type: 'unavailable', videoId, reason, status: 'failed' });
           },
           onPlaylistDetected: ({ name, total }) => {
             if (total > 1) {
@@ -702,7 +881,7 @@ ipcMain.handle(
         }
       }
 
-      return { ok: true, trackIds, playlistId: playlistId ?? null };
+      return { ok: true, trackIds, playlistId: playlistId ?? null, unavailableCount };
     } catch (err) {
       if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-progress', null);
       return { ok: false, error: err.message };
@@ -751,8 +930,12 @@ ipcMain.handle('format-usb', async (_, { device, mountPoint }) => {
 });
 
 /** Copies a track's audio file to {usbRoot}/music/, returns the USB path or null on error. */
-function copyTrackToUsb(track, usbRoot, usedNames) {
-  const ext = path.extname(track.file_path || '');
+function copyTrackToUsb(track, usbRoot, usedNames, useNormalized = false) {
+  const srcPath =
+    useNormalized && track.normalized_file_path && fs.existsSync(track.normalized_file_path)
+      ? track.normalized_file_path
+      : track.file_path;
+  const ext = path.extname(srcPath || '');
   const filename = trackToFilename(track, ext);
   // Deduplicate filename
   let finalName = filename;
@@ -766,8 +949,8 @@ function copyTrackToUsb(track, usbRoot, usedNames) {
   fs.mkdirSync(destDir, { recursive: true });
   const destPath = path.join(destDir, finalName);
 
-  if (!fs.existsSync(destPath) && fs.existsSync(track.file_path)) {
-    fs.copyFileSync(track.file_path, destPath);
+  if (!fs.existsSync(destPath) && fs.existsSync(srcPath)) {
+    fs.copyFileSync(srcPath, destPath);
   }
 
   return `/music/${finalName}`;
@@ -817,282 +1000,300 @@ function saveManifest(usbRoot, tracksMap, playlistsMap) {
   );
 }
 
-ipcMain.handle('export-rekordbox', async (_, { usbRoot, playlistIds, playlistId }) => {
-  try {
-    const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
-    const allPlaylists = ids?.length
-      ? ids.map((id) => getPlaylist(id)).filter(Boolean)
-      : getPlaylists();
+ipcMain.handle(
+  'export-rekordbox',
+  async (_, { usbRoot, playlistIds, playlistId, useNormalized = false }) => {
+    try {
+      const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
+      const allPlaylists = ids?.length
+        ? ids.map((id) => getPlaylist(id)).filter(Boolean)
+        : getPlaylists();
 
-    const trackMap = new Map();
-    for (const pl of allPlaylists) {
-      for (const t of getPlaylistTracks(pl.id)) {
-        if (!trackMap.has(t.id)) trackMap.set(t.id, t);
+      const trackMap = new Map();
+      for (const pl of allPlaylists) {
+        for (const t of getPlaylistTracks(pl.id)) {
+          if (!trackMap.has(t.id)) trackMap.set(t.id, t);
+        }
       }
-    }
-    const tracks = [...trackMap.values()];
-    const total = tracks.length;
+      const tracks = [...trackMap.values()];
+      const total = tracks.length;
 
-    // Load existing manifest so we can merge with previously exported tracks/playlists
-    const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
-    const existingCount = existingTracks.size;
+      // Load existing manifest so we can merge with previously exported tracks/playlists
+      const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
+      const existingCount = existingTracks.size;
 
-    send('export-rekordbox-progress', {
-      msg: existingCount
-        ? `Merging ${total} tracks into existing export (${existingCount} tracks already on USB)…`
-        : `Exporting ${total} tracks…`,
-      pct: 0,
-    });
-
-    // Pre-populate usedNames from existing manifest so copyTrackToUsb won't assign duplicate filenames
-    const usedNames = new Map();
-    for (const et of existingTracks.values()) {
-      const name = path.basename(et.file_path || '').toLowerCase();
-      if (name) usedNames.set(name, true);
-    }
-
-    // 2. Copy files to USB, build USB path map
-    const usbPaths = new Map(); // trackId → USB path
-    for (let i = 0; i < tracks.length; i++) {
-      const t = tracks[i];
-      const usbPath = copyTrackToUsb(t, usbRoot, usedNames);
-      usbPaths.set(t.id, usbPath);
       send('export-rekordbox-progress', {
-        msg: `Copying files… ${i + 1}/${total}`,
-        pct: Math.round(((i + 1) / total) * 40),
+        msg: existingCount
+          ? `Merging ${total} tracks into existing export (${existingCount} tracks already on USB)…`
+          : `Exporting ${total} tracks…`,
+        pct: 0,
       });
-    }
 
-    // 3. Write ANLZ beat grid files (only for tracks in the current export)
-    send('export-rekordbox-progress', { msg: 'Writing beat grids & waveforms…', pct: 40 });
-    const anlzPaths = new Map(); // trackId → Pioneer analyze_path string for PDB
-    for (let i = 0; i < tracks.length; i++) {
-      const t = tracks[i];
-      const usbFilePath = usbPaths.get(t.id);
-      if (!usbFilePath) continue;
-      const anlzFolder = getAnlzFolder(usbFilePath).replace(/\\/g, '/');
-      anlzPaths.set(t.id, `/${anlzFolder}/ANLZ0000.DAT`);
-      try {
-        await writeAnlz({
-          usbFilePath,
-          sourceFilePath: t.file_path || null,
-          beatgrid: t.beatgrid ?? null,
-          bpm: t.bpm_override ?? t.bpm ?? 0,
-          usbRoot,
-          ffmpegPath: getFfmpegRuntimePath(),
+      // Pre-populate usedNames from existing manifest so copyTrackToUsb won't assign duplicate filenames
+      const usedNames = new Map();
+      for (const et of existingTracks.values()) {
+        const name = path.basename(et.file_path || '').toLowerCase();
+        if (name) usedNames.set(name, true);
+      }
+
+      // 2. Copy files to USB, build USB path map
+      const usbPaths = new Map(); // trackId → USB path
+      for (let i = 0; i < tracks.length; i++) {
+        const t = tracks[i];
+        const usbPath = copyTrackToUsb(t, usbRoot, usedNames, useNormalized);
+        usbPaths.set(t.id, usbPath);
+        send('export-rekordbox-progress', {
+          msg: `Copying files… ${i + 1}/${total}`,
+          pct: Math.round(((i + 1) / total) * 40),
         });
-      } catch (err) {
-        console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
       }
-      send('export-rekordbox-progress', {
-        msg: `Beat grids & waveforms… ${i + 1}/${total}`,
-        pct: 40 + Math.round(((i + 1) / total) * 30),
-      });
-    }
 
-    // 4. Build PDB tracks for the current export
-    send('export-rekordbox-progress', { msg: 'Writing Rekordbox database…', pct: 70 });
-    const newPdbTracks = tracks.map((t) => ({
-      id: t.id,
-      title: t.title || '',
-      artist: t.artist || '',
-      album: t.album || '',
-      duration: t.duration || 0,
-      bpm: t.bpm_override ?? t.bpm ?? 0,
-      key_raw: t.key_raw || '',
-      file_path: usbPaths.get(t.id) || '',
-      track_number: t.track_number || 0,
-      year: t.year || '',
-      label: t.label || '',
-      genres: t.genres ? JSON.parse(t.genres) : [],
-      file_size: t.file_size || 0,
-      bitrate: t.bitrate || 0,
-      comments: t.comments || '',
-      rating: t.rating || 0,
-      analyzePath: anlzPaths.get(t.id) || '',
-    }));
-
-    const newPdbPlaylists = allPlaylists.map((pl) => ({
-      id: pl.id,
-      name: pl.name,
-      track_ids: getPlaylistTracks(pl.id)
-        .map((t) => t.id)
-        .filter((id) => usbPaths.has(id)),
-    }));
-
-    // Merge: existing data is the base; new export overrides by id
-    const mergedTracks = new Map(existingTracks);
-    for (const t of newPdbTracks) mergedTracks.set(t.id, t);
-
-    const mergedPlaylists = new Map(existingPlaylists);
-    for (const pl of newPdbPlaylists) mergedPlaylists.set(pl.id, pl);
-
-    runPdbExporter(
-      { usbRoot, tracks: [...mergedTracks.values()], playlists: [...mergedPlaylists.values()] },
-      usbRoot
-    );
-    writeSettingFiles(usbRoot);
-    saveManifest(usbRoot, mergedTracks, mergedPlaylists);
-
-    send('export-rekordbox-progress', { msg: 'Done!', pct: 100 });
-    send('export-rekordbox-progress', null);
-    return { ok: true, trackCount: mergedTracks.size, newTrackCount: total, usbRoot };
-  } catch (err) {
-    send('export-rekordbox-progress', null);
-    return { ok: false, error: err.message };
-  }
-});
-
-ipcMain.handle('export-all', async (_, { usbRoot, playlistIds, playlistId }) => {
-  try {
-    const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
-    const allPlaylists = ids?.length
-      ? ids.map((id) => getPlaylist(id)).filter(Boolean)
-      : getPlaylists();
-
-    // Build deduped track map once, shared by both M3U and Rekordbox
-    const trackMap = new Map();
-    for (const pl of allPlaylists) {
-      for (const t of getPlaylistTracks(pl.id)) {
-        if (!trackMap.has(t.id)) trackMap.set(t.id, t);
-      }
-    }
-    const allTracks = [...trackMap.values()];
-    const total = allTracks.length;
-
-    // Load existing manifest for merging
-    const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
-    const existingCount = existingTracks.size;
-
-    send('export-all-progress', {
-      msg: existingCount
-        ? `Merging ${total} tracks into existing export (${existingCount} tracks already on USB)…`
-        : `Exporting ${total} tracks…`,
-      pct: 0,
-    });
-
-    // Pre-populate usedNames from manifest to avoid filename collisions
-    const usedNames = new Map();
-    for (const et of existingTracks.values()) {
-      const name = path.basename(et.file_path || '').toLowerCase();
-      if (name) usedNames.set(name, true);
-    }
-
-    // Copy files once
-    const usbPaths = new Map();
-    for (let i = 0; i < allTracks.length; i++) {
-      const t = allTracks[i];
-      usbPaths.set(t.id, copyTrackToUsb(t, usbRoot, usedNames));
-      send('export-all-progress', {
-        msg: `Copying files… ${i + 1}/${total}`,
-        pct: Math.round(((i + 1) / total) * 35),
-      });
-    }
-
-    // Write M3U playlists (USB path mode)
-    send('export-all-progress', { msg: 'Writing M3U playlists…', pct: 35 });
-    const playlistDir = path.join(usbRoot, 'playlists');
-    fs.mkdirSync(playlistDir, { recursive: true });
-    for (const pl of allPlaylists) {
-      const tracks = getPlaylistTracks(pl.id);
-      const safeName = pl.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
-      const lines = ['#EXTM3U'];
-      for (const t of tracks) {
-        const usbPath = usbPaths.get(t.id);
-        if (!usbPath) continue;
-        const duration = Math.floor(t.duration ?? -1);
-        const label = [t.artist, t.title].filter(Boolean).join(' - ') || path.basename(usbPath);
-        lines.push(`#EXTINF:${duration},${label}`);
-        lines.push(usbPath);
-      }
-      fs.writeFileSync(path.join(playlistDir, `${safeName}.m3u`), lines.join('\n') + '\n', 'utf8');
-    }
-
-    // Write ANLZ beat grids + waveforms (only for tracks in the current export)
-    send('export-all-progress', { msg: 'Writing beat grids & waveforms…', pct: 50 });
-    for (let i = 0; i < allTracks.length; i++) {
-      const t = allTracks[i];
-      const usbFilePath = usbPaths.get(t.id);
-      if (!usbFilePath) continue;
-      try {
-        await writeAnlz({
-          usbFilePath,
-          sourceFilePath: t.file_path || null,
-          beatgrid: t.beatgrid ?? null,
-          bpm: t.bpm_override ?? t.bpm ?? 0,
-          usbRoot,
-          ffmpegPath: getFfmpegRuntimePath(),
+      // 3. Write ANLZ beat grid files (only for tracks in the current export)
+      send('export-rekordbox-progress', { msg: 'Writing beat grids & waveforms…', pct: 40 });
+      const anlzPaths = new Map(); // trackId → Pioneer analyze_path string for PDB
+      for (let i = 0; i < tracks.length; i++) {
+        const t = tracks[i];
+        const usbFilePath = usbPaths.get(t.id);
+        if (!usbFilePath) continue;
+        const anlzFolder = getAnlzFolder(usbFilePath).replace(/\\/g, '/');
+        anlzPaths.set(t.id, `/${anlzFolder}/ANLZ0000.DAT`);
+        const sourceFilePath =
+          useNormalized && t.normalized_file_path && fs.existsSync(t.normalized_file_path)
+            ? t.normalized_file_path
+            : t.file_path || null;
+        try {
+          await writeAnlz({
+            usbFilePath,
+            sourceFilePath,
+            beatgrid: t.beatgrid ?? null,
+            bpm: t.bpm_override ?? t.bpm ?? 0,
+            usbRoot,
+            ffmpegPath: getFfmpegRuntimePath(),
+          });
+        } catch (err) {
+          console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
+        }
+        send('export-rekordbox-progress', {
+          msg: `Beat grids & waveforms… ${i + 1}/${total}`,
+          pct: 40 + Math.round(((i + 1) / total) * 30),
         });
-      } catch (err) {
-        console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
       }
-      send('export-all-progress', {
-        msg: `Beat grids & waveforms… ${i + 1}/${total}`,
-        pct: 50 + Math.round(((i + 1) / total) * 20),
-      });
+
+      // 4. Build PDB tracks for the current export
+      send('export-rekordbox-progress', { msg: 'Writing Rekordbox database…', pct: 70 });
+      const newPdbTracks = tracks.map((t) => ({
+        id: t.id,
+        title: t.title || '',
+        artist: t.artist || '',
+        album: t.album || '',
+        duration: t.duration || 0,
+        bpm: t.bpm_override ?? t.bpm ?? 0,
+        key_raw: t.key_raw || '',
+        file_path: usbPaths.get(t.id) || '',
+        track_number: t.track_number || 0,
+        year: t.year || '',
+        label: t.label || '',
+        genres: t.genres ? JSON.parse(t.genres) : [],
+        file_size: t.file_size || 0,
+        bitrate: t.bitrate || 0,
+        comments: t.comments || '',
+        rating: t.rating || 0,
+        analyzePath: anlzPaths.get(t.id) || '',
+      }));
+
+      const newPdbPlaylists = allPlaylists.map((pl) => ({
+        id: pl.id,
+        name: pl.name,
+        track_ids: getPlaylistTracks(pl.id)
+          .map((t) => t.id)
+          .filter((id) => usbPaths.has(id)),
+      }));
+
+      // Merge: existing data is the base; new export overrides by id
+      const mergedTracks = new Map(existingTracks);
+      for (const t of newPdbTracks) mergedTracks.set(t.id, t);
+
+      const mergedPlaylists = new Map(existingPlaylists);
+      for (const pl of newPdbPlaylists) mergedPlaylists.set(pl.id, pl);
+
+      runPdbExporter(
+        { usbRoot, tracks: [...mergedTracks.values()], playlists: [...mergedPlaylists.values()] },
+        usbRoot
+      );
+      writeSettingFiles(usbRoot);
+      saveManifest(usbRoot, mergedTracks, mergedPlaylists);
+
+      send('export-rekordbox-progress', { msg: 'Done!', pct: 100 });
+      send('export-rekordbox-progress', null);
+      return { ok: true, trackCount: mergedTracks.size, newTrackCount: total, usbRoot };
+    } catch (err) {
+      send('export-rekordbox-progress', null);
+      return { ok: false, error: err.message };
     }
-
-    // Write PDB — merge with existing manifest
-    send('export-all-progress', { msg: 'Writing Rekordbox database…', pct: 70 });
-    const newPdbTracks = allTracks.map((t) => ({
-      id: t.id,
-      title: t.title || '',
-      artist: t.artist || '',
-      album: t.album || '',
-      duration: t.duration || 0,
-      bpm: t.bpm_override ?? t.bpm ?? 0,
-      key_raw: t.key_raw || '',
-      file_path: usbPaths.get(t.id) || '',
-      track_number: t.track_number || 0,
-      year: t.year || '',
-      label: t.label || '',
-      genres: t.genres ? JSON.parse(t.genres) : [],
-      file_size: t.file_size || 0,
-      bitrate: t.bitrate || 0,
-      comments: t.comments || '',
-      rating: t.rating || 0,
-      analyzePath: (() => {
-        const usbFP = usbPaths.get(t.id);
-        if (!usbFP) return '';
-        const folder = getAnlzFolder(usbFP).replace(/\\/g, '/');
-        return folder ? `/${folder}/ANLZ0000.DAT` : '';
-      })(),
-    }));
-    const newPdbPlaylists = allPlaylists.map((pl) => ({
-      id: pl.id,
-      name: pl.name,
-      track_ids: getPlaylistTracks(pl.id)
-        .map((t) => t.id)
-        .filter((id) => usbPaths.has(id)),
-    }));
-
-    const mergedTracks = new Map(existingTracks);
-    for (const t of newPdbTracks) mergedTracks.set(t.id, t);
-
-    const mergedPlaylists = new Map(existingPlaylists);
-    for (const pl of newPdbPlaylists) mergedPlaylists.set(pl.id, pl);
-
-    runPdbExporter(
-      { usbRoot, tracks: [...mergedTracks.values()], playlists: [...mergedPlaylists.values()] },
-      usbRoot
-    );
-    writeSettingFiles(usbRoot);
-    saveManifest(usbRoot, mergedTracks, mergedPlaylists);
-
-    send('export-all-progress', { msg: 'Done!', pct: 100 });
-    send('export-all-progress', null);
-    return {
-      ok: true,
-      trackCount: mergedTracks.size,
-      newTrackCount: total,
-      playlistCount: mergedPlaylists.size,
-      usbRoot,
-    };
-  } catch (err) {
-    send('export-all-progress', null);
-    return { ok: false, error: err.message };
   }
-});
+);
+
+ipcMain.handle(
+  'export-all',
+  async (_, { usbRoot, playlistIds, playlistId, useNormalized = false }) => {
+    try {
+      const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
+      const allPlaylists = ids?.length
+        ? ids.map((id) => getPlaylist(id)).filter(Boolean)
+        : getPlaylists();
+
+      // Build deduped track map once, shared by both M3U and Rekordbox
+      const trackMap = new Map();
+      for (const pl of allPlaylists) {
+        for (const t of getPlaylistTracks(pl.id)) {
+          if (!trackMap.has(t.id)) trackMap.set(t.id, t);
+        }
+      }
+      const allTracks = [...trackMap.values()];
+      const total = allTracks.length;
+
+      // Load existing manifest for merging
+      const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
+      const existingCount = existingTracks.size;
+
+      send('export-all-progress', {
+        msg: existingCount
+          ? `Merging ${total} tracks into existing export (${existingCount} tracks already on USB)…`
+          : `Exporting ${total} tracks…`,
+        pct: 0,
+      });
+
+      // Pre-populate usedNames from manifest to avoid filename collisions
+      const usedNames = new Map();
+      for (const et of existingTracks.values()) {
+        const name = path.basename(et.file_path || '').toLowerCase();
+        if (name) usedNames.set(name, true);
+      }
+
+      // Copy files once
+      const usbPaths = new Map();
+      for (let i = 0; i < allTracks.length; i++) {
+        const t = allTracks[i];
+        usbPaths.set(t.id, copyTrackToUsb(t, usbRoot, usedNames, useNormalized));
+        send('export-all-progress', {
+          msg: `Copying files… ${i + 1}/${total}`,
+          pct: Math.round(((i + 1) / total) * 35),
+        });
+      }
+
+      // Write M3U playlists (USB path mode)
+      send('export-all-progress', { msg: 'Writing M3U playlists…', pct: 35 });
+      const playlistDir = path.join(usbRoot, 'playlists');
+      fs.mkdirSync(playlistDir, { recursive: true });
+      for (const pl of allPlaylists) {
+        const tracks = getPlaylistTracks(pl.id);
+        const safeName = pl.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+        const lines = ['#EXTM3U'];
+        for (const t of tracks) {
+          const usbPath = usbPaths.get(t.id);
+          if (!usbPath) continue;
+          const duration = Math.floor(t.duration ?? -1);
+          const label = [t.artist, t.title].filter(Boolean).join(' - ') || path.basename(usbPath);
+          lines.push(`#EXTINF:${duration},${label}`);
+          lines.push(usbPath);
+        }
+        fs.writeFileSync(
+          path.join(playlistDir, `${safeName}.m3u`),
+          lines.join('\n') + '\n',
+          'utf8'
+        );
+      }
+
+      // Write ANLZ beat grids + waveforms (only for tracks in the current export)
+      send('export-all-progress', { msg: 'Writing beat grids & waveforms…', pct: 50 });
+      for (let i = 0; i < allTracks.length; i++) {
+        const t = allTracks[i];
+        const usbFilePath = usbPaths.get(t.id);
+        if (!usbFilePath) continue;
+        const sourceFilePath =
+          useNormalized && t.normalized_file_path && fs.existsSync(t.normalized_file_path)
+            ? t.normalized_file_path
+            : t.file_path || null;
+        try {
+          await writeAnlz({
+            usbFilePath,
+            sourceFilePath,
+            beatgrid: t.beatgrid ?? null,
+            bpm: t.bpm_override ?? t.bpm ?? 0,
+            usbRoot,
+            ffmpegPath: getFfmpegRuntimePath(),
+          });
+        } catch (err) {
+          console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
+        }
+        send('export-all-progress', {
+          msg: `Beat grids & waveforms… ${i + 1}/${total}`,
+          pct: 50 + Math.round(((i + 1) / total) * 20),
+        });
+      }
+
+      // Write PDB — merge with existing manifest
+      send('export-all-progress', { msg: 'Writing Rekordbox database…', pct: 70 });
+      const newPdbTracks = allTracks.map((t) => ({
+        id: t.id,
+        title: t.title || '',
+        artist: t.artist || '',
+        album: t.album || '',
+        duration: t.duration || 0,
+        bpm: t.bpm_override ?? t.bpm ?? 0,
+        key_raw: t.key_raw || '',
+        file_path: usbPaths.get(t.id) || '',
+        track_number: t.track_number || 0,
+        year: t.year || '',
+        label: t.label || '',
+        genres: t.genres ? JSON.parse(t.genres) : [],
+        file_size: t.file_size || 0,
+        bitrate: t.bitrate || 0,
+        comments: t.comments || '',
+        rating: t.rating || 0,
+        analyzePath: (() => {
+          const usbFP = usbPaths.get(t.id);
+          if (!usbFP) return '';
+          const folder = getAnlzFolder(usbFP).replace(/\\/g, '/');
+          return folder ? `/${folder}/ANLZ0000.DAT` : '';
+        })(),
+      }));
+      const newPdbPlaylists = allPlaylists.map((pl) => ({
+        id: pl.id,
+        name: pl.name,
+        track_ids: getPlaylistTracks(pl.id)
+          .map((t) => t.id)
+          .filter((id) => usbPaths.has(id)),
+      }));
+
+      const mergedTracks = new Map(existingTracks);
+      for (const t of newPdbTracks) mergedTracks.set(t.id, t);
+
+      const mergedPlaylists = new Map(existingPlaylists);
+      for (const pl of newPdbPlaylists) mergedPlaylists.set(pl.id, pl);
+
+      runPdbExporter(
+        { usbRoot, tracks: [...mergedTracks.values()], playlists: [...mergedPlaylists.values()] },
+        usbRoot
+      );
+      writeSettingFiles(usbRoot);
+      saveManifest(usbRoot, mergedTracks, mergedPlaylists);
+
+      send('export-all-progress', { msg: 'Done!', pct: 100 });
+      send('export-all-progress', null);
+      return {
+        ok: true,
+        trackCount: mergedTracks.size,
+        newTrackCount: total,
+        playlistCount: mergedPlaylists.size,
+        usbRoot,
+      };
+    } catch (err) {
+      send('export-all-progress', null);
+      return { ok: false, error: err.message };
+    }
+  }
+);
 
 app.on('ready', initApp);
 app.on('window-all-closed', () => {

@@ -64,6 +64,8 @@ export function initDB() {
     'ALTER TABLE tracks ADD COLUMN user_tags TEXT',
     'ALTER TABLE tracks ADD COLUMN has_artwork INTEGER DEFAULT 0',
     'ALTER TABLE tracks ADD COLUMN artwork_path TEXT',
+    'ALTER TABLE tracks ADD COLUMN normalized_file_path TEXT',
+    'ALTER TABLE tracks ADD COLUMN source_loudness REAL',
   ]) {
     try {
       db.prepare(col).run();
