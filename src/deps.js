@@ -164,16 +164,19 @@ export function getReleaseByTag(owner, repo, tag) {
 // ── Archive helpers ───────────────────────────────────────────────────────────
 
 async function extractTarGz(archive, destDir) {
+  if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
   await fs.promises.mkdir(destDir, { recursive: true });
   await execAsync(`tar -xzf "${archive}" -C "${destDir}"`);
 }
 
 async function extractTarXz(archive, destDir) {
+  if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
   await fs.promises.mkdir(destDir, { recursive: true });
   await execAsync(`tar -xJf "${archive}" -C "${destDir}"`);
 }
 
 async function extractZip(archive, destDir) {
+  if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
   await fs.promises.mkdir(destDir, { recursive: true });
   if (process.platform === 'win32') {
     await execAsync(

@@ -215,13 +215,14 @@ describe('context menu — submenu CSS classes', () => {
     expect(submenu.classList.contains('context-submenu--scrollable')).toBe(true);
   });
 
-  it('"Add to playlist" is NOT shown when there are no playlists', async () => {
+  it('shows "Add to new playlist" option directly when there are no playlists', async () => {
     window.api.getPlaylistsForTrack.mockResolvedValue([]);
     renderLibrary();
     await openContextMenu('Track One');
 
-    // Should show a disabled "No playlists" item, not the submenu
-    await waitFor(() => expect(screen.getByText(/➕ No playlists/)).toBeInTheDocument());
+    // When no playlists exist, a direct "Add to new playlist…" item is shown
+    await waitFor(() => expect(screen.getByText(/➕ Add to new playlist…/)).toBeInTheDocument());
+    // No submenu parent for "Add to playlist"
     expect(getSubmenuParent('➕ Add to playlist')).toBeNull();
   });
 });

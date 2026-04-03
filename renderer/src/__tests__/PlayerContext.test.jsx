@@ -38,6 +38,7 @@ describe('PlayerProvider — context API', () => {
     expect(typeof ctx.stop).toBe('function');
     expect(typeof ctx.toggleShuffle).toBe('function');
     expect(typeof ctx.cycleRepeat).toBe('function');
+    expect(typeof ctx.reloadCurrentTrack).toBe('function');
     expect(ctx.isPlaying).toBe(false);
     expect(ctx.currentTime).toBe(0);
     expect(ctx.duration).toBe(0);

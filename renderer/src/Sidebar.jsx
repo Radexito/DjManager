@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useDownload } from './DownloadContext.jsx';
 import './Sidebar.css';
+import ImportPlaylistDialog from './ImportPlaylistDialog';
 
 const MENU_ITEMS = [
   { id: 'music', name: 'Music', icon: '🎵' },
@@ -23,9 +25,12 @@ function Sidebar({
   onExportPlaylistRekordboxUsb,
   onExportPlaylistAll,
 }) {
+  const { sidebarProgress: ytDlpSidebarProgress } = useDownload();
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
+  const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
   const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
+  const [ytDlpCheckProgress, setYtDlpCheckProgress] = useState(null); // { checked, total } | null during fetch/check
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -33,6 +38,8 @@ function Sidebar({
   const [playlistMenu, setPlaylistMenu] = useState(null); // { id, x, y }
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
+  const [dragOverPlaylistId, setDragOverPlaylistId] = useState(null);
+  const [importDialogFiles, setImportDialogFiles] = useState(null); // pending files waiting for playlist selection
   const newInputRef = useRef(null);
   const renameInputRef = useRef(null);
 
@@ -68,9 +75,27 @@ function Sidebar({
   const handleImport = async () => {
     const files = await window.api.selectAudioFiles();
     if (!files.length) return;
+    setImportDialogFiles(files);
+  };
+
+  const handleImportConfirm = async (choice) => {
+    const files = importDialogFiles;
+    setImportDialogFiles(null);
+    if (!files?.length) return;
+
+    let playlistId = null;
+
+    if (choice.type === 'create') {
+      const result = await window.api.createPlaylist(choice.name);
+      playlistId = result?.id ?? null;
+    } else if (choice.type === 'existing') {
+      playlistId = choice.id;
+    }
+
     setImportProgress({ total: files.length, completed: 0 });
-    await window.api.importAudioFiles(files);
-    setImportProgress({ total: 0, completed: 0 });
+    await window.api.importAudioFiles(files, playlistId);
+    // Small delay so the user sees 100% before the bar disappears
+    setTimeout(() => setImportProgress({ total: 0, completed: 0 }), 800);
   };
 
   const handleCreatePlaylist = async (e) => {
@@ -109,6 +134,31 @@ function Sidebar({
     return unsub;
   }, []);
 
+  useEffect(() => {
+    const unsub = window.api.onImportProgress(({ completed, total }) => {
+      setImportProgress({ completed, total });
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = window.api.onNormalizeProgress((data) => {
+      if (data.done) {
+        setTimeout(() => setNormalizeProgress(null), 1500);
+      } else {
+        setNormalizeProgress({ completed: data.completed, total: data.total });
+      }
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = window.api.onYtDlpCheckProgress((data) => {
+      setYtDlpCheckProgress(data); // null when done
+    });
+    return unsub;
+  }, []);
+
   const handleExportM3U = async (id) => {
     setPlaylistMenu(null);
     const result = await window.api.exportPlaylistAsM3U(id);
@@ -140,6 +190,32 @@ function Sidebar({
   const handleColorPick = async (id, color) => {
     setPlaylistMenu(null);
     await window.api.updatePlaylistColor(id, color);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleDragEnter = (e, playlistId) => {
+    if (e.dataTransfer.types.includes('application/dj-tracks')) {
+      setDragOverPlaylistId(playlistId);
+    }
+  };
+
+  const handleDragLeave = (e) => {
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      setDragOverPlaylistId(null);
+    }
+  };
+
+  const handleDrop = async (e, playlistId) => {
+    e.preventDefault();
+    setDragOverPlaylistId(null);
+    const raw = e.dataTransfer.getData('application/dj-tracks');
+    if (!raw) return;
+    const trackIds = JSON.parse(raw);
+    await window.api.addTracksToPlaylist(playlistId, trackIds);
   };
 
   return (
@@ -214,12 +290,16 @@ function Sidebar({
               </form>
             ) : (
               <div
-                className={`menu-item playlist-item ${selectedMenuItemId === String(pl.id) ? 'active' : ''}`}
+                className={`menu-item playlist-item ${selectedMenuItemId === String(pl.id) ? 'active' : ''}${dragOverPlaylistId === pl.id ? ' playlist-item--drag-over' : ''}`}
                 onClick={() => onMenuSelect(String(pl.id))}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setPlaylistMenu({ id: pl.id, x: e.clientX, y: e.clientY });
                 }}
+                onDragOver={handleDragOver}
+                onDragEnter={(e) => handleDragEnter(e, pl.id)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, pl.id)}
               >
                 {pl.color && (
                   <span className="playlist-color-dot" style={{ background: pl.color }} />
@@ -237,6 +317,83 @@ function Sidebar({
           <div className="import-progress">
             Importing {importProgress.completed} / {importProgress.total}…
           </div>
+        )}
+        {normalizeProgress && (
+          <div className="normalize-progress-wrap">
+            <div className="normalize-progress-label">
+              <span>Normalizing</span>
+              <span>
+                {normalizeProgress.completed} / {normalizeProgress.total}
+              </span>
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill"
+                style={{
+                  width: `${Math.round((normalizeProgress.completed / normalizeProgress.total) * 100)}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
+        {ytDlpCheckProgress && !ytDlpSidebarProgress && (
+          <button
+            className="normalize-progress-wrap ytdlp-progress-clickable"
+            onClick={() => onMenuSelect('download')}
+            title="Go to YT-DLP"
+          >
+            <div className="normalize-progress-label">
+              <span>Checking tracks…</span>
+              {ytDlpCheckProgress.total > 0 && (
+                <span>
+                  {ytDlpCheckProgress.checked} / {ytDlpCheckProgress.total}
+                </span>
+              )}
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill ytdlp-progress-fill"
+                style={{
+                  width: `${ytDlpCheckProgress.total > 0 ? Math.round((ytDlpCheckProgress.checked / ytDlpCheckProgress.total) * 100) : 0}%`,
+                }}
+              />
+            </div>
+          </button>
+        )}
+        {ytDlpSidebarProgress && (
+          <button
+            className="normalize-progress-wrap ytdlp-progress-clickable"
+            onClick={() => onMenuSelect('download')}
+            title="Go to YT-DLP"
+          >
+            <div className="normalize-progress-label">
+              <span>Downloading</span>
+              <span>
+                {ytDlpSidebarProgress.current} / {ytDlpSidebarProgress.total}
+              </span>
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill ytdlp-progress-fill"
+                style={{ width: `${Math.round(ytDlpSidebarProgress.pct)}%` }}
+              />
+            </div>
+            {ytDlpSidebarProgress.msg && (
+              <div className="normalize-progress-label" style={{ marginTop: 4, opacity: 0.7 }}>
+                <span
+                  style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: '100%',
+                    fontSize: 11,
+                  }}
+                >
+                  {ytDlpSidebarProgress.msg}
+                </span>
+              </div>
+            )}
+          </button>
         )}
         {exportProgress && (
           <div className="import-progress">
@@ -309,6 +466,14 @@ function Sidebar({
             🗑️ Delete playlist
           </div>
         </div>
+      )}
+
+      {importDialogFiles && (
+        <ImportPlaylistDialog
+          playlists={playlists}
+          onConfirm={handleImportConfirm}
+          onCancel={() => setImportDialogFiles(null)}
+        />
       )}
     </div>
   );

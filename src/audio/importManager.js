@@ -78,6 +78,36 @@ function parseTags(ffprobeData) {
   };
 }
 
+function getNormalizedStoragePath(hash, ext) {
+  const base = getLibraryBase();
+  const shard = hash.slice(0, 2);
+  fs.mkdirSync(path.join(base, shard), { recursive: true });
+  return path.join(base, shard, `${hash}_norm${ext}`);
+}
+
+export async function normalizeAudioFile(track, targetLufs) {
+  // Always compute gain from the ORIGINAL loudness, not the normalized file's loudness.
+  // source_loudness is set once (first normalization) and never overwritten.
+  const sourceLoudness = track.source_loudness ?? track.loudness;
+  if (sourceLoudness == null) throw new Error('Track has no loudness data');
+  const gain = targetLufs - sourceLoudness;
+  const ext = path.extname(track.file_path);
+  const normalizedPath = getNormalizedStoragePath(track.file_hash, ext);
+
+  await execFileAsync(getFfmpegRuntimePath(), [
+    '-y',
+    '-i',
+    track.file_path,
+    '-filter:a',
+    `volume=${gain.toFixed(2)}dB`,
+    '-c:v',
+    'copy',
+    normalizedPath,
+  ]);
+
+  return normalizedPath;
+}
+
 export function spawnAnalysis(trackId, filePath) {
   const worker = new Worker(new URL('./analysisWorker.js', import.meta.url), {
     workerData: { filePath, trackId, analyzerPath: getAnalyzerRuntimePath() },
@@ -113,11 +143,54 @@ export function spawnAnalysis(trackId, filePath) {
     }
 
     const update = { ...analysisFields, bpm_override: null, ...mergedTags };
+
+    // Re-apply normalization if configured — prevents re-analysis from wiping manual gain
+    const normTarget = getSetting('normalize_target_lufs', null);
+    if (normTarget != null && update.loudness != null) {
+      const parsed = Number(normTarget);
+      if (Number.isFinite(parsed)) {
+        update.replay_gain = Math.round((parsed - update.loudness) * 10) / 10;
+      }
+    }
+
     updateTrack(trackId, update);
+
+    // Include normalized_file_path from DB so renderer knows to switch playback to the normalized file
+    const trackAfterUpdate = getTrackById(trackId);
+    const normalized_file_path = trackAfterUpdate?.normalized_file_path ?? null;
+    console.log(
+      `[importManager] track-updated for ${trackId}: normalized_file_path=${normalized_file_path}`
+    );
 
     // Notify renderer
     if (global.mainWindow) {
-      global.mainWindow.webContents.send('track-updated', { trackId, analysis: update });
+      global.mainWindow.webContents.send('track-updated', {
+        trackId,
+        analysis: { ...update, normalized_file_path },
+      });
+    }
+
+    // Auto-normalize on import: only when setting is enabled AND this is a fresh (non-normalized) track
+    const autoNormalize = getSetting('auto_normalize_on_import', 'false') === 'true';
+    const alreadyNormalized = trackAfterUpdate?.normalized_file_path != null;
+    if (autoNormalize && !alreadyNormalized && update.loudness != null) {
+      const targetLufs = Number(getSetting('normalize_target_lufs', '-9'));
+      normalizeAudioFile(trackAfterUpdate, targetLufs)
+        .then((normalizedPath) => {
+          const dbUpdate = { normalized_file_path: normalizedPath };
+          if (trackAfterUpdate.source_loudness == null) dbUpdate.source_loudness = update.loudness;
+          updateTrack(trackId, dbUpdate);
+          if (global.mainWindow) {
+            global.mainWindow.webContents.send('track-updated', {
+              trackId,
+              analysis: { normalized_file_path: normalizedPath, analyzed: 0 },
+            });
+          }
+          spawnAnalysis(trackId, normalizedPath);
+        })
+        .catch((err) => {
+          console.error(`[auto-normalize] failed for track ${trackId}:`, err.message);
+        });
     }
   });
 }
@@ -148,12 +221,24 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
   // Extract tags
   const { title, artist, album, genre, year, label, bpm } = parseTags(probe);
 
+  // Fallback: parse "Artist - Title" from filename when artist tag is absent
+  const basename = path.basename(filePath, ext);
+  let resolvedArtist = artist;
+  let resolvedTitle = title;
+  if (!artist) {
+    const dashIdx = basename.indexOf(' - ');
+    if (dashIdx !== -1) {
+      resolvedArtist = basename.slice(0, dashIdx).trim();
+      resolvedTitle = resolvedTitle || basename.slice(dashIdx + 3).trim();
+    }
+  }
+
   // Extract embedded album art (best-effort, non-blocking)
   const artworkPath = await extractArtwork(dest, hash);
 
   const trackId = addTrack({
-    title: title || path.basename(filePath, ext),
-    artist,
+    title: resolvedTitle || basename,
+    artist: resolvedArtist,
     album,
     duration,
     file_path: dest,
@@ -172,7 +257,7 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
     artwork_path: artworkPath ?? null,
   });
 
-  console.log(`Added track ID ${trackId}: ${title || path.basename(filePath, ext)}`);
+  console.log(`Added track ID ${trackId}: ${resolvedTitle || basename}`);
 
   spawnAnalysis(trackId, dest);
   return trackId;
