@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import DownloadView from '../DownloadView.jsx';
+import { DownloadProvider } from '../DownloadContext.jsx';
+
+function renderWithProvider(ui) {
+  return render(<DownloadProvider>{ui}</DownloadProvider>);
+}
 
 const PLAYLIST_INFO = {
   ok: true,
@@ -23,7 +28,7 @@ beforeEach(() => {
 
 describe('DownloadView', () => {
   it('step 1 renders URL input and Load button; does not show selection or progress view', () => {
-    render(<DownloadView />);
+    renderWithProvider(<DownloadView />);
     expect(screen.getByRole('textbox')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Load/i })).toBeInTheDocument();
     expect(screen.queryByText(/Acid House/)).not.toBeInTheDocument();
@@ -32,13 +37,13 @@ describe('DownloadView', () => {
   });
 
   it('Load button is disabled when input is empty', () => {
-    render(<DownloadView />);
+    renderWithProvider(<DownloadView />);
     expect(screen.getByRole('button', { name: /Load/i })).toBeDisabled();
   });
 
   it('shows error when ytDlpFetchInfo returns ok:false', async () => {
     window.api.ytDlpFetchInfo.mockResolvedValue({ ok: false, error: 'Network error' });
-    render(<DownloadView />);
+    renderWithProvider(<DownloadView />);
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'https://www.youtube.com/watch?v=abc' },
     });
@@ -48,7 +53,7 @@ describe('DownloadView', () => {
 
   it('shows restart error when ytDlpFetchInfo is not a function', async () => {
     window.api.ytDlpFetchInfo = undefined;
-    render(<DownloadView />);
+    renderWithProvider(<DownloadView />);
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'https://www.youtube.com/watch?v=abc' },
     });
@@ -58,7 +63,7 @@ describe('DownloadView', () => {
 
   it('transitions to selection view on success (playlist)', async () => {
     window.api.ytDlpFetchInfo.mockResolvedValue(PLAYLIST_INFO);
-    render(<DownloadView />);
+    renderWithProvider(<DownloadView />);
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'https://www.youtube.com/playlist?list=xyz' },
     });
@@ -71,7 +76,7 @@ describe('DownloadView', () => {
 
   it('select/deselect single track updates Download button count', async () => {
     window.api.ytDlpFetchInfo.mockResolvedValue(PLAYLIST_INFO);
-    render(<DownloadView />);
+    renderWithProvider(<DownloadView />);
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'https://www.youtube.com/playlist?list=xyz' },
     });
@@ -98,7 +103,7 @@ describe('DownloadView', () => {
         { index: 0, id: 'x', title: 'Short Track', url: 'https://yt.com/x', duration: 125 },
       ],
     });
-    render(<DownloadView />);
+    renderWithProvider(<DownloadView />);
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'https://www.youtube.com/playlist?list=dur' },
     });
