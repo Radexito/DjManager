@@ -87,8 +87,8 @@ function Sidebar({
     let playlistId = null;
 
     if (choice.type === 'create') {
-      const id = await window.api.createPlaylist(choice.name);
-      playlistId = id;
+      const result = await window.api.createPlaylist(choice.name);
+      playlistId = result?.id ?? null;
     } else if (choice.type === 'existing') {
       playlistId = choice.id;
     }
