@@ -87,6 +87,11 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('library-updated', handler);
     return () => ipcRenderer.removeListener('library-updated', handler);
   },
+  onImportProgress: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('import-progress', handler);
+    return () => ipcRenderer.removeListener('import-progress', handler);
+  },
   onPlaylistsUpdated: (callback) => {
     const handler = () => callback();
     ipcRenderer.on('playlists-updated', handler);
