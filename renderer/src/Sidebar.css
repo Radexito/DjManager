@@ -114,6 +114,20 @@
   font-size: 13px;
 }
 
+button.normalize-progress-wrap.ytdlp-progress-clickable {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+button.normalize-progress-wrap.ytdlp-progress-clickable:hover {
+  background-color: #333;
+}
+
 .normalize-progress-label {
   display: flex;
   justify-content: space-between;

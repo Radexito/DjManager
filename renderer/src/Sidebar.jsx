@@ -322,7 +322,11 @@ function Sidebar({
           </div>
         )}
         {ytDlpCheckProgress && !ytDlpProgress && (
-          <div className="normalize-progress-wrap">
+          <button
+            className="normalize-progress-wrap ytdlp-progress-clickable"
+            onClick={() => onMenuSelect('download')}
+            title="Go to YT-DLP"
+          >
             <div className="normalize-progress-label">
               <span>Checking tracks…</span>
               {ytDlpCheckProgress.total > 0 && (
@@ -339,10 +343,14 @@ function Sidebar({
                 }}
               />
             </div>
-          </div>
+          </button>
         )}
         {ytDlpProgress && (
-          <div className="normalize-progress-wrap">
+          <button
+            className="normalize-progress-wrap ytdlp-progress-clickable"
+            onClick={() => onMenuSelect('download')}
+            title="Go to YT-DLP"
+          >
             <div className="normalize-progress-label">
               <span>Downloading</span>
               {ytDlpProgress.overallTotal > 1 && (
@@ -372,7 +380,7 @@ function Sidebar({
                 </span>
               </div>
             )}
-          </div>
+          </button>
         )}
         {exportProgress && (
           <div className="import-progress">
