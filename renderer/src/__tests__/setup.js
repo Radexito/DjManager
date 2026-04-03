@@ -52,6 +52,7 @@ window.api = {
   checkDuplicateUrls: vi.fn().mockResolvedValue([]),
   ytDlpDownloadUrl: vi.fn().mockResolvedValue({ ok: true, trackIds: [] }),
   onYtDlpProgress: vi.fn().mockImplementation(() => () => {}),
+  onYtDlpCheckProgress: vi.fn().mockImplementation(() => () => {}),
   onYtDlpTrackUpdate: vi.fn().mockImplementation(() => () => {}),
   openExternal: vi.fn().mockResolvedValue(undefined),
   checkUsbFormat: vi
