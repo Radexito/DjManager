@@ -566,7 +566,33 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
             </div>
           </div>
 
-          {downloadHistory.length > 0 && (
+          {/* Live track list during availability check */}
+          {fetching && checkProgress && playlistInfo?.entries?.length > 0 && (
+            <div className="dl-checking-list">
+              <div className="dl-checking-list-title">
+                Checking availability… {checkProgress.checked}/{checkProgress.total}
+              </div>
+              <div className="dl-select-list">
+                {playlistInfo.entries.map((entry) => (
+                  <div
+                    key={entry.index}
+                    className={`dl-check-item${entry.unavailable ? ' dl-check-item--unavailable' : entry.checked ? ' dl-check-item--ok' : ''}`}
+                  >
+                    <span className="dl-check-item-icon">
+                      {entry.unavailable ? '✗' : entry.checked ? '✓' : '⋯'}
+                    </span>
+                    <span className="dl-select-item-num">{entry.index + 1}.</span>
+                    <span className="dl-select-item-title">{entry.title}</span>
+                    {entry.duration && (
+                      <span className="dl-select-item-dur">{fmtDuration(entry.duration)}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {downloadHistory.length > 0 && !fetching && (
             <div className="dl-history">
               <div className="dl-history-title">Session downloads</div>
               {downloadHistory.map((item, i) => (
@@ -622,6 +648,34 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
                 />
                 {allSelected ? 'Deselect all' : 'Select all'}
               </label>
+              <div className="dl-select-filter-btns">
+                {downloadableEntries.length > 0 && (
+                  <button
+                    type="button"
+                    className="dl-filter-btn"
+                    title="Select only tracks not in your library (will download)"
+                    onClick={() => {
+                      setSelectedIndices(new Set(downloadableEntries.map((e) => e.index)));
+                      setLinkIndices(new Set());
+                    }}
+                  >
+                    ↓ Downloads only
+                  </button>
+                )}
+                {linkableEntries.length > 0 && (
+                  <button
+                    type="button"
+                    className="dl-filter-btn"
+                    title="Select only tracks already in your library (will link to playlist)"
+                    onClick={() => {
+                      setSelectedIndices(new Set());
+                      setLinkIndices(new Set(linkableEntries.map((e) => e.index)));
+                    }}
+                  >
+                    ⊟ Link only
+                  </button>
+                )}
+              </div>
               <span className="dl-select-selected-count">
                 {selectedIndices.size + linkIndices.size} / {availableEntries.length} selected
               </span>

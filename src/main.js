@@ -660,9 +660,15 @@ ipcMain.handle('ytdlp-fetch-info', async (_event, url) => {
       console.log('[ytdlp-fetch-info] using cookies from browser:', cookiesBrowser);
     const info = await ytDlpFetchPlaylistInfo(url, {
       cookiesBrowser,
+      onBeforeCheck: (entries) => {
+        if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-entries-ready', entries);
+      },
       onCheckProgress: ({ checked, total }) => {
         if (global.mainWindow)
           global.mainWindow.webContents.send('ytdlp-check-progress', { checked, total });
+      },
+      onEntryChecked: (entry) => {
+        if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-entry-checked', entry);
       },
     });
     if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-check-progress', null);
