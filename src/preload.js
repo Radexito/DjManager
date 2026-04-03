@@ -11,7 +11,8 @@ contextBridge.exposeInMainWorld('api', {
 
   // Import
   selectAudioFiles: () => ipcRenderer.invoke('select-audio-files'),
-  importAudioFiles: (files) => ipcRenderer.invoke('import-audio-files', files),
+  importAudioFiles: (files, playlistId) =>
+    ipcRenderer.invoke('import-audio-files', files, playlistId),
 
   // Playlists
   getPlaylists: () => ipcRenderer.invoke('get-playlists'),

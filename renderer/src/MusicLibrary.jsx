@@ -207,6 +207,8 @@ function LibraryRow({
   gridTemplate,
   minScrollWidth,
   mediaPort,
+  newTrackIds,
+  onAnimationEnd,
 }) {
   const t = tracks[index];
   if (!t) {
@@ -221,10 +223,11 @@ function LibraryRow({
   }
   const isSelected = selectedIds.has(t.id);
   const isPlaying = currentTrackId === t.id;
+  const isNew = newTrackIds?.has(t.id);
   return (
     <div
       style={{ ...style, gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
-      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}`}
+      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}${isNew ? ' row--new' : ''}`}
       title={
         t.analyzed === 0
           ? `⏳ Analyzing / processing — "${t.title}" will be available shortly`
@@ -235,6 +238,7 @@ function LibraryRow({
       onClick={(e) => onRowClick(e, t, index)}
       onDoubleClick={() => onDoubleClick(t, index)}
       onContextMenu={(e) => onContextMenu(e, t, index)}
+      onAnimationEnd={isNew ? () => onAnimationEnd?.(t.id) : undefined}
     >
       {visibleColumns.map((col) =>
         col.key === 'index' ? (
@@ -294,6 +298,8 @@ function SortableRow({
   gridTemplate,
   minScrollWidth,
   mediaPort,
+  isNew,
+  onAnimationEnd,
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: t.id,
@@ -309,7 +315,7 @@ function SortableRow({
     <div
       ref={setNodeRef}
       style={style}
-      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}`}
+      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}${isNew ? ' row--new' : ''}`}
       title={
         t.analyzed === 0
           ? `⏳ Analyzing / processing — "${t.title}" will be available shortly`
@@ -318,6 +324,7 @@ function SortableRow({
       onClick={(e) => onRowClick(e, t, index)}
       onDoubleClick={() => onDoubleClick(t, index)}
       onContextMenu={(e) => onContextMenu(e, t, index)}
+      onAnimationEnd={isNew ? () => onAnimationEnd?.(t.id) : undefined}
     >
       {visibleColumns.map((col) =>
         col.key === 'index' ? (
@@ -411,6 +418,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
 
   const [tracks, setTracks] = useState([]);
   const [hasMore, setHasMore] = useState(true);
+  const [newTrackIds, setNewTrackIds] = useState(new Set()); // IDs of rows to animate in
 
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [contextMenu, setContextMenu] = useState(null); // { x, y, targetIds }
@@ -445,6 +453,24 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const dndScrollRef = useRef(null); // ref to playlist DnD scroll container
   // Tracks whether we should resume playback after normalization finishes re-analyzing
   const normalizeResumeRef = useRef(null); // { id, shouldResume } | null
+  // When set to true, the next loadTracks call will animate truly-new incoming rows
+  const animateNextLoadRef = useRef(false);
+  // Snapshot of IDs already in the list before a reload — used to diff truly-new rows
+  const preReloadIdsRef = useRef(new Set());
+  // Refs that stay in sync so the onLibraryUpdated closure (empty deps) can read current values
+  const selectedPlaylistRef = useRef(selectedPlaylist);
+  const searchRef = useRef(search);
+  useEffect(() => {
+    selectedPlaylistRef.current = selectedPlaylist;
+  }, [selectedPlaylist]);
+  useEffect(() => {
+    searchRef.current = search;
+  }, [search]);
+
+  // Track previous view identity so the reset effect knows whether the VIEW changed
+  // (search/playlist switch → clear selection) vs. just a data reload (loadKey bump → keep selection)
+  const prevSelectedPlaylistRef = useRef(selectedPlaylist);
+  const prevSearchRef = useRef(search);
 
   const visibleColumns = useMemo(
     () => colOrder.map((k) => COL_BY_KEY[k]).filter((c) => c && colVis[c.key] !== false),
@@ -489,7 +515,20 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
 
       if (token !== resetTokenRef.current) return; // stale — reset happened mid-flight
 
-      setTracks((prev) => [...prev, ...rows]);
+      // On first page: replace all tracks atomically (no flash from empty-list state)
+      if (offsetRef.current === 0) {
+        // Animate only rows that weren't already in the list before reload
+        if (animateNextLoadRef.current) {
+          animateNextLoadRef.current = false;
+          const truly = new Set(
+            rows.filter((r) => !preReloadIdsRef.current.has(r.id)).map((r) => r.id)
+          );
+          if (truly.size > 0) setNewTrackIds((prev) => new Set([...prev, ...truly]));
+        }
+        setTracks(rows);
+      } else {
+        setTracks((prev) => [...prev, ...rows]);
+      }
       offsetRef.current += rows.length;
 
       if (rows.length < PAGE_SIZE) {
@@ -520,16 +559,28 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   }, [tracks, sortBy]);
 
   useEffect(() => {
+    // Snapshot IDs currently visible so loadTracks can diff truly-new rows
+    preReloadIdsRef.current = new Set(sortedTracksRef.current.map((t) => t.id));
+
+    // Only clear selection + reset sort when the VIEW changes (user navigated to a
+    // different playlist or typed a new search). Pure data reloads (loadKey bumps from
+    // import/playlist-updated) should preserve selection so the user isn't surprised.
+    const viewChanged =
+      prevSelectedPlaylistRef.current !== selectedPlaylist || prevSearchRef.current !== search;
+    prevSelectedPlaylistRef.current = selectedPlaylist;
+    prevSearchRef.current = search;
+
     offsetRef.current = 0;
     loadingRef.current = false;
     hasMoreRef.current = true;
     resetTokenRef.current += 1;
-    setTracks([]);
     setHasMore(true);
-    setSelectedIds(new Set());
-    lastSelectedIndexRef.current = null;
-    setSortBy({ key: 'index', asc: true }); // reset sort when switching view/search
-    setSortSaved(true);
+    if (viewChanged) {
+      setSelectedIds(new Set());
+      lastSelectedIndexRef.current = null;
+      setSortBy({ key: 'index', asc: true });
+      setSortSaved(true);
+    }
 
     // Use setTimeout so the state updates above are committed before we load.
     // The cleanup cancels the timer — in StrictMode this means the first
@@ -586,7 +637,31 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
 
   // Refresh list when new tracks are imported
   useEffect(() => {
-    const unsub = window.api.onLibraryUpdated(() => setLoadKey((k) => k + 1));
+    const unsub = window.api.onLibraryUpdated(async () => {
+      const isDefaultView = selectedPlaylistRef.current === 'music' && !searchRef.current;
+      if (isDefaultView) {
+        // Soft append: fetch only the new rows at the current end of the list.
+        // This avoids resetting the list (which shrinks the scroll container and
+        // snaps the user away from their current position).
+        const currentCount = sortedTracksRef.current.length;
+        const rows = await window.api.getTracks({ limit: PAGE_SIZE, offset: currentCount });
+        if (rows.length > 0) {
+          const newIds = new Set(rows.map((r) => r.id));
+          setNewTrackIds((prev) => new Set([...prev, ...newIds]));
+          setTracks((prev) => [...prev, ...rows]);
+          offsetRef.current = currentCount + rows.length;
+          if (rows.length < PAGE_SIZE) {
+            hasMoreRef.current = false;
+            setHasMore(false);
+          }
+        }
+      } else {
+        // Filtered / playlist view: full reload (content may have changed meaningfully)
+        preReloadIdsRef.current = new Set(sortedTracksRef.current.map((t) => t.id));
+        animateNextLoadRef.current = true;
+        setLoadKey((k) => k + 1);
+      }
+    });
     return unsub;
   }, []);
 
@@ -1055,6 +1130,15 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     [selectedIds]
   );
 
+  const handleRowAnimationEnd = useCallback((trackId) => {
+    setNewTrackIds((prev) => {
+      if (!prev.has(trackId)) return prev;
+      const next = new Set(prev);
+      next.delete(trackId);
+      return next;
+    });
+  }, []);
+
   const handleSaveOrder = useCallback(async () => {
     await window.api.reorderPlaylist(
       Number(selectedPlaylist),
@@ -1238,6 +1322,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                         gridTemplate={gridTemplate}
                         minScrollWidth={minScrollWidth}
                         mediaPort={mediaPort}
+                        isNew={newTrackIds.has(t.id)}
+                        onAnimationEnd={handleRowAnimationEnd}
                       />
                     ))}
                   </div>
@@ -1282,6 +1368,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                 gridTemplate,
                 minScrollWidth,
                 mediaPort,
+                newTrackIds,
+                onAnimationEnd: handleRowAnimationEnd,
               }}
             />
           )}
