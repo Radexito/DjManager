@@ -447,7 +447,11 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
   ).length;
   // Drive overall counter from trackStatuses (truth source) to avoid yt-dlp reset on retry
   const overallTotal = trackStatuses.length || (progress?.overallTotal ?? 1);
-  const overallCurrent = loading ? Math.min(completedCount + 1, overallTotal) : completedCount;
+  // Prefer overallCurrent from yt-dlp progress so the counter advances immediately when a
+  // new track starts (before_dl), instead of waiting for the async import to finish.
+  const overallCurrent = loading
+    ? (progress?.overallCurrent ?? Math.min(completedCount + 1, overallTotal))
+    : completedCount;
   const overallPct = overallTotal > 0 ? Math.round((overallCurrent / overallTotal) * 100) : 0;
 
   const availableEntries = playlistInfo ? playlistInfo.entries.filter((e) => !e.unavailable) : [];
