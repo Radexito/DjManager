@@ -156,30 +156,21 @@ export async function fetchPlaylistInfo(url, options = {}) {
 
 const INNERTUBE_CONCURRENCY = 6;
 const INNERTUBE_TIMEOUT_MS = 8000;
-// YouTube InnerTube player endpoint.
-// We check with two clients because no single client catches everything:
-//  - WEB: conservative, matches what yt-dlp's primary scraper sees
-//  - TVHTML5_SIMPLY_EMBEDDED_PLAYER: catches videos restricted on web but playable on TV embed
-// Any non-OK status from either marks the video as unavailable.
+// YouTube InnerTube player endpoint using the WEB client.
+// The WEB client is what yt-dlp's primary scraper uses, so if it returns UNPLAYABLE/ERROR
+// the download will also fail. HTTP non-200 means auth/quota issue → assume available.
 const INNERTUBE_URL = 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
-const INNERTUBE_CLIENTS = [
-  {
-    clientName: 'WEB',
-    clientVersion: '2.20240101.00.00',
-    hl: 'en',
-  },
-  {
-    clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-    clientVersion: '2.0',
-    hl: 'en',
-  },
-];
+const INNERTUBE_WEB_CLIENT = {
+  clientName: 'WEB',
+  clientVersion: '2.20231219.01.00', // yt-dlp WEB client version
+  hl: 'en',
+};
 
 /**
- * Batch-check YouTube video availability via the InnerTube player API.
- * Checks with two clients (WEB + TV_EMBEDDED) to catch geo-restricted,
- * content-match-removed, private, deleted, and other unplayable states.
+ * Batch-check YouTube video availability via the InnerTube player API (WEB client).
  * Mutates each entry in-place: sets entry.unavailable and entry.unavailableReason.
+ * Only marks unavailable when InnerTube explicitly returns a non-OK playabilityStatus.
+ * HTTP errors (auth/quota) are treated as "can't determine → assume available".
  */
 async function checkYouTubeAvailability(entries) {
   const toCheck = entries.filter((e) => !e.unavailable && e.id);
@@ -188,34 +179,37 @@ async function checkYouTubeAvailability(entries) {
   console.log(`[ytdlp] InnerTube availability check for ${toCheck.length} entries…`);
 
   async function checkOne(videoId) {
-    for (const clientCtx of INNERTUBE_CLIENTS) {
-      try {
-        const res = await fetch(INNERTUBE_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ videoId, context: { client: clientCtx } }),
-          signal: AbortSignal.timeout(INNERTUBE_TIMEOUT_MS),
-        });
-        if (!res.ok) continue;
-        const data = await res.json();
-        const ps = data?.playabilityStatus;
-        const status = ps?.status;
-        console.log(`[ytdlp] ${videoId} [${clientCtx.clientName}] → ${status}`);
-        if (status && status !== 'OK') {
-          return {
-            unavailable: true,
-            reason:
-              ps.reason ||
-              (status === 'LOGIN_REQUIRED'
-                ? 'Private video'
-                : status === 'UNPLAYABLE'
-                  ? 'Video unavailable'
-                  : 'Video unavailable'),
-          };
-        }
-      } catch {
-        // Timeout or network error for this client — try next
+    try {
+      const res = await fetch(INNERTUBE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoId, context: { client: INNERTUBE_WEB_CLIENT } }),
+        signal: AbortSignal.timeout(INNERTUBE_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        // HTTP error (auth/quota) — can't determine, assume available
+        console.log(`[ytdlp] ${videoId} [WEB] HTTP ${res.status} — assuming available`);
+        return { unavailable: false };
       }
+      const data = await res.json();
+      const ps = data?.playabilityStatus;
+      const status = ps?.status;
+      console.log(`[ytdlp] ${videoId} [WEB] → ${status}`);
+      if (status && status !== 'OK') {
+        return {
+          unavailable: true,
+          reason:
+            ps.reason ||
+            (status === 'LOGIN_REQUIRED'
+              ? 'Private video'
+              : status === 'UNPLAYABLE'
+                ? 'Video unavailable'
+                : 'Video unavailable'),
+        };
+      }
+    } catch {
+      // Timeout or network error — assume available, yt-dlp will report if not
+      console.log(`[ytdlp] ${videoId} [WEB] network error — assuming available`);
     }
     return { unavailable: false };
   }
