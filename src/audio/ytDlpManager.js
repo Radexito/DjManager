@@ -430,7 +430,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
   args.push(url);
 
   return new Promise((resolve, reject) => {
-    const proc = spawn(ytDlp, args);
+    const proc = spawn(ytDlp, args, { env: { ...process.env, PYTHONUNBUFFERED: '1' } });
     const startTime = Date.now();
 
     let currentQuality = 'unknown';
@@ -469,7 +469,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
     let lastProgressSent = 0;
     const throttledProgress = (data) => {
       const now = Date.now();
-      if (now - lastProgressSent >= 200) {
+      if (now - lastProgressSent >= 100) {
         lastProgressSent = now;
         onProgress?.(data);
       }
