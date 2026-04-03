@@ -657,10 +657,18 @@ ipcMain.handle('ytdlp-fetch-info', async (_event, url) => {
     const cookiesBrowser = getSetting('ytdlp_cookies_browser', '') || null;
     if (cookiesBrowser)
       console.log('[ytdlp-fetch-info] using cookies from browser:', cookiesBrowser);
-    const info = await ytDlpFetchPlaylistInfo(url, { cookiesBrowser });
+    const info = await ytDlpFetchPlaylistInfo(url, {
+      cookiesBrowser,
+      onCheckProgress: ({ checked, total }) => {
+        if (global.mainWindow)
+          global.mainWindow.webContents.send('ytdlp-check-progress', { checked, total });
+      },
+    });
+    if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-check-progress', null);
     console.log(`[ytdlp-fetch-info] ok — type=${info.type} entries=${info.entries?.length}`);
     return { ok: true, ...info };
   } catch (err) {
+    if (global.mainWindow) global.mainWindow.webContents.send('ytdlp-check-progress', null);
     console.error('[ytdlp-fetch-info] error:', err.message);
     return { ok: false, error: err.message };
   }

@@ -45,6 +45,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
   // ── step: url ─────────────────────────────────────────────────────────────
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState(null);
+  const [checkProgress, setCheckProgress] = useState(null); // { checked, total } | null
   const inputRef = useRef(null);
 
   // ── step: select ──────────────────────────────────────────────────────────
@@ -69,6 +70,10 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
         setLoading(false);
         setProgress(null);
       } else setProgress(data);
+    });
+
+    const unsubCheckProgress = window.api.onYtDlpCheckProgress((data) => {
+      setCheckProgress(data); // null when done
     });
 
     const unsubTrack = window.api.onYtDlpTrackUpdate((update) => {
@@ -108,6 +113,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
 
     return () => {
       unsubProgress();
+      unsubCheckProgress();
       unsubTrack();
     };
   }, []);
@@ -379,7 +385,9 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
                         strokeLinecap="round"
                       />
                     </svg>
-                    Loading…
+                    {checkProgress
+                      ? `Checking ${checkProgress.checked}/${checkProgress.total}…`
+                      : 'Loading…'}
                   </span>
                 ) : (
                   'Load →'

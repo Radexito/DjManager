@@ -117,6 +117,11 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('ytdlp-progress', handler);
     return () => ipcRenderer.removeListener('ytdlp-progress', handler);
   },
+  onYtDlpCheckProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-check-progress', handler);
+    return () => ipcRenderer.removeListener('ytdlp-check-progress', handler);
+  },
   onYtDlpTrackUpdate: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('ytdlp-track-update', handler);
