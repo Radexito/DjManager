@@ -410,3 +410,23 @@
   color: #888;
   font-size: 11px;
 }
+
+.settings-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-toggle-row input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: #1db954;
+}
+
+.settings-toggle-desc {
+  color: #aaa;
+  font-size: 12px;
+  line-height: 1.4;
+}
