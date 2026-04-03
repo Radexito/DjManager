@@ -371,11 +371,15 @@ export function clearTracks() {
  * Checks source_link, source_url, AND title (yt-dlp stores the video ID in
  * brackets at the end of the title when source_link is not captured).
  */
+/**
+ * For each entry check whether a track already exists in the library.
+ * Returns an array of { url, trackId } for every entry that matches.
+ */
 export function getExistingSourceUrls(entries) {
-  if (!entries || entries.length === 0) return new Set();
-  const found = new Set();
+  if (!entries || entries.length === 0) return [];
+  const results = [];
   const stmt = db.prepare(
-    `SELECT 1 FROM tracks
+    `SELECT id FROM tracks
      WHERE source_link LIKE ? OR source_url LIKE ? OR title LIKE ?
      LIMIT 1`
   );
@@ -383,7 +387,22 @@ export function getExistingSourceUrls(entries) {
     if (!id && !url) continue;
     const pattern = `%${id || url}%`;
     const row = stmt.get(pattern, pattern, pattern);
-    if (row) found.add(url);
+    if (row) results.push({ url, trackId: row.id });
   }
-  return found;
+  return results;
+}
+
+/**
+ * Returns all tracks in a playlist with their source URL fields,
+ * used to determine "already in playlist" status on the selection screen.
+ */
+export function getPlaylistSourceUrls(playlistId) {
+  return db
+    .prepare(
+      `SELECT t.id AS trackId, t.source_url, t.source_link
+       FROM playlist_tracks pt
+       JOIN tracks t ON t.id = pt.track_id
+       WHERE pt.playlist_id = ?`
+    )
+    .all(playlistId);
 }

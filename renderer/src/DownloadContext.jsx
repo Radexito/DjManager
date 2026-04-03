@@ -11,11 +11,17 @@ export function DownloadProvider({ children }) {
   // ── step: url ───────────────────────────────────────────────────────────────
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState(null);
+  const [checkProgress, setCheckProgress] = useState(null); // { checked, total } | null
 
   // ── step: select ─────────────────────────────────────────────────────────────
   const [playlistInfo, setPlaylistInfo] = useState(null);
   const [selectedIndices, setSelectedIndices] = useState(new Set());
-  const [duplicateUrls, setDuplicateUrls] = useState(new Set());
+  // libraryMap: Map<entryUrl, trackId> — tracks already in the library
+  const [libraryMap, setLibraryMap] = useState(new Map());
+  // linkIndices: Set<entryIndex> — tracks to link (in library, user wants to add to playlist)
+  const [linkIndices, setLinkIndices] = useState(new Set());
+  // playlistMemberUrls: Set<entryUrl> — tracks already in the TARGET playlist
+  const [playlistMemberUrls, setPlaylistMemberUrls] = useState(new Set());
   const [playlists, setPlaylists] = useState([]);
   const [targetPlaylistId, setTargetPlaylistId] = useState(null);
   const [targetPlaylistName, setTargetPlaylistName] = useState('');
@@ -37,6 +43,28 @@ export function DownloadProvider({ children }) {
       }
     });
 
+    const unsubCheckProgress = window.api.onYtDlpCheckProgress((data) => {
+      setCheckProgress(data); // null when done
+    });
+
+    // Fires once the flat-playlist fetch is done — populate entries before availability check
+    const unsubEntriesReady = window.api.onYtDlpEntriesReady((entries) => {
+      setPlaylistInfo((prev) =>
+        prev ? { ...prev, entries } : { type: 'playlist', title: null, entries }
+      );
+    });
+
+    // Fires after each individual entry is checked — flip unavailable flag in-place
+    const unsubEntryChecked = window.api.onYtDlpEntryChecked(({ id, unavailable }) => {
+      setPlaylistInfo((prev) => {
+        if (!prev?.entries) return prev;
+        const updated = prev.entries.map((e) =>
+          e.id === id ? { ...e, unavailable, checked: true } : e
+        );
+        return { ...prev, entries: updated };
+      });
+    });
+
     const unsubTrack = window.api.onYtDlpTrackUpdate((update) => {
       if (update.type === 'init') {
         setTrackStatuses((prev) => {
@@ -48,6 +76,14 @@ export function DownloadProvider({ children }) {
             status: 'pending',
           }));
         });
+      } else if (update.type === 'unavailable') {
+        setTrackStatuses((prev) =>
+          prev.map((t) =>
+            t.title?.includes(update.videoId) || t.url?.includes(update.videoId)
+              ? { ...t, status: 'failed', error: update.reason }
+              : t
+          )
+        );
       } else {
         setTrackStatuses((prev) => {
           const next = [...prev];
@@ -64,15 +100,14 @@ export function DownloadProvider({ children }) {
 
     return () => {
       unsubProgress();
+      unsubCheckProgress();
+      unsubEntriesReady();
+      unsubEntryChecked();
       unsubTrack();
     };
   }, []);
 
   // ── derived ──────────────────────────────────────────────────────────────────
-  // Progress summary for the sidebar progress bar.
-  // Use trackStatuses.length as authoritative total — it's pre-populated from the
-  // user's selection before any IPC event arrives, so it stays correct even when
-  // early yt-dlp output reports overallTotal=1 before the playlist counter line.
   const completedCount = trackStatuses.filter(
     (s) => s.status === 'done' || s.status === 'failed'
   ).length;
@@ -91,7 +126,9 @@ export function DownloadProvider({ children }) {
     setStep('url');
     setPlaylistInfo(null);
     setSelectedIndices(new Set());
-    setDuplicateUrls(new Set());
+    setLibraryMap(new Map());
+    setLinkIndices(new Set());
+    setPlaylistMemberUrls(new Set());
     setTargetPlaylistId(null);
     setTargetPlaylistName('');
     setFetchError(null);
@@ -113,12 +150,18 @@ export function DownloadProvider({ children }) {
         setFetching,
         fetchError,
         setFetchError,
+        checkProgress,
+        setCheckProgress,
         playlistInfo,
         setPlaylistInfo,
         selectedIndices,
         setSelectedIndices,
-        duplicateUrls,
-        setDuplicateUrls,
+        libraryMap,
+        setLibraryMap,
+        linkIndices,
+        setLinkIndices,
+        playlistMemberUrls,
+        setPlaylistMemberUrls,
         playlists,
         setPlaylists,
         targetPlaylistId,
