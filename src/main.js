@@ -1,7 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, MenuItem, shell } from 'electron';
 
 // Fix for Linux/Wayland + AMD radeonsi/Mesa stability issues.
 // Root cause chain (diagnosed 2025-03):
@@ -124,6 +124,27 @@ function createWindow() {
 
   global.mainWindow = mainWindow; // make accessible to workers
   mainWindow.maximize();
+
+  // Native right-click context menu for editable inputs and text selections
+  mainWindow.webContents.on('context-menu', (_e, params) => {
+    const menu = new Menu();
+    if (params.isEditable) {
+      if (params.editFlags.canUndo) menu.append(new MenuItem({ role: 'undo', label: 'Undo' }));
+      if (params.editFlags.canRedo) menu.append(new MenuItem({ role: 'redo', label: 'Redo' }));
+      if (params.editFlags.canUndo || params.editFlags.canRedo)
+        menu.append(new MenuItem({ type: 'separator' }));
+      menu.append(new MenuItem({ role: 'cut', label: 'Cut', enabled: params.editFlags.canCut }));
+      menu.append(new MenuItem({ role: 'copy', label: 'Copy', enabled: params.editFlags.canCopy }));
+      menu.append(
+        new MenuItem({ role: 'paste', label: 'Paste', enabled: params.editFlags.canPaste })
+      );
+      menu.append(new MenuItem({ type: 'separator' }));
+      menu.append(new MenuItem({ role: 'selectAll', label: 'Select All' }));
+    } else if (params.selectionText) {
+      menu.append(new MenuItem({ role: 'copy', label: 'Copy' }));
+    }
+    if (menu.items.length > 0) menu.popup();
+  });
 
   if (process.env.E2E_TEST === '1') {
     mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'));

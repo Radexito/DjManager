@@ -348,7 +348,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
               <input
                 ref={inputRef}
                 className="dl-input"
-                type="url"
+                type="text"
                 placeholder="https://www.youtube.com/watch?v=…"
                 value={url}
                 onChange={(e) => {
