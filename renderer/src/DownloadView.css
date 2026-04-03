@@ -82,6 +82,20 @@
   cursor: not-allowed;
 }
 
+.dl-btn--cancel {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 10px 12px;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 400;
+}
+
+.dl-btn--cancel:hover:not(:disabled) {
+  opacity: 1;
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
 /* ── Progress ────────────────────────────────────────────────────────────── */
 
 .dl-progress {
