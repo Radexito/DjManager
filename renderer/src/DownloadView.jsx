@@ -173,7 +173,9 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
 
       // Pre-select only non-duplicate entries
       setSelectedIndices(
-        new Set(res.entries.filter((e) => !dupUrls.has(e.url)).map((e) => e.index))
+        new Set(
+          res.entries.filter((e) => !e.unavailable && !dupUrls.has(e.url)).map((e) => e.index)
+        )
       );
       // Fetch existing playlists for the combobox
       let existingPlaylists = [];
@@ -222,12 +224,11 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
     });
   }, []);
 
-  // Step 2: select / deselect all
+  // Step 2: select / deselect all — only toggles available entries
   const handleToggleAll = useCallback(() => {
+    const available = playlistInfo.entries.filter((e) => !e.unavailable);
     setSelectedIndices((prev) =>
-      prev.size === playlistInfo.entries.length
-        ? new Set()
-        : new Set(playlistInfo.entries.map((_, i) => i))
+      prev.size === available.length ? new Set() : new Set(available.map((e) => e.index))
     );
   }, [playlistInfo]);
 
@@ -259,9 +260,9 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
       overallTotal: selectedEntries.length,
     });
 
-    // Build --playlist-items string (1-based) only when a subset is selected
+    // Build --playlist-items string (1-based) only when a subset of available entries is selected
     let playlistItems = null;
-    if (playlistInfo.type === 'playlist' && selectedIndices.size < playlistInfo.entries.length) {
+    if (playlistInfo.type === 'playlist' && selectedIndices.size < availableEntries.length) {
       playlistItems = Array.from(selectedIndices)
         .sort((a, b) => a - b)
         .map((i) => i + 1)
@@ -308,7 +309,12 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
   const overallCurrent = loading ? Math.min(completedCount + 1, overallTotal) : completedCount;
   const overallPct = overallTotal > 0 ? Math.round((overallCurrent / overallTotal) * 100) : 0;
 
-  const allSelected = playlistInfo && selectedIndices.size === playlistInfo.entries.length;
+  const availableEntries = playlistInfo ? playlistInfo.entries.filter((e) => !e.unavailable) : [];
+  const unavailableCount = playlistInfo
+    ? playlistInfo.entries.filter((e) => e.unavailable).length
+    : 0;
+  const allSelected =
+    playlistInfo && selectedIndices.size === availableEntries.length && availableEntries.length > 0;
   const someSelected = playlistInfo && selectedIndices.size > 0 && !allSelected;
 
   // ── render ────────────────────────────────────────────────────────────────
@@ -320,7 +326,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
           {step === 'url' && 'Paste a URL to preview and choose tracks before downloading.'}
           {step === 'select' &&
             (playlistInfo?.type === 'playlist'
-              ? `${playlistInfo.entries.length} tracks found — select what to download.`
+              ? `${availableEntries.length} track${availableEntries.length !== 1 ? 's' : ''} found${unavailableCount > 0 ? ` (${unavailableCount} unavailable)` : ''} — select what to download.`
               : 'Ready to download.')}
           {step === 'download' && 'Downloading and importing to your library…'}
         </p>
@@ -430,7 +436,18 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
                 {playlistInfo.title || (playlistInfo.type === 'playlist' ? 'Playlist' : 'Track')}
               </span>
               {playlistInfo.type === 'playlist' && (
-                <span className="dl-select-count">{playlistInfo.entries.length} tracks</span>
+                <span className="dl-select-count">
+                  {availableEntries.length} track{availableEntries.length !== 1 ? 's' : ''}
+                  {unavailableCount > 0 && (
+                    <span
+                      className="dl-select-count-unavailable"
+                      title={`${unavailableCount} video${unavailableCount !== 1 ? 's' : ''} are unavailable (private, deleted, or restricted)`}
+                    >
+                      {' '}
+                      · {unavailableCount} unavailable
+                    </span>
+                  )}
+                </span>
               )}
             </div>
           </div>
@@ -449,7 +466,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
                 {allSelected ? 'Deselect all' : 'Select all'}
               </label>
               <span className="dl-select-selected-count">
-                {selectedIndices.size} / {playlistInfo.entries.length} selected
+                {selectedIndices.size} / {availableEntries.length} selected
               </span>
             </div>
           )}
@@ -457,24 +474,35 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
           <div className="dl-select-list">
             {playlistInfo.entries.map((entry) => {
               const isDupe = duplicateUrls.has(entry.url);
+              const isUnavailable = !!entry.unavailable;
               return (
                 <label
                   key={entry.index}
-                  className={`dl-select-item${isDupe ? ' dl-select-item--dupe' : ''}`}
+                  className={`dl-select-item${isDupe ? ' dl-select-item--dupe' : ''}${isUnavailable ? ' dl-select-item--unavailable' : ''}`}
+                  title={isUnavailable ? entry.unavailableReason || 'Unavailable' : undefined}
                 >
                   {playlistInfo.type === 'playlist' && (
                     <input
                       type="checkbox"
-                      checked={selectedIndices.has(entry.index)}
-                      onChange={() => handleToggleEntry(entry.index)}
+                      checked={!isUnavailable && selectedIndices.has(entry.index)}
+                      disabled={isUnavailable}
+                      onChange={() => !isUnavailable && handleToggleEntry(entry.index)}
                     />
                   )}
                   <span className="dl-select-item-num">{entry.index + 1}.</span>
                   <span className="dl-select-item-title">{entry.title}</span>
-                  {entry.duration && (
+                  {entry.duration && !isUnavailable && (
                     <span className="dl-select-item-dur">{fmtDuration(entry.duration)}</span>
                   )}
-                  {isDupe && (
+                  {isUnavailable && (
+                    <span
+                      className="dl-select-item-unavailable-badge"
+                      title={entry.unavailableReason || 'Unavailable'}
+                    >
+                      ✗ {entry.unavailableReason || 'Unavailable'}
+                    </span>
+                  )}
+                  {isDupe && !isUnavailable && (
                     <span className="dl-select-item-dupe-badge" title="Already in your library">
                       ✓ in library
                     </span>
