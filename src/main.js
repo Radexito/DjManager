@@ -54,6 +54,7 @@ import {
   getTrackIdsNeedingNormalization,
   getNormalizedTrackCount,
   getExistingSourceUrls,
+  getPlaylistSourceUrls,
 } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import {
@@ -675,8 +676,11 @@ ipcMain.handle('ytdlp-fetch-info', async (_event, url) => {
 });
 
 ipcMain.handle('check-duplicate-urls', (_event, entries) => {
-  const found = getExistingSourceUrls(entries);
-  return [...found];
+  return getExistingSourceUrls(entries); // [{url, trackId}]
+});
+
+ipcMain.handle('get-playlist-source-urls', (_event, playlistId) => {
+  return getPlaylistSourceUrls(playlistId); // [{trackId, source_url, source_link}]
 });
 
 // ─── yt-dlp URL download ──────────────────────────────────────────────────────

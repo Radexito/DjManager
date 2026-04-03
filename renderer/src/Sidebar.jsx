@@ -28,6 +28,7 @@ function Sidebar({
   const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
   const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
   const [ytDlpProgress, setYtDlpProgress] = useState(null); // { msg, pct, overallCurrent, overallTotal } | null
+  const [ytDlpCheckProgress, setYtDlpCheckProgress] = useState(null); // { checked, total } | null during fetch/check
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -130,6 +131,13 @@ function Sidebar({
       } else {
         setYtDlpProgress(data);
       }
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = window.api.onYtDlpCheckProgress((data) => {
+      setYtDlpCheckProgress(data); // null when done
     });
     return unsub;
   }, []);
@@ -306,6 +314,26 @@ function Sidebar({
                 className="normalize-progress-fill"
                 style={{
                   width: `${Math.round((normalizeProgress.completed / normalizeProgress.total) * 100)}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
+        {ytDlpCheckProgress && !ytDlpProgress && (
+          <div className="normalize-progress-wrap">
+            <div className="normalize-progress-label">
+              <span>Checking tracks…</span>
+              {ytDlpCheckProgress.total > 0 && (
+                <span>
+                  {ytDlpCheckProgress.checked} / {ytDlpCheckProgress.total}
+                </span>
+              )}
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill ytdlp-progress-fill"
+                style={{
+                  width: `${ytDlpCheckProgress.total > 0 ? Math.round((ytDlpCheckProgress.checked / ytDlpCheckProgress.total) * 100) : 0}%`,
                 }}
               />
             </div>

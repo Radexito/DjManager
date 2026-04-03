@@ -542,6 +542,10 @@
   flex-shrink: 0;
 }
 
+.dl-select-item-badge--playlist {
+  color: #7c9fd4;
+}
+
 .dl-select-item-unavailable-badge {
   font-size: 11px;
   color: #e57373;

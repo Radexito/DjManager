@@ -104,6 +104,7 @@ contextBridge.exposeInMainWorld('api', {
   getMediaPort: () => ipcRenderer.invoke('get-media-port'),
   ytDlpFetchInfo: (url) => ipcRenderer.invoke('ytdlp-fetch-info', url),
   checkDuplicateUrls: (urls) => ipcRenderer.invoke('check-duplicate-urls', urls),
+  getPlaylistSourceUrls: (playlistId) => ipcRenderer.invoke('get-playlist-source-urls', playlistId),
   ytDlpDownloadUrl: ({ url, playlistItems, playlistTitle, existingPlaylistId, newPlaylistName }) =>
     ipcRenderer.invoke('ytdlp-download-url', {
       url,
