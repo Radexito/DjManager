@@ -139,7 +139,10 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
     e.preventDefault();
     const trimmed = url.trim();
     if (!trimmed || fetching) return;
-    console.log('[DownloadView] handleLoad start, url=', trimmed);
+    // Auto-prepend https:// if no protocol is present
+    const normalizedUrl = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    console.log('[DownloadView] handleLoad start, url=', normalizedUrl);
+    if (normalizedUrl !== trimmed) setUrl(normalizedUrl); // update input to show normalised form
     setFetching(true);
     setFetchError(null);
     try {
@@ -148,7 +151,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
           'ytDlpFetchInfo is not available — please restart the app to load the latest preload changes.'
         );
       }
-      const res = await window.api.ytDlpFetchInfo(trimmed);
+      const res = await window.api.ytDlpFetchInfo(normalizedUrl);
       console.log('[DownloadView] ytDlpFetchInfo result:', res);
       if (!res.ok) {
         setFetchError(res.error);
@@ -260,9 +263,14 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
       overallTotal: selectedEntries.length,
     });
 
-    // Build --playlist-items string (1-based) only when a subset of available entries is selected
+    // Always pass --playlist-items when:
+    // - user deselected some available tracks, OR
+    // - there are unavailable entries that must be excluded (even if user selected all available)
     let playlistItems = null;
-    if (playlistInfo.type === 'playlist' && selectedIndices.size < availableEntries.length) {
+    if (
+      playlistInfo.type === 'playlist' &&
+      (selectedIndices.size < availableEntries.length || unavailableCount > 0)
+    ) {
       playlistItems = Array.from(selectedIndices)
         .sort((a, b) => a - b)
         .map((i) => i + 1)
