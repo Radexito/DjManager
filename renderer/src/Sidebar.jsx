@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import ImportPlaylistModal from './ImportPlaylistModal.jsx';
 import { useDownload } from './DownloadContext.jsx';
 import './Sidebar.css';
+import ImportPlaylistDialog from './ImportPlaylistDialog';
 
 const MENU_ITEMS = [
   { id: 'music', name: 'Music', icon: '🎵' },
@@ -42,6 +43,7 @@ function Sidebar({
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
   const [dragOverPlaylistId, setDragOverPlaylistId] = useState(null);
+  const [importDialogFiles, setImportDialogFiles] = useState(null); // pending files waiting for playlist selection
   const newInputRef = useRef(null);
   const renameInputRef = useRef(null);
 
@@ -77,28 +79,25 @@ function Sidebar({
   const handleImport = async () => {
     const files = await window.api.selectAudioFiles();
     if (!files.length) return;
-    setPendingImportFiles(files);
+    setImportDialogFiles(files);
   };
 
-  const handleImportConfirm = async ({ mode, name, id }) => {
-    const files = pendingImportFiles;
-    setPendingImportFiles(null);
-    setImportProgress({ total: files.length, completed: 0 });
+  const handleImportConfirm = async (choice) => {
+    const files = importDialogFiles;
+    setImportDialogFiles(null);
+    if (!files?.length) return;
 
     let playlistId = null;
-    if (mode === 'existing') {
+
+    if (choice.type === 'create') {
+      const id = await window.api.createPlaylist(choice.name);
       playlistId = id;
-    } else if (mode === 'new' && name) {
-      const id = await window.api.createPlaylist(name, null);
-      playlistId = id ?? null;
+    } else if (choice.type === 'existing') {
+      playlistId = choice.id;
     }
 
-    const trackIds = await window.api.importAudioFiles(files);
-
-    if (playlistId && trackIds?.length) {
-      await window.api.addTracksToPlaylist(playlistId, trackIds);
-    }
-
+    setImportProgress({ total: files.length, completed: 0 });
+    await window.api.importAudioFiles(files, playlistId);
     setImportProgress({ total: 0, completed: 0 });
   };
 
@@ -483,11 +482,12 @@ function Sidebar({
           </div>
         </div>
       )}
-      {pendingImportFiles && (
-        <ImportPlaylistModal
-          fileCount={pendingImportFiles.length}
+
+      {importDialogFiles && (
+        <ImportPlaylistDialog
+          playlists={playlists}
           onConfirm={handleImportConfirm}
-          onCancel={() => setPendingImportFiles(null)}
+          onCancel={() => setImportDialogFiles(null)}
         />
       )}
     </div>
