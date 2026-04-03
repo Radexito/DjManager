@@ -68,7 +68,6 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
     setTargetPlaylistId,
     targetPlaylistName,
     setTargetPlaylistName,
-    loading,
     setLoading,
     progress,
     setProgress,
@@ -447,7 +446,8 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
   ).length;
   // Drive overall counter from trackStatuses (truth source) to avoid yt-dlp reset on retry
   const overallTotal = trackStatuses.length || (progress?.overallTotal ?? 1);
-  const overallCurrent = loading ? Math.min(completedCount + 1, overallTotal) : completedCount;
+  // Show how many tracks have fully completed (done/failed), starting at 0.
+  const overallCurrent = completedCount;
   const overallPct = overallTotal > 0 ? Math.round((overallCurrent / overallTotal) * 100) : 0;
 
   const availableEntries = playlistInfo ? playlistInfo.entries.filter((e) => !e.unavailable) : [];
