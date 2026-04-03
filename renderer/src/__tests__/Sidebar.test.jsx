@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import Sidebar from '../Sidebar.jsx';
+import { DownloadProvider } from '../DownloadContext.jsx';
+
+function renderSidebar(props = {}) {
+  return render(
+    <DownloadProvider>
+      <Sidebar {...props} />
+    </DownloadProvider>
+  );
+}
 
 describe('Sidebar', () => {
   const defaultProps = {
@@ -11,17 +20,17 @@ describe('Sidebar', () => {
   };
 
   it('renders the Music menu item', () => {
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
     expect(screen.getByText('Music')).toBeInTheDocument();
   });
 
   it('renders the PLAYLISTS heading', () => {
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
     expect(screen.getByText('PLAYLISTS')).toBeInTheDocument();
   });
 
   it('shows empty state when no playlists exist', async () => {
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
     await waitFor(() => {
       expect(screen.getByText('No playlists yet')).toBeInTheDocument();
     });
@@ -33,7 +42,7 @@ describe('Sidebar', () => {
       { id: 2, name: 'House Vibes', color: null, track_count: 8, total_duration: 2400 },
     ]);
 
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
     await waitFor(() => {
       expect(screen.getByText('Techno Set')).toBeInTheDocument();
       expect(screen.getByText('House Vibes')).toBeInTheDocument();
@@ -42,7 +51,7 @@ describe('Sidebar', () => {
 
   it('calls onMenuSelect when Music is clicked', () => {
     const onMenuSelect = vi.fn();
-    render(<Sidebar {...defaultProps} onMenuSelect={onMenuSelect} />);
+    renderSidebar({ ...defaultProps, onMenuSelect });
     fireEvent.click(screen.getByText('Music'));
     expect(onMenuSelect).toHaveBeenCalledWith('music');
   });
@@ -53,14 +62,14 @@ describe('Sidebar', () => {
       { id: 42, name: 'My Set', color: null, track_count: 5, total_duration: 1500 },
     ]);
 
-    render(<Sidebar {...defaultProps} onMenuSelect={onMenuSelect} />);
+    renderSidebar({ ...defaultProps, onMenuSelect });
     await waitFor(() => screen.getByText('My Set'));
     fireEvent.click(screen.getByText('My Set'));
     expect(onMenuSelect).toHaveBeenCalledWith('42');
   });
 
   it('shows new playlist input when + button is clicked', () => {
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
     fireEvent.click(screen.getByTitle('New playlist'));
     expect(screen.getByPlaceholderText('Playlist name')).toBeInTheDocument();
   });
@@ -70,7 +79,7 @@ describe('Sidebar', () => {
       { id: 1, name: 'Techno Set', color: null, track_count: 0, total_duration: 0 },
     ]);
 
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
     await waitFor(() => screen.getByText('Techno Set'));
     fireEvent.contextMenu(screen.getByText('Techno Set'));
 
@@ -84,7 +93,7 @@ describe('Sidebar', () => {
       { id: 1, name: 'Techno Set', color: null, track_count: 0, total_duration: 0 },
     ]);
 
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
     await waitFor(() => screen.getByText('Techno Set'));
     fireEvent.contextMenu(screen.getByText('Techno Set'));
 
@@ -98,9 +107,10 @@ describe('Sidebar', () => {
       { id: 42, name: 'My Set', color: null, track_count: 0, total_duration: 0 },
     ]);
 
-    render(
-      <Sidebar {...defaultProps} onExportPlaylistRekordboxUsb={onExportPlaylistRekordboxUsb} />
-    );
+    renderSidebar({
+      ...defaultProps,
+      onExportPlaylistRekordboxUsb,
+    });
     await waitFor(() => screen.getByText('My Set'));
     fireEvent.contextMenu(screen.getByText('My Set'));
     fireEvent.click(screen.getByText(/Export Rekordbox USB/));
@@ -114,7 +124,7 @@ describe('Sidebar', () => {
       { id: 42, name: 'My Set', color: null, track_count: 0, total_duration: 0 },
     ]);
 
-    render(<Sidebar {...defaultProps} onExportPlaylistAll={onExportPlaylistAll} />);
+    renderSidebar({ ...defaultProps, onExportPlaylistAll });
     await waitFor(() => screen.getByText('My Set'));
     fireEvent.contextMenu(screen.getByText('My Set'));
     fireEvent.click(screen.getByText(/Export All to USB/));
@@ -123,7 +133,7 @@ describe('Sidebar', () => {
   });
 
   it('does not render an "Export USB…" bottom button', () => {
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
     expect(screen.queryByText(/Export USB/)).toBeNull();
   });
 });
@@ -145,7 +155,7 @@ describe('Sidebar — normalization progress bar', () => {
       return vi.fn(); // unsub
     });
 
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
 
     act(() => {
       progressCallback({ completed: 3, total: 10, done: false });
@@ -164,7 +174,7 @@ describe('Sidebar — normalization progress bar', () => {
       return vi.fn();
     });
 
-    render(<Sidebar {...defaultProps} />);
+    renderSidebar({ ...defaultProps });
 
     act(() => progressCallback({ completed: 5, total: 5, done: false }));
     await waitFor(() => expect(screen.getByText('Normalizing')).toBeInTheDocument());
