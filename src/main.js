@@ -83,6 +83,7 @@ import {
   updateAll,
 } from './deps.js';
 import { initLogger, getLogDir } from './logger.js';
+import { writeNml } from './audio/nmlWriter.js';
 import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
@@ -893,6 +894,102 @@ ipcMain.handle('open-external', async (_event, url) => {
   shell.openExternal(url);
 });
 
+// ─── Traktor NML Export ────────────────────────────────────────────────────────
+
+function sendNml(data) {
+  if (global.mainWindow) global.mainWindow.webContents.send('export-nml-progress', data);
+}
+
+/**
+ * Copy tracks to <destDir>/music/ with friendly "Artist - Title.ext" names.
+ * Returns a new tracks array with file_path rewritten to the copied location.
+ */
+function copyTracksForNml(tracks, destDir) {
+  const musicDir = path.join(destDir, 'music');
+  fs.mkdirSync(musicDir, { recursive: true });
+
+  const usedNames = new Set();
+  return tracks.map((track) => {
+    const ext = path.extname(track.file_path || '');
+    const rawBase =
+      [track.artist, track.title].filter(Boolean).join(' - ') ||
+      path.basename(track.file_path || 'track', ext);
+    const safeBase = rawBase.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+    let filename = `${safeBase}${ext}`;
+    let n = 1;
+    while (usedNames.has(filename)) filename = `${safeBase} (${n++})${ext}`;
+    usedNames.add(filename);
+
+    const dest = path.join(musicDir, filename);
+    if (track.file_path && fs.existsSync(track.file_path)) {
+      fs.copyFileSync(track.file_path, dest);
+    }
+
+    return { ...track, file_path: dest };
+  });
+}
+
+ipcMain.handle('export-nml', async (_, { outputPath, playlistId }) => {
+  try {
+    sendNml({ msg: 'Loading tracks…', pct: 10 });
+
+    const playlist = getPlaylist(playlistId);
+    if (!playlist) throw new Error('Playlist not found');
+
+    const trackRows = getPlaylistTracks(playlistId);
+    const tracks = trackRows.map((t) => getTrackById(t.id)).filter(Boolean);
+    const total = tracks.length;
+
+    sendNml({ msg: `Copying ${total} tracks…`, pct: 20 });
+    const outputDir = path.dirname(outputPath);
+    const copiedTracks = copyTracksForNml(tracks, outputDir);
+
+    sendNml({ msg: 'Writing NML…', pct: 80 });
+    const trackIds = tracks.map((t) => t.id);
+    const payload = {
+      tracks: copiedTracks,
+      playlists: [{ name: playlist.name, track_ids: trackIds }],
+    };
+
+    writeNml(payload, outputPath);
+    sendNml({ msg: 'Done', pct: 100 });
+    sendNml(null);
+    return { ok: true, outputPath };
+  } catch (err) {
+    sendNml(null);
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('export-nml-all', async (_, { outputPath }) => {
+  try {
+    sendNml({ msg: 'Loading library…', pct: 10 });
+
+    const allTracks = getTracks({ limit: 999999, offset: 0 });
+    const allPlaylists = getPlaylists();
+    const total = allTracks.length;
+
+    sendNml({ msg: `Copying ${total} tracks…`, pct: 20 });
+    const outputDir = path.dirname(outputPath);
+    const copiedTracks = copyTracksForNml(allTracks, outputDir);
+
+    sendNml({ msg: 'Writing NML…', pct: 80 });
+    const playlistsWithTracks = allPlaylists.map((pl) => {
+      const trackRows = getPlaylistTracks(pl.id);
+      return { name: pl.name, track_ids: trackRows.map((t) => t.id) };
+    });
+
+    const payload = { tracks: copiedTracks, playlists: playlistsWithTracks };
+    writeNml(payload, outputPath);
+
+    sendNml({ msg: 'Done', pct: 100 });
+    sendNml(null);
+    return { ok: true, outputPath };
+  } catch (err) {
+    sendNml(null);
+    return { ok: false, error: err.message };
+  }
+});
 // ─── USB / Rekordbox Export ────────────────────────────────────────────────────
 
 function send(channel, data) {
@@ -1294,7 +1391,6 @@ ipcMain.handle(
     }
   }
 );
-
 app.on('ready', initApp);
 app.on('window-all-closed', () => {
   console.log('All windows closed.');

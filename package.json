@@ -108,6 +108,9 @@
   },
   "homepage": "https://github.com/Radexito/djman#readme",
   "lint-staged": {
+    "*.js": [
+      "prettier --write"
+    ],
     "src/**/*.js": [
       "eslint --fix",
       "prettier --write"

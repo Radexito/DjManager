@@ -3,6 +3,7 @@ import Sidebar from './Sidebar.jsx';
 import MusicLibrary from './MusicLibrary.jsx';
 import DownloadView from './DownloadView.jsx';
 import SettingsModal from './SettingsModal.jsx';
+import NmlExportModal from './NmlExportModal.jsx';
 import ExportModal from './ExportModal.jsx';
 import PlayerBar from './PlayerBar.jsx';
 import TopBar from './TopBar.jsx';
@@ -14,6 +15,7 @@ function App() {
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('music');
   const [showSettings, setShowSettings] = useState(false);
   const [exportState, setExportState] = useState(null); // { playlistId, mode } | null
+  const [nmlModal, setNmlModal] = useState(null); // { playlistId, mode } | null
   const [depsProgress, setDepsProgress] = useState(null); // { msg, pct } or null
   const [search, setSearch] = useState('');
 
@@ -51,6 +53,8 @@ function App() {
                 setExportState({ playlistId: id, mode: 'rekordbox' })
               }
               onExportPlaylistAll={(id) => setExportState({ playlistId: id, mode: 'all' })}
+              onExportPlaylistNml={(id) => setNmlModal({ playlistId: id, mode: 'playlist' })}
+              onExportNmlAll={(id) => setNmlModal({ playlistId: id, mode: 'all' })}
             />
             {/* Always mounted so state persists when switching tabs */}
             <DownloadView
@@ -77,6 +81,13 @@ function App() {
             playlistId={exportState.playlistId}
             initialMode={exportState.mode}
             onClose={() => setExportState(null)}
+          />
+        )}
+        {nmlModal && (
+          <NmlExportModal
+            playlistId={nmlModal.playlistId}
+            initialMode={nmlModal.mode}
+            onClose={() => setNmlModal(null)}
           />
         )}
         {depsProgress && (

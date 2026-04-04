@@ -1,0 +1,100 @@
+.imp-modal {
+  background: #1a1a1a;
+  border: 1px solid #3a3a3a;
+  border-radius: 10px;
+  width: 380px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.75);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+}
+
+.imp-modal-title {
+  margin: 0;
+  padding: 18px 20px 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text, #e0e0f0);
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.imp-modal-body {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.imp-modal-label {
+  font-size: 12.5px;
+  color: var(--text-muted, #8a8a9a);
+}
+
+.imp-modal-select {
+  background: var(--input-bg, #1e1e2e);
+  color: var(--text, #e0e0f0);
+  border: 1px solid var(--border, #3a3a4a);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.imp-modal-select:focus {
+  outline: none;
+  border-color: var(--accent, #7c6af5);
+}
+
+.imp-modal-name-input {
+  background: var(--input-bg, #1e1e2e);
+  color: var(--text, #e0e0f0);
+  border: 1px solid var(--border, #3a3a4a);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.imp-modal-name-input:focus {
+  outline: none;
+  border-color: var(--accent, #7c6af5);
+}
+
+.imp-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid #2a2a2a;
+}
+
+.imp-modal-btn {
+  padding: 7px 18px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+}
+
+.imp-modal-btn--secondary {
+  background: #2a2a3a;
+  color: var(--text-muted, #8a8a9a);
+}
+
+.imp-modal-btn--secondary:hover {
+  background: #3a3a4a;
+  color: var(--text, #e0e0f0);
+}
+
+.imp-modal-btn--primary {
+  background: var(--accent, #7c6af5);
+  color: #fff;
+}
+
+.imp-modal-btn--primary:hover {
+  background: #6a59e0;
+}
