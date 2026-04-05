@@ -305,6 +305,10 @@
   margin-left: auto;
 }
 
+.dl-entry-playlist-badge {
+  color: #2196f3;
+}
+
 .dl-select-actions {
   display: flex;
   align-items: center;

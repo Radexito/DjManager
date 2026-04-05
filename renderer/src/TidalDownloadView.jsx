@@ -45,6 +45,8 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
     setLinkIndices,
     libraryMap,
     setLibraryMap,
+    playlistMemberUrls,
+    setPlaylistMemberUrls,
     playlists,
     setPlaylists,
     targetPlaylistId,
@@ -185,12 +187,33 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
         return;
       }
 
-      // Pre-select non-library entries; pre-link library entries
+      // Pre-select non-library entries; pre-link library entries not already in matched playlist
+      let newMemberUrls = new Set();
+      if (match && newLibraryMap.size > 0) {
+        try {
+          const memberRows = await window.api.getPlaylistSourceUrls(match.id);
+          const memberTrackIds = new Set(memberRows.map((r) => r.trackId));
+          newMemberUrls = new Set(
+            [...newLibraryMap.entries()]
+              .filter(([, tid]) => memberTrackIds.has(tid))
+              .map(([u]) => u)
+          );
+        } catch {
+          // non-fatal
+        }
+      }
+      setPlaylistMemberUrls(newMemberUrls);
+
       setSelectedIndices(
         new Set(res.entries.filter((e) => !newLibraryMap.has(e.url)).map((e) => e.index))
       );
+      // linkIndices = in library but NOT already in the matched playlist
       setLinkIndices(
-        new Set(res.entries.filter((e) => newLibraryMap.has(e.url)).map((e) => e.index))
+        new Set(
+          res.entries
+            .filter((e) => newLibraryMap.has(e.url) && !newMemberUrls.has(e.url))
+            .map((e) => e.index)
+        )
       );
       setStep('select');
     } catch (err) {
@@ -199,6 +222,43 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
       setFetching(false);
     }
   };
+
+  // ── target playlist change: re-check membership ────────────────────────────
+  const handleTargetPlaylistChange = useCallback(
+    async (newPlaylistId) => {
+      setTargetPlaylistId(newPlaylistId);
+      if (!newPlaylistId || libraryMap.size === 0) {
+        setPlaylistMemberUrls(new Set());
+        // Restore all library entries to linkIndices
+        if (playlistInfo) {
+          setLinkIndices(
+            new Set(playlistInfo.entries.filter((e) => libraryMap.has(e.url)).map((e) => e.index))
+          );
+        }
+        return;
+      }
+      try {
+        const memberRows = await window.api.getPlaylistSourceUrls(newPlaylistId);
+        const memberTrackIds = new Set(memberRows.map((r) => r.trackId));
+        const inPlaylist = new Set(
+          [...libraryMap.entries()].filter(([, tid]) => memberTrackIds.has(tid)).map(([u]) => u)
+        );
+        setPlaylistMemberUrls(inPlaylist);
+        if (playlistInfo) {
+          setLinkIndices(
+            new Set(
+              playlistInfo.entries
+                .filter((e) => libraryMap.has(e.url) && !inPlaylist.has(e.url))
+                .map((e) => e.index)
+            )
+          );
+        }
+      } catch {
+        setPlaylistMemberUrls(new Set());
+      }
+    },
+    [libraryMap, playlistInfo, setTargetPlaylistId, setPlaylistMemberUrls, setLinkIndices]
+  );
 
   // ── step select → download ─────────────────────────────────────────────────
   const handleDownload = async () => {
@@ -275,7 +335,9 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
   const handleToggleAll = useCallback(() => {
     if (!playlistInfo) return;
     const downloadable = playlistInfo.entries.filter((e) => !libraryMap.has(e.url));
-    const linkable = playlistInfo.entries.filter((e) => libraryMap.has(e.url));
+    const linkable = playlistInfo.entries.filter(
+      (e) => libraryMap.has(e.url) && !playlistMemberUrls.has(e.url)
+    );
     const allDownSelected = downloadable.every((e) => selectedIndices.has(e.index));
     const allLinkSelected = linkable.every((e) => linkIndices.has(e.index));
     if (allDownSelected && allLinkSelected) {
@@ -285,7 +347,15 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
       setSelectedIndices(new Set(downloadable.map((e) => e.index)));
       setLinkIndices(new Set(linkable.map((e) => e.index)));
     }
-  }, [playlistInfo, libraryMap, selectedIndices, linkIndices, setSelectedIndices, setLinkIndices]);
+  }, [
+    playlistInfo,
+    libraryMap,
+    playlistMemberUrls,
+    selectedIndices,
+    linkIndices,
+    setSelectedIndices,
+    setLinkIndices,
+  ]);
 
   // ── render: checking setup ────────────────────────────────────────────────
   if (setup === null) {
@@ -519,10 +589,14 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
   if (step === 'select') {
     const entries = playlistInfo?.entries ?? [];
     const downloadable = entries.filter((e) => !libraryMap.has(e.url));
-    const linkable = entries.filter((e) => libraryMap.has(e.url));
+    const linkable = entries.filter((e) => libraryMap.has(e.url) && !playlistMemberUrls.has(e.url));
     const allDownSelected = downloadable.every((e) => selectedIndices.has(e.index));
     const allLinkSelected = linkable.every((e) => linkIndices.has(e.index));
-    const allSelected = entries.length > 0 && allDownSelected && allLinkSelected;
+    const allSelected =
+      entries.length > 0 &&
+      allDownSelected &&
+      allLinkSelected &&
+      downloadable.length + linkable.length > 0;
     const totalActive = selectedIndices.size + linkIndices.size;
 
     return (
@@ -531,7 +605,8 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
           <h2 className="dl-title">{playlistInfo?.title ?? 'Select tracks'}</h2>
           <p className="dl-subtitle">
             {entries.length} track{entries.length !== 1 ? 's' : ''}
-            {libraryMap.size > 0 ? ` · ${libraryMap.size} already in library` : ''}
+            {libraryMap.size > 0 ? ` · ${libraryMap.size} in library` : ''}
+            {playlistMemberUrls.size > 0 ? ` · ${playlistMemberUrls.size} in playlist` : ''}
             {' · '}select which to download
           </p>
         </div>
@@ -549,6 +624,7 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
           <div className="dl-entries">
             {entries.map((entry) => {
               const inLibrary = libraryMap.has(entry.url);
+              const inPlaylist = playlistMemberUrls.has(entry.url);
               const checked = inLibrary
                 ? linkIndices.has(entry.index)
                 : selectedIndices.has(entry.index);
@@ -560,16 +636,24 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
                   <input
                     type="checkbox"
                     checked={checked}
-                    onChange={() => handleToggleEntry(entry.index, entry)}
+                    disabled={inPlaylist}
+                    onChange={() => !inPlaylist && handleToggleEntry(entry.index, entry)}
                   />
                   <span className="dl-entry-num">{entry.index + 1}</span>
                   <span className="dl-entry-info">
                     <span className="dl-entry-title">{entry.title}</span>
                     {entry.artist && <span className="dl-entry-artist">{entry.artist}</span>}
                   </span>
-                  {inLibrary && <span className="dl-entry-library-badge">✓ In library</span>}
-                  {!inLibrary && entry.duration > 0 && (
-                    <span className="dl-entry-dur">{fmtDuration(entry.duration)}</span>
+                  {inPlaylist ? (
+                    <span className="dl-entry-library-badge dl-entry-playlist-badge">
+                      ✓ In playlist
+                    </span>
+                  ) : inLibrary ? (
+                    <span className="dl-entry-library-badge">✓ In library</span>
+                  ) : (
+                    entry.duration > 0 && (
+                      <span className="dl-entry-dur">{fmtDuration(entry.duration)}</span>
+                    )
                   )}
                 </label>
               );
@@ -582,7 +666,7 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
           <select
             className="dl-playlist-select"
             value={targetPlaylistId ?? ''}
-            onChange={(e) => setTargetPlaylistId(e.target.value || null)}
+            onChange={(e) => handleTargetPlaylistChange(e.target.value || null)}
           >
             <option value="">None / new playlist</option>
             {playlists.map((pl) => (
