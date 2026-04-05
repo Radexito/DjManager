@@ -152,7 +152,6 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
       } catch {
         // non-fatal
       }
-      setLibraryMap(newLibraryMap);
 
       const pls = await window.api.getPlaylists().catch(() => []);
       setPlaylists(pls);
@@ -173,6 +172,7 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
         const linkIdx = new Set(
           (res.entries ?? []).filter((e) => newLibraryMap.has(e.url)).map((e) => e.index)
         );
+        setLibraryMap(newLibraryMap);
         setSelectedIndices(allIndices);
         setLinkIndices(linkIdx);
         setStep('download');
@@ -189,20 +189,37 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
 
       // Pre-select non-library entries; pre-link library entries not already in matched playlist
       let newMemberUrls = new Set();
-      if (match && newLibraryMap.size > 0) {
+      if (match) {
         try {
           const memberRows = await window.api.getPlaylistSourceUrls(match.id);
           const memberTrackIds = new Set(memberRows.map((r) => r.trackId));
-          newMemberUrls = new Set(
-            [...newLibraryMap.entries()]
-              .filter(([, tid]) => memberTrackIds.has(tid))
-              .map(([u]) => u)
-          );
+          for (const entry of res.entries ?? []) {
+            const entryId = String(entry.id ?? '');
+            // Primary: trackId via libraryMap
+            const libTid = newLibraryMap.get(entry.url);
+            if (libTid && memberTrackIds.has(libTid)) {
+              newMemberUrls.add(entry.url);
+              continue;
+            }
+            // Fallback: direct pattern match (handles old source_url format)
+            if (entryId) {
+              const hit = memberRows.find(
+                (r) =>
+                  (r.source_url && r.source_url.includes(entryId)) ||
+                  (r.source_link && r.source_link.includes(entryId))
+              );
+              if (hit) {
+                newMemberUrls.add(entry.url);
+                if (!newLibraryMap.has(entry.url)) newLibraryMap.set(entry.url, hit.trackId);
+              }
+            }
+          }
         } catch {
           // non-fatal
         }
       }
       setPlaylistMemberUrls(newMemberUrls);
+      setLibraryMap(newLibraryMap);
 
       setSelectedIndices(
         new Set(res.entries.filter((e) => !newLibraryMap.has(e.url)).map((e) => e.index))
@@ -227,9 +244,8 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
   const handleTargetPlaylistChange = useCallback(
     async (newPlaylistId) => {
       setTargetPlaylistId(newPlaylistId);
-      if (!newPlaylistId || libraryMap.size === 0) {
+      if (!newPlaylistId || !playlistInfo) {
         setPlaylistMemberUrls(new Set());
-        // Restore all library entries to linkIndices
         if (playlistInfo) {
           setLinkIndices(
             new Set(playlistInfo.entries.filter((e) => libraryMap.has(e.url)).map((e) => e.index))
@@ -240,24 +256,53 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
       try {
         const memberRows = await window.api.getPlaylistSourceUrls(newPlaylistId);
         const memberTrackIds = new Set(memberRows.map((r) => r.trackId));
-        const inPlaylist = new Set(
-          [...libraryMap.entries()].filter(([, tid]) => memberTrackIds.has(tid)).map(([u]) => u)
-        );
-        setPlaylistMemberUrls(inPlaylist);
-        if (playlistInfo) {
-          setLinkIndices(
-            new Set(
-              playlistInfo.entries
-                .filter((e) => libraryMap.has(e.url) && !inPlaylist.has(e.url))
-                .map((e) => e.index)
-            )
-          );
+
+        const inPlaylist = new Set();
+        const updatedLibraryMap = new Map(libraryMap);
+
+        for (const entry of playlistInfo.entries) {
+          const entryId = String(entry.id ?? '');
+          // Primary: trackId match via libraryMap
+          const libTid = libraryMap.get(entry.url);
+          if (libTid && memberTrackIds.has(libTid)) {
+            inPlaylist.add(entry.url);
+            continue;
+          }
+          // Fallback: direct pattern match for tracks imported with old source_url format
+          if (entryId) {
+            const hit = memberRows.find(
+              (r) =>
+                (r.source_url && r.source_url.includes(entryId)) ||
+                (r.source_link && r.source_link.includes(entryId))
+            );
+            if (hit) {
+              inPlaylist.add(entry.url);
+              if (!updatedLibraryMap.has(entry.url)) updatedLibraryMap.set(entry.url, hit.trackId);
+            }
+          }
         }
+
+        if (updatedLibraryMap.size !== libraryMap.size) setLibraryMap(updatedLibraryMap);
+        setPlaylistMemberUrls(inPlaylist);
+        setLinkIndices(
+          new Set(
+            playlistInfo.entries
+              .filter((e) => updatedLibraryMap.has(e.url) && !inPlaylist.has(e.url))
+              .map((e) => e.index)
+          )
+        );
       } catch {
         setPlaylistMemberUrls(new Set());
       }
     },
-    [libraryMap, playlistInfo, setTargetPlaylistId, setPlaylistMemberUrls, setLinkIndices]
+    [
+      libraryMap,
+      playlistInfo,
+      setTargetPlaylistId,
+      setPlaylistMemberUrls,
+      setLinkIndices,
+      setLibraryMap,
+    ]
   );
 
   // ── step select → download ─────────────────────────────────────────────────
