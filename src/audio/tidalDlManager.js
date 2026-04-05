@@ -105,6 +105,38 @@ function writeTidalConfig(cfg) {
 }
 
 /**
+ * Path to the tidal-dl-ng download history file.
+ * tdn skips tracks listed here — we clear it before each download
+ * so all requested tracks are always fetched. The library's SHA-1
+ * dedup prevents re-importing tracks that are already in the library.
+ */
+function getHistoryPath() {
+  if (process.platform === 'win32') {
+    return path.join(os.homedir(), 'AppData', 'Local', 'tidal_dl_ng', 'downloaded_history.json');
+  } else if (process.platform === 'darwin') {
+    return path.join(
+      os.homedir(),
+      'Library',
+      'Application Support',
+      'tidal_dl_ng',
+      'downloaded_history.json'
+    );
+  }
+  return path.join(os.homedir(), '.config', 'tidal_dl_ng', 'downloaded_history.json');
+}
+
+function clearDownloadHistory() {
+  try {
+    const p = getHistoryPath();
+    if (fs.existsSync(p)) {
+      fs.writeFileSync(p, '[]');
+    }
+  } catch (e) {
+    console.warn('[tidal-dl] failed to clear download history:', e.message);
+  }
+}
+
+/**
  * Install tidal-dl-ng via pip, streaming output to onProgress.
  * Tries pip3 → pip → python3 -m pip → python -m pip in order.
  * @param {(line: string) => void} onProgress
@@ -301,6 +333,10 @@ export async function downloadTidal(url, outputDir, onProgress) {
     cover_album_file: false,
   };
   writeTidalConfig(patchedCfg);
+
+  // Clear download history so tdn never skips tracks.
+  // Library-level SHA-1 dedup prevents re-importing existing tracks.
+  clearDownloadHistory();
 
   const startTime = Date.now();
 
