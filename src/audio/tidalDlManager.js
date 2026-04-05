@@ -65,17 +65,17 @@ export function findTidalDlPath() {
  */
 function getConfigPath() {
   if (process.platform === 'win32') {
-    return path.join(os.homedir(), 'AppData', 'Local', 'tidal-dl-ng', 'settings.json');
+    return path.join(os.homedir(), 'AppData', 'Local', 'tidal_dl_ng', 'settings.json');
   } else if (process.platform === 'darwin') {
     return path.join(
       os.homedir(),
       'Library',
       'Application Support',
-      'tidal-dl-ng',
+      'tidal_dl_ng',
       'settings.json'
     );
   }
-  return path.join(os.homedir(), '.config', 'tidal-dl-ng', 'settings.json');
+  return path.join(os.homedir(), '.config', 'tidal_dl_ng', 'settings.json');
 }
 
 /**
@@ -83,11 +83,11 @@ function getConfigPath() {
  */
 function getTokenPath() {
   if (process.platform === 'win32') {
-    return path.join(os.homedir(), 'AppData', 'Local', 'tidal-dl-ng', 'token.json');
+    return path.join(os.homedir(), 'AppData', 'Local', 'tidal_dl_ng', 'token.json');
   } else if (process.platform === 'darwin') {
-    return path.join(os.homedir(), 'Library', 'Application Support', 'tidal-dl-ng', 'token.json');
+    return path.join(os.homedir(), 'Library', 'Application Support', 'tidal_dl_ng', 'token.json');
   }
-  return path.join(os.homedir(), '.config', 'tidal-dl-ng', 'token.json');
+  return path.join(os.homedir(), '.config', 'tidal_dl_ng', 'token.json');
 }
 
 function readTidalConfig() {
