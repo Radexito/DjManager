@@ -176,3 +176,211 @@
 .tidal-checking {
   animation: tidal-blink 1.2s ease-in-out infinite;
 }
+
+/* ── Fetch error ─────────────────────────────────────────────────────────── */
+
+.dl-fetch-error {
+  font-size: 12px;
+  color: #fc8181;
+}
+
+/* ── Select step ─────────────────────────────────────────────────────────── */
+
+.dl-select-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  max-height: min(420px, 50vh);
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+.dl-select-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  background: var(--bg-secondary, #1a1a1a);
+  border-radius: 6px 6px 0 0;
+}
+
+.dl-select-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #aaa);
+  cursor: pointer;
+  user-select: none;
+}
+
+.dl-select-all input[type='checkbox'] {
+  accent-color: var(--accent, #7c5cfc);
+}
+
+.dl-select-count {
+  font-size: 12px;
+  color: var(--text-secondary, #666);
+}
+
+.dl-entries {
+  overflow-y: auto;
+  max-height: calc(min(420px, 50vh) - 38px);
+}
+
+.dl-entry {
+  display: grid;
+  grid-template-columns: auto 28px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border, #1e1e1e);
+  cursor: pointer;
+  transition: background 0.1s;
+  user-select: none;
+}
+
+.dl-entry:last-child {
+  border-bottom: none;
+}
+
+.dl-entry:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.dl-entry input[type='checkbox'] {
+  accent-color: var(--accent, #7c5cfc);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.dl-entry-num {
+  font-size: 11px;
+  color: var(--text-secondary, #555);
+  text-align: right;
+}
+
+.dl-entry-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+
+.dl-entry-title {
+  font-size: 13px;
+  color: var(--text-primary, #ddd);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dl-entry-artist {
+  font-size: 11px;
+  color: var(--text-secondary, #888);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dl-entry-dur {
+  font-size: 11px;
+  color: var(--text-secondary, #666);
+  white-space: nowrap;
+}
+
+.dl-select-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+/* ── Download step track list ────────────────────────────────────────────── */
+
+.dl-track-list {
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 6px;
+  overflow-y: auto;
+  max-height: min(480px, 55vh);
+  margin-bottom: 12px;
+}
+
+.dl-track-row {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border, #1e1e1e);
+}
+
+.dl-track-row:last-child {
+  border-bottom: none;
+}
+
+.dl-track-icon {
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.dl-track-icon--pending {
+  color: var(--text-secondary, #555);
+}
+.dl-track-icon--downloading {
+  color: #f6ad55;
+}
+.dl-track-icon--importing {
+  color: #63b3ed;
+}
+.dl-track-icon--done {
+  color: #68d391;
+}
+.dl-track-icon--failed {
+  color: #fc8181;
+}
+
+.dl-track-row--done {
+  background: rgba(104, 211, 145, 0.04);
+}
+.dl-track-row--failed {
+  background: rgba(252, 129, 129, 0.04);
+}
+
+.dl-track-info {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dl-track-title {
+  font-size: 13px;
+  color: var(--text-primary, #ddd);
+}
+
+.dl-track-artist {
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+}
+
+.dl-track-error {
+  font-size: 11px;
+  color: #fc8181;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Progress bar fill (deterministic) ──────────────────────────────────── */
+
+.dl-progress-fill {
+  height: 100%;
+  background: var(--accent, #7c5cfc);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
