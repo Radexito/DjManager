@@ -162,7 +162,7 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
 
   // ── render: not installed ─────────────────────────────────────────────────
   if (!setup.installed) {
-    const handleInstall = async () => {
+    const handleRetry = async () => {
       setInstalling(true);
       setInstallLog([]);
       setInstallError(null);
@@ -179,23 +179,21 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
       <div className="dl-view" style={style}>
         <div className="dl-header">
           <h2 className="dl-title">TIDAL Download</h2>
-          <p className="dl-subtitle">
-            {installing ? 'Installing tidal-dl-ng…' : 'tidal-dl-ng needs to be installed.'}
-          </p>
+          <p className="dl-subtitle">tidal-dl-ng could not be installed during startup.</p>
         </div>
         <div className="tidal-install-box">
           {!installing && !installError && (
             <>
-              <div className="tidal-install-title">One-click install</div>
+              <div className="tidal-install-title">Python not found</div>
               <p className="tidal-install-note">
-                Requires Python 3.12+ to be installed on your system.
+                tidal-dl-ng requires Python 3.12+. Install it, then click Retry. You can also check
+                Settings → Dependencies.
               </p>
-              <button className="dl-btn" onClick={handleInstall}>
-                Install tidal-dl-ng
+              <button className="dl-btn" onClick={handleRetry}>
+                Retry
               </button>
             </>
           )}
-
           {installing && (
             <>
               <div className="tidal-install-title">Installing…</div>
@@ -211,21 +209,15 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
               </div>
             </>
           )}
-
           {installError && (
             <>
               <div className="tidal-install-title" style={{ color: 'var(--error, #f55)' }}>
                 Installation failed
               </div>
               <p className="tidal-install-note">{installError}</p>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <button className="dl-btn" onClick={handleInstall}>
-                  Retry
-                </button>
-                <button className="dl-btn" onClick={checkSetup} style={{ opacity: 0.7 }}>
-                  Check again
-                </button>
-              </div>
+              <button className="dl-btn" onClick={handleRetry}>
+                Retry
+              </button>
             </>
           )}
         </div>

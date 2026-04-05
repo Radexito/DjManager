@@ -145,6 +145,7 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('ytdlp-track-update', handler);
   },
   updateYtDlp: (tag) => ipcRenderer.invoke('update-yt-dlp', tag ?? null),
+  updateTidalDlNg: () => ipcRenderer.invoke('update-tidal-dl-ng'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
 
   // TIDAL download
