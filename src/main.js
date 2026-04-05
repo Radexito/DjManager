@@ -957,7 +957,7 @@ ipcMain.handle('tidal-login', async () => {
 
 ipcMain.handle(
   'tidal-download-url',
-  async (_event, { url, selectedEntries, existingPlaylistId, newPlaylistName }) => {
+  async (_event, { url, selectedEntries, linkTrackIds, existingPlaylistId, newPlaylistName }) => {
     const send = (ch, data) => {
       if (global.mainWindow) global.mainWindow.webContents.send(ch, data);
     };
@@ -1051,14 +1051,30 @@ ipcMain.handle(
       };
 
       sendProgress('Starting download…');
-      const files = await downloadTidal(downloadUrls, tmpDir, sendProgress, { onFileReady });
 
-      send('tidal-progress', null);
-
-      if (files.length === 0 && trackIds.length === 0) {
-        return { ok: false, error: 'Download finished but no audio files were found.' };
+      // Only call tdn if there are new tracks to download
+      const hasDownloads = selectedEntries?.length > 0 || !selectedEntries;
+      if (hasDownloads) {
+        const files = await downloadTidal(downloadUrls, tmpDir, sendProgress, { onFileReady });
+        if (files.length === 0 && trackIds.length === 0 && (linkTrackIds?.length ?? 0) === 0) {
+          send('tidal-progress', null);
+          return { ok: false, error: 'Download finished but no audio files were found.' };
+        }
       }
 
+      // Link already-in-library tracks to the playlist (no re-download needed)
+      if (linkTrackIds?.length > 0 && playlistId) {
+        for (const tid of linkTrackIds) {
+          try {
+            addTrackToPlaylist(playlistId, tid);
+          } catch {
+            // ignore duplicate playlist entry errors
+          }
+        }
+        send('playlists-updated');
+      }
+
+      send('tidal-progress', null);
       return { ok: true, trackIds, playlistId: playlistId ?? null };
     } catch (err) {
       send('tidal-progress', null);

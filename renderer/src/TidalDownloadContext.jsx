@@ -14,6 +14,8 @@ export function TidalDownloadProvider({ children }) {
   // ── step: select ─────────────────────────────────────────────────────────────
   const [playlistInfo, setPlaylistInfo] = useState(null); // { type, title, entries }
   const [selectedIndices, setSelectedIndices] = useState(new Set());
+  const [linkIndices, setLinkIndices] = useState(new Set()); // entries already in library
+  const [libraryMap, setLibraryMap] = useState(new Map()); // url → trackId
   const [playlists, setPlaylists] = useState([]);
   const [targetPlaylistId, setTargetPlaylistId] = useState(null);
   const [targetPlaylistName, setTargetPlaylistName] = useState('');
@@ -84,6 +86,8 @@ export function TidalDownloadProvider({ children }) {
     setStep('url');
     setPlaylistInfo(null);
     setSelectedIndices(new Set());
+    setLinkIndices(new Set());
+    setLibraryMap(new Map());
     setTargetPlaylistId(null);
     setTargetPlaylistName('');
     setFetchError(null);
@@ -107,6 +111,10 @@ export function TidalDownloadProvider({ children }) {
         setPlaylistInfo,
         selectedIndices,
         setSelectedIndices,
+        linkIndices,
+        setLinkIndices,
+        libraryMap,
+        setLibraryMap,
         playlists,
         setPlaylists,
         targetPlaylistId,

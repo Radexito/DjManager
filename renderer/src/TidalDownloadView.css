@@ -293,6 +293,18 @@
   white-space: nowrap;
 }
 
+.dl-entry--library {
+  opacity: 0.75;
+}
+
+.dl-entry-library-badge {
+  font-size: 11px;
+  color: #4caf50;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
 .dl-select-actions {
   display: flex;
   align-items: center;
