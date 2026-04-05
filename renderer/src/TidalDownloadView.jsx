@@ -184,9 +184,9 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
         <div className="tidal-install-box">
           {!installing && !installError && (
             <>
-              <div className="tidal-install-title">Python not found</div>
+              <div className="tidal-install-title">Installation failed</div>
               <p className="tidal-install-note">
-                tidal-dl-ng requires Python 3.12+. Install it, then click Retry. You can also check
+                tidal-dl-ng could not be installed automatically. Click Retry to try again, or check
                 Settings → Dependencies.
               </p>
               <button className="dl-btn" onClick={handleRetry}>
