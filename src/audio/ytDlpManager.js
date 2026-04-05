@@ -363,7 +363,7 @@ function _fetchPlaylistInfoOnce(url, options = {}) {
  * @param {(data: object) => void} [onProgress] - Progress callback, receives { msg, pct, trackPct, overallCurrent, overallTotal }
  * @param {{
  *   cookiesBrowser?: string|null,
- *   onFileReady?: (file: { filePath, originalUrl, trackUrl, platform, quality, title, index }) => void,
+ *   onFileReady?: (file: { filePath, originalUrl, trackUrl, platform, quality, title, channel, index }) => void,
  *   onPlaylistDetected?: (info: { name: string|null, total: number }) => void,
  *   onTrackMeta?: (info: { index: number, title: string }) => void,
  * }} [options]
@@ -399,6 +399,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
   // Unique marker so we can reliably identify --print output lines among other stdout noise
   const FILE_MARKER = '__YTDLP_FILE__:';
   const TRACK_MARKER = '__YTDLP_TRACK__:';
+  const CHANNEL_MARKER = '__YTDLP_CHANNEL__:';
 
   const args = [
     '-f',
@@ -417,6 +418,9 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
     // Reliable per-track progress: fires before each download starts, goes to stdout
     '--print',
     `before_dl:${TRACK_MARKER}%(n_entries|1)s:%(title)s`,
+    // Channel/uploader for artist fallback when video title has no "Artist - Title" delimiter
+    '--print',
+    `before_dl:${CHANNEL_MARKER}%(channel|uploader|NA)s`,
     // --print after_move gives us the definitive final filepath after all post-processors
     // (audio extraction, remux, etc.) have run. This is our primary file detection mechanism.
     '--print',
@@ -452,6 +456,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
     let currentTrackPct = 0;
     let playlistDetectedFired = false;
     let currentTrackTitle = null;
+    let currentTrackChannel = null;
     let stderr = '';
 
     const destinationFiles = [];
@@ -467,10 +472,12 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
         platform,
         quality: currentQuality,
         title,
+        channel: currentTrackChannel || null,
         index: destinationFiles.length - 1,
       });
       // Reset per-track state for the next item
       currentTrackTitle = null;
+      currentTrackChannel = null;
       currentTrackUrl = null;
     };
 
@@ -493,6 +500,13 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
       if (trimmed.startsWith(FILE_MARKER)) {
         const f = trimmed.slice(FILE_MARKER.length).trim();
         if (f) fireFileReady(f);
+        return;
+      }
+
+      // Channel/uploader for artist fallback: --print before_dl emits CHANNEL_MARKER:<name>
+      if (trimmed.startsWith(CHANNEL_MARKER)) {
+        const name = trimmed.slice(CHANNEL_MARKER.length).trim();
+        currentTrackChannel = name && name !== 'NA' ? name : null;
         return;
       }
 

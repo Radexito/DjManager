@@ -766,6 +766,7 @@ ipcMain.handle(
         platform,
         quality,
         title,
+        channel,
         index,
       }) => {
         handledPaths.add(filePath);
@@ -776,6 +777,7 @@ ipcMain.handle(
             source_link: trackUrl !== originalUrl ? trackUrl : null,
             source_platform: platform,
             source_quality: quality,
+            channel: channel || null,
           });
           trackIds.push(trackId);
           if (playlistId) {
