@@ -10,8 +10,7 @@ import { createWriteStream } from 'fs';
 import { app } from 'electron';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
-import { installTidalDlNg, findTidalDlPath } from './audio/tidalDlManager.js';
-
+import { findTidalDlPath } from './audio/tidalDlManager.js';
 const execAsync = promisify(exec);
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
@@ -46,6 +45,10 @@ export function getYtDlpRuntimePath() {
   return path.join(getBinDir(), 'yt-dlp');
 }
 
+export function getUvRuntimePath() {
+  return path.join(getBinDir(), process.platform === 'win32' ? 'uv.exe' : 'uv');
+}
+
 function versionFile(name) {
   return path.join(getBinDir(), `${name}.version`);
 }
@@ -73,6 +76,17 @@ export function getInstalledVersions() {
 }
 
 async function getTidalDlNgVersion() {
+  const uvPath = getUvRuntimePath();
+  if (fs.existsSync(uvPath)) {
+    try {
+      const { stdout } = await execAsync(`"${uvPath}" tool list`);
+      const match = stdout.match(/tidal-dl-ng\s+v?([\d.]+)/i);
+      if (match) return match[1];
+    } catch {
+      /* fall through */
+    }
+  }
+  // Fallback: pip show
   const cmds =
     process.platform === 'win32'
       ? ['pip show tidal-dl-ng', 'python -m pip show tidal-dl-ng']
@@ -89,57 +103,159 @@ async function getTidalDlNgVersion() {
   return 'installed';
 }
 
+async function downloadUvBinary(onProgress) {
+  const { platform, arch } = process;
+  const assetMap = {
+    linux:
+      arch === 'arm64'
+        ? 'uv-aarch64-unknown-linux-gnu.tar.gz'
+        : 'uv-x86_64-unknown-linux-gnu.tar.gz',
+    darwin: arch === 'arm64' ? 'uv-aarch64-apple-darwin.tar.gz' : 'uv-x86_64-apple-darwin.tar.gz',
+    win32: 'uv-x86_64-pc-windows-msvc.zip',
+  };
+  const assetName = assetMap[platform];
+  if (!assetName) throw new Error(`Unsupported platform for uv: ${platform}`);
+
+  const release = await getLatestRelease('astral-sh', 'uv');
+  const asset = release.assets.find((a) => a.name === assetName);
+  if (!asset) throw new Error(`No uv asset found: ${assetName}`);
+
+  const tmp = path.join(app.getPath('temp'), 'djman-uv-dl');
+  await fs.promises.mkdir(tmp, { recursive: true });
+  try {
+    const archive = path.join(tmp, assetName);
+    await downloadFile(
+      asset.browser_download_url,
+      archive,
+      (r, t) => t > 0 && onProgress?.(`Downloading uv… ${Math.round((r / t) * 100)}%`, -1)
+    );
+    const dir = path.join(tmp, 'extracted');
+    if (assetName.endsWith('.tar.gz')) await extractTarGz(archive, dir);
+    else await extractZip(archive, dir);
+
+    const uvBinName = platform === 'win32' ? 'uv.exe' : 'uv';
+    const uvSrc = await findFile(dir, uvBinName);
+    if (!uvSrc) throw new Error('uv binary not found in archive');
+
+    const dest = getUvRuntimePath();
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(uvSrc, dest);
+    if (platform !== 'win32') fs.chmodSync(dest, 0o755);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 async function installTidalDlNgDep(onProgress) {
-  await installTidalDlNg((line) => onProgress?.(line, -1));
+  let uvPath = getUvRuntimePath();
+  if (!fs.existsSync(uvPath)) {
+    onProgress?.('Downloading uv…', -1);
+    await downloadUvBinary(onProgress);
+    uvPath = getUvRuntimePath();
+  }
+
+  onProgress?.('Installing tidal-dl-ng…', -1);
+  await new Promise((resolve, reject) => {
+    const proc = spawn(uvPath, ['tool', 'install', '--reinstall', 'tidal-dl-ng'], {
+      env: { ...process.env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    proc.stdout.on('data', (chunk) => {
+      for (const line of chunk.toString().split('\n')) {
+        const t = line.trim();
+        if (t) onProgress?.(t, -1);
+      }
+    });
+    proc.stderr.on('data', (chunk) => {
+      for (const line of chunk.toString().split('\n')) {
+        const t = line.trim();
+        if (t) onProgress?.(t, -1);
+      }
+    });
+    proc.on('close', (code) =>
+      code === 0 ? resolve() : reject(new Error(`uv tool install exited with code ${code}`))
+    );
+    proc.on('error', reject);
+  });
+
   const version = await getTidalDlNgVersion();
   writeVersion('tidal-dl-ng', { version, installedAt: new Date().toISOString() });
 }
 
-async function upgradeTidalDlNgDep(onProgress) {
-  const candidates =
-    process.platform === 'win32'
-      ? [
-          ['pip', ['install', '--upgrade', 'tidal-dl-ng']],
-          ['python', ['-m', 'pip', 'install', '--upgrade', 'tidal-dl-ng']],
-        ]
-      : [
-          ['pip3', ['install', '--upgrade', 'tidal-dl-ng']],
-          ['pip', ['install', '--upgrade', 'tidal-dl-ng']],
-          ['python3', ['-m', 'pip', 'install', '--upgrade', 'tidal-dl-ng']],
-          ['python', ['-m', 'pip', 'install', '--upgrade', 'tidal-dl-ng']],
-        ];
+export { installTidalDlNgDep as ensureTidalDlNg };
 
-  let lastErr;
-  for (const [cmd, args] of candidates) {
-    try {
-      await new Promise((resolve, reject) => {
-        const proc = spawn(cmd, args, {
-          env: { ...process.env, PYTHONUNBUFFERED: '1' },
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
-        proc.stdout.on('data', (chunk) => {
-          for (const line of chunk.toString().split('\n')) {
-            const t = line.trim();
-            if (t) onProgress?.(t, -1);
-          }
-        });
-        proc.stderr.on('data', (chunk) => {
-          for (const line of chunk.toString().split('\n')) {
-            const t = line.trim();
-            if (t) onProgress?.(t, -1);
-          }
-        });
-        proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`exit ${code}`))));
-        proc.on('error', reject);
+async function upgradeTidalDlNgDep(onProgress) {
+  const uvPath = getUvRuntimePath();
+  if (fs.existsSync(uvPath)) {
+    await new Promise((resolve, reject) => {
+      const proc = spawn(uvPath, ['tool', 'upgrade', 'tidal-dl-ng'], {
+        env: { ...process.env },
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
-      const version = await getTidalDlNgVersion();
-      writeVersion('tidal-dl-ng', { version, installedAt: new Date().toISOString() });
-      return;
-    } catch (err) {
-      lastErr = err;
+      proc.stdout.on('data', (chunk) => {
+        for (const line of chunk.toString().split('\n')) {
+          const t = line.trim();
+          if (t) onProgress?.(t, -1);
+        }
+      });
+      proc.stderr.on('data', (chunk) => {
+        for (const line of chunk.toString().split('\n')) {
+          const t = line.trim();
+          if (t) onProgress?.(t, -1);
+        }
+      });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`uv tool upgrade exited with code ${code}`))
+      );
+      proc.on('error', reject);
+    });
+  } else {
+    // Fallback: pip upgrade
+    const candidates =
+      process.platform === 'win32'
+        ? [
+            ['pip', ['install', '--upgrade', 'tidal-dl-ng']],
+            ['python', ['-m', 'pip', 'install', '--upgrade', 'tidal-dl-ng']],
+          ]
+        : [
+            ['pip3', ['install', '--upgrade', 'tidal-dl-ng']],
+            ['pip', ['install', '--upgrade', 'tidal-dl-ng']],
+            ['python3', ['-m', 'pip', 'install', '--upgrade', 'tidal-dl-ng']],
+            ['python', ['-m', 'pip', 'install', '--upgrade', 'tidal-dl-ng']],
+          ];
+    let lastErr;
+    for (const [cmd, args] of candidates) {
+      try {
+        await new Promise((resolve, reject) => {
+          const proc = spawn(cmd, args, {
+            env: { ...process.env, PYTHONUNBUFFERED: '1' },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          proc.stdout.on('data', (chunk) => {
+            for (const line of chunk.toString().split('\n')) {
+              const t = line.trim();
+              if (t) onProgress?.(t, -1);
+            }
+          });
+          proc.stderr.on('data', (chunk) => {
+            for (const line of chunk.toString().split('\n')) {
+              const t = line.trim();
+              if (t) onProgress?.(t, -1);
+            }
+          });
+          proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`exit ${code}`))));
+          proc.on('error', reject);
+        });
+        break;
+      } catch (err) {
+        lastErr = err;
+      }
     }
+    if (lastErr) throw lastErr;
   }
-  throw lastErr ?? new Error('Could not find pip to upgrade tidal-dl-ng');
+
+  const version = await getTidalDlNgVersion();
+  writeVersion('tidal-dl-ng', { version, installedAt: new Date().toISOString() });
 }
 
 // ── Readiness ─────────────────────────────────────────────────────────────────
