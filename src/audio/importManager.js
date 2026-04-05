@@ -233,6 +233,11 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
     }
   }
 
+  // Last-resort fallback: use channel/uploader name as artist when still empty
+  if (!resolvedArtist && sourceMeta.channel) {
+    resolvedArtist = sourceMeta.channel;
+  }
+
   // Extract embedded album art (best-effort, non-blocking)
   const artworkPath = await extractArtwork(dest, hash);
 
