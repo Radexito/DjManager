@@ -104,6 +104,69 @@ function writeTidalConfig(cfg) {
 }
 
 /**
+ * Install tidal-dl-ng via pip, streaming output to onProgress.
+ * Tries pip3 → pip → python3 -m pip → python -m pip in order.
+ * @param {(line: string) => void} onProgress
+ * @returns {Promise<void>}
+ */
+export function installTidalDlNg(onProgress) {
+  const candidates =
+    process.platform === 'win32'
+      ? [
+          ['pip', ['install', 'tidal-dl-ng']],
+          ['python', ['-m', 'pip', 'install', 'tidal-dl-ng']],
+        ]
+      : [
+          ['pip3', ['install', 'tidal-dl-ng']],
+          ['pip', ['install', 'tidal-dl-ng']],
+          ['python3', ['-m', 'pip', 'install', 'tidal-dl-ng']],
+          ['python', ['-m', 'pip', 'install', 'tidal-dl-ng']],
+        ];
+
+  function tryNext(index) {
+    if (index >= candidates.length) {
+      return Promise.reject(
+        new Error('Could not find pip or python. Please install Python 3.12+ and try again.')
+      );
+    }
+    const [cmd, args] = candidates[index];
+    return new Promise((resolve, reject) => {
+      const proc = spawn(cmd, args, {
+        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      proc.stdout.on('data', (chunk) => {
+        for (const line of chunk.toString().split('\n')) {
+          const t = line.trim();
+          if (t) onProgress(t);
+        }
+      });
+      proc.stderr.on('data', (chunk) => {
+        for (const line of chunk.toString().split('\n')) {
+          const t = line.trim();
+          if (t) onProgress(t);
+        }
+      });
+
+      proc.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`${cmd} exited with code ${code}`));
+      });
+      proc.on('error', () => {
+        // This candidate not available — try the next one
+        reject(new Error(`spawn ${cmd} failed`));
+      });
+    }).catch((err) => {
+      console.warn(`[tidal-install] ${err.message} — trying next candidate`);
+      return tryNext(index + 1);
+    });
+  }
+
+  return tryNext(0);
+}
+
+/**
  * Check if tdn is installed and the user is logged in.
  * @returns {{ installed: boolean, loggedIn: boolean, path: string|null }}
  */

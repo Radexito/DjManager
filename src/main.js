@@ -78,6 +78,7 @@ import {
   checkTidalSetup,
   startLogin as tidalStartLogin,
   downloadTidal,
+  installTidalDlNg,
 } from './audio/tidalDlManager.js';
 import { ensureDeps, getFfmpegRuntimePath } from './deps.js';
 import {
@@ -902,6 +903,18 @@ ipcMain.handle('open-external', async (_event, url) => {
 
 ipcMain.handle('tidal-check', async () => {
   return checkTidalSetup();
+});
+
+ipcMain.handle('tidal-install', async () => {
+  try {
+    await installTidalDlNg((line) => {
+      if (global.mainWindow)
+        global.mainWindow.webContents.send('tidal-install-progress', { msg: line });
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 
 ipcMain.handle('tidal-login', async () => {

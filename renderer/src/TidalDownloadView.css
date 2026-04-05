@@ -36,6 +36,27 @@
   line-height: 1.5;
 }
 
+.tidal-install-log {
+  background: #111;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-family: monospace;
+  font-size: 12px;
+  color: #a6e3a1;
+  min-height: 60px;
+  max-height: 160px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tidal-install-log-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 /* ── Login box ────────────────────────────────────────────────────────────── */
 
 .tidal-login-box {
