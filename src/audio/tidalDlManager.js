@@ -10,6 +10,99 @@ import os from 'os';
 
 const AUDIO_EXTS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.wav', '.ogg', '.opus']);
 
+// Embedded Python script for fetching TIDAL track listings via tidalapi.
+// Written to a temp file and executed with the uv-managed Python interpreter.
+const FETCH_INFO_SCRIPT = `
+import sys, json, re
+try:
+    import tidalapi
+except ImportError:
+    print(json.dumps({'ok': False, 'error': 'tidalapi not installed'}))
+    sys.exit(1)
+
+def parse_url(url):
+    patterns = [
+        (r'/album/(\\d+)', 'album'),
+        (r'/playlist/([0-9a-f-]{36})', 'playlist'),
+        (r'/mix/([a-zA-Z0-9_-]+)', 'mix'),
+        (r'/track/(\\d+)', 'track'),
+    ]
+    for pattern, rtype in patterns:
+        m = re.search(pattern, url)
+        if m:
+            return rtype, m.group(1)
+    return None, None
+
+if len(sys.argv) < 3:
+    print(json.dumps({'ok': False, 'error': 'Usage: script.py <url> <token_path>'}))
+    sys.exit(1)
+
+url = sys.argv[1]
+token_path = sys.argv[2]
+
+try:
+    with open(token_path) as f:
+        token = json.load(f)
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': f'Token error: {str(e)}'}))
+    sys.exit(1)
+
+try:
+    session = tidalapi.Session()
+    session.load_oauth_session(
+        token.get('token_type', 'Bearer'),
+        token['access_token'],
+        token.get('refresh_token')
+    )
+    if not session.check_login():
+        print(json.dumps({'ok': False, 'error': 'Not logged in to TIDAL'}))
+        sys.exit(1)
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': f'Session error: {str(e)}'}))
+    sys.exit(1)
+
+rtype, rid = parse_url(url)
+if not rtype:
+    print(json.dumps({'ok': False, 'error': 'Could not parse TIDAL URL. Use tidal.com/browse/album/123, /track/123, or /playlist/uuid'}))
+    sys.exit(1)
+
+def track_to_entry(t, idx, entry_url=None):
+    return {
+        'index': idx,
+        'id': str(t.id),
+        'title': t.name,
+        'artist': t.artist.name if t.artist else '',
+        'duration': t.duration,
+        'url': entry_url or f'https://tidal.com/browse/track/{t.id}',
+    }
+
+try:
+    if rtype == 'track':
+        t = session.track(int(rid))
+        entries = [track_to_entry(t, 0, url)]
+        title = ((t.artist.name + ' - ') if t.artist else '') + t.name
+    elif rtype == 'album':
+        a = session.album(int(rid))
+        tracks = list(a.tracks())
+        title = a.name
+        entries = [track_to_entry(t, i) for i, t in enumerate(tracks)]
+    elif rtype == 'playlist':
+        pl = session.playlist(rid)
+        tracks = list(pl.tracks())
+        title = pl.name
+        entries = [track_to_entry(t, i) for i, t in enumerate(tracks)]
+    elif rtype == 'mix':
+        print(json.dumps({'ok': True, 'type': 'mix', 'title': 'TIDAL Mix', 'entries': []}))
+        sys.exit(0)
+    else:
+        print(json.dumps({'ok': False, 'error': f'Unsupported type: {rtype}'}))
+        sys.exit(1)
+    print(json.dumps({'ok': True, 'type': rtype, 'title': title, 'entries': entries}))
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': str(e)}))
+    sys.exit(1)
+`;
+
 // Strip ANSI escape codes from terminal output
 function stripAnsi(str) {
   return str.replace(/\x1B\[[0-9;]*[mGKHFABCDST]/g, '');
@@ -58,6 +151,97 @@ export function findTidalDlPath() {
   }
 
   return null;
+}
+
+/**
+ * Find the Python interpreter bundled with the uv-managed tidal-dl-ng-for-dj environment.
+ * Falls back to system Python if the uv env is not found.
+ * @returns {string|null}
+ */
+export function findTidalPython() {
+  const uvToolDir = path.join(os.homedir(), '.local', 'share', 'uv', 'tools', 'tidal-dl-ng-for-dj');
+  const candidates =
+    process.platform === 'win32'
+      ? [
+          path.join(uvToolDir, 'Scripts', 'python.exe'),
+          path.join(uvToolDir, 'Scripts', 'python3.exe'),
+        ]
+      : [path.join(uvToolDir, 'bin', 'python3'), path.join(uvToolDir, 'bin', 'python')];
+
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+
+  // Fall back to system Python
+  const which = process.platform === 'win32' ? 'where' : 'which';
+  for (const cmd of ['python3', 'python']) {
+    try {
+      const result = execSync(`${which} ${cmd}`, {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+      if (result) return result.split('\n')[0].trim();
+    } catch {
+      /* not in PATH */
+    }
+  }
+  return null;
+}
+
+/**
+ * Fetch TIDAL track/album/playlist info for a given URL using tidalapi.
+ * Uses the uv-managed Python interpreter and the embedded fetch script.
+ * @param {string} url
+ * @returns {Promise<{ ok: boolean, type?: string, title?: string, entries?: Array, error?: string }>}
+ */
+export async function fetchTidalInfo(url) {
+  const pythonPath = findTidalPython();
+  if (!pythonPath) {
+    return { ok: false, error: 'Python interpreter not found. Ensure tidal-dl-ng is installed.' };
+  }
+
+  const tokenPath = getTokenPath();
+  if (!fs.existsSync(tokenPath)) {
+    return { ok: false, error: 'Not logged in to TIDAL. Please connect your account first.' };
+  }
+
+  // Write the embedded script to a temp file
+  const scriptPath = path.join(os.tmpdir(), 'dj_manager_tidal_fetch.py');
+  try {
+    fs.writeFileSync(scriptPath, FETCH_INFO_SCRIPT.trimStart());
+  } catch (e) {
+    return { ok: false, error: `Failed to write fetch script: ${e.message}` };
+  }
+
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+
+    const proc = spawn(pythonPath, [scriptPath, url, tokenPath], {
+      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    proc.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    proc.on('close', () => {
+      try {
+        const result = JSON.parse(stdout.trim());
+        resolve(result);
+      } catch {
+        resolve({ ok: false, error: stderr.trim() || stdout.trim() || 'Failed to parse response' });
+      }
+    });
+
+    proc.on('error', (err) => {
+      resolve({ ok: false, error: err.message });
+    });
+  });
 }
 
 /**
@@ -324,15 +508,19 @@ async function scanForAudioFiles(dir, sinceMs) {
 }
 
 /**
- * Download a TIDAL URL using `tdn dl`.
+ * Download one or more TIDAL URLs using `tdn dl`.
  * Temporarily sets download_base_path to outputDir, restores after.
  *
- * @param {string} url
- * @param {string} outputDir  Directory to download into
+ * When `onFileReady` is provided, it is called for each audio file as soon as
+ * tdn signals "Downloaded item '...'." — enabling progressive library import.
+ *
+ * @param {string|string[]} urlOrUrls  Single URL or array of track URLs
+ * @param {string} outputDir           Directory to download into
  * @param {(msg: string) => void} onProgress
- * @returns {Promise<string[]>}  Paths of downloaded audio files
+ * @param {{ onFileReady?: (filePath: string) => void }} [opts]
+ * @returns {Promise<string[]>}  Paths of all downloaded audio files
  */
-export async function downloadTidal(url, outputDir, onProgress) {
+export async function downloadTidal(urlOrUrls, outputDir, onProgress, { onFileReady } = {}) {
   const binPath = findTidalDlPath();
   if (!binPath) {
     throw new Error('tidal-dl-ng not found. Install it with: pip install tidal-dl-ng');
@@ -373,9 +561,37 @@ export async function downloadTidal(url, outputDir, onProgress) {
   clearDownloadHistory();
 
   const startTime = Date.now();
+  const urlArray = Array.isArray(urlOrUrls) ? urlOrUrls : [urlOrUrls];
+  // Track which files we've already reported to onFileReady
+  const seenFiles = new Set();
+
+  function restore() {
+    for (const [cfgPath, original] of originalCfgs) {
+      try {
+        fs.writeFileSync(cfgPath, JSON.stringify(original, null, 2));
+      } catch (e) {
+        console.warn('[tidal-dl] failed to restore config', cfgPath, ':', e.message);
+      }
+    }
+  }
+
+  /**
+   * Scan outputDir for newly appeared audio files and call onFileReady for each.
+   * Called after tdn logs "Downloaded item" so we detect files right after each track.
+   */
+  async function reportNewFiles() {
+    if (!onFileReady) return;
+    const allFiles = await scanForAudioFiles(outputDir, startTime);
+    for (const f of allFiles) {
+      if (!seenFiles.has(f)) {
+        seenFiles.add(f);
+        onFileReady(f);
+      }
+    }
+  }
 
   return new Promise((resolve, reject) => {
-    const proc = spawn(binPath, ['dl', url], {
+    const proc = spawn(binPath, ['dl', ...urlArray], {
       env: { ...process.env, TERM: 'dumb', NO_COLOR: '1', FORCE_COLOR: '0' },
     });
 
@@ -385,9 +601,14 @@ export async function downloadTidal(url, outputDir, onProgress) {
       const text = stripAnsi(chunk.toString());
       for (const line of text.split('\n')) {
         const t = line.trim();
-        if (t) {
-          console.log('[tidal-dl] stdout:', t);
-          onProgress(t);
+        if (!t) continue;
+        console.log('[tidal-dl] stdout:', t);
+        onProgress(t);
+
+        // tdn logs "Downloaded item 'Artist - Title'." right before it moves the file.
+        // Wait 800ms for the shutil.move to complete, then pick up the new file.
+        if (/Downloaded item '/i.test(t)) {
+          setTimeout(() => reportNewFiles(), 800);
         }
       }
     });
@@ -402,32 +623,22 @@ export async function downloadTidal(url, outputDir, onProgress) {
     });
 
     proc.on('close', async (code) => {
-      // Restore original configs in all dirs
-      for (const [cfgPath, original] of originalCfgs) {
-        try {
-          fs.writeFileSync(cfgPath, JSON.stringify(original, null, 2));
-        } catch (e) {
-          console.warn('[tidal-dl] failed to restore config', cfgPath, ':', e.message);
-        }
-      }
+      restore();
 
       if (code !== 0) {
         reject(new Error(`tidal-dl-ng exited with code ${code}: ${stderr.trim().slice(0, 400)}`));
         return;
       }
 
-      const files = await scanForAudioFiles(outputDir, startTime);
-      resolve(files);
+      // Catch any files the progressive scan may have missed (e.g. fast downloads)
+      await reportNewFiles();
+
+      const allFiles = await scanForAudioFiles(outputDir, startTime);
+      resolve(allFiles);
     });
 
     proc.on('error', (err) => {
-      for (const [cfgPath, original] of originalCfgs) {
-        try {
-          fs.writeFileSync(cfgPath, JSON.stringify(original, null, 2));
-        } catch {
-          /* ignore */
-        }
-      }
+      restore();
       reject(err);
     });
   });

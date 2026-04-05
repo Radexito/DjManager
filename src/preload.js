@@ -151,6 +151,7 @@ contextBridge.exposeInMainWorld('api', {
   // TIDAL download
   tidalCheck: () => ipcRenderer.invoke('tidal-check'),
   tidalInstall: () => ipcRenderer.invoke('tidal-install'),
+  tidalFetchInfo: (url) => ipcRenderer.invoke('tidal-fetch-info', url),
   tidalLogin: () => ipcRenderer.invoke('tidal-login'),
   tidalDownloadUrl: (opts) => ipcRenderer.invoke('tidal-download-url', opts),
   onTidalProgress: (cb) => {
@@ -167,6 +168,11 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('tidal-install-progress', handler);
     return () => ipcRenderer.removeListener('tidal-install-progress', handler);
+  },
+  onTidalTrackUpdate: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('tidal-track-update', handler);
+    return () => ipcRenderer.removeListener('tidal-track-update', handler);
   },
 
   clearLibrary: () => ipcRenderer.invoke('clear-library'),

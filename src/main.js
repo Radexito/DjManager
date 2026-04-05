@@ -78,6 +78,7 @@ import {
   checkTidalSetup,
   startLogin as tidalStartLogin,
   downloadTidal,
+  fetchTidalInfo,
 } from './audio/tidalDlManager.js';
 import { ensureDeps, getFfmpegRuntimePath } from './deps.js';
 import {
@@ -931,6 +932,18 @@ ipcMain.handle('tidal-install', async () => {
   }
 });
 
+ipcMain.handle('tidal-fetch-info', async (_event, url) => {
+  console.log('[tidal-fetch-info] fetching info for:', url);
+  try {
+    const info = await fetchTidalInfo(url);
+    console.log(`[tidal-fetch-info] ok — type=${info.type} entries=${info.entries?.length}`);
+    return info;
+  } catch (err) {
+    console.error('[tidal-fetch-info] error:', err.message);
+    return { ok: false, error: err.message };
+  }
+});
+
 ipcMain.handle('tidal-login', async () => {
   try {
     await tidalStartLogin((url) => {
@@ -944,40 +957,69 @@ ipcMain.handle('tidal-login', async () => {
 
 ipcMain.handle(
   'tidal-download-url',
-  async (_event, { url, existingPlaylistId, newPlaylistName }) => {
-    const sendProgress = (msg) => {
-      if (global.mainWindow) global.mainWindow.webContents.send('tidal-progress', { msg });
+  async (_event, { url, selectedEntries, existingPlaylistId, newPlaylistName }) => {
+    const send = (ch, data) => {
+      if (global.mainWindow) global.mainWindow.webContents.send(ch, data);
     };
+    const sendTrackUpdate = (data) => send('tidal-track-update', data);
+    const sendProgress = (msg) => send('tidal-progress', { msg });
 
     try {
-      sendProgress('Starting download…');
-
       const tmpDir = path.join(app.getPath('userData'), 'tidal_tmp');
 
-      const files = await downloadTidal(url, tmpDir, sendProgress);
+      // Resolve the download URLs: individual track URLs when selectedEntries are provided,
+      // otherwise the raw URL (for mixes and direct single-URL downloads).
+      const downloadUrls =
+        selectedEntries?.length > 0
+          ? selectedEntries.map((e) => `https://tidal.com/browse/track/${e.id}`)
+          : [url];
 
-      if (files.length === 0) {
-        return { ok: false, error: 'Download finished but no audio files were found.' };
-      }
-
-      sendProgress('Importing to library…');
-
+      // Create playlist before starting download so tracks can be added progressively.
       let playlistId = null;
-      const trackIds = [];
-
       if (existingPlaylistId) {
         playlistId = existingPlaylistId;
-      } else if (newPlaylistName) {
+      } else if (newPlaylistName?.trim()) {
         try {
-          const { id } = findOrCreatePlaylist(newPlaylistName, null, url);
+          const { id } = findOrCreatePlaylist(newPlaylistName.trim(), null, url);
           playlistId = id;
-          if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+          send('playlists-updated');
         } catch (err) {
           console.error('[tidal] findOrCreatePlaylist failed:', err.message);
         }
       }
 
-      for (const filePath of files) {
+      // Emit init event so the UI can render the full track list immediately.
+      if (selectedEntries?.length > 0) {
+        sendTrackUpdate({ type: 'init', tracks: selectedEntries });
+      }
+
+      const trackIds = [];
+      // fileIndex tracks which selectedEntry corresponds to the next file reported by onFileReady.
+      // tdn downloads in the order we pass URLs, so positional matching is reliable.
+      let fileIndex = 0;
+
+      const onFileReady = async (filePath) => {
+        const entry = selectedEntries?.[fileIndex] ?? null;
+        const idx = fileIndex;
+        fileIndex++;
+
+        if (entry) {
+          sendTrackUpdate({
+            index: idx,
+            title: entry.title,
+            artist: entry.artist,
+            status: 'importing',
+          });
+        } else {
+          // No entry info (e.g. mix download) — emit a generic update
+          sendTrackUpdate({
+            index: idx,
+            title: path.basename(filePath),
+            artist: '',
+            status: 'importing',
+          });
+        }
+
         try {
           const trackId = await importAudioFile(filePath, {
             source_url: url,
@@ -986,18 +1028,40 @@ ipcMain.handle(
           trackIds.push(trackId);
           if (playlistId) {
             addTrackToPlaylist(playlistId, trackId);
-            if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+            send('playlists-updated');
           }
-          if (global.mainWindow) global.mainWindow.webContents.send('library-updated');
+          send('library-updated');
+          sendTrackUpdate({
+            index: idx,
+            title: entry?.title ?? path.basename(filePath),
+            artist: entry?.artist ?? '',
+            status: 'done',
+            trackId,
+          });
         } catch (err) {
           console.error('[tidal] importAudioFile failed:', err.message);
+          sendTrackUpdate({
+            index: idx,
+            title: entry?.title ?? path.basename(filePath),
+            artist: entry?.artist ?? '',
+            status: 'failed',
+            error: err.message,
+          });
         }
+      };
+
+      sendProgress('Starting download…');
+      const files = await downloadTidal(downloadUrls, tmpDir, sendProgress, { onFileReady });
+
+      send('tidal-progress', null);
+
+      if (files.length === 0 && trackIds.length === 0) {
+        return { ok: false, error: 'Download finished but no audio files were found.' };
       }
 
-      if (global.mainWindow) global.mainWindow.webContents.send('tidal-progress', null);
       return { ok: true, trackIds, playlistId: playlistId ?? null };
     } catch (err) {
-      if (global.mainWindow) global.mainWindow.webContents.send('tidal-progress', null);
+      send('tidal-progress', null);
       return { ok: false, error: err.message };
     }
   }
