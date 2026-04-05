@@ -86,6 +86,7 @@ import {
   checkForUpdates,
   updateAnalyzer,
   updateYtDlp,
+  updateTidalDlNg,
   updateAll,
 } from './deps.js';
 import { initLogger, getLogDir } from './logger.js';
@@ -618,6 +619,19 @@ ipcMain.handle('update-all-deps', async (_event) => {
     if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
   });
   if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+});
+
+ipcMain.handle('update-tidal-dl-ng', async (_event) => {
+  try {
+    await updateTidalDlNg((msg, pct) => {
+      if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
+    });
+    if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+    return { ok: true };
+  } catch (err) {
+    if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+    return { ok: false, error: err.message };
+  }
 });
 
 // ─── Auto-tagger ──────────────────────────────────────────────────────────────
