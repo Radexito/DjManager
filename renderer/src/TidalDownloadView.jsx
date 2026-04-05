@@ -31,6 +31,11 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
 
   const inputRef = useRef(null);
 
+  // ── install state ─────────────────────────────────────────────────────────
+  const [installing, setInstalling] = useState(false);
+  const [installLog, setInstallLog] = useState([]);
+  const [installError, setInstallError] = useState(null);
+
   // ── initial setup check ───────────────────────────────────────────────────
   const checkSetup = useCallback(async () => {
     setSetup(null);
@@ -56,9 +61,14 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
       window.api.openExternal(url);
     });
 
+    const unsubInstall = window.api.onTidalInstallProgress((data) => {
+      setInstallLog((prev) => [...prev.slice(-199), data.msg]);
+    });
+
     return () => {
       unsubProgress();
       unsubLoginUrl();
+      unsubInstall();
     };
   }, [checkSetup]);
 
@@ -152,23 +162,72 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
 
   // ── render: not installed ─────────────────────────────────────────────────
   if (!setup.installed) {
+    const handleInstall = async () => {
+      setInstalling(true);
+      setInstallLog([]);
+      setInstallError(null);
+      const res = await window.api.tidalInstall();
+      setInstalling(false);
+      if (res.ok) {
+        await checkSetup();
+      } else {
+        setInstallError(res.error);
+      }
+    };
+
     return (
       <div className="dl-view" style={style}>
         <div className="dl-header">
           <h2 className="dl-title">TIDAL Download</h2>
           <p className="dl-subtitle">
-            tidal-dl-ng is not installed. Install it to enable TIDAL downloads.
+            {installing ? 'Installing tidal-dl-ng…' : 'tidal-dl-ng needs to be installed.'}
           </p>
         </div>
         <div className="tidal-install-box">
-          <div className="tidal-install-title">Install tidal-dl-ng</div>
-          <code className="tidal-install-cmd">pip install tidal-dl-ng</code>
-          <p className="tidal-install-note">
-            Requires Python 3.12+. After installing, restart DjManager.
-          </p>
-          <button className="dl-btn" onClick={checkSetup}>
-            Check again
-          </button>
+          {!installing && !installError && (
+            <>
+              <div className="tidal-install-title">One-click install</div>
+              <p className="tidal-install-note">
+                Requires Python 3.12+ to be installed on your system.
+              </p>
+              <button className="dl-btn" onClick={handleInstall}>
+                Install tidal-dl-ng
+              </button>
+            </>
+          )}
+
+          {installing && (
+            <>
+              <div className="tidal-install-title">Installing…</div>
+              <div className="tidal-install-log">
+                {installLog.slice(-8).map((line, i) => (
+                  <div key={i} className="tidal-install-log-line">
+                    {line}
+                  </div>
+                ))}
+                {installLog.length === 0 && (
+                  <div className="tidal-install-log-line">Starting pip…</div>
+                )}
+              </div>
+            </>
+          )}
+
+          {installError && (
+            <>
+              <div className="tidal-install-title" style={{ color: 'var(--error, #f55)' }}>
+                Installation failed
+              </div>
+              <p className="tidal-install-note">{installError}</p>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button className="dl-btn" onClick={handleInstall}>
+                  Retry
+                </button>
+                <button className="dl-btn" onClick={checkSetup} style={{ opacity: 0.7 }}>
+                  Check again
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );
