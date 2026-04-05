@@ -28,6 +28,7 @@ function SettingsModal({ onClose }) {
   const [updatingAll, setUpdatingAll] = useState(false);
   const [ytdlpVersionInput, setYtdlpVersionInput] = useState('');
   const [ytdlpUpdating, setYtdlpUpdating] = useState(false);
+  const [tidalUpdating, setTidalUpdating] = useState(false);
   const [cookiesBrowser, setCookiesBrowser] = useState('');
 
   // Library location
@@ -87,6 +88,14 @@ function SettingsModal({ onClose }) {
     setDepVersions(versions);
     setYtdlpUpdating(false);
     if (tag) setYtdlpVersionInput('');
+  };
+
+  const handleUpdateTidalDlNg = async () => {
+    setTidalUpdating(true);
+    await window.api.updateTidalDlNg();
+    const versions = await window.api.getDepVersions();
+    setDepVersions(versions);
+    setTidalUpdating(false);
   };
 
   const handleTargetChange = (raw) => {
@@ -440,7 +449,8 @@ function SettingsModal({ onClose }) {
               <div className="settings-group">
                 <div className="settings-group-title">Installed Versions</div>
                 <p className="settings-group-desc">
-                  FFmpeg, mixxx-analyzer, and yt-dlp are downloaded automatically on first launch.
+                  FFmpeg, mixxx-analyzer, yt-dlp, and tidal-dl-ng are downloaded automatically on
+                  first launch.
                 </p>
                 <div className="dep-version-list">
                   <div className="dep-version-row">
@@ -455,6 +465,12 @@ function SettingsModal({ onClose }) {
                     <span className="dep-version-name">yt-dlp</span>
                     <span className="dep-version-tag">{depVersions?.ytDlp?.version ?? '…'}</span>
                   </div>
+                  <div className="dep-version-row">
+                    <span className="dep-version-name">tidal-dl-ng</span>
+                    <span className="dep-version-tag">
+                      {depVersions?.tidalDlNg?.version ?? 'not installed'}
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -464,13 +480,13 @@ function SettingsModal({ onClose }) {
                   <div>
                     <div className="settings-action-label">Update All Dependencies</div>
                     <div className="settings-action-desc">
-                      Re-downloads the latest FFmpeg, mixxx-analyzer, and yt-dlp.
+                      Re-downloads the latest FFmpeg, mixxx-analyzer, yt-dlp, and tidal-dl-ng.
                     </div>
                   </div>
                   <button
                     className="btn-primary"
                     onClick={handleUpdateAll}
-                    disabled={updatingAll || ytdlpUpdating}
+                    disabled={updatingAll || ytdlpUpdating || tidalUpdating}
                   >
                     {updatingAll ? 'Updating…' : 'Update All'}
                   </button>
@@ -486,9 +502,25 @@ function SettingsModal({ onClose }) {
                   <button
                     className="btn-secondary"
                     onClick={() => handleUpdateYtDlp(null)}
-                    disabled={updatingAll || ytdlpUpdating}
+                    disabled={updatingAll || ytdlpUpdating || tidalUpdating}
                   >
                     {ytdlpUpdating && !ytdlpVersionInput ? 'Updating…' : 'Update yt-dlp'}
+                  </button>
+                </div>
+
+                <div className="settings-row settings-row-action" style={{ marginTop: '0.75rem' }}>
+                  <div>
+                    <div className="settings-action-label">Update tidal-dl-ng</div>
+                    <div className="settings-action-desc">
+                      Upgrades tidal-dl-ng to the latest version via pip.
+                    </div>
+                  </div>
+                  <button
+                    className="btn-secondary"
+                    onClick={handleUpdateTidalDlNg}
+                    disabled={updatingAll || ytdlpUpdating || tidalUpdating}
+                  >
+                    {tidalUpdating ? 'Updating…' : 'Update tidal-dl-ng'}
                   </button>
                 </div>
               </div>

@@ -145,7 +145,35 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('ytdlp-track-update', handler);
   },
   updateYtDlp: (tag) => ipcRenderer.invoke('update-yt-dlp', tag ?? null),
+  updateTidalDlNg: () => ipcRenderer.invoke('update-tidal-dl-ng'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
+
+  // TIDAL download
+  tidalCheck: () => ipcRenderer.invoke('tidal-check'),
+  tidalInstall: () => ipcRenderer.invoke('tidal-install'),
+  tidalFetchInfo: (url) => ipcRenderer.invoke('tidal-fetch-info', url),
+  tidalLogin: () => ipcRenderer.invoke('tidal-login'),
+  tidalDownloadUrl: (opts) => ipcRenderer.invoke('tidal-download-url', opts),
+  onTidalProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('tidal-progress', handler);
+    return () => ipcRenderer.removeListener('tidal-progress', handler);
+  },
+  onTidalLoginUrl: (cb) => {
+    const handler = (_, url) => cb(url);
+    ipcRenderer.on('tidal-login-url', handler);
+    return () => ipcRenderer.removeListener('tidal-login-url', handler);
+  },
+  onTidalInstallProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('tidal-install-progress', handler);
+    return () => ipcRenderer.removeListener('tidal-install-progress', handler);
+  },
+  onTidalTrackUpdate: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('tidal-track-update', handler);
+    return () => ipcRenderer.removeListener('tidal-track-update', handler);
+  },
 
   clearLibrary: () => ipcRenderer.invoke('clear-library'),
   clearUserData: () => ipcRenderer.invoke('clear-user-data'),

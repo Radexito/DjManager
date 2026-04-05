@@ -34,6 +34,7 @@ window.api = {
   getDepVersions: vi.fn().mockResolvedValue({}),
   checkDepUpdates: vi.fn().mockResolvedValue({}),
   updateAllDeps: vi.fn().mockResolvedValue(undefined),
+  updateTidalDlNg: vi.fn().mockResolvedValue({ ok: true }),
   clearLibrary: vi.fn().mockResolvedValue(undefined),
   clearUserData: vi.fn().mockResolvedValue(undefined),
   getLogDir: vi.fn().mockResolvedValue('/tmp/logs'),
@@ -58,6 +59,15 @@ window.api = {
   onYtDlpEntriesReady: vi.fn().mockImplementation(() => () => {}),
   onYtDlpEntryChecked: vi.fn().mockImplementation(() => () => {}),
   onYtDlpTrackUpdate: vi.fn().mockImplementation(() => () => {}),
+  tidalCheck: vi.fn().mockResolvedValue({ installed: false, loggedIn: false, path: null }),
+  tidalInstall: vi.fn().mockResolvedValue({ ok: true }),
+  tidalFetchInfo: vi.fn().mockResolvedValue({ ok: false, error: 'not configured' }),
+  tidalLogin: vi.fn().mockResolvedValue({ ok: true }),
+  tidalDownloadUrl: vi.fn().mockResolvedValue({ ok: true, trackIds: [], playlistId: null }),
+  onTidalProgress: vi.fn().mockImplementation(() => () => {}),
+  onTidalLoginUrl: vi.fn().mockImplementation(() => () => {}),
+  onTidalInstallProgress: vi.fn().mockImplementation(() => () => {}),
+  onTidalTrackUpdate: vi.fn().mockImplementation(() => () => {}),
   openExternal: vi.fn().mockResolvedValue(undefined),
   checkUsbFormat: vi
     .fn()

@@ -74,12 +74,20 @@ import {
   downloadUrl as ytDlpDownloadUrl,
   fetchPlaylistInfo as ytDlpFetchPlaylistInfo,
 } from './audio/ytDlpManager.js';
+import {
+  checkTidalSetup,
+  startLogin as tidalStartLogin,
+  downloadTidal,
+  fetchTidalInfo,
+} from './audio/tidalDlManager.js';
 import { ensureDeps, getFfmpegRuntimePath } from './deps.js';
 import {
   getInstalledVersions,
   checkForUpdates,
   updateAnalyzer,
   updateYtDlp,
+  updateTidalDlNg,
+  ensureTidalDlNg,
   updateAll,
 } from './deps.js';
 import { initLogger, getLogDir } from './logger.js';
@@ -614,6 +622,19 @@ ipcMain.handle('update-all-deps', async (_event) => {
   if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
 });
 
+ipcMain.handle('update-tidal-dl-ng', async (_event) => {
+  try {
+    await updateTidalDlNg((msg, pct) => {
+      if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
+    });
+    if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+    return { ok: true };
+  } catch (err) {
+    if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+    return { ok: false, error: err.message };
+  }
+});
+
 // ─── Auto-tagger ──────────────────────────────────────────────────────────────
 
 ipcMain.handle('auto-tag-search', async (_, { query }) => {
@@ -892,6 +913,177 @@ ipcMain.handle(
 ipcMain.handle('open-external', async (_event, url) => {
   shell.openExternal(url);
 });
+
+// ─── TIDAL download ───────────────────────────────────────────────────────────
+
+ipcMain.handle('tidal-check', async () => {
+  return checkTidalSetup();
+});
+
+ipcMain.handle('tidal-install', async () => {
+  try {
+    await ensureTidalDlNg((line) => {
+      if (global.mainWindow)
+        global.mainWindow.webContents.send('tidal-install-progress', { msg: line });
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('tidal-fetch-info', async (_event, url) => {
+  console.log('[tidal-fetch-info] fetching info for:', url);
+  try {
+    const info = await fetchTidalInfo(url);
+    console.log(`[tidal-fetch-info] ok — type=${info.type} entries=${info.entries?.length}`);
+    return info;
+  } catch (err) {
+    console.error('[tidal-fetch-info] error:', err.message);
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('tidal-login', async () => {
+  try {
+    await tidalStartLogin((url) => {
+      if (global.mainWindow) global.mainWindow.webContents.send('tidal-login-url', url);
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle(
+  'tidal-download-url',
+  async (_event, { url, selectedEntries, linkTrackIds, existingPlaylistId, newPlaylistName }) => {
+    const send = (ch, data) => {
+      if (global.mainWindow) global.mainWindow.webContents.send(ch, data);
+    };
+    const sendTrackUpdate = (data) => send('tidal-track-update', data);
+    const sendProgress = (msg) => send('tidal-progress', { msg });
+
+    try {
+      const tmpDir = path.join(app.getPath('userData'), 'tidal_tmp');
+
+      // Resolve the download URLs: individual track URLs when selectedEntries are provided,
+      // otherwise the raw URL (for mixes and direct single-URL downloads).
+      const downloadUrls =
+        selectedEntries?.length > 0
+          ? selectedEntries.map((e) => `https://tidal.com/browse/track/${e.id}`)
+          : [url];
+
+      // Create playlist before starting download so tracks can be added progressively.
+      let playlistId = null;
+      if (existingPlaylistId) {
+        playlistId = existingPlaylistId;
+      } else if (newPlaylistName?.trim()) {
+        try {
+          const { id } = findOrCreatePlaylist(newPlaylistName.trim(), null, url);
+          playlistId = id;
+          send('playlists-updated');
+        } catch (err) {
+          console.error('[tidal] findOrCreatePlaylist failed:', err.message);
+        }
+      }
+
+      // Emit init event so the UI can render the full track list immediately.
+      if (selectedEntries?.length > 0) {
+        sendTrackUpdate({ type: 'init', tracks: selectedEntries });
+      }
+
+      const trackIds = [];
+      // fileIndex tracks which selectedEntry corresponds to the next file reported by onFileReady.
+      // tdn downloads in the order we pass URLs, so positional matching is reliable.
+      let fileIndex = 0;
+
+      const onFileReady = async (filePath) => {
+        const entry = selectedEntries?.[fileIndex] ?? null;
+        const idx = fileIndex;
+        fileIndex++;
+
+        if (entry) {
+          sendTrackUpdate({
+            index: idx,
+            title: entry.title,
+            artist: entry.artist,
+            status: 'importing',
+          });
+        } else {
+          // No entry info (e.g. mix download) — emit a generic update
+          sendTrackUpdate({
+            index: idx,
+            title: path.basename(filePath),
+            artist: '',
+            status: 'importing',
+          });
+        }
+
+        try {
+          const trackSourceUrl = entry?.id ? `https://tidal.com/browse/track/${entry.id}` : url;
+          const trackId = await importAudioFile(filePath, {
+            source_url: trackSourceUrl,
+            source_link: url !== trackSourceUrl ? url : null,
+            source_platform: 'tidal',
+          });
+          trackIds.push(trackId);
+          if (playlistId) {
+            addTrackToPlaylist(playlistId, trackId);
+            send('playlists-updated');
+          }
+          send('library-updated');
+          sendTrackUpdate({
+            index: idx,
+            title: entry?.title ?? path.basename(filePath),
+            artist: entry?.artist ?? '',
+            status: 'done',
+            trackId,
+          });
+        } catch (err) {
+          console.error('[tidal] importAudioFile failed:', err.message);
+          sendTrackUpdate({
+            index: idx,
+            title: entry?.title ?? path.basename(filePath),
+            artist: entry?.artist ?? '',
+            status: 'failed',
+            error: err.message,
+          });
+        }
+      };
+
+      sendProgress('Starting download…');
+
+      // Only call tdn if there are new tracks to download
+      const hasDownloads = selectedEntries?.length > 0 || !selectedEntries;
+      if (hasDownloads) {
+        const files = await downloadTidal(downloadUrls, tmpDir, sendProgress, { onFileReady });
+        if (files.length === 0 && trackIds.length === 0 && (linkTrackIds?.length ?? 0) === 0) {
+          send('tidal-progress', null);
+          return { ok: false, error: 'Download finished but no audio files were found.' };
+        }
+      }
+
+      // Link already-in-library tracks to the playlist (no re-download needed)
+      if (linkTrackIds?.length > 0 && playlistId) {
+        for (const tid of linkTrackIds) {
+          try {
+            addTrackToPlaylist(playlistId, tid);
+          } catch {
+            // ignore duplicate playlist entry errors
+          }
+        }
+        send('playlists-updated');
+      }
+
+      send('tidal-progress', null);
+      return { ok: true, trackIds, playlistId: playlistId ?? null };
+    } catch (err) {
+      send('tidal-progress', null);
+      return { ok: false, error: err.message };
+    }
+  }
+);
 
 // ─── USB / Rekordbox Export ────────────────────────────────────────────────────
 

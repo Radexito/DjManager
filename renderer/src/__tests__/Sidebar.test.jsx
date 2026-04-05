@@ -2,11 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import Sidebar from '../Sidebar.jsx';
 import { DownloadProvider } from '../DownloadContext.jsx';
+import { TidalDownloadProvider } from '../TidalDownloadContext.jsx';
 
 function renderSidebar(props = {}) {
   return render(
     <DownloadProvider>
-      <Sidebar {...props} />
+      <TidalDownloadProvider>
+        <Sidebar {...props} />
+      </TidalDownloadProvider>
     </DownloadProvider>
   );
 }
