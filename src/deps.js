@@ -80,7 +80,7 @@ async function getTidalDlNgVersion() {
   if (fs.existsSync(uvPath)) {
     try {
       const { stdout } = await execAsync(`"${uvPath}" tool list`);
-      const match = stdout.match(/tidal-dl-ng\s+v?([\d.]+)/i);
+      const match = stdout.match(/tidal-dl-ng(?:-for-dj)?\s+v?([\d.]+)/i);
       if (match) return match[1];
     } catch {
       /* fall through */
@@ -156,10 +156,14 @@ async function installTidalDlNgDep(onProgress) {
 
   onProgress?.('Installing tidal-dl-ng…', -1);
   await new Promise((resolve, reject) => {
-    const proc = spawn(uvPath, ['tool', 'install', '--reinstall', 'tidal-dl-ng'], {
-      env: { ...process.env },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const proc = spawn(
+      uvPath,
+      ['tool', 'install', '--reinstall', 'git+https://github.com/Radexito/tidal-dl-ng-For-DJ.git'],
+      {
+        env: { ...process.env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }
+    );
     proc.stdout.on('data', (chunk) => {
       for (const line of chunk.toString().split('\n')) {
         const t = line.trim();
@@ -188,10 +192,19 @@ async function upgradeTidalDlNgDep(onProgress) {
   const uvPath = getUvRuntimePath();
   if (fs.existsSync(uvPath)) {
     await new Promise((resolve, reject) => {
-      const proc = spawn(uvPath, ['tool', 'upgrade', 'tidal-dl-ng'], {
-        env: { ...process.env },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      const proc = spawn(
+        uvPath,
+        [
+          'tool',
+          'install',
+          '--reinstall',
+          'git+https://github.com/Radexito/tidal-dl-ng-For-DJ.git',
+        ],
+        {
+          env: { ...process.env },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }
+      );
       proc.stdout.on('data', (chunk) => {
         for (const line of chunk.toString().split('\n')) {
           const t = line.trim();
