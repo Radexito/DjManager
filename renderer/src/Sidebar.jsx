@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useDownload } from './DownloadContext.jsx';
+import { useTidalDownload } from './TidalDownloadContext.jsx';
 import './Sidebar.css';
 import ImportPlaylistDialog from './ImportPlaylistDialog';
 
@@ -27,6 +28,7 @@ function Sidebar({
   onExportPlaylistAll,
 }) {
   const { sidebarProgress: ytDlpSidebarProgress } = useDownload();
+  const { sidebarProgress: tidalSidebarProgress } = useTidalDownload();
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
   const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
@@ -391,6 +393,41 @@ function Sidebar({
                   }}
                 >
                   {ytDlpSidebarProgress.msg}
+                </span>
+              </div>
+            )}
+          </button>
+        )}
+        {tidalSidebarProgress && (
+          <button
+            className="normalize-progress-wrap ytdlp-progress-clickable"
+            onClick={() => onMenuSelect('tidal')}
+            title="Go to TIDAL"
+          >
+            <div className="normalize-progress-label">
+              <span>TIDAL Downloading</span>
+              <span>
+                {tidalSidebarProgress.current} / {tidalSidebarProgress.total}
+              </span>
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill ytdlp-progress-fill"
+                style={{ width: `${Math.round(tidalSidebarProgress.pct)}%` }}
+              />
+            </div>
+            {tidalSidebarProgress.msg && (
+              <div className="normalize-progress-label" style={{ marginTop: 4, opacity: 0.7 }}>
+                <span
+                  style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: '100%',
+                    fontSize: 11,
+                  }}
+                >
+                  {tidalSidebarProgress.msg}
                 </span>
               </div>
             )}

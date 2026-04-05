@@ -1021,8 +1021,10 @@ ipcMain.handle(
         }
 
         try {
+          const trackSourceUrl = entry?.id ? `https://tidal.com/browse/track/${entry.id}` : url;
           const trackId = await importAudioFile(filePath, {
-            source_url: url,
+            source_url: trackSourceUrl,
+            source_link: url !== trackSourceUrl ? url : null,
             source_platform: 'tidal',
           });
           trackIds.push(trackId);
