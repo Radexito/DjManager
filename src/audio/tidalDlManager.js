@@ -61,78 +61,97 @@ export function findTidalDlPath() {
 }
 
 /**
- * Path to the tidal-dl-ng settings file (platformdirs user_config_dir).
+ * Return all possible tidal-dl-ng config directory base paths.
+ * The fork may use 'tidal_dl_ng' or 'tidal_dl_ng-dev' depending on
+ * how it was installed. We operate on every dir that exists.
  */
-function getConfigPath() {
+function getTidalConfigDirs() {
+  let bases;
   if (process.platform === 'win32') {
-    return path.join(os.homedir(), 'AppData', 'Local', 'tidal_dl_ng', 'settings.json');
+    bases = [
+      path.join(os.homedir(), 'AppData', 'Local', 'tidal_dl_ng'),
+      path.join(os.homedir(), 'AppData', 'Local', 'tidal_dl_ng-dev'),
+    ];
   } else if (process.platform === 'darwin') {
-    return path.join(
-      os.homedir(),
-      'Library',
-      'Application Support',
-      'tidal_dl_ng',
-      'settings.json'
-    );
+    bases = [
+      path.join(os.homedir(), 'Library', 'Application Support', 'tidal_dl_ng'),
+      path.join(os.homedir(), 'Library', 'Application Support', 'tidal_dl_ng-dev'),
+    ];
+  } else {
+    bases = [
+      path.join(os.homedir(), '.config', 'tidal_dl_ng'),
+      path.join(os.homedir(), '.config', 'tidal_dl_ng-dev'),
+    ];
   }
-  return path.join(os.homedir(), '.config', 'tidal_dl_ng', 'settings.json');
+  return bases.filter((d) => fs.existsSync(d));
 }
 
 /**
- * Path to the tidal-dl-ng OAuth token file.
+ * Return the config dir that has a settings.json (prefer the one tdn
+ * is currently writing to, identified by the most-recently-modified file).
  */
-function getTokenPath() {
-  if (process.platform === 'win32') {
-    return path.join(os.homedir(), 'AppData', 'Local', 'tidal_dl_ng', 'token.json');
-  } else if (process.platform === 'darwin') {
-    return path.join(os.homedir(), 'Library', 'Application Support', 'tidal_dl_ng', 'token.json');
-  }
-  return path.join(os.homedir(), '.config', 'tidal_dl_ng', 'token.json');
-}
-
-function readTidalConfig() {
-  try {
-    return JSON.parse(fs.readFileSync(getConfigPath(), 'utf8'));
-  } catch {
-    return {};
-  }
-}
-
-function writeTidalConfig(cfg) {
-  const p = getConfigPath();
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(cfg, null, 2));
-}
-
-/**
- * Path to the tidal-dl-ng download history file.
- * tdn skips tracks listed here — we clear it before each download
- * so all requested tracks are always fetched. The library's SHA-1
- * dedup prevents re-importing tracks that are already in the library.
- */
-function getHistoryPath() {
-  if (process.platform === 'win32') {
-    return path.join(os.homedir(), 'AppData', 'Local', 'tidal_dl_ng', 'downloaded_history.json');
-  } else if (process.platform === 'darwin') {
-    return path.join(
-      os.homedir(),
-      'Library',
-      'Application Support',
-      'tidal_dl_ng',
-      'downloaded_history.json'
-    );
-  }
-  return path.join(os.homedir(), '.config', 'tidal_dl_ng', 'downloaded_history.json');
-}
-
-function clearDownloadHistory() {
-  try {
-    const p = getHistoryPath();
-    if (fs.existsSync(p)) {
-      fs.writeFileSync(p, '[]');
+function getActiveConfigDir() {
+  const dirs = getTidalConfigDirs();
+  if (dirs.length === 0) return null;
+  if (dirs.length === 1) return dirs[0];
+  // Pick whichever settings.json was modified most recently
+  let best = dirs[0];
+  let bestMtime = 0;
+  for (const d of dirs) {
+    try {
+      const mtime = fs.statSync(path.join(d, 'settings.json')).mtimeMs;
+      if (mtime > bestMtime) {
+        bestMtime = mtime;
+        best = d;
+      }
+    } catch {
+      /* no settings.json in this dir */
     }
-  } catch (e) {
-    console.warn('[tidal-dl] failed to clear download history:', e.message);
+  }
+  return best;
+}
+
+function getTokenPath() {
+  const dir = getActiveConfigDir();
+  const base =
+    dir ??
+    (process.platform === 'win32'
+      ? path.join(os.homedir(), 'AppData', 'Local', 'tidal_dl_ng')
+      : process.platform === 'darwin'
+        ? path.join(os.homedir(), 'Library', 'Application Support', 'tidal_dl_ng')
+        : path.join(os.homedir(), '.config', 'tidal_dl_ng'));
+  return path.join(base, 'token.json');
+}
+
+/**
+ * Clear the download history in ALL tidal config dirs before each download.
+ * tdn skips tracks listed in downloaded_history.json — clearing it ensures
+ * all requested tracks are fetched. The library's SHA-1 dedup prevents
+ * re-importing tracks already in the library.
+ *
+ * The history schema is { _schema_version, settings, tracks: { id: {...} } }
+ * — we preserve schema_version and set tracks to {} and preventDuplicates to false.
+ */
+function clearDownloadHistory() {
+  for (const dir of getTidalConfigDirs()) {
+    const p = path.join(dir, 'downloaded_history.json');
+    try {
+      let existing = {};
+      try {
+        existing = JSON.parse(fs.readFileSync(p, 'utf8'));
+      } catch {
+        /* file missing or corrupt — start fresh */
+      }
+      const cleared = {
+        _schema_version: existing._schema_version ?? 1,
+        _last_updated: new Date().toISOString(),
+        settings: { preventDuplicates: false },
+        tracks: {},
+      };
+      fs.writeFileSync(p, JSON.stringify(cleared));
+    } catch (e) {
+      console.warn('[tidal-dl] failed to clear download history in', dir, ':', e.message);
+    }
   }
 }
 
@@ -321,20 +340,35 @@ export async function downloadTidal(url, outputDir, onProgress) {
 
   await fs.promises.mkdir(outputDir, { recursive: true });
 
-  // Save + set download config
-  const originalCfg = readTidalConfig();
-  const patchedCfg = {
-    ...originalCfg,
-    download_base_path: outputDir,
-    // Prefer lossless for DJs; fall back gracefully if subscription doesn't allow
-    quality_audio: originalCfg.quality_audio ?? 'HiRes_Lossless',
-    extract_flac: originalCfg.extract_flac ?? true,
-    skip_existing: false,
-    cover_album_file: false,
-  };
-  writeTidalConfig(patchedCfg);
+  // Patch settings in ALL config dirs so whichever one tdn reads gets the right values.
+  const allDirs = getTidalConfigDirs();
+  const originalCfgs = new Map();
+  for (const dir of allDirs) {
+    const cfgPath = path.join(dir, 'settings.json');
+    let original = {};
+    try {
+      original = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+    } catch {
+      /* missing — will create */
+    }
+    originalCfgs.set(cfgPath, original);
+    const patched = {
+      ...original,
+      download_base_path: outputDir,
+      quality_audio: original.quality_audio ?? 'HiRes_Lossless',
+      extract_flac: original.extract_flac ?? true,
+      skip_existing: false,
+      cover_album_file: false,
+    };
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(cfgPath, JSON.stringify(patched, null, 2));
+    } catch (e) {
+      console.warn('[tidal-dl] failed to patch config in', dir, ':', e.message);
+    }
+  }
 
-  // Clear download history so tdn never skips tracks.
+  // Clear download history in all config dirs so tdn never skips tracks.
   // Library-level SHA-1 dedup prevents re-importing existing tracks.
   clearDownloadHistory();
 
@@ -368,11 +402,13 @@ export async function downloadTidal(url, outputDir, onProgress) {
     });
 
     proc.on('close', async (code) => {
-      // Restore original config
-      try {
-        writeTidalConfig(originalCfg);
-      } catch (e) {
-        console.warn('[tidal-dl] failed to restore config:', e.message);
+      // Restore original configs in all dirs
+      for (const [cfgPath, original] of originalCfgs) {
+        try {
+          fs.writeFileSync(cfgPath, JSON.stringify(original, null, 2));
+        } catch (e) {
+          console.warn('[tidal-dl] failed to restore config', cfgPath, ':', e.message);
+        }
       }
 
       if (code !== 0) {
@@ -385,10 +421,12 @@ export async function downloadTidal(url, outputDir, onProgress) {
     });
 
     proc.on('error', (err) => {
-      try {
-        writeTidalConfig(originalCfg);
-      } catch {
-        /* ignore */
+      for (const [cfgPath, original] of originalCfgs) {
+        try {
+          fs.writeFileSync(cfgPath, JSON.stringify(original, null, 2));
+        } catch {
+          /* ignore */
+        }
       }
       reject(err);
     });
