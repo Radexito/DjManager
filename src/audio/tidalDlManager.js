@@ -29,6 +29,7 @@ export function findTidalDlPath() {
 
   if (process.platform === 'win32') {
     candidates.push(
+      path.join(os.homedir(), '.local', 'bin', 'tdn.exe'),
       path.join(os.homedir(), 'AppData', 'Roaming', 'Python', 'Scripts', 'tdn.exe'),
       path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Python', 'Scripts', 'tdn.exe')
     );
