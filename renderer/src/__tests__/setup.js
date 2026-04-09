@@ -8,7 +8,7 @@ window.api = {
   getTrackIds: vi.fn().mockResolvedValue([]),
   getPlaylists: vi.fn().mockResolvedValue([]),
   getPlaylist: vi.fn().mockResolvedValue(null),
-  createPlaylist: vi.fn().mockResolvedValue(1),
+  createPlaylist: vi.fn().mockResolvedValue({ id: 1 }),
   renamePlaylist: vi.fn().mockResolvedValue(undefined),
   updatePlaylistColor: vi.fn().mockResolvedValue(undefined),
   deletePlaylist: vi.fn().mockResolvedValue(undefined),
