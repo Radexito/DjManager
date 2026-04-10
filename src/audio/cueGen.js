@@ -25,10 +25,11 @@ function parseBeatgrid(beatgridJson) {
     const raw = JSON.parse(beatgridJson);
     if (!Array.isArray(raw) || raw.length === 0) return null;
     // mixxx-analyzer produces [{ beat_number, position_seconds, bpm }]
-    return raw
+    const beats = raw
       .filter((b) => typeof b.position_seconds === 'number')
       .map((b) => ({ positionSecs: b.position_seconds }))
       .sort((a, b) => a.positionSecs - b.positionSecs);
+    return beats.length > 0 ? beats : null;
   } catch {
     return null;
   }

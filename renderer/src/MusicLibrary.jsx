@@ -27,6 +27,7 @@ import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
 import { parseQuery } from './searchParser.js';
 import TrackDetails from './TrackDetails.jsx';
+import CuePointsEditor from './CuePointsEditor.jsx';
 import RatingStars from './RatingStars.jsx';
 import './MusicLibrary.css';
 
@@ -46,6 +47,7 @@ const ALL_COLUMNS = [
   { key: 'bpm', label: 'BPM', width: '62px' },
   { key: 'key_camelot', label: 'Key', width: '52px' },
   { key: 'loudness', label: 'Loudness (LUFS)', width: '115px' },
+  { key: 'cue', label: '◆', width: '28px' },
   { key: 'album', label: 'Album', width: 'minmax(80px, 1fr)' },
   { key: 'year', label: 'Year', width: '50px' },
   { key: 'label', label: 'Label', width: '100px' },
@@ -66,6 +68,7 @@ const DEFAULT_COL_VIS = {
   bpm: true,
   key_camelot: true,
   loudness: true,
+  cue: true,
   album: false,
   year: false,
   label: false,
@@ -131,6 +134,8 @@ function renderCell(t, colKey) {
         return '—';
       }
     }
+    case 'cue':
+      return null; // rendered as icon button in LibraryRow
     case 'rating':
       return null; // rendered as interactive RatingStars in LibraryRow
     case 'user_tags':
@@ -202,6 +207,7 @@ function LibraryRow({
   onDoubleClick,
   onContextMenu,
   onRatingChange,
+  onCueClick,
   onDragStart,
   visibleColumns,
   gridTemplate,
@@ -256,6 +262,26 @@ function LibraryRow({
               ▶
             </button>
           </div>
+        ) : col.key === 'cue' ? (
+          <div
+            key="cue"
+            className="cell cue"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCueClick?.(t);
+            }}
+            title={
+              t.cue_count > 0
+                ? `${t.cue_count} cue point(s) — click to edit`
+                : 'No cue points — click to add'
+            }
+          >
+            {t.cue_count > 0 ? (
+              <span className="cue-dot cue-dot--has">◆</span>
+            ) : (
+              <span className="cue-dot cue-dot--empty">◇</span>
+            )}
+          </div>
         ) : col.key === 'rating' ? (
           <div key="rating" className="cell rating" onClick={(e) => e.stopPropagation()}>
             <RatingStars value={t.rating ?? 0} onChange={(val) => onRatingChange(t.id, val)} />
@@ -294,6 +320,7 @@ function SortableRow({
   onDoubleClick,
   onContextMenu,
   onRatingChange,
+  onCueClick,
   visibleColumns,
   gridTemplate,
   minScrollWidth,
@@ -341,6 +368,26 @@ function SortableRow({
             >
               ▶
             </button>
+          </div>
+        ) : col.key === 'cue' ? (
+          <div
+            key="cue"
+            className="cell cue"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCueClick?.(t);
+            }}
+            title={
+              t.cue_count > 0
+                ? `${t.cue_count} cue point(s) — click to edit`
+                : 'No cue points — click to add'
+            }
+          >
+            {t.cue_count > 0 ? (
+              <span className="cue-dot cue-dot--has">◆</span>
+            ) : (
+              <span className="cue-dot cue-dot--empty">◇</span>
+            )}
           </div>
         ) : col.key === 'rating' ? (
           <div key="rating" className="cell rating" onClick={(e) => e.stopPropagation()}>
@@ -439,6 +486,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const [colMenuAnchor, setColMenuAnchor] = useState(null); // { x, y } | null
   const [detailsTrack, setDetailsTrack] = useState(null);
   const [detailsBulkTracks, setDetailsBulkTracks] = useState(null); // array | null
+  const [cueTrack, setCueTrack] = useState(null);
 
   const offsetRef = useRef(0);
   const loadingRef = useRef(false);
@@ -779,6 +827,24 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     setDetailsTrack(null);
     setDetailsBulkTracks(null);
   }, []);
+
+  // ── Cue points panel ───────────────────────────────────────────────────────
+
+  const handleCueClick = useCallback((track) => {
+    setCueTrack((prev) => (prev?.id === track.id ? null : track));
+  }, []);
+
+  const handleCueClose = useCallback(() => setCueTrack(null), []);
+
+  const handleCuePointsChange = useCallback(
+    (pts) => {
+      setCueTrack((prev) => (prev ? { ...prev, cue_count: pts.length } : prev));
+      setTracks((prev) =>
+        prev.map((t) => (t.id === cueTrack?.id ? { ...t, cue_count: pts.length } : t))
+      );
+    },
+    [cueTrack?.id]
+  );
 
   const handleDetailsSave = useCallback((result) => {
     if (Array.isArray(result)) {
@@ -1195,7 +1261,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
 
   return (
     <div
-      className={`music-library${detailsTrack || detailsBulkTracks ? ' music-library--with-panel' : ''}`}
+      className={`music-library${detailsTrack || detailsBulkTracks || cueTrack ? ' music-library--with-panel' : ''}`}
     >
       <div className="music-library__main">
         {/* Playlist header bar */}
@@ -1317,6 +1383,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                         onDoubleClick={handleDoubleClick}
                         onContextMenu={handleContextMenu}
                         onRatingChange={handleRatingChange}
+                        onCueClick={handleCueClick}
                         onDragStart={handleTrackDragStart}
                         visibleColumns={visibleColumns}
                         gridTemplate={gridTemplate}
@@ -1363,6 +1430,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                 onDoubleClick: handleDoubleClick,
                 onContextMenu: handleContextMenu,
                 onRatingChange: handleRatingChange,
+                onCueClick: handleCueClick,
                 onDragStart: handleTrackDragStart,
                 visibleColumns,
                 gridTemplate,
@@ -1793,6 +1861,20 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                       ✏️ Edit Details{selectionLabel}
                     </div>
 
+                    {/* ── Edit Cue Points ── */}
+                    {contextMenu?.targetTracks?.length === 1 && (
+                      <div
+                        className="context-menu-item"
+                        onClick={() => {
+                          const track = contextMenu.targetTracks[0];
+                          setContextMenu(null);
+                          handleCueClick(track);
+                        }}
+                      >
+                        ◆ Edit Cue Points
+                      </div>
+                    )}
+
                     {/* ── Analysis submenu ── */}
                     <SubItem id="analysis" label={`🔬 Analysis${selectionLabel}`}>
                       <div className="context-menu-item" onClick={handleReanalyze}>
@@ -1876,6 +1958,17 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
           onSave={handleDetailsSave}
           onCancel={handleDetailsClose}
         />
+      )}
+      {cueTrack && (
+        <div className="cue-panel">
+          <div className="cue-panel__header">
+            <span className="cue-panel__title">{cueTrack.title}</span>
+            <button className="cue-panel__close" onClick={handleCueClose} title="Close">
+              ✕
+            </button>
+          </div>
+          <CuePointsEditor trackId={cueTrack.id} onCuePointsChange={handleCuePointsChange} />
+        </div>
       )}
     </div>
   );

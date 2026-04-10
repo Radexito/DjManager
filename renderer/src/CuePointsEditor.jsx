@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { usePlayer } from './PlayerContext.jsx';
 import './CuePointsEditor.css';
 
@@ -25,23 +25,32 @@ function msToTime(ms) {
 const HOT_CUE_LABELS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 
 export default function CuePointsEditor({ trackId, onCuePointsChange }) {
-  const { currentTime, currentTrack } = usePlayer() ?? {};
+  const { currentTime } = usePlayer() ?? {};
   const [cuePoints, setCuePoints] = useState([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editLabel, setEditLabel] = useState('');
 
-  const load = useCallback(async () => {
-    if (!trackId) return;
-    const pts = await window.api.getCuePoints(trackId);
-    setCuePoints(pts);
-    onCuePointsChange?.(pts);
-  }, [trackId, onCuePointsChange]);
+  const revRef = useRef(0);
+  const [rev, setRev] = useState(0);
+  const reload = useCallback(() => {
+    revRef.current += 1;
+    setRev(revRef.current);
+  }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!trackId) return;
+    let alive = true;
+    window.api.getCuePoints(trackId).then((pts) => {
+      if (!alive) return;
+      setCuePoints(pts);
+      onCuePointsChange?.(pts);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [trackId, rev, onCuePointsChange]);
 
   const handleAdd = async () => {
     if (!trackId) return;
@@ -54,7 +63,7 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
       color: '#00b4d8',
       hotCueIndex: -1,
     });
-    await load();
+    reload();
     setLoading(false);
   };
 
@@ -62,24 +71,24 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
     if (!trackId) return;
     setGenerating(true);
     await window.api.generateCuePoints(trackId);
-    await load();
+    reload();
     setGenerating(false);
   };
 
   const handleDelete = async (id) => {
     await window.api.deleteCuePoint(id);
-    await load();
+    reload();
   };
 
   const handleColorChange = async (id, color) => {
     await window.api.updateCuePoint(id, { color });
-    await load();
+    reload();
   };
 
   const handleLabelSave = async (id) => {
     await window.api.updateCuePoint(id, { label: editLabel });
     setEditingId(null);
-    await load();
+    reload();
   };
 
   const startEdit = (cue) => {
