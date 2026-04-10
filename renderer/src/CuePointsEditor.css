@@ -187,3 +187,30 @@
 .cpe__del:hover {
   color: #ff4444;
 }
+
+.cpe__confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #2a1a00;
+  border: 1px solid #5a3800;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: #ffb347;
+}
+
+.cpe__confirm span {
+  flex: 1;
+}
+
+.cpe__btn--danger {
+  border-color: #cc3333;
+  color: #ff6666;
+}
+
+.cpe__btn--danger:hover:not(:disabled) {
+  background: #cc333322;
+  color: #ff4444;
+}

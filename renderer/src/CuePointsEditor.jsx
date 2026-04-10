@@ -29,6 +29,7 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
   const [cuePoints, setCuePoints] = useState([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [confirmGen, setConfirmGen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editLabel, setEditLabel] = useState('');
 
@@ -37,7 +38,8 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
   const reload = useCallback(() => {
     revRef.current += 1;
     setRev(revRef.current);
-  }, []);
+    window.dispatchEvent(new CustomEvent('cue-points-updated', { detail: { trackId } }));
+  }, [trackId]);
 
   useEffect(() => {
     if (!trackId) return;
@@ -67,7 +69,17 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
     setLoading(false);
   };
 
+  const handleGenerateClick = () => {
+    if (!trackId) return;
+    if (cuePoints.length > 0) {
+      setConfirmGen(true);
+    } else {
+      handleGenerate();
+    }
+  };
+
   const handleGenerate = async () => {
+    setConfirmGen(false);
     if (!trackId) return;
     setGenerating(true);
     await window.api.generateCuePoints(trackId);
@@ -113,7 +125,7 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
           </button>
           <button
             className="cpe__btn cpe__btn--gen"
-            onClick={handleGenerate}
+            onClick={handleGenerateClick}
             disabled={generating || !trackId}
             title="Auto-generate cue points from track analysis (intro, phrases, outro)"
           >
@@ -121,6 +133,20 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
           </button>
         </div>
       </div>
+
+      {confirmGen && (
+        <div className="cpe__confirm">
+          <span>
+            Replace {cuePoints.length} existing cue point{cuePoints.length !== 1 ? 's' : ''}?
+          </span>
+          <button className="cpe__btn cpe__btn--danger" onClick={handleGenerate}>
+            Replace
+          </button>
+          <button className="cpe__btn" onClick={() => setConfirmGen(false)}>
+            Cancel
+          </button>
+        </div>
+      )}
 
       {cuePoints.length === 0 ? (
         <div className="cpe__empty">No cue points — add one or use ⚡ Auto</div>
