@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
 import './PlayerBar.css';
+import './PlayerBarCues.css';
 
 function formatTime(s) {
   if (!s || isNaN(s)) return '0:00';
@@ -38,6 +39,7 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
   const [devices, setDevices] = useState([]);
   const [showDevices, setShowDevices] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [cuePoints, setCuePoints] = useState([]);
   const seekbarRef = useRef(); // uncontrolled range input
   const seekingRef = useRef(false); // true while user drags
   const deviceWrapRef = useRef();
@@ -51,6 +53,18 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     }
     loadDevices();
   }, []);
+
+  // Load cue points whenever the playing track changes
+  useEffect(() => {
+    if (!currentTrack?.id) {
+      setCuePoints([]);
+      return;
+    }
+    window.api
+      .getCuePoints(currentTrack.id)
+      .then(setCuePoints)
+      .catch(() => setCuePoints([]));
+  }, [currentTrack?.id]);
 
   // Keep seekbar max in sync with duration
   useEffect(() => {
@@ -179,25 +193,45 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
 
         <div className="player-seek">
           <span className="player-time">{formatTime(currentTime)}</span>
-          <input
-            ref={seekbarRef}
-            type="range"
-            className="player-seekbar"
-            min={0}
-            max={duration || 0}
-            step={0.5}
-            defaultValue={0}
-            onPointerDown={(e) => {
-              console.log(`[seekbar] pointerDown value=${Number(e.target.value).toFixed(3)}`);
-              seekingRef.current = true;
-            }}
-            onPointerUp={(e) => {
-              const val = Number(e.target.value);
-              console.log(`[seekbar] pointerUp  value=${val.toFixed(3)}`);
-              seek(val);
-              seekingRef.current = false;
-            }}
-          />
+          <div className="player-seekbar-wrap">
+            <input
+              ref={seekbarRef}
+              type="range"
+              className="player-seekbar"
+              min={0}
+              max={duration || 0}
+              step={0.5}
+              defaultValue={0}
+              onPointerDown={(e) => {
+                console.log(`[seekbar] pointerDown value=${Number(e.target.value).toFixed(3)}`);
+                seekingRef.current = true;
+              }}
+              onPointerUp={(e) => {
+                const val = Number(e.target.value);
+                console.log(`[seekbar] pointerUp  value=${val.toFixed(3)}`);
+                seek(val);
+                seekingRef.current = false;
+              }}
+            />
+            {duration > 0 &&
+              cuePoints.map((cue) => {
+                const pct = Math.min((cue.position_ms / 1000 / duration) * 100, 100);
+                return (
+                  <button
+                    key={cue.id}
+                    className="player-cue-marker"
+                    style={{ left: `${pct}%`, background: cue.color }}
+                    title={
+                      cue.label ||
+                      (cue.hot_cue_index >= 0
+                        ? `Hot cue ${'ABCDEFGH'[cue.hot_cue_index]}`
+                        : 'Memory cue')
+                    }
+                    onClick={() => seek(cue.position_ms / 1000)}
+                  />
+                );
+              })}
+          </div>
           <span className="player-time">{formatTime(duration)}</span>
         </div>
       </div>

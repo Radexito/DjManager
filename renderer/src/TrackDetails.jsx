@@ -4,6 +4,7 @@ import AutoTaggerModal from './AutoTaggerModal.jsx';
 import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
 import RatingStars from './RatingStars.jsx';
+import CuePointsEditor from './CuePointsEditor.jsx';
 
 const EDITABLE_FIELDS = [
   { key: 'title', label: 'Title', type: 'text', bulkSupported: false },
@@ -265,6 +266,8 @@ export default function TrackDetails({
           </div>
         </div>
       )}
+
+      {!isBulk && <CuePointsEditor trackId={track?.id} />}
 
       {error && <div className="track-details__error">{error}</div>}
 

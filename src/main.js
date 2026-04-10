@@ -95,6 +95,14 @@ import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtil
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
+import {
+  getCuePoints,
+  addCuePoint,
+  updateCuePoint,
+  deleteCuePoint,
+  deleteAllCuePoints,
+} from './db/cuePointRepository.js';
+import { generateCuePoints } from './audio/cueGen.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -425,6 +433,33 @@ ipcMain.handle('adjust-bpm', (_, { trackIds, factor }) => {
   }
   return results;
 });
+// ── Cue point IPC handlers ────────────────────────────────────────────────────
+ipcMain.handle('get-cue-points', (_, trackId) => getCuePoints(trackId));
+
+ipcMain.handle('add-cue-point', (_, { trackId, positionMs, label, color, hotCueIndex }) => {
+  const id = addCuePoint({ trackId, positionMs, label, color, hotCueIndex });
+  return { id };
+});
+
+ipcMain.handle('update-cue-point', (_, { id, label, color }) => {
+  updateCuePoint(id, { label, color });
+  return { ok: true };
+});
+
+ipcMain.handle('delete-cue-point', (_, id) => {
+  deleteCuePoint(id);
+  return { ok: true };
+});
+
+ipcMain.handle('generate-cue-points', (_, trackId) => {
+  const track = getTrackById(trackId);
+  if (!track) throw new Error(`Track ${trackId} not found`);
+  deleteAllCuePoints(trackId);
+  const generated = generateCuePoints(track);
+  generated.forEach((cue) => addCuePoint({ trackId, ...cue }));
+  return getCuePoints(trackId);
+});
+
 // Playlist IPC handlers
 ipcMain.handle('get-playlists', () => getPlaylists());
 ipcMain.handle('create-playlist', (_, { name, color }) => {
@@ -1263,6 +1298,7 @@ ipcMain.handle(
             bpm: t.bpm_override ?? t.bpm ?? 0,
             usbRoot,
             ffmpegPath: getFfmpegRuntimePath(),
+            cuePoints: getCuePoints(t.id),
           });
         } catch (err) {
           console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
@@ -1416,6 +1452,7 @@ ipcMain.handle(
             bpm: t.bpm_override ?? t.bpm ?? 0,
             usbRoot,
             ffmpegPath: getFfmpegRuntimePath(),
+            cuePoints: getCuePoints(t.id),
           });
         } catch (err) {
           console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
