@@ -164,4 +164,25 @@ export function initDB() {
     )
   `
   ).run();
+
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS cue_points (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      track_id      INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+      position_ms   REAL    NOT NULL,
+      label         TEXT    NOT NULL DEFAULT '',
+      color         TEXT    NOT NULL DEFAULT '#00b4d8',
+      hot_cue_index INTEGER NOT NULL DEFAULT -1,
+      created_at    INTEGER NOT NULL
+    )
+  `
+  ).run();
+
+  db.prepare(
+    `
+    CREATE INDEX IF NOT EXISTS idx_cue_points_track_id
+    ON cue_points(track_id)
+  `
+  ).run();
 }

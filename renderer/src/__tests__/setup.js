@@ -6,6 +6,11 @@ const noop = () => () => {}; // returns unsubscribe fn
 window.api = {
   getTracks: vi.fn().mockResolvedValue([]),
   getTrackIds: vi.fn().mockResolvedValue([]),
+  getCuePoints: vi.fn().mockResolvedValue([]),
+  addCuePoint: vi.fn().mockResolvedValue({ id: 1 }),
+  updateCuePoint: vi.fn().mockResolvedValue({ ok: true }),
+  deleteCuePoint: vi.fn().mockResolvedValue({ ok: true }),
+  generateCuePoints: vi.fn().mockResolvedValue([]),
   getPlaylists: vi.fn().mockResolvedValue([]),
   getPlaylist: vi.fn().mockResolvedValue(null),
   createPlaylist: vi.fn().mockResolvedValue({ id: 1 }),

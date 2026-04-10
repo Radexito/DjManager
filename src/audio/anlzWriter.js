@@ -235,37 +235,66 @@ function buildPvbrSection(fileSize) {
   return buildSection('PVBR', body, 16);
 }
 
-// ─── Stub sections (cue placeholders required by Rekordbox) ───────────────────
+// ─── Cue point sections (PCOB / PCO2) ─────────────────────────────────────────
+//
+// Format derived from community reverse-engineering of Pioneer CDJ ANLZ files:
+//   https://github.com/Deep-Symmetry/crate-digger (kaitai structs)
+//
+// PCOB: basic cue objects (present in both DAT and EXT)
+//   Header (24 bytes): tag + len_header(24) + len_tag + count + memory_count + pad
+//   Each entry (28 bytes): hot_cue, status, u16, order×2, type, u8, u16,
+//                           time_ms(u32), loop_time(u32), color, u8×3, loop_num×2
+//
+// PCO2: extended cue objects with UTF-16BE labels (EXT only)
+//   Header (20 bytes): tag + len_header(20) + len_tag + count + memory_count
+//   Each entry (variable): same base as PCOB, plus label_len(u32) + UTF-16BE label
+//
+// Rekordbox color palette (hot cue / memory cue color index):
+const REKORDBOX_COLORS = [
+  '#ff6b35', // 0  orange-red  (hot cue A default)
+  '#ff0000', // 1  red
+  '#ff9900', // 2  orange
+  '#ffff00', // 3  yellow
+  '#00ff00', // 4  green
+  '#00b4d8', // 5  cyan
+  '#0080ff', // 6  blue
+  '#cc00ff', // 7  violet
+];
 
-// PCOB #1 and #2: empty cue object stubs (24 bytes each, no body)
-// Observed in every native Rekordbox DAT and EXT file.
-const PCOB1 = Buffer.from([
+function hexToRekordboxColor(hex) {
+  if (!hex) return 5; // default cyan
+  const norm = hex.toLowerCase();
+  const idx = REKORDBOX_COLORS.indexOf(norm);
+  return idx >= 0 ? idx : 5;
+}
+
+const EMPTY_PCOB_1 = Buffer.from([
   0x50,
   0x43,
   0x4f,
-  0x42,
+  0x42, // 'PCOB'
   0x00,
   0x00,
   0x00,
-  0x18, // 'PCOB', len_header=24
+  0x18, // len_header = 24
   0x00,
   0x00,
   0x00,
-  0x18, // len_tag=24 (no body)
+  0x18, // len_tag = 24 (no entries)
   0x00,
   0x00,
   0x00,
-  0x01, // flag=1
+  0x01, // count_indicator = 1 (slot 1 header sentinel)
   0x00,
   0x00,
   0x00,
-  0x00, // zero
+  0x00,
   0xff,
   0xff,
   0xff,
-  0xff, // value=FFFFFFFF
+  0xff,
 ]);
-const PCOB2 = Buffer.from([
+const EMPTY_PCOB_2 = Buffer.from([
   0x50,
   0x43,
   0x4f,
@@ -281,7 +310,7 @@ const PCOB2 = Buffer.from([
   0x00,
   0x00,
   0x00,
-  0x00, // flag=0
+  0x00, // count_indicator = 0 (slot 2)
   0x00,
   0x00,
   0x00,
@@ -290,54 +319,146 @@ const PCOB2 = Buffer.from([
   0xff,
   0xff,
   0xff,
+]);
+const EMPTY_PCO2_1 = Buffer.from([
+  0x50,
+  0x43,
+  0x4f,
+  0x32, // 'PCO2'
+  0x00,
+  0x00,
+  0x00,
+  0x14, // len_header = 20
+  0x00,
+  0x00,
+  0x00,
+  0x14, // len_tag = 20
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+]);
+const EMPTY_PCO2_2 = Buffer.from([
+  0x50, 0x43, 0x4f, 0x32, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00,
 ]);
 
-// PCO2 #1 and #2: empty extended cue stubs (20 bytes each, no body)
-// Present in native Rekordbox EXT files only (not DAT).
-const PCO2_1 = Buffer.from([
-  0x50,
-  0x43,
-  0x4f,
-  0x32,
-  0x00,
-  0x00,
-  0x00,
-  0x14, // 'PCO2', len_header=20
-  0x00,
-  0x00,
-  0x00,
-  0x14, // len_tag=20 (no body)
-  0x00,
-  0x00,
-  0x00,
-  0x01, // flag=1
-  0x00,
-  0x00,
-  0x00,
-  0x00,
-]);
-const PCO2_2 = Buffer.from([
-  0x50,
-  0x43,
-  0x4f,
-  0x32,
-  0x00,
-  0x00,
-  0x00,
-  0x14,
-  0x00,
-  0x00,
-  0x00,
-  0x14,
-  0x00,
-  0x00,
-  0x00,
-  0x00, // flag=0
-  0x00,
-  0x00,
-  0x00,
-  0x00,
-]);
+/**
+ * Build populated PCOB section buffers for DAT/EXT.
+ * Returns [pcob1, pcob2] — two sections as Rekordbox always expects exactly two.
+ * When cuePoints is empty, returns the empty stubs.
+ *
+ * @param {Array<{position_ms, color, hot_cue_index}>} cuePoints
+ * @returns {[Buffer, Buffer]}
+ */
+export function buildPcobSections(cuePoints) {
+  if (!cuePoints || cuePoints.length === 0) return [EMPTY_PCOB_1, EMPTY_PCOB_2];
+
+  const count = cuePoints.length;
+  const memoryCues = cuePoints.filter((c) => c.hot_cue_index < 0);
+  const memoryCount = memoryCues.length;
+  const entrySize = 28;
+  const headerSize = 24;
+  const tagLen = headerSize + count * entrySize;
+
+  // Both PCOB slots hold all cues (Rekordbox reads from either; slot 1 is primary)
+  function buildOne(slotFlag) {
+    const buf = Buffer.alloc(tagLen, 0);
+    buf.write('PCOB', 0, 'ascii');
+    buf.writeUInt32BE(headerSize, 4);
+    buf.writeUInt32BE(tagLen, 8);
+    buf.writeUInt32BE(slotFlag ? count : 0, 12); // count in primary slot
+    buf.writeUInt32BE(slotFlag ? memoryCount : 0, 16);
+    // bytes 20-23 = 0 (padding)
+
+    if (slotFlag) {
+      cuePoints.forEach((cue, i) => {
+        const off = headerSize + i * entrySize;
+        const hotCue = cue.hot_cue_index >= 0 ? cue.hot_cue_index : 0xff;
+        buf[off + 0] = hotCue;
+        buf[off + 1] = 0x01; // status: active
+        // bytes 2-3: u16be = 0
+        buf.writeUInt16BE(i, off + 4); // order_first
+        buf.writeUInt16BE(i, off + 6); // order_last
+        buf[off + 8] = 0x01; // type: cue point
+        // bytes 9-11: 0
+        buf.writeUInt32BE(Math.round(cue.position_ms), off + 12);
+        buf.writeUInt32BE(0xffffffff, off + 16); // loop_time: none
+        buf[off + 20] = hexToRekordboxColor(cue.color);
+        // bytes 21-27: 0 (color padding + loop_numerator/denominator)
+      });
+    } else {
+      // Slot 2: all FFs for value sentinel (mirrors empty stub behaviour)
+      buf.writeUInt32BE(0xffffffff, 20);
+    }
+    return buf;
+  }
+
+  return [buildOne(true), buildOne(false)];
+}
+
+/**
+ * Build populated PCO2 section buffers (EXT file only) — adds UTF-16BE labels.
+ * Returns [pco2_1, pco2_2].
+ *
+ * @param {Array<{position_ms, label, color, hot_cue_index}>} cuePoints
+ * @returns {[Buffer, Buffer]}
+ */
+export function buildPco2Sections(cuePoints) {
+  if (!cuePoints || cuePoints.length === 0) return [EMPTY_PCO2_1, EMPTY_PCO2_2];
+
+  const count = cuePoints.length;
+  const memoryCount = cuePoints.filter((c) => c.hot_cue_index < 0).length;
+  const headerSize = 20;
+
+  // Build entry buffers (variable length due to UTF-16BE labels)
+  const entries = cuePoints.map((cue, i) => {
+    const label = cue.label ?? '';
+    // UTF-16BE encoded label with null terminator, padded to 4-byte boundary
+    const labelByteLen = label.length > 0 ? (label.length + 1) * 2 : 0;
+    const labelPadded = Math.ceil(labelByteLen / 4) * 4;
+    const entrySize = 28 + 4 + labelPadded; // base(28) + label_len(4) + label
+    const buf = Buffer.alloc(entrySize, 0);
+    const hotCue = cue.hot_cue_index >= 0 ? cue.hot_cue_index : 0xff;
+    buf[0] = hotCue;
+    buf[1] = 0x01;
+    buf.writeUInt32BE(i, 4); // order
+    buf[8] = 0x01; // type: cue
+    buf.writeUInt32BE(Math.round(cue.position_ms), 12);
+    buf.writeUInt32BE(0xffffffff, 16); // loop_time: none
+    buf[20] = hexToRekordboxColor(cue.color);
+    buf.writeUInt32BE(labelByteLen, 28);
+    if (label.length > 0) {
+      buf.write(label, 32, 'utf16le'); // little-endian; we'll byte-swap below
+      // Convert UTF-16LE → UTF-16BE
+      for (let j = 32; j < 32 + label.length * 2; j += 2) {
+        const tmp = buf[j];
+        buf[j] = buf[j + 1];
+        buf[j + 1] = tmp;
+      }
+    }
+    return buf;
+  });
+
+  const bodyLen = entries.reduce((s, b) => s + b.length, 0);
+  const tagLen = headerSize + bodyLen;
+
+  function buildOne(primary) {
+    const header = Buffer.alloc(headerSize, 0);
+    header.write('PCO2', 0, 'ascii');
+    header.writeUInt32BE(headerSize, 4);
+    header.writeUInt32BE(primary ? tagLen : headerSize, 8);
+    header.writeUInt32BE(primary ? count : 0, 12);
+    header.writeUInt32BE(primary ? memoryCount : 0, 16);
+    return primary ? Buffer.concat([header, ...entries]) : header;
+  }
+
+  return [buildOne(true), buildOne(false)];
+}
 
 // ─── PMAI file header ──────────────────────────────────────────────────────────
 
@@ -491,14 +612,15 @@ function buildSectionWithBigHeader(fourcc, specificHeader, data) {
  * Includes real waveforms generated from the source audio via ffmpeg.
  *
  * @param {object} opts
- * @param {string}  opts.usbFilePath   - USB-relative path e.g. "/music/Artist - Title.mp3"
+ * @param {string}  opts.usbFilePath    - USB-relative path e.g. "/music/Artist - Title.mp3"
  * @param {string}  opts.sourceFilePath - Absolute path to original audio on disk
- * @param {string|null} opts.beatgrid  - JSON string from DB (mixxx-analyzer output)
- * @param {number}  opts.bpm           - BPM value from DB
- * @param {string}  opts.usbRoot       - Absolute path to USB root on disk
+ * @param {string|null} opts.beatgrid   - JSON string from DB (mixxx-analyzer output)
+ * @param {number}  opts.bpm            - BPM value from DB
+ * @param {string}  opts.usbRoot        - Absolute path to USB root on disk
+ * @param {Array}   [opts.cuePoints]    - Cue point rows from cue_points table
  */
 export async function writeAnlz(opts) {
-  const { usbFilePath, sourceFilePath, beatgrid, bpm, usbRoot, ffmpegPath } = opts;
+  const { usbFilePath, sourceFilePath, beatgrid, bpm, usbRoot, ffmpegPath, cuePoints } = opts;
 
   const folderHash = getFolderName(usbFilePath);
   const anlzDir = path.join(usbRoot, 'PIONEER', 'USBANLZ', folderHash);
@@ -527,6 +649,10 @@ export async function writeAnlz(opts) {
   }
   const pvbrSection = buildPvbrSection(audioFileSize);
 
+  // ── Build cue sections once — shared by DAT and EXT ─────────────────────────
+  const [pcob1, pcob2] = buildPcobSections(cuePoints ?? []);
+  const [pco2_1, pco2_2] = buildPco2Sections(cuePoints ?? []);
+
   // ── ANLZ0000.DAT ─────────────────────────────────────────────────────────────
   // Section order confirmed from native Rekordbox: PPTH, PVBR, PQTZ, PWAV, PWV2, PCOB×2
   const datSections = [buildPathTag(usbFilePath), pvbrSection, buildBeatGrid(beats, bpm)];
@@ -534,7 +660,7 @@ export async function writeAnlz(opts) {
     datSections.push(buildPwavSection(waveforms.pwav));
     datSections.push(buildPwv2Section(waveforms.pwv2));
   }
-  datSections.push(PCOB1, PCOB2);
+  datSections.push(pcob1, pcob2);
   const datSize = 28 + datSections.reduce((s, b) => s + b.length, 0);
   const datBuffer = Buffer.concat([buildFileHeader(datSize), ...datSections]);
   fs.writeFileSync(path.join(anlzDir, 'ANLZ0000.DAT'), datBuffer);
@@ -545,7 +671,7 @@ export async function writeAnlz(opts) {
   if (waveforms) {
     extSections.push(buildPwv3Section(waveforms.pwv3));
   }
-  extSections.push(PCOB1, PCOB2, PCO2_1, PCO2_2);
+  extSections.push(pcob1, pcob2, pco2_1, pco2_2);
   extSections.push(buildPqt2Section(beats, bpm));
   if (waveforms) {
     extSections.push(buildPwv5Section(waveforms.pwv5));
