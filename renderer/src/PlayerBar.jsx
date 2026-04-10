@@ -62,6 +62,22 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
       .catch(() => setCuePoints([]));
   }, [currentTrack?.id]);
 
+  // Refresh cue markers when cue points are added/edited/deleted elsewhere
+  useEffect(() => {
+    const id = currentTrack?.id;
+    if (!id) return;
+    const handler = (e) => {
+      if (e.detail?.trackId === id) {
+        window.api
+          .getCuePoints(id)
+          .then(setCuePoints)
+          .catch(() => {});
+      }
+    };
+    window.addEventListener('cue-points-updated', handler);
+    return () => window.removeEventListener('cue-points-updated', handler);
+  }, [currentTrack?.id]);
+
   // Keep seekbar max in sync with duration
   useEffect(() => {
     if (seekbarRef.current) seekbarRef.current.max = duration || 0;

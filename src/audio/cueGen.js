@@ -62,6 +62,7 @@ export function generateCuePoints(track) {
   if (duration < 10) return []; // too short to be meaningful
 
   const introSecs = track.intro_secs ?? 0;
+  // outro_secs is the absolute position (from track start) where the outro begins
   const outroSecs = track.outro_secs ?? 0;
   const bpm = track.bpm_override ?? track.bpm ?? 0;
 
@@ -83,11 +84,13 @@ export function generateCuePoints(track) {
     hotCueIndex: 0, // hot cue A
   });
 
+  // outro_secs is absolute — use directly as the cut-off for phrase markers
+  const outroStartSecs = outroSecs > 0 ? outroSecs : duration;
+
   // ── Memory cues: phrase markers every 32 bars ───────────────────────────────
   if (bpm > 0) {
     const secsPerBar = (60 / bpm) * 4; // 4/4 time
     const phraseSecs = secsPerBar * 32;
-    const outroStartSecs = duration - outroSecs;
 
     if (beats) {
       // Walk 32-bar intervals using actual beat positions
@@ -106,7 +109,6 @@ export function generateCuePoints(track) {
       }
     } else if (phraseSecs > 0) {
       // No beatgrid — use BPM arithmetic
-      const outroStartSecs = duration - outroSecs;
       let pos = introEndSecs + phraseSecs;
       while (pos < outroStartSecs - 2) {
         cues.push({
@@ -121,14 +123,14 @@ export function generateCuePoints(track) {
   }
 
   // ── Memory cue: outro start (mix-out point) ─────────────────────────────────
-  if (outroSecs > 0) {
-    let outroStartSecs = duration - outroSecs;
-    if (beats && outroStartSecs > 0) {
-      const idx = nearestBeatIndex(beats, outroStartSecs);
-      outroStartSecs = beats[idx].positionSecs;
+  if (outroSecs > 0 && outroSecs < duration) {
+    let mixOutSecs = outroSecs;
+    if (beats) {
+      const idx = nearestBeatIndex(beats, outroSecs);
+      mixOutSecs = beats[idx].positionSecs;
     }
     cues.push({
-      positionMs: Math.round(outroStartSecs * 1000),
+      positionMs: Math.round(mixOutSecs * 1000),
       label: 'Mix Out',
       color: OUTRO_COLOR,
       hotCueIndex: -1,
