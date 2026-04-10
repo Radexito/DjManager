@@ -141,6 +141,74 @@ describe('Sidebar', () => {
   });
 });
 
+describe('Sidebar — import dialog playlist association', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const defaultProps = {
+    selectedMenuItemId: 'music',
+    onMenuSelect: vi.fn(),
+    onExportPlaylistRekordboxUsb: vi.fn(),
+    onExportPlaylistAll: vi.fn(),
+  };
+
+  it('passes playlist id (not the whole object) to importAudioFiles when creating new playlist', async () => {
+    window.api.selectAudioFiles.mockResolvedValueOnce(['/tmp/track.mp3']);
+    window.api.createPlaylist.mockResolvedValueOnce({ id: 7 });
+
+    renderSidebar({ ...defaultProps });
+    fireEvent.click(screen.getByText('Import Audio Files'));
+
+    await waitFor(() => screen.getByText('Import to Playlist'));
+
+    fireEvent.click(screen.getByRole('radio', { name: /Create new playlist/ }));
+    fireEvent.change(screen.getByPlaceholderText('New playlist name'), {
+      target: { value: 'My New Set' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+
+    await waitFor(() => {
+      expect(window.api.createPlaylist).toHaveBeenCalledWith('My New Set');
+      // Regression: must pass the integer id, not the whole { id } object
+      expect(window.api.importAudioFiles).toHaveBeenCalledWith(['/tmp/track.mp3'], 7);
+    });
+  });
+
+  it('passes playlist id to importAudioFiles when selecting an existing playlist', async () => {
+    window.api.getPlaylists.mockResolvedValue([
+      { id: 42, name: 'Techno Set', color: null, track_count: 5, total_duration: 1500 },
+    ]);
+    window.api.selectAudioFiles.mockResolvedValueOnce(['/tmp/track.mp3']);
+
+    renderSidebar({ ...defaultProps });
+    await waitFor(() => screen.getByText('Techno Set'));
+
+    fireEvent.click(screen.getByText('Import Audio Files'));
+    await waitFor(() => screen.getByText('Import to Playlist'));
+
+    fireEvent.click(screen.getByRole('radio', { name: /Techno Set/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+
+    await waitFor(() => {
+      expect(window.api.importAudioFiles).toHaveBeenCalledWith(['/tmp/track.mp3'], 42);
+    });
+  });
+
+  it('passes null to importAudioFiles when "Library only" is selected', async () => {
+    window.api.selectAudioFiles.mockResolvedValueOnce(['/tmp/track.mp3']);
+
+    renderSidebar({ ...defaultProps });
+    fireEvent.click(screen.getByText('Import Audio Files'));
+    await waitFor(() => screen.getByText('Import to Playlist'));
+
+    // "Library only" is the default — just click Import
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+
+    await waitFor(() => {
+      expect(window.api.importAudioFiles).toHaveBeenCalledWith(['/tmp/track.mp3'], null);
+    });
+  });
+});
+
 describe('Sidebar — normalization progress bar', () => {
   beforeEach(() => vi.clearAllMocks());
 
