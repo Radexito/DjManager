@@ -56,12 +56,8 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
 
   // Load cue points whenever the playing track changes
   useEffect(() => {
-    if (!currentTrack?.id) {
-      setCuePoints([]);
-      return;
-    }
-    window.api
-      .getCuePoints(currentTrack.id)
+    const id = currentTrack?.id;
+    Promise.resolve(id ? window.api.getCuePoints(id) : [])
       .then(setCuePoints)
       .catch(() => setCuePoints([]));
   }, [currentTrack?.id]);
