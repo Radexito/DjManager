@@ -691,12 +691,21 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
         // Soft append: fetch only the new rows at the current end of the list.
         // This avoids resetting the list (which shrinks the scroll container and
         // snaps the user away from their current position).
+        //
+        // onLibraryUpdated fires multiple times per import (row insert + analysis
+        // complete). All fires can read a stale sortedTracksRef before React re-renders,
+        // so they all use the same offset and fetch the same batch. Dedup inside the
+        // functional updater so duplicate rows from concurrent fires are silently dropped.
         const currentCount = sortedTracksRef.current.length;
         const rows = await window.api.getTracks({ limit: PAGE_SIZE, offset: currentCount });
         if (rows.length > 0) {
           const newIds = new Set(rows.map((r) => r.id));
           setNewTrackIds((prev) => new Set([...prev, ...newIds]));
-          setTracks((prev) => [...prev, ...rows]);
+          setTracks((prev) => {
+            const existingIds = new Set(prev.map((t) => t.id));
+            const fresh = rows.filter((r) => !existingIds.has(r.id));
+            return fresh.length > 0 ? [...prev, ...fresh] : prev;
+          });
           offsetRef.current = currentCount + rows.length;
           if (rows.length < PAGE_SIZE) {
             hasMoreRef.current = false;
