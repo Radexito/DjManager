@@ -188,6 +188,13 @@
   color: #ff4444;
 }
 
+.cpe__del-confirm {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .cpe__confirm {
   display: flex;
   align-items: center;
