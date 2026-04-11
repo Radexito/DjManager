@@ -228,9 +228,11 @@ export function getTracks({ limit = 50, offset = 0, search = '', filters = [], p
     return db
       .prepare(
         `
-        SELECT t.*
+        SELECT t.*, COALESCE(cp.cnt, 0) AS cue_count
         FROM playlist_tracks pt
         JOIN tracks t ON t.id = pt.track_id
+        LEFT JOIN (SELECT track_id, COUNT(*) AS cnt FROM cue_points GROUP BY track_id) cp
+          ON cp.track_id = t.id
         WHERE pt.playlist_id = @playlistId ${extra}
         ORDER BY pt.position ASC
         LIMIT @limit OFFSET @offset
@@ -243,9 +245,12 @@ export function getTracks({ limit = 50, offset = 0, search = '', filters = [], p
   return db
     .prepare(
       `
-      SELECT * FROM tracks
+      SELECT t.*, COALESCE(cp.cnt, 0) AS cue_count
+      FROM tracks t
+      LEFT JOIN (SELECT track_id, COUNT(*) AS cnt FROM cue_points GROUP BY track_id) cp
+        ON cp.track_id = t.id
       ${where}
-      ORDER BY created_at DESC
+      ORDER BY t.created_at DESC
       LIMIT @limit OFFSET @offset
     `
     )
