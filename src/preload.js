@@ -9,6 +9,13 @@ contextBridge.exposeInMainWorld('api', {
   updateTrack: (id, data) => ipcRenderer.invoke('update-track', { id, data }),
   adjustBpm: (payload) => ipcRenderer.invoke('adjust-bpm', payload),
 
+  // Cue points
+  getCuePoints: (trackId) => ipcRenderer.invoke('get-cue-points', trackId),
+  addCuePoint: (payload) => ipcRenderer.invoke('add-cue-point', payload),
+  updateCuePoint: (id, update) => ipcRenderer.invoke('update-cue-point', { id, ...update }),
+  deleteCuePoint: (id) => ipcRenderer.invoke('delete-cue-point', id),
+  generateCuePoints: (trackId) => ipcRenderer.invoke('generate-cue-points', trackId),
+
   // Import
   selectAudioFiles: () => ipcRenderer.invoke('select-audio-files'),
   importAudioFiles: (files, playlistId) =>
