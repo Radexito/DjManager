@@ -30,6 +30,7 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [confirmGen, setConfirmGen] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editLabel, setEditLabel] = useState('');
 
@@ -87,8 +88,14 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
     setGenerating(false);
   };
 
-  const handleDelete = async (id) => {
-    await window.api.deleteCuePoint(id);
+  const handleDelete = (id) => {
+    setConfirmDeleteId(id);
+  };
+
+  const confirmDelete = async () => {
+    if (!confirmDeleteId) return;
+    await window.api.deleteCuePoint(confirmDeleteId);
+    setConfirmDeleteId(null);
     reload();
   };
 
@@ -213,13 +220,24 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
               </div>
 
               {/* Delete */}
-              <button
-                className="cpe__del"
-                onClick={() => handleDelete(cue.id)}
-                title="Delete cue point"
-              >
-                ✕
-              </button>
+              {confirmDeleteId === cue.id ? (
+                <div className="cpe__del-confirm">
+                  <button className="cpe__btn cpe__btn--danger" onClick={confirmDelete}>
+                    Delete
+                  </button>
+                  <button className="cpe__btn" onClick={() => setConfirmDeleteId(null)}>
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  className="cpe__del"
+                  onClick={() => handleDelete(cue.id)}
+                  title="Delete cue point"
+                >
+                  ✕
+                </button>
+              )}
             </div>
           ))}
         </div>

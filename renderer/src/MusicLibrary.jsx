@@ -805,6 +805,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     } else {
       setSelectedIds(new Set([track.id]));
       lastSelectedIndexRef.current = index;
+      // If the cue panel is already open, follow the selection
+      setCueTrack((prev) => (prev ? track : null));
     }
   }, []);
 

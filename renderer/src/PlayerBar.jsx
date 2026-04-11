@@ -57,10 +57,42 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
   // Load cue points whenever the playing track changes
   useEffect(() => {
     const id = currentTrack?.id;
-    Promise.resolve(id ? window.api.getCuePoints(id) : [])
-      .then(setCuePoints)
-      .catch(() => setCuePoints([]));
+    if (!id) {
+      setCuePoints([]);
+      return;
+    }
+    let alive = true;
+    window.api
+      .getCuePoints(id)
+      .then((pts) => {
+        if (alive) setCuePoints(pts);
+      })
+      .catch(() => {
+        if (alive) setCuePoints([]);
+      });
+    return () => {
+      alive = false;
+    };
   }, [currentTrack?.id]);
+
+  // Re-sync cue markers once audio duration is known — fixes the race where the
+  // SQLite response arrives before durationchange fires, so markers were hidden
+  // (duration > 0 guard) even though cue points were already in state.
+  const hasDuration = duration > 0;
+  useEffect(() => {
+    const id = currentTrack?.id;
+    if (!id || !hasDuration) return;
+    let alive = true;
+    window.api
+      .getCuePoints(id)
+      .then((pts) => {
+        if (alive) setCuePoints(pts);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [currentTrack?.id, hasDuration]);
 
   // Refresh cue markers when cue points are added/edited/deleted elsewhere
   useEffect(() => {
