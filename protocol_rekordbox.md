@@ -236,7 +236,10 @@ Subheader (12 bytes at offset 12):
 | 16     | 4    | `num_entries` (1200 fixed) |
 | 20     | 4    | `0x00000000`               |
 
-Body: 1200 × 6 bytes. Per column: `[whiteness, whiteness, overall_rms, bass, mid, treble]`.
+Body: 1200 × 6 bytes. Per column: `[peak_byte, 255 - peak_byte, overall_rms, bass, mid, treble]`.
+
+- `peak_byte` = `min(255, round(peak * 255))` — peak amplitude, confirmed from hex-diff of native files (avg b0+b1 ≈ 255).
+- `overall_rms`, `bass`, `mid`, `treble` each scaled by 510, capped at 255.
 
 ---
 
