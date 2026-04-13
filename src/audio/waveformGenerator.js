@@ -12,11 +12,22 @@ export const PWV2_COLS = 100; // PWV2: tiny overview (CDJ-900)
 export const PWV4_COLS = 1200; // PWV4: colour overview (NXS2), 6 bytes/col
 export const PWV6_COLS = 1200; // PWV6: colour overview for 2EX (CDJ-3000), 3 bytes/col
 
+// Two-stage EMA cutoffs for frequency band separation (applied to |sample|).
+// α ≈ 2π·f_c / f_s  →  0.03 ≈ 105 Hz (bass),  0.28 ≈ 980 Hz (bass+mid)
+const ALPHA_BASS = 0.03;
+const ALPHA_MID = 0.28;
+
 // ─── Per-slice analysis ───────────────────────────────────────────────────────
 
 /**
  * Compute RMS, peak, and approximate frequency-band energies for a sample slice.
- * Uses a two-stage IIR to separate bass (<~500 Hz) from treble (>~2 kHz).
+ * Uses two cascaded EMA low-pass filters on |sample| to separate bass/mid/treble.
+ *   bass   ≈ 0–105 Hz  (EMA α=0.03)
+ *   mid    ≈ 105–980 Hz (difference of the two EMAs)
+ *   treble ≈ >980 Hz   (residual above upper EMA)
+ *
+ * For per-column overview segments (thousands of samples) the EMA settles fully
+ * within the slice, so initialising from the first sample is accurate enough.
  */
 function analyzeSlice(samples, start, end) {
   const len = end - start;
@@ -25,27 +36,30 @@ function analyzeSlice(samples, start, end) {
   let sumSq = 0;
   let peak = 0;
   let bassSum = 0;
+  let midSum = 0;
   let trebleSum = 0;
-  // EMA low-pass: alpha=0.1 approximates a ~450 Hz cutoff at 22050 Hz
-  let ema = Math.abs(samples[start] || 0);
+  let emaBass = Math.abs(samples[start] || 0);
+  let emaMid = emaBass;
 
   for (let i = start; i < end; i++) {
     const s = samples[i] || 0;
     const abs = Math.abs(s);
     sumSq += s * s;
     if (abs > peak) peak = abs;
-    ema = 0.1 * abs + 0.9 * ema;
-    bassSum += ema;
-    trebleSum += Math.max(0, abs - ema);
+    emaBass = ALPHA_BASS * abs + (1 - ALPHA_BASS) * emaBass;
+    emaMid = ALPHA_MID * abs + (1 - ALPHA_MID) * emaMid;
+    bassSum += emaBass;
+    midSum += Math.max(0, emaMid - emaBass);
+    trebleSum += Math.max(0, abs - emaMid);
   }
 
-  const rms = Math.sqrt(sumSq / len);
-  const bassRms = bassSum / len;
-  const trebleRms = trebleSum / len;
-  // Mid is energy that sits between bass and treble approximations
-  const midRms = Math.max(0, rms - bassRms - trebleRms * 0.5);
-
-  return { rms, peak, bassRms, midRms, trebleRms };
+  return {
+    rms: Math.sqrt(sumSq / len),
+    peak,
+    bassRms: bassSum / len,
+    midRms: midSum / len,
+    trebleRms: trebleSum / len,
+  };
 }
 
 // ─── Column encoders ──────────────────────────────────────────────────────────
@@ -81,7 +95,7 @@ function computeColumns(samples) {
 
   // PWV3: 1 byte per col — (whiteness[0-7] << 5) | height[0-31]
   const pwv3 = Buffer.alloc(numCols);
-  // PWV5: 2 bytes per col — correct RGB+height u16be per Pioneer/crate-digger spec:
+  // PWV5: 2 bytes per col — RGB+height u16be per Pioneer/crate-digger spec:
   //   bits 15-13: red (treble, 3 bits)
   //   bits 12-10: green (mid,    3 bits)
   //   bits  9- 7: blue  (bass,   3 bits)
@@ -91,15 +105,37 @@ function computeColumns(samples) {
   // PWV7: 3 bytes per col — [treble, mid, bass] each 0-255 (CDJ-3000 / .2EX)
   const pwv7 = Buffer.alloc(numCols * 3);
 
+  // Carry EMA state across columns — critical for the bass channel where the
+  // time constant (1/α_bass = 33 samples) is comparable to SAMPLES_PER_COL (147).
+  let emaBass = 0;
+  let emaMid = 0;
+
   for (let col = 0; col < numCols; col++) {
     const start = col * SAMPLES_PER_COL;
-    const { rms, peak, bassRms, midRms, trebleRms } = analyzeSlice(
-      samples,
-      start,
-      start + SAMPLES_PER_COL
-    );
-    const { height, whiteness } = monoHeightWhiteness(rms, peak);
+    let sumSq = 0;
+    let peak = 0;
+    let bassSum = 0;
+    let midSum = 0;
+    let trebleSum = 0;
 
+    for (let i = start; i < start + SAMPLES_PER_COL; i++) {
+      const s = samples[i] || 0;
+      const abs = Math.abs(s);
+      sumSq += s * s;
+      if (abs > peak) peak = abs;
+      emaBass = ALPHA_BASS * abs + (1 - ALPHA_BASS) * emaBass;
+      emaMid = ALPHA_MID * abs + (1 - ALPHA_MID) * emaMid;
+      bassSum += emaBass;
+      midSum += Math.max(0, emaMid - emaBass);
+      trebleSum += Math.max(0, abs - emaMid);
+    }
+
+    const rms = Math.sqrt(sumSq / SAMPLES_PER_COL);
+    const bassRms = bassSum / SAMPLES_PER_COL;
+    const midRms = midSum / SAMPLES_PER_COL;
+    const trebleRms = trebleSum / SAMPLES_PER_COL;
+
+    const { height, whiteness } = monoHeightWhiteness(rms, peak);
     pwv3[col] = ((whiteness & 7) << 5) | (height & 31);
 
     const r = Math.min(7, Math.round(trebleRms * 28));
@@ -135,20 +171,19 @@ function computeColumns(samples) {
   );
 
   // PWV4: 1200 × 6 bytes — colour overview (NXS2)
-  //   byte 0: whiteness/brightness indicator
-  //   byte 1: whiteness/brightness indicator
-  //   byte 2: energy_bottom_half_freq  (overall RMS, < ~10 kHz)
-  //   byte 3: energy_bottom_third_freq (bass, < ~3.5 kHz)
-  //   byte 4: energy_mid_third_freq    (mid,  3.5–7 kHz)
-  //   byte 5: energy_top_third_freq    (treble, > 7 kHz)
+  //   byte 0: peak intensity  (peak * 255)          — confirmed from native files
+  //   byte 1: complement      (255 - byte0)          — native avg b0+b1 ≈ 255
+  //   byte 2: overall RMS     (rms * 510, capped)
+  //   byte 3: bass energy     (0–105 Hz)
+  //   byte 4: mid energy      (105–980 Hz)
+  //   byte 5: treble energy   (>980 Hz)
   const pwv4 = Buffer.concat(
     computeFixedColumns(samples, PWV4_COLS, (s, a, b) => {
       const { rms, peak, bassRms, midRms, trebleRms } = analyzeSlice(s, a, b);
-      const transientRatio = rms > 0.001 ? Math.min(peak / (rms + 0.001), 4) : 0;
-      const whiteness = Math.min(255, Math.round(transientRatio * 64));
+      const peakByte = Math.min(255, Math.round(peak * 255));
       return Buffer.from([
-        whiteness,
-        whiteness,
+        peakByte,
+        255 - peakByte,
         Math.min(255, Math.round(rms * 510)),
         Math.min(255, Math.round(bassRms * 510)),
         Math.min(255, Math.round(midRms * 510)),

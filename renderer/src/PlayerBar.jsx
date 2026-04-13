@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
 import './PlayerBar.css';
+import './PlayerBarCues.css';
 
 function formatTime(s) {
   if (!s || isNaN(s)) return '0:00';
@@ -38,6 +39,13 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
   const [devices, setDevices] = useState([]);
   const [showDevices, setShowDevices] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [cuePoints, setCuePoints] = useState([]);
+  const [showHotCues, setShowHotCues] = useState(
+    () => localStorage.getItem('cue-show-hot') !== 'false'
+  );
+  const [showMemCues, setShowMemCues] = useState(
+    () => localStorage.getItem('cue-show-mem') !== 'false'
+  );
   const seekbarRef = useRef(); // uncontrolled range input
   const seekingRef = useRef(false); // true while user drags
   const deviceWrapRef = useRef();
@@ -50,6 +58,67 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
       setDevices(all.filter((d) => d.kind === 'audiooutput'));
     }
     loadDevices();
+  }, []);
+
+  // Load cue points whenever the playing track changes
+  useEffect(() => {
+    const id = currentTrack?.id;
+    let alive = true;
+    Promise.resolve(id ? window.api.getCuePoints(id) : [])
+      .then((pts) => {
+        if (alive) setCuePoints(pts);
+      })
+      .catch(() => {
+        if (alive) setCuePoints([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [currentTrack?.id]);
+
+  // Re-sync cue markers once audio duration is known — fixes the race where the
+  // SQLite response arrives before durationchange fires, so markers were hidden
+  // (duration > 0 guard) even though cue points were already in state.
+  const hasDuration = duration > 0;
+  useEffect(() => {
+    const id = currentTrack?.id;
+    if (!id || !hasDuration) return;
+    let alive = true;
+    window.api
+      .getCuePoints(id)
+      .then((pts) => {
+        if (alive) setCuePoints(pts);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [currentTrack?.id, hasDuration]);
+
+  // Refresh cue markers when cue points are added/edited/deleted elsewhere
+  useEffect(() => {
+    const id = currentTrack?.id;
+    if (!id) return;
+    const handler = (e) => {
+      if (e.detail?.trackId === id) {
+        window.api
+          .getCuePoints(id)
+          .then(setCuePoints)
+          .catch(() => {});
+      }
+    };
+    window.addEventListener('cue-points-updated', handler);
+    return () => window.removeEventListener('cue-points-updated', handler);
+  }, [currentTrack?.id]);
+
+  // Sync visibility toggles with CuePointsEditor
+  useEffect(() => {
+    const handler = ({ detail: { key, val } }) => {
+      if (key === 'cue-show-hot') setShowHotCues(val);
+      if (key === 'cue-show-mem') setShowMemCues(val);
+    };
+    window.addEventListener('cue-visibility-changed', handler);
+    return () => window.removeEventListener('cue-visibility-changed', handler);
   }, []);
 
   // Keep seekbar max in sync with duration
@@ -179,25 +248,47 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
 
         <div className="player-seek">
           <span className="player-time">{formatTime(currentTime)}</span>
-          <input
-            ref={seekbarRef}
-            type="range"
-            className="player-seekbar"
-            min={0}
-            max={duration || 0}
-            step={0.5}
-            defaultValue={0}
-            onPointerDown={(e) => {
-              console.log(`[seekbar] pointerDown value=${Number(e.target.value).toFixed(3)}`);
-              seekingRef.current = true;
-            }}
-            onPointerUp={(e) => {
-              const val = Number(e.target.value);
-              console.log(`[seekbar] pointerUp  value=${val.toFixed(3)}`);
-              seek(val);
-              seekingRef.current = false;
-            }}
-          />
+          <div className="player-seekbar-wrap">
+            <input
+              ref={seekbarRef}
+              type="range"
+              className="player-seekbar"
+              min={0}
+              max={duration || 0}
+              step={0.5}
+              defaultValue={0}
+              onPointerDown={(e) => {
+                console.log(`[seekbar] pointerDown value=${Number(e.target.value).toFixed(3)}`);
+                seekingRef.current = true;
+              }}
+              onPointerUp={(e) => {
+                const val = Number(e.target.value);
+                console.log(`[seekbar] pointerUp  value=${val.toFixed(3)}`);
+                seek(val);
+                seekingRef.current = false;
+              }}
+            />
+            {duration > 0 &&
+              cuePoints
+                .filter((cue) => (cue.hot_cue_index >= 0 ? showHotCues : showMemCues))
+                .map((cue) => {
+                  const pct = Math.min((cue.position_ms / 1000 / duration) * 100, 100);
+                  return (
+                    <button
+                      key={cue.id}
+                      className="player-cue-marker"
+                      style={{ left: `${pct}%`, background: cue.color }}
+                      title={
+                        cue.label ||
+                        (cue.hot_cue_index >= 0
+                          ? `Hot cue ${'ABCDEFGH'[cue.hot_cue_index]}`
+                          : 'Memory cue')
+                      }
+                      onClick={() => seek(cue.position_ms / 1000)}
+                    />
+                  );
+                })}
+          </div>
           <span className="player-time">{formatTime(duration)}</span>
         </div>
       </div>

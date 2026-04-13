@@ -1,4 +1,12 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import {
+  useEffect,
+  useState,
+  useRef,
+  useCallback,
+  useMemo,
+  createContext,
+  useContext,
+} from 'react';
 import { List } from 'react-window';
 import {
   DndContext,
@@ -19,6 +27,7 @@ import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
 import { parseQuery } from './searchParser.js';
 import TrackDetails from './TrackDetails.jsx';
+import CuePointsEditor from './CuePointsEditor.jsx';
 import RatingStars from './RatingStars.jsx';
 import './MusicLibrary.css';
 
@@ -38,6 +47,7 @@ const ALL_COLUMNS = [
   { key: 'bpm', label: 'BPM', width: '62px' },
   { key: 'key_camelot', label: 'Key', width: '52px' },
   { key: 'loudness', label: 'Loudness (LUFS)', width: '115px' },
+  { key: 'cue', label: '◆', width: '28px' },
   { key: 'album', label: 'Album', width: 'minmax(80px, 1fr)' },
   { key: 'year', label: 'Year', width: '50px' },
   { key: 'label', label: 'Label', width: '100px' },
@@ -58,6 +68,7 @@ const DEFAULT_COL_VIS = {
   bpm: true,
   key_camelot: true,
   loudness: true,
+  cue: true,
   album: false,
   year: false,
   label: false,
@@ -123,6 +134,8 @@ function renderCell(t, colKey) {
         return '—';
       }
     }
+    case 'cue':
+      return null; // rendered as icon button in LibraryRow
     case 'rating':
       return null; // rendered as interactive RatingStars in LibraryRow
     case 'user_tags':
@@ -144,6 +157,45 @@ function cellClass(colKey, t) {
   return `cell ${colKey}${numeric ? ' numeric' : ''}${over ? ' bpm--overridden' : ''}`;
 }
 
+// ── SubItem context — defined outside MusicLibrary so SubItem's type is stable across
+//    re-renders, preventing unmount/remount that would kill CSS hover state ──────────────
+const SubItemCtx = createContext(null);
+
+function SubItem({ id, label, children, wide, scrollable }) {
+  const ctx = useContext(SubItemCtx);
+  if (!ctx) return null;
+  const { isOverlay, onDrillDown } = ctx;
+  if (isOverlay) {
+    return (
+      <div
+        className="context-menu-item context-menu-item--has-submenu"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDrillDown({ id, label, content: children });
+        }}
+      >
+        {label}
+      </div>
+    );
+  }
+  return (
+    <div className="context-menu-item context-menu-item--has-submenu">
+      {label}
+      <div
+        className={[
+          'context-submenu',
+          wide ? 'context-submenu--wide' : '',
+          scrollable ? 'context-submenu--scrollable' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 // ── LibraryRow — outside MusicLibrary so react-virtualized doesn't remount on re-render ──
 function LibraryRow({
   index,
@@ -155,10 +207,14 @@ function LibraryRow({
   onDoubleClick,
   onContextMenu,
   onRatingChange,
+  onCueClick,
+  onDragStart,
   visibleColumns,
   gridTemplate,
   minScrollWidth,
   mediaPort,
+  newTrackIds,
+  onAnimationEnd,
 }) {
   const t = tracks[index];
   if (!t) {
@@ -173,14 +229,22 @@ function LibraryRow({
   }
   const isSelected = selectedIds.has(t.id);
   const isPlaying = currentTrackId === t.id;
+  const isNew = newTrackIds?.has(t.id);
   return (
     <div
       style={{ ...style, gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
-      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}`}
-      title={`${t.title} - ${t.artist || 'Unknown'}`}
+      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}${isNew ? ' row--new' : ''}`}
+      title={
+        t.analyzed === 0
+          ? `⏳ Analyzing / processing — "${t.title}" will be available shortly`
+          : `${t.title} - ${t.artist || 'Unknown'}`
+      }
+      draggable={true}
+      onDragStart={(e) => onDragStart(e, t)}
       onClick={(e) => onRowClick(e, t, index)}
       onDoubleClick={() => onDoubleClick(t, index)}
       onContextMenu={(e) => onContextMenu(e, t, index)}
+      onAnimationEnd={isNew ? () => onAnimationEnd?.(t.id) : undefined}
     >
       {visibleColumns.map((col) =>
         col.key === 'index' ? (
@@ -197,6 +261,26 @@ function LibraryRow({
             >
               ▶
             </button>
+          </div>
+        ) : col.key === 'cue' ? (
+          <div
+            key="cue"
+            className="cell cue"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCueClick?.(t);
+            }}
+            title={
+              t.cue_count > 0
+                ? `${t.cue_count} cue point(s) — click to edit`
+                : 'No cue points — click to add'
+            }
+          >
+            {t.cue_count > 0 ? (
+              <span className="cue-dot cue-dot--has">◆</span>
+            ) : (
+              <span className="cue-dot cue-dot--empty">◇</span>
+            )}
           </div>
         ) : col.key === 'rating' ? (
           <div key="rating" className="cell rating" onClick={(e) => e.stopPropagation()}>
@@ -236,10 +320,13 @@ function SortableRow({
   onDoubleClick,
   onContextMenu,
   onRatingChange,
+  onCueClick,
   visibleColumns,
   gridTemplate,
   minScrollWidth,
   mediaPort,
+  isNew,
+  onAnimationEnd,
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: t.id,
@@ -255,11 +342,16 @@ function SortableRow({
     <div
       ref={setNodeRef}
       style={style}
-      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}`}
-      title={`${t.title} - ${t.artist || 'Unknown'}`}
+      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}${isNew ? ' row--new' : ''}`}
+      title={
+        t.analyzed === 0
+          ? `⏳ Analyzing / processing — "${t.title}" will be available shortly`
+          : `${t.title} - ${t.artist || 'Unknown'}`
+      }
       onClick={(e) => onRowClick(e, t, index)}
       onDoubleClick={() => onDoubleClick(t, index)}
       onContextMenu={(e) => onContextMenu(e, t, index)}
+      onAnimationEnd={isNew ? () => onAnimationEnd?.(t.id) : undefined}
     >
       {visibleColumns.map((col) =>
         col.key === 'index' ? (
@@ -276,6 +368,26 @@ function SortableRow({
             >
               ▶
             </button>
+          </div>
+        ) : col.key === 'cue' ? (
+          <div
+            key="cue"
+            className="cell cue"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCueClick?.(t);
+            }}
+            title={
+              t.cue_count > 0
+                ? `${t.cue_count} cue point(s) — click to edit`
+                : 'No cue points — click to add'
+            }
+          >
+            {t.cue_count > 0 ? (
+              <span className="cue-dot cue-dot--has">◆</span>
+            ) : (
+              <span className="cue-dot cue-dot--empty">◇</span>
+            )}
           </div>
         ) : col.key === 'rating' ? (
           <div key="rating" className="cell rating" onClick={(e) => e.stopPropagation()}>
@@ -328,7 +440,18 @@ function SortableColItem({ colKey, label, checked, onToggle }) {
 
 function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const isPlaylistView = selectedPlaylist !== 'music';
-  const { play, stop, currentTrack, currentPlaylistId, mediaPort } = usePlayer();
+  const {
+    play,
+    stop,
+    currentTrack,
+    isPlaying,
+    togglePlay,
+    currentPlaylistId,
+    mediaPort,
+    patchCurrentTrack,
+    reloadCurrentTrack,
+    updateQueue,
+  } = usePlayer();
 
   // Only highlight a track as "playing" when the source context matches this view.
   // Library view: only highlight when played from library (currentPlaylistId === null).
@@ -343,11 +466,18 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
 
   const [tracks, setTracks] = useState([]);
   const [hasMore, setHasMore] = useState(true);
+  const [newTrackIds, setNewTrackIds] = useState(new Set()); // IDs of rows to animate in
 
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [contextMenu, setContextMenu] = useState(null); // { x, y, targetIds }
+  const [toast, setToast] = useState(null); // { msg, ok } | null
+  const toastTimerRef = useRef(null);
   const [drillStack, setDrillStack] = useState([]); // overlay drill-down stack [{ id, label, content }]
   const [playlistSubmenu, setPlaylistSubmenu] = useState(null); // [{ id, name, color, is_member }]
+  const [newPlaylistInputActive, setNewPlaylistInputActive] = useState(false);
+  const [newPlaylistName, setNewPlaylistName] = useState('');
+  const [newPlaylistError, setNewPlaylistError] = useState('');
+  const newPlaylistInputRef = useRef(null);
   const [loadKey, setLoadKey] = useState(0);
   const [playlistInfo, setPlaylistInfo] = useState(null); // { name, total_duration, track_count }
   const [activeId, setActiveId] = useState(null); // DnD active drag id
@@ -357,6 +487,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const [colMenuAnchor, setColMenuAnchor] = useState(null); // { x, y } | null
   const [detailsTrack, setDetailsTrack] = useState(null);
   const [detailsBulkTracks, setDetailsBulkTracks] = useState(null); // array | null
+  const [cueTrack, setCueTrack] = useState(null);
 
   const offsetRef = useRef(0);
   const loadingRef = useRef(false);
@@ -369,6 +500,34 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const headerRef = useRef(null);
   const headerScrollRef = useRef(null); // syncs header horizontal scroll to content scroll
   const dndScrollRef = useRef(null); // ref to playlist DnD scroll container
+  // Tracks whether we should resume playback after normalization finishes re-analyzing
+  const normalizeResumeRef = useRef(null); // { id, shouldResume } | null
+  // When set to true, the next loadTracks call will animate truly-new incoming rows
+  const animateNextLoadRef = useRef(false);
+  // Snapshot of IDs already in the list before a reload — used to diff truly-new rows
+  const preReloadIdsRef = useRef(new Set());
+  // Refs that stay in sync so the onLibraryUpdated closure (empty deps) can read current values
+  const selectedPlaylistRef = useRef(selectedPlaylist);
+  const searchRef = useRef(search);
+  const currentPlaylistIdRef = useRef(currentPlaylistId);
+  const updateQueueRef = useRef(updateQueue);
+  useEffect(() => {
+    selectedPlaylistRef.current = selectedPlaylist;
+  }, [selectedPlaylist]);
+  useEffect(() => {
+    searchRef.current = search;
+  }, [search]);
+  useEffect(() => {
+    currentPlaylistIdRef.current = currentPlaylistId;
+  }, [currentPlaylistId]);
+  useEffect(() => {
+    updateQueueRef.current = updateQueue;
+  }, [updateQueue]);
+
+  // Track previous view identity so the reset effect knows whether the VIEW changed
+  // (search/playlist switch → clear selection) vs. just a data reload (loadKey bump → keep selection)
+  const prevSelectedPlaylistRef = useRef(selectedPlaylist);
+  const prevSearchRef = useRef(search);
 
   const visibleColumns = useMemo(
     () => colOrder.map((k) => COL_BY_KEY[k]).filter((c) => c && colVis[c.key] !== false),
@@ -413,7 +572,20 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
 
       if (token !== resetTokenRef.current) return; // stale — reset happened mid-flight
 
-      setTracks((prev) => [...prev, ...rows]);
+      // On first page: replace all tracks atomically (no flash from empty-list state)
+      if (offsetRef.current === 0) {
+        // Animate only rows that weren't already in the list before reload
+        if (animateNextLoadRef.current) {
+          animateNextLoadRef.current = false;
+          const truly = new Set(
+            rows.filter((r) => !preReloadIdsRef.current.has(r.id)).map((r) => r.id)
+          );
+          if (truly.size > 0) setNewTrackIds((prev) => new Set([...prev, ...truly]));
+        }
+        setTracks(rows);
+      } else {
+        setTracks((prev) => [...prev, ...rows]);
+      }
       offsetRef.current += rows.length;
 
       if (rows.length < PAGE_SIZE) {
@@ -431,7 +603,11 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
       // For BPM, prefer the override value
       const va = sortBy.key === 'bpm' ? (a.bpm_override ?? a.bpm ?? '') : (a[sortBy.key] ?? '');
       const vb = sortBy.key === 'bpm' ? (b.bpm_override ?? b.bpm ?? '') : (b[sortBy.key] ?? '');
-      if (typeof va === 'string') return sortBy.asc ? va.localeCompare(vb) : vb.localeCompare(va);
+      if (typeof va === 'string' || typeof vb === 'string') {
+        const sa = String(va ?? '');
+        const sb = String(vb ?? '');
+        return sortBy.asc ? sa.localeCompare(sb) : sb.localeCompare(sa);
+      }
       if (typeof va === 'number') return sortBy.asc ? va - vb : vb - va;
       return 0;
     });
@@ -440,16 +616,28 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   }, [tracks, sortBy]);
 
   useEffect(() => {
+    // Snapshot IDs currently visible so loadTracks can diff truly-new rows
+    preReloadIdsRef.current = new Set(sortedTracksRef.current.map((t) => t.id));
+
+    // Only clear selection + reset sort when the VIEW changes (user navigated to a
+    // different playlist or typed a new search). Pure data reloads (loadKey bumps from
+    // import/playlist-updated) should preserve selection so the user isn't surprised.
+    const viewChanged =
+      prevSelectedPlaylistRef.current !== selectedPlaylist || prevSearchRef.current !== search;
+    prevSelectedPlaylistRef.current = selectedPlaylist;
+    prevSearchRef.current = search;
+
     offsetRef.current = 0;
     loadingRef.current = false;
     hasMoreRef.current = true;
     resetTokenRef.current += 1;
-    setTracks([]);
     setHasMore(true);
-    setSelectedIds(new Set());
-    lastSelectedIndexRef.current = null;
-    setSortBy({ key: 'index', asc: true }); // reset sort when switching view/search
-    setSortSaved(true);
+    if (viewChanged) {
+      setSelectedIds(new Set());
+      lastSelectedIndexRef.current = null;
+      setSortBy({ key: 'index', asc: true });
+      setSortSaved(true);
+    }
 
     // Use setTimeout so the state updates above are committed before we load.
     // The cleanup cancels the timer — in StrictMode this means the first
@@ -467,18 +655,102 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   // Listen for background analysis updates
   useEffect(() => {
     const unsub = window.api.onTrackUpdated(({ trackId, analysis }) => {
-      setTracks((prev) =>
-        prev.map((t) => (t.id === trackId ? { ...t, ...analysis, analyzed: 1 } : t))
-      );
+      // analyzed: 0 means an intermediate event (normalization done, re-analysis pending)
+      // analyzed: undefined or 1 means analysis is complete
+      const isAnalyzed = analysis.analyzed !== 0;
+      const merged = { ...analysis, analyzed: isAnalyzed ? 1 : 0 };
+
+      setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, ...merged } : t)));
+
+      // Keep PlayerContext's currentTrack in sync
+      patchCurrentTrack(trackId, merged);
+
+      // If this completes the full analysis of a track being normalized that was playing,
+      // reload the audio element to use the new normalized file, then optionally resume
+      if (isAnalyzed) {
+        console.log(
+          '[normalize] track-updated (full analysis) trackId=',
+          trackId,
+          'normalized_file_path=',
+          analysis.normalized_file_path,
+          'resume ref=',
+          normalizeResumeRef.current
+        );
+        if (analysis.normalized_file_path && normalizeResumeRef.current?.id === trackId) {
+          const { shouldResume } = normalizeResumeRef.current;
+          normalizeResumeRef.current = null;
+          console.log(
+            '[normalize] calling reloadCurrentTrack path=',
+            analysis.normalized_file_path,
+            'shouldResume=',
+            shouldResume
+          );
+          reloadCurrentTrack(analysis.normalized_file_path, shouldResume);
+        }
+      }
+    });
+    return unsub;
+  }, [patchCurrentTrack, reloadCurrentTrack]);
+
+  // Refresh list when new tracks are imported
+  useEffect(() => {
+    const unsub = window.api.onLibraryUpdated(async () => {
+      const isDefaultView = selectedPlaylistRef.current === 'music' && !searchRef.current;
+      if (isDefaultView) {
+        // getTracks orders by created_at DESC (newest first), so using currentCount as the
+        // offset would skip the N newest tracks and return the (N+1)th oldest — which is
+        // already on screen, not the just-imported track (#204).  Fetch from offset 0 and
+        // dedup against what's already loaded instead.
+        const rows = await window.api.getTracks({ limit: PAGE_SIZE, offset: 0 });
+        if (rows.length > 0) {
+          const existingIds = new Set(sortedTracksRef.current.map((t) => t.id));
+          const newRows = rows.filter((r) => !existingIds.has(r.id));
+          if (newRows.length > 0) {
+            setNewTrackIds((prev) => new Set([...prev, ...newRows.map((r) => r.id)]));
+            setTracks((prev) => {
+              const prevIds = new Set(prev.map((t) => t.id));
+              const deduped = newRows.filter((r) => !prevIds.has(r.id));
+              if (deduped.length === 0) return prev;
+              const merged = [...prev, ...deduped];
+              // Keep the player queue in sync when playing from the music (all-tracks) view.
+              if (currentPlaylistIdRef.current === null) {
+                updateQueueRef.current(merged);
+              }
+              return merged;
+            });
+            offsetRef.current = sortedTracksRef.current.length + newRows.length;
+            // If the batch we fetched is smaller than a full page, we've reached the end.
+            if (rows.length < PAGE_SIZE) {
+              hasMoreRef.current = false;
+              setHasMore(false);
+            }
+          }
+        }
+      } else {
+        // Filtered / playlist view: full reload (content may have changed meaningfully)
+        preReloadIdsRef.current = new Set(sortedTracksRef.current.map((t) => t.id));
+        animateNextLoadRef.current = true;
+        setLoadKey((k) => k + 1);
+      }
     });
     return unsub;
   }, []);
 
-  // Refresh list when new tracks are imported
+  // Keep player queue in sync when tracks are added/removed from the current playlist (#213).
+  // The all-tracks view is handled inside onLibraryUpdated; playlist view needs its own sync
+  // because it does a full reload (setLoadKey) rather than a soft-append.
   useEffect(() => {
-    const unsub = window.api.onLibraryUpdated(() => setLoadKey((k) => k + 1));
-    return unsub;
-  }, []);
+    if (
+      isPlaylistView &&
+      currentPlaylistId !== null &&
+      String(currentPlaylistId) === String(selectedPlaylist) &&
+      sortedTracksRef.current.length > 0
+    ) {
+      updateQueue(sortedTracksRef.current);
+    }
+    // Only react to track count changes — sort-order changes should not reshuffle the queue.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tracks.length, isPlaylistView, selectedPlaylist, currentPlaylistId]);
 
   // Reload playlist info (name, duration) when entering playlist view or tracks change
   useEffect(() => {
@@ -545,6 +817,9 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     const close = () => {
       setContextMenu(null);
       setDrillStack([]);
+      setNewPlaylistInputActive(false);
+      setNewPlaylistName('');
+      setNewPlaylistError('');
     };
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
@@ -569,6 +844,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     } else {
       setSelectedIds(new Set([track.id]));
       lastSelectedIndexRef.current = index;
+      // If the cue panel is already open, follow the selection
+      setCueTrack((prev) => (prev ? track : null));
     }
   }, []);
 
@@ -591,6 +868,24 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     setDetailsTrack(null);
     setDetailsBulkTracks(null);
   }, []);
+
+  // ── Cue points panel ───────────────────────────────────────────────────────
+
+  const handleCueClick = useCallback((track) => {
+    setCueTrack((prev) => (prev?.id === track.id ? null : track));
+  }, []);
+
+  const handleCueClose = useCallback(() => setCueTrack(null), []);
+
+  const handleCuePointsChange = useCallback(
+    (pts) => {
+      setCueTrack((prev) => (prev ? { ...prev, cue_count: pts.length } : prev));
+      setTracks((prev) =>
+        prev.map((t) => (t.id === cueTrack?.id ? { ...t, cue_count: pts.length } : t))
+      );
+    },
+    [cueTrack?.id]
+  );
 
   const handleDetailsSave = useCallback((result) => {
     if (Array.isArray(result)) {
@@ -746,6 +1041,64 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     for (const id of targetIds) await window.api.reanalyzeTrack(id);
   }, [contextMenu]);
 
+  const showToast = useCallback((msg, ok = true) => {
+    clearTimeout(toastTimerRef.current);
+    setToast({ msg, ok });
+    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+  }, []);
+
+  const handleNormalizeTracks = useCallback(async () => {
+    const targetIds = contextMenu?.targetIds ?? [];
+    setContextMenu(null);
+
+    // Pause if the currently-playing track is among those being normalized
+    const playingTarget = currentTrack && targetIds.includes(currentTrack.id);
+    if (playingTarget) {
+      normalizeResumeRef.current = { id: currentTrack.id, shouldResume: isPlaying };
+      if (isPlaying) togglePlay(); // pause
+    }
+
+    // Gray out tracks immediately so there's instant visual feedback
+    setTracks((prev) => prev.map((t) => (targetIds.includes(t.id) ? { ...t, analyzed: 0 } : t)));
+    const { normalized, skipped } = await window.api.normalizeTracksAudio({ trackIds: targetIds });
+    if (normalized === 0) {
+      // Un-gray if nothing was normalized
+      setTracks((prev) => prev.map((t) => (targetIds.includes(t.id) ? { ...t, analyzed: 1 } : t)));
+      const wasPlaying = normalizeResumeRef.current?.shouldResume ?? false;
+      normalizeResumeRef.current = null;
+      // Resume if we paused for nothing
+      if (playingTarget && wasPlaying) togglePlay();
+      showToast(
+        skipped > 0
+          ? 'No analyzed tracks — analyze tracks first to get loudness data.'
+          : 'Nothing to normalize.',
+        false
+      );
+    }
+    // On success: track-updated IPC events (from normalization + re-analysis) update each row
+    // and reloadCurrentTrack resumes playback once re-analysis is done
+  }, [contextMenu, currentTrack, isPlaying, togglePlay, showToast]);
+
+  const handleResetNormalization = useCallback(async () => {
+    const targetIds = contextMenu?.targetIds ?? [];
+    setContextMenu(null);
+    await window.api.resetNormalization({ trackIds: targetIds });
+    // Clear gain + normalized path, mark as re-analyzing (analysis runs in background)
+    setTracks((prev) =>
+      prev.map((t) =>
+        targetIds.includes(t.id)
+          ? { ...t, replay_gain: null, normalized_file_path: null, analyzed: 0 }
+          : t
+      )
+    );
+    for (const id of targetIds) {
+      patchCurrentTrack(id, { replay_gain: null, normalized_file_path: null });
+    }
+    showToast(
+      `Reset ${targetIds.length} track${targetIds.length !== 1 ? 's' : ''} — re-analyzing…`
+    );
+  }, [contextMenu, patchCurrentTrack, showToast]);
+
   const handleRemove = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
     const n = targetIds.length;
@@ -787,6 +1140,33 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
       console.error('addTracksToPlaylist failed:', err);
     }
   }, []);
+
+  const handleAddToNewPlaylist = useCallback(
+    async (e) => {
+      e?.preventDefault();
+      const name = newPlaylistName.trim();
+      if (!name) {
+        setNewPlaylistInputActive(false);
+        setNewPlaylistName('');
+        return;
+      }
+      const targetIds = contextMenu?.targetIds ?? [];
+      const result = await window.api.createPlaylist(name, null);
+      if (result?.error === 'duplicate') {
+        setNewPlaylistError('Name already exists');
+        newPlaylistInputRef.current?.focus();
+        return;
+      }
+      if (result?.id && targetIds.length) {
+        await window.api.addTracksToPlaylist(result.id, targetIds);
+      }
+      setNewPlaylistInputActive(false);
+      setNewPlaylistName('');
+      setNewPlaylistError('');
+      setContextMenu(null);
+    },
+    [contextMenu, newPlaylistName]
+  );
 
   const handleBpmAdjust = useCallback(
     async (factor) => {
@@ -848,6 +1228,24 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     [selectedPlaylist]
   );
 
+  const handleTrackDragStart = useCallback(
+    (e, track) => {
+      const ids = selectedIds.has(track.id) ? [...selectedIds] : [track.id];
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('application/dj-tracks', JSON.stringify(ids));
+    },
+    [selectedIds]
+  );
+
+  const handleRowAnimationEnd = useCallback((trackId) => {
+    setNewTrackIds((prev) => {
+      if (!prev.has(trackId)) return prev;
+      const next = new Set(prev);
+      next.delete(trackId);
+      return next;
+    });
+  }, []);
+
   const handleSaveOrder = useCallback(async () => {
     await window.api.reorderPlaylist(
       Number(selectedPlaylist),
@@ -860,8 +1258,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   // ── Misc ───────────────────────────────────────────────────────────────────
 
   const handleItemsRendered = useCallback(
-    ({ visibleStopIndex }) => {
-      if (visibleStopIndex >= sortedTracksRef.current.length - PRELOAD_TRIGGER) {
+    ({ stopIndex }) => {
+      if (stopIndex >= sortedTracksRef.current.length - PRELOAD_TRIGGER) {
         loadTracks(); // loadTracks checks hasMoreRef and loadingRef internally
       }
     },
@@ -893,44 +1291,18 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
 
   const activeTrack = activeId ? tracks.find((t) => t.id === activeId) : null;
 
-  // In normal mode: CSS hover fly-out.
-  // In overlay mode: clicking pushes children onto drillStack (drill-down navigation).
-  const SubItem = ({ id, label, children, wide, scrollable }) => {
-    const isOverlay = contextMenu?.overlayMode;
-    if (isOverlay) {
-      return (
-        <div
-          className="context-menu-item context-menu-item--has-submenu"
-          onClick={(e) => {
-            e.stopPropagation();
-            setDrillStack((prev) => [...prev, { id, label, content: children }]);
-          }}
-        >
-          {label}
-        </div>
-      );
-    }
-    return (
-      <div className="context-menu-item context-menu-item--has-submenu">
-        {label}
-        <div
-          className={[
-            'context-submenu',
-            wide ? 'context-submenu--wide' : '',
-            scrollable ? 'context-submenu--scrollable' : '',
-          ]
-            .filter(Boolean)
-            .join(' ')}
-        >
-          {children}
-        </div>
-      </div>
-    );
-  };
+  const subItemCtxValue = useMemo(
+    () => ({
+      isOverlay: !!contextMenu?.overlayMode,
+      onDrillDown: ({ id, label, content }) =>
+        setDrillStack((prev) => [...prev, { id, label, content }]),
+    }),
+    [contextMenu?.overlayMode]
+  );
 
   return (
     <div
-      className={`music-library${detailsTrack || detailsBulkTracks ? ' music-library--with-panel' : ''}`}
+      className={`music-library${detailsTrack || detailsBulkTracks || cueTrack ? ' music-library--with-panel' : ''}`}
     >
       <div className="music-library__main">
         {/* Playlist header bar */}
@@ -1027,7 +1399,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
               <div className="playlist-empty-state">
                 No tracks in this playlist.
                 <br />
-                Right-click tracks in your library to add them.
+                Drag tracks from your library here, or right-click to add.
               </div>
             ) : (
               <DndContext
@@ -1052,10 +1424,14 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                         onDoubleClick={handleDoubleClick}
                         onContextMenu={handleContextMenu}
                         onRatingChange={handleRatingChange}
+                        onCueClick={handleCueClick}
+                        onDragStart={handleTrackDragStart}
                         visibleColumns={visibleColumns}
                         gridTemplate={gridTemplate}
                         minScrollWidth={minScrollWidth}
                         mediaPort={mediaPort}
+                        isNew={newTrackIds.has(t.id)}
+                        onAnimationEnd={handleRowAnimationEnd}
                       />
                     ))}
                   </div>
@@ -1095,10 +1471,14 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                 onDoubleClick: handleDoubleClick,
                 onContextMenu: handleContextMenu,
                 onRatingChange: handleRatingChange,
+                onCueClick: handleCueClick,
+                onDragStart: handleTrackDragStart,
                 visibleColumns,
                 gridTemplate,
                 minScrollWidth,
                 mediaPort,
+                newTrackIds,
+                onAnimationEnd: handleRowAnimationEnd,
               }}
             />
           )}
@@ -1106,386 +1486,494 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
         {/* end .table-scroll-wrap */}
 
         {contextMenu && (
-          <>
-            {contextMenu.overlayMode && (
+          <SubItemCtx.Provider value={subItemCtxValue}>
+            <>
+              {contextMenu.overlayMode && (
+                <div
+                  className="context-backdrop"
+                  onClick={() => {
+                    setContextMenu(null);
+                    setDrillStack([]);
+                  }}
+                />
+              )}
               <div
-                className="context-backdrop"
-                onClick={() => {
-                  setContextMenu(null);
-                  setDrillStack([]);
-                }}
-              />
-            )}
-            <div
-              className={[
-                'context-menu',
-                contextMenu.overlayMode ? 'context-menu--overlay' : '',
-                contextMenu.flipLeft ? 'context-menu--flip-left' : '',
-                contextMenu.flipUp ? 'context-menu--flip-up' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
-              style={
-                contextMenu.overlayMode
-                  ? undefined
-                  : {
-                      top: contextMenu.y,
-                      left: contextMenu.x,
-                      '--submenu-max-h': `${contextMenu.submenuMaxH}px`,
-                    }
-              }
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              {/* ── Overlay drill-down view ── */}
-              {contextMenu.overlayMode && drillStack.length > 0 ? (
-                <>
-                  <div
-                    className="context-menu__back"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDrillStack((prev) => prev.slice(0, -1));
-                    }}
-                  >
-                    ‹ {drillStack.length > 1 ? drillStack[drillStack.length - 2].label : 'Back'}
-                  </div>
-                  <div className="context-menu-item context-menu-item--header">
-                    {drillStack[drillStack.length - 1].label}
-                  </div>
-                  {drillStack[drillStack.length - 1].content}
-                </>
-              ) : (
-                <>
-                  {/* ── Add to playlist ── */}
-                  {playlistSubmenu !== null &&
-                    (playlistSubmenu.length === 0 ? (
-                      <div className="context-menu-item context-menu-item--disabled">
-                        ➕ No playlists
-                      </div>
-                    ) : (
-                      <SubItem id="add-to-playlist" label="➕ Add to playlist" scrollable>
-                        {playlistSubmenu.map((pl) => (
-                          <div
-                            key={pl.id}
-                            className={`context-menu-item${pl.is_member ? ' context-menu-item--checked' : ''}`}
-                            onClick={() =>
-                              !pl.is_member &&
-                              handleAddToPlaylist(pl.id, contextMenu?.targetIds ?? [])
-                            }
-                          >
-                            {pl.color && (
-                              <span className="ctx-color-dot" style={{ background: pl.color }} />
-                            )}
-                            {pl.is_member ? '✓ ' : ''}
-                            {pl.name}
-                          </div>
-                        ))}
-                      </SubItem>
-                    ))}
-
-                  {/* ── Find similar ── */}
-                  {contextMenu.targetTracks?.length > 0 && (
-                    <SubItem id="find-similar" label="🔍 Find similar" wide>
-                      {contextMenu.targetTracks.length === 1 ? (
-                        /* ── Single-track options ── */
+                className={[
+                  'context-menu',
+                  contextMenu.overlayMode ? 'context-menu--overlay' : '',
+                  contextMenu.flipLeft ? 'context-menu--flip-left' : '',
+                  contextMenu.flipUp ? 'context-menu--flip-up' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                style={
+                  contextMenu.overlayMode
+                    ? undefined
+                    : {
+                        top: contextMenu.y,
+                        left: contextMenu.x,
+                        '--submenu-max-h': `${contextMenu.submenuMaxH}px`,
+                      }
+                }
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                {/* ── Overlay drill-down view ── */}
+                {contextMenu.overlayMode && drillStack.length > 0 ? (
+                  <>
+                    <div
+                      className="context-menu__back"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDrillStack((prev) => prev.slice(0, -1));
+                      }}
+                    >
+                      ‹ {drillStack.length > 1 ? drillStack[drillStack.length - 2].label : 'Back'}
+                    </div>
+                    <div className="context-menu-item context-menu-item--header">
+                      {drillStack[drillStack.length - 1].label}
+                    </div>
+                    {drillStack[drillStack.length - 1].content}
+                  </>
+                ) : (
+                  <>
+                    {/* ── Add to playlist ── */}
+                    {playlistSubmenu !== null &&
+                      (playlistSubmenu.length === 0 ? (
                         <>
-                          {contextMenu.track.key_camelot && (
-                            <>
-                              <div className="context-menu-item context-menu-item--header">
-                                🎹 Key: {contextMenu.track.key_camelot.toUpperCase()}
-                              </div>
-                              <div
-                                className="context-menu-item"
-                                onClick={() =>
-                                  handleFindSimilar(
-                                    `KEY is ${contextMenu.track.key_camelot.toUpperCase()}`
-                                  )
-                                }
-                              >
-                                Same key
-                              </div>
-                              <div
-                                className="context-menu-item"
-                                onClick={() =>
-                                  handleFindSimilar(
-                                    `KEY adjacent ${contextMenu.track.key_camelot.toUpperCase()}`
-                                  )
-                                }
-                              >
-                                Adjacent — energy shift
-                              </div>
-                              <div
-                                className="context-menu-item"
-                                onClick={() =>
-                                  handleFindSimilar(
-                                    `KEY mode switch ${contextMenu.track.key_camelot.toUpperCase()}`
-                                  )
-                                }
-                              >
-                                Mode switch — minor↔major
-                              </div>
-                              <div
-                                className="context-menu-item"
-                                onClick={() =>
-                                  handleFindSimilar(
-                                    `KEY matches ${contextMenu.track.key_camelot.toUpperCase()}`
-                                  )
-                                }
-                              >
-                                All compatible keys
-                              </div>
-                            </>
+                          {newPlaylistInputActive ? (
+                            <form
+                              className="ctx-new-playlist-form"
+                              onSubmit={handleAddToNewPlaylist}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <input
+                                ref={newPlaylistInputRef}
+                                className="ctx-new-playlist-input"
+                                value={newPlaylistName}
+                                onChange={(e) => {
+                                  setNewPlaylistName(e.target.value);
+                                  setNewPlaylistError('');
+                                }}
+                                placeholder="Playlist name"
+                                autoFocus
+                                onBlur={handleAddToNewPlaylist}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Escape') {
+                                    setNewPlaylistInputActive(false);
+                                    setNewPlaylistName('');
+                                    setNewPlaylistError('');
+                                  }
+                                }}
+                              />
+                              {newPlaylistError && (
+                                <div className="ctx-new-playlist-error">{newPlaylistError}</div>
+                              )}
+                            </form>
+                          ) : (
+                            <div
+                              className="context-menu-item"
+                              onClick={() => {
+                                setNewPlaylistInputActive(true);
+                                setTimeout(() => newPlaylistInputRef.current?.focus(), 0);
+                              }}
+                            >
+                              ➕ Add to new playlist…
+                            </div>
                           )}
-                          {(contextMenu.track.bpm_override ?? contextMenu.track.bpm) != null &&
-                            (() => {
-                              const bpm = Math.round(
-                                contextMenu.track.bpm_override ?? contextMenu.track.bpm
-                              );
-                              return (
-                                <>
-                                  {contextMenu.track.key_camelot && (
-                                    <div className="context-menu-separator" />
-                                  )}
-                                  <div className="context-menu-item context-menu-item--header">
-                                    ♩ BPM: {bpm}
-                                  </div>
-                                  <div
-                                    className="context-menu-item"
-                                    onClick={() => handleFindSimilar(`BPM is ${bpm}`)}
-                                  >
-                                    Exact BPM
-                                  </div>
-                                  <div
-                                    className="context-menu-item"
-                                    onClick={() =>
-                                      handleFindSimilar(`BPM in range ${bpm - 5}-${bpm + 5}`)
-                                    }
-                                  >
-                                    Similar BPM (±5)
-                                  </div>
-                                  <div
-                                    className="context-menu-item"
-                                    onClick={() =>
-                                      handleFindSimilar(`BPM in range ${bpm - 2}-${bpm + 2}`)
-                                    }
-                                  >
-                                    Very similar BPM (±2)
-                                  </div>
-                                </>
-                              );
-                            })()}
-                          {contextMenu.track.key_camelot &&
-                            (contextMenu.track.bpm_override ?? contextMenu.track.bpm) != null &&
-                            (() => {
-                              const bpm = Math.round(
-                                contextMenu.track.bpm_override ?? contextMenu.track.bpm
-                              );
-                              return (
-                                <>
-                                  <div className="context-menu-separator" />
-                                  <div className="context-menu-item context-menu-item--header">
-                                    🎯 Combined
-                                  </div>
-                                  <div
-                                    className="context-menu-item"
-                                    onClick={() =>
-                                      handleFindSimilar(
-                                        `KEY matches ${contextMenu.track.key_camelot.toUpperCase()} AND BPM in range ${bpm - 5}-${bpm + 5}`
-                                      )
-                                    }
-                                  >
-                                    Compatible key + similar BPM
-                                  </div>
-                                </>
-                              );
-                            })()}
-                          {(() => {
-                            try {
-                              const genres = JSON.parse(contextMenu.track.genres ?? '[]');
-                              if (!genres.length) return null;
-                              return (
-                                <>
-                                  <div className="context-menu-separator" />
-                                  <div className="context-menu-item context-menu-item--header">
-                                    🏷 Genre
-                                  </div>
-                                  {genres.slice(0, 3).map((g) => (
-                                    <div
-                                      key={g}
-                                      className="context-menu-item"
-                                      onClick={() => handleFindSimilar(`GENRE is ${g}`)}
-                                    >
-                                      {g}
-                                    </div>
-                                  ))}
-                                </>
-                              );
-                            } catch {
-                              return null;
-                            }
-                          })()}
                         </>
                       ) : (
-                        /* ── Multi-track options only ── */
-                        (() => {
-                          const tt = contextMenu.targetTracks;
-                          const bpms = tt
-                            .map((t) => t.bpm_override ?? t.bpm)
-                            .filter((b) => b != null)
-                            .map((b) => Math.round(b));
-                          const keys = tt.map((t) => t.key_camelot).filter(Boolean);
-                          const allGenres = tt.flatMap((t) => {
-                            try {
-                              return JSON.parse(t.genres ?? '[]');
-                            } catch {
-                              return [];
-                            }
-                          });
-                          const genreCount = allGenres.reduce((acc, g) => {
-                            acc[g] = (acc[g] ?? 0) + 1;
-                            return acc;
-                          }, {});
-                          const topGenres = Object.entries(genreCount)
-                            .sort((a, b) => b[1] - a[1])
-                            .slice(0, 3)
-                            .map(([g]) => g);
-                          const keyCounts = keys.reduce((acc, k) => {
-                            const n = k.toLowerCase();
-                            acc[n] = (acc[n] ?? 0) + 1;
-                            return acc;
-                          }, {});
-                          const topKey = Object.entries(keyCounts).sort(
-                            (a, b) => b[1] - a[1]
-                          )[0]?.[0];
-                          const bpmMin = bpms.length ? Math.min(...bpms) : null;
-                          const bpmMax = bpms.length ? Math.max(...bpms) : null;
-                          return (
-                            <>
-                              <div className="context-menu-item context-menu-item--header">
-                                📦 {tt.length} tracks selected
-                              </div>
-                              {bpms.length > 0 && bpmMin !== bpmMax && (
-                                <div
-                                  className="context-menu-item"
-                                  onClick={() =>
-                                    handleFindSimilar(`BPM in range ${bpmMin}-${bpmMax}`)
-                                  }
-                                >
-                                  BPM range {bpmMin}–{bpmMax}
-                                </div>
+                        <SubItem id="add-to-playlist" label="➕ Add to playlist" scrollable>
+                          <div
+                            className="context-menu-item ctx-new-playlist-item"
+                            onClick={() => {
+                              setNewPlaylistInputActive(true);
+                              setTimeout(() => newPlaylistInputRef.current?.focus(), 0);
+                            }}
+                          >
+                            {newPlaylistInputActive ? (
+                              <form
+                                className="ctx-new-playlist-form"
+                                onSubmit={handleAddToNewPlaylist}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <input
+                                  ref={newPlaylistInputRef}
+                                  className="ctx-new-playlist-input"
+                                  value={newPlaylistName}
+                                  onChange={(e) => {
+                                    setNewPlaylistName(e.target.value);
+                                    setNewPlaylistError('');
+                                  }}
+                                  placeholder="Playlist name"
+                                  autoFocus
+                                  onBlur={handleAddToNewPlaylist}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Escape') {
+                                      setNewPlaylistInputActive(false);
+                                      setNewPlaylistName('');
+                                      setNewPlaylistError('');
+                                    }
+                                  }}
+                                />
+                                {newPlaylistError && (
+                                  <div className="ctx-new-playlist-error">{newPlaylistError}</div>
+                                )}
+                              </form>
+                            ) : (
+                              '✚ New playlist…'
+                            )}
+                          </div>
+                          <div className="context-menu-separator" />
+                          {playlistSubmenu.map((pl) => (
+                            <div
+                              key={pl.id}
+                              className={`context-menu-item${pl.is_member ? ' context-menu-item--checked' : ''}`}
+                              onClick={() =>
+                                !pl.is_member &&
+                                handleAddToPlaylist(pl.id, contextMenu?.targetIds ?? [])
+                              }
+                            >
+                              {pl.color && (
+                                <span className="ctx-color-dot" style={{ background: pl.color }} />
                               )}
-                              {bpms.length > 0 && bpmMin === bpmMax && (
-                                <div
-                                  className="context-menu-item"
-                                  onClick={() => handleFindSimilar(`BPM is ${bpmMin}`)}
-                                >
-                                  BPM {bpmMin} (all same)
+                              {pl.is_member ? '✓ ' : ''}
+                              {pl.name}
+                            </div>
+                          ))}
+                        </SubItem>
+                      ))}
+
+                    {/* ── Find similar ── */}
+                    {contextMenu.targetTracks?.length > 0 && (
+                      <SubItem id="find-similar" label="🔍 Find similar" wide>
+                        {contextMenu.targetTracks.length === 1 ? (
+                          /* ── Single-track options ── */
+                          <>
+                            {contextMenu.track.key_camelot && (
+                              <>
+                                <div className="context-menu-item context-menu-item--header">
+                                  🎹 Key: {contextMenu.track.key_camelot.toUpperCase()}
                                 </div>
-                              )}
-                              {topKey && (
-                                <div
-                                  className="context-menu-item"
-                                  onClick={() =>
-                                    handleFindSimilar(`KEY matches ${topKey.toUpperCase()}`)
-                                  }
-                                >
-                                  Keys compatible with {topKey.toUpperCase()}
-                                </div>
-                              )}
-                              {topKey && bpms.length > 0 && (
                                 <div
                                   className="context-menu-item"
                                   onClick={() =>
                                     handleFindSimilar(
-                                      `KEY matches ${topKey.toUpperCase()} AND BPM in range ${bpmMin}-${bpmMax}`
+                                      `KEY is ${contextMenu.track.key_camelot.toUpperCase()}`
                                     )
                                   }
                                 >
-                                  Compatible key + BPM range
+                                  Same key
                                 </div>
-                              )}
-                              {topGenres.map((g) => (
                                 <div
-                                  key={g}
                                   className="context-menu-item"
-                                  onClick={() => handleFindSimilar(`GENRE is ${g}`)}
+                                  onClick={() =>
+                                    handleFindSimilar(
+                                      `KEY adjacent ${contextMenu.track.key_camelot.toUpperCase()}`
+                                    )
+                                  }
                                 >
-                                  Genre: {g}
+                                  Adjacent — energy shift
                                 </div>
-                              ))}
-                            </>
-                          );
-                        })()
-                      )}
-                    </SubItem>
-                  )}
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleFindSimilar(
+                                      `KEY mode switch ${contextMenu.track.key_camelot.toUpperCase()}`
+                                    )
+                                  }
+                                >
+                                  Mode switch — minor↔major
+                                </div>
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleFindSimilar(
+                                      `KEY matches ${contextMenu.track.key_camelot.toUpperCase()}`
+                                    )
+                                  }
+                                >
+                                  All compatible keys
+                                </div>
+                              </>
+                            )}
+                            {(contextMenu.track.bpm_override ?? contextMenu.track.bpm) != null &&
+                              (() => {
+                                const bpm = Math.round(
+                                  contextMenu.track.bpm_override ?? contextMenu.track.bpm
+                                );
+                                return (
+                                  <>
+                                    {contextMenu.track.key_camelot && (
+                                      <div className="context-menu-separator" />
+                                    )}
+                                    <div className="context-menu-item context-menu-item--header">
+                                      ♩ BPM: {bpm}
+                                    </div>
+                                    <div
+                                      className="context-menu-item"
+                                      onClick={() => handleFindSimilar(`BPM is ${bpm}`)}
+                                    >
+                                      Exact BPM
+                                    </div>
+                                    <div
+                                      className="context-menu-item"
+                                      onClick={() =>
+                                        handleFindSimilar(`BPM in range ${bpm - 5}-${bpm + 5}`)
+                                      }
+                                    >
+                                      Similar BPM (±5)
+                                    </div>
+                                    <div
+                                      className="context-menu-item"
+                                      onClick={() =>
+                                        handleFindSimilar(`BPM in range ${bpm - 2}-${bpm + 2}`)
+                                      }
+                                    >
+                                      Very similar BPM (±2)
+                                    </div>
+                                  </>
+                                );
+                              })()}
+                            {contextMenu.track.key_camelot &&
+                              (contextMenu.track.bpm_override ?? contextMenu.track.bpm) != null &&
+                              (() => {
+                                const bpm = Math.round(
+                                  contextMenu.track.bpm_override ?? contextMenu.track.bpm
+                                );
+                                return (
+                                  <>
+                                    <div className="context-menu-separator" />
+                                    <div className="context-menu-item context-menu-item--header">
+                                      🎯 Combined
+                                    </div>
+                                    <div
+                                      className="context-menu-item"
+                                      onClick={() =>
+                                        handleFindSimilar(
+                                          `KEY matches ${contextMenu.track.key_camelot.toUpperCase()} AND BPM in range ${bpm - 5}-${bpm + 5}`
+                                        )
+                                      }
+                                    >
+                                      Compatible key + similar BPM
+                                    </div>
+                                  </>
+                                );
+                              })()}
+                            {(() => {
+                              try {
+                                const genres = JSON.parse(contextMenu.track.genres ?? '[]');
+                                if (!genres.length) return null;
+                                return (
+                                  <>
+                                    <div className="context-menu-separator" />
+                                    <div className="context-menu-item context-menu-item--header">
+                                      🏷 Genre
+                                    </div>
+                                    {genres.slice(0, 3).map((g) => (
+                                      <div
+                                        key={g}
+                                        className="context-menu-item"
+                                        onClick={() => handleFindSimilar(`GENRE is ${g}`)}
+                                      >
+                                        {g}
+                                      </div>
+                                    ))}
+                                  </>
+                                );
+                              } catch {
+                                return null;
+                              }
+                            })()}
+                          </>
+                        ) : (
+                          /* ── Multi-track options only ── */
+                          (() => {
+                            const tt = contextMenu.targetTracks;
+                            const bpms = tt
+                              .map((t) => t.bpm_override ?? t.bpm)
+                              .filter((b) => b != null)
+                              .map((b) => Math.round(b));
+                            const keys = tt.map((t) => t.key_camelot).filter(Boolean);
+                            const allGenres = tt.flatMap((t) => {
+                              try {
+                                return JSON.parse(t.genres ?? '[]');
+                              } catch {
+                                return [];
+                              }
+                            });
+                            const genreCount = allGenres.reduce((acc, g) => {
+                              acc[g] = (acc[g] ?? 0) + 1;
+                              return acc;
+                            }, {});
+                            const topGenres = Object.entries(genreCount)
+                              .sort((a, b) => b[1] - a[1])
+                              .slice(0, 3)
+                              .map(([g]) => g);
+                            const keyCounts = keys.reduce((acc, k) => {
+                              const n = k.toLowerCase();
+                              acc[n] = (acc[n] ?? 0) + 1;
+                              return acc;
+                            }, {});
+                            const topKey = Object.entries(keyCounts).sort(
+                              (a, b) => b[1] - a[1]
+                            )[0]?.[0];
+                            const bpmMin = bpms.length ? Math.min(...bpms) : null;
+                            const bpmMax = bpms.length ? Math.max(...bpms) : null;
+                            return (
+                              <>
+                                <div className="context-menu-item context-menu-item--header">
+                                  📦 {tt.length} tracks selected
+                                </div>
+                                {bpms.length > 0 && bpmMin !== bpmMax && (
+                                  <div
+                                    className="context-menu-item"
+                                    onClick={() =>
+                                      handleFindSimilar(`BPM in range ${bpmMin}-${bpmMax}`)
+                                    }
+                                  >
+                                    BPM range {bpmMin}–{bpmMax}
+                                  </div>
+                                )}
+                                {bpms.length > 0 && bpmMin === bpmMax && (
+                                  <div
+                                    className="context-menu-item"
+                                    onClick={() => handleFindSimilar(`BPM is ${bpmMin}`)}
+                                  >
+                                    BPM {bpmMin} (all same)
+                                  </div>
+                                )}
+                                {topKey && (
+                                  <div
+                                    className="context-menu-item"
+                                    onClick={() =>
+                                      handleFindSimilar(`KEY matches ${topKey.toUpperCase()}`)
+                                    }
+                                  >
+                                    Keys compatible with {topKey.toUpperCase()}
+                                  </div>
+                                )}
+                                {topKey && bpms.length > 0 && (
+                                  <div
+                                    className="context-menu-item"
+                                    onClick={() =>
+                                      handleFindSimilar(
+                                        `KEY matches ${topKey.toUpperCase()} AND BPM in range ${bpmMin}-${bpmMax}`
+                                      )
+                                    }
+                                  >
+                                    Compatible key + BPM range
+                                  </div>
+                                )}
+                                {topGenres.map((g) => (
+                                  <div
+                                    key={g}
+                                    className="context-menu-item"
+                                    onClick={() => handleFindSimilar(`GENRE is ${g}`)}
+                                  >
+                                    Genre: {g}
+                                  </div>
+                                ))}
+                              </>
+                            );
+                          })()
+                        )}
+                      </SubItem>
+                    )}
 
-                  {/* ── separator ── */}
-                  <div className="context-menu-separator" />
-
-                  {/* ── Edit Details ── */}
-                  <div
-                    className="context-menu-item"
-                    onClick={() => {
-                      const targetTracks = contextMenu?.targetTracks ?? [];
-                      setContextMenu(null);
-                      if (targetTracks.length === 1) {
-                        setDetailsBulkTracks(null);
-                        setDetailsTrack(targetTracks[0]);
-                        setSelectedIds(new Set([targetTracks[0].id]));
-                      } else if (targetTracks.length > 1) {
-                        setDetailsTrack(null);
-                        setDetailsBulkTracks(targetTracks);
-                      }
-                    }}
-                  >
-                    ✏️ Edit Details{selectionLabel}
-                  </div>
-
-                  {/* ── Analysis submenu ── */}
-                  <SubItem id="analysis" label={`🔬 Analysis${selectionLabel}`}>
-                    <div className="context-menu-item" onClick={handleReanalyze}>
-                      🔄 Re-analyze
-                    </div>
+                    {/* ── separator ── */}
                     <div className="context-menu-separator" />
-                    <SubItem id="bpm" label="🎵 BPM">
-                      <div className="context-menu-item" onClick={() => handleBpmAdjust(2)}>
-                        ✕2 Double BPM
-                      </div>
-                      <div className="context-menu-item" onClick={() => handleBpmAdjust(0.5)}>
-                        ÷2 Halve BPM
-                      </div>
-                    </SubItem>
-                  </SubItem>
 
-                  {/* ── Remove ── */}
-                  {isPlaylistView ? (
-                    <>
+                    {/* ── Edit Details ── */}
+                    <div
+                      className="context-menu-item"
+                      onClick={() => {
+                        const targetTracks = contextMenu?.targetTracks ?? [];
+                        setContextMenu(null);
+                        if (targetTracks.length === 1) {
+                          setDetailsBulkTracks(null);
+                          setDetailsTrack(targetTracks[0]);
+                          setSelectedIds(new Set([targetTracks[0].id]));
+                        } else if (targetTracks.length > 1) {
+                          setDetailsTrack(null);
+                          setDetailsBulkTracks(targetTracks);
+                        }
+                      }}
+                    >
+                      ✏️ Edit Details{selectionLabel}
+                    </div>
+
+                    {/* ── Edit Cue Points ── */}
+                    {contextMenu?.targetTracks?.length === 1 && (
                       <div
-                        className="context-menu-item context-menu-item--danger"
-                        onClick={handleRemoveFromPlaylist}
+                        className="context-menu-item"
+                        onClick={() => {
+                          const track = contextMenu.targetTracks[0];
+                          setContextMenu(null);
+                          handleCueClick(track);
+                        }}
                       >
-                        ➖ Remove from playlist{selectionLabel}
+                        ◆ Edit Cue Points
                       </div>
+                    )}
+
+                    {/* ── Analysis submenu ── */}
+                    <SubItem id="analysis" label={`🔬 Analysis${selectionLabel}`}>
+                      <div className="context-menu-item" onClick={handleReanalyze}>
+                        🔄 Re-analyze
+                      </div>
+                      <div className="context-menu-separator" />
+                      <div className="context-menu-item" onClick={handleNormalizeTracks}>
+                        🔊 Normalize
+                      </div>
+                      <div className="context-menu-item" onClick={handleResetNormalization}>
+                        ↩ Reset normalization
+                      </div>
+                      <div className="context-menu-separator" />
+                      <SubItem id="bpm" label="🎵 BPM">
+                        <div className="context-menu-item" onClick={() => handleBpmAdjust(2)}>
+                          ✕2 Double BPM
+                        </div>
+                        <div className="context-menu-item" onClick={() => handleBpmAdjust(0.5)}>
+                          ÷2 Halve BPM
+                        </div>
+                      </SubItem>
+                    </SubItem>
+
+                    {/* ── Remove ── */}
+                    {isPlaylistView ? (
+                      <>
+                        <div
+                          className="context-menu-item context-menu-item--danger"
+                          onClick={handleRemoveFromPlaylist}
+                        >
+                          ➖ Remove from playlist{selectionLabel}
+                        </div>
+                        <div
+                          className="context-menu-item context-menu-item--danger"
+                          onClick={handleRemove}
+                        >
+                          🗑️ Remove from library{selectionLabel}
+                        </div>
+                      </>
+                    ) : (
                       <div
                         className="context-menu-item context-menu-item--danger"
                         onClick={handleRemove}
                       >
                         🗑️ Remove from library{selectionLabel}
                       </div>
-                    </>
-                  ) : (
-                    <div
-                      className="context-menu-item context-menu-item--danger"
-                      onClick={handleRemove}
-                    >
-                      🗑️ Remove from library{selectionLabel}
-                    </div>
-                  )}
-                </>
-              )}{' '}
-              {/* end drill-down conditional */}
-            </div>
-          </>
+                    )}
+                  </>
+                )}{' '}
+                {/* end drill-down conditional */}
+              </div>
+            </>
+          </SubItemCtx.Provider>
+        )}
+        {toast && (
+          <div className={`music-library-toast${toast.ok ? '' : ' music-library-toast--warn'}`}>
+            {toast.msg}
+          </div>
         )}
       </div>
       {/* end .music-library__main */}
@@ -1511,6 +1999,17 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
           onSave={handleDetailsSave}
           onCancel={handleDetailsClose}
         />
+      )}
+      {cueTrack && (
+        <div className="cue-panel">
+          <div className="cue-panel__header">
+            <span className="cue-panel__title">{cueTrack.title}</span>
+            <button className="cue-panel__close" onClick={handleCueClose} title="Close">
+              ✕
+            </button>
+          </div>
+          <CuePointsEditor trackId={cueTrack.id} onCuePointsChange={handleCuePointsChange} />
+        </div>
       )}
     </div>
   );

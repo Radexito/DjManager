@@ -9,9 +9,17 @@ contextBridge.exposeInMainWorld('api', {
   updateTrack: (id, data) => ipcRenderer.invoke('update-track', { id, data }),
   adjustBpm: (payload) => ipcRenderer.invoke('adjust-bpm', payload),
 
+  // Cue points
+  getCuePoints: (trackId) => ipcRenderer.invoke('get-cue-points', trackId),
+  addCuePoint: (payload) => ipcRenderer.invoke('add-cue-point', payload),
+  updateCuePoint: (id, update) => ipcRenderer.invoke('update-cue-point', { id, ...update }),
+  deleteCuePoint: (id) => ipcRenderer.invoke('delete-cue-point', id),
+  generateCuePoints: (trackId) => ipcRenderer.invoke('generate-cue-points', trackId),
+
   // Import
   selectAudioFiles: () => ipcRenderer.invoke('select-audio-files'),
-  importAudioFiles: (files) => ipcRenderer.invoke('import-audio-files', files),
+  importAudioFiles: (files, playlistId) =>
+    ipcRenderer.invoke('import-audio-files', files, playlistId),
 
   // Playlists
   getPlaylists: () => ipcRenderer.invoke('get-playlists'),
@@ -65,7 +73,10 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('move-library-progress', (_, data) => cb(data));
     return () => ipcRenderer.removeAllListeners('move-library-progress');
   },
-  normalizeLibrary: (payload) => ipcRenderer.invoke('normalize-library', payload),
+  normalizeLibrary: () => ipcRenderer.invoke('normalize-library'),
+  getNormalizedCount: () => ipcRenderer.invoke('get-normalized-count'),
+  normalizeTracksAudio: (payload) => ipcRenderer.invoke('normalize-tracks-audio', payload),
+  resetNormalization: (payload) => ipcRenderer.invoke('reset-normalization', payload),
 
   // Events
   onTrackUpdated: (callback) => {
@@ -73,10 +84,20 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('track-updated', handler);
     return () => ipcRenderer.removeListener('track-updated', handler);
   },
+  onNormalizeProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('normalize-progress', handler);
+    return () => ipcRenderer.removeListener('normalize-progress', handler);
+  },
   onLibraryUpdated: (callback) => {
     const handler = () => callback();
     ipcRenderer.on('library-updated', handler);
     return () => ipcRenderer.removeListener('library-updated', handler);
+  },
+  onImportProgress: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('import-progress', handler);
+    return () => ipcRenderer.removeListener('import-progress', handler);
   },
   onPlaylistsUpdated: (callback) => {
     const handler = () => callback();
@@ -95,6 +116,8 @@ contextBridge.exposeInMainWorld('api', {
   // yt-dlp URL download
   getMediaPort: () => ipcRenderer.invoke('get-media-port'),
   ytDlpFetchInfo: (url) => ipcRenderer.invoke('ytdlp-fetch-info', url),
+  checkDuplicateUrls: (urls) => ipcRenderer.invoke('check-duplicate-urls', urls),
+  getPlaylistSourceUrls: (playlistId) => ipcRenderer.invoke('get-playlist-source-urls', playlistId),
   ytDlpDownloadUrl: ({ url, playlistItems, playlistTitle, existingPlaylistId, newPlaylistName }) =>
     ipcRenderer.invoke('ytdlp-download-url', {
       url,
@@ -108,13 +131,56 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('ytdlp-progress', handler);
     return () => ipcRenderer.removeListener('ytdlp-progress', handler);
   },
+  onYtDlpCheckProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-check-progress', handler);
+    return () => ipcRenderer.removeListener('ytdlp-check-progress', handler);
+  },
+  onYtDlpEntriesReady: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-entries-ready', handler);
+    return () => ipcRenderer.removeListener('ytdlp-entries-ready', handler);
+  },
+  onYtDlpEntryChecked: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('ytdlp-entry-checked', handler);
+    return () => ipcRenderer.removeListener('ytdlp-entry-checked', handler);
+  },
   onYtDlpTrackUpdate: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('ytdlp-track-update', handler);
     return () => ipcRenderer.removeListener('ytdlp-track-update', handler);
   },
   updateYtDlp: (tag) => ipcRenderer.invoke('update-yt-dlp', tag ?? null),
+  updateTidalDlNg: () => ipcRenderer.invoke('update-tidal-dl-ng'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
+
+  // TIDAL download
+  tidalCheck: () => ipcRenderer.invoke('tidal-check'),
+  tidalInstall: () => ipcRenderer.invoke('tidal-install'),
+  tidalFetchInfo: (url) => ipcRenderer.invoke('tidal-fetch-info', url),
+  tidalLogin: () => ipcRenderer.invoke('tidal-login'),
+  tidalDownloadUrl: (opts) => ipcRenderer.invoke('tidal-download-url', opts),
+  onTidalProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('tidal-progress', handler);
+    return () => ipcRenderer.removeListener('tidal-progress', handler);
+  },
+  onTidalLoginUrl: (cb) => {
+    const handler = (_, url) => cb(url);
+    ipcRenderer.on('tidal-login-url', handler);
+    return () => ipcRenderer.removeListener('tidal-login-url', handler);
+  },
+  onTidalInstallProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('tidal-install-progress', handler);
+    return () => ipcRenderer.removeListener('tidal-install-progress', handler);
+  },
+  onTidalTrackUpdate: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('tidal-track-update', handler);
+    return () => ipcRenderer.removeListener('tidal-track-update', handler);
+  },
 
   clearLibrary: () => ipcRenderer.invoke('clear-library'),
   clearUserData: () => ipcRenderer.invoke('clear-user-data'),
