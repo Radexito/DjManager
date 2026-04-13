@@ -22,7 +22,7 @@ export function addCuePoint({
   return info.lastInsertRowid;
 }
 
-export function updateCuePoint(id, { label, color }) {
+export function updateCuePoint(id, { label, color, hotCueIndex }) {
   const fields = [];
   const vals = [];
   if (label !== undefined) {
@@ -32,6 +32,10 @@ export function updateCuePoint(id, { label, color }) {
   if (color !== undefined) {
     fields.push('color = ?');
     vals.push(color);
+  }
+  if (hotCueIndex !== undefined) {
+    fields.push('hot_cue_index = ?');
+    vals.push(hotCueIndex);
   }
   if (fields.length === 0) return;
   vals.push(id);
