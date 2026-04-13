@@ -77,6 +77,24 @@ Paste any URL from **YouTube, SoundCloud, Bandcamp, Mixcloud, Vimeo, Twitch, Twi
 - Cancel in-progress downloads
 - Browser cookie authentication (Chrome, Chromium, Brave, Firefox, LibreWolf, Edge) for sites requiring login
 - Downloaded tracks import directly into the library and optionally into a playlist
+- Channel name used as artist when video title contains no artist delimiter
+
+### 🎵 TIDAL Download
+
+Download from TIDAL via the [tidal-dl-ng](https://github.com/Radexito/tidal-dl-ng-For-DJ) integration.
+
+- One-click login via device-link URL (opens in your browser)
+- Paste any TIDAL track, album, or playlist URL to download at **HiRes Lossless** quality
+- 3-step UI: login → paste URL → select tracks → download
+- Duplicate detection — tracks already in your library are flagged before downloading
+- Progress shown per track; imported directly into the library with full metadata
+
+### 🎯 Cue Points & Auto-Cue
+
+- **Cue Points Editor** — add, label, colour, and delete hot cues (A–H) and memory cues per track
+- **CueGen Auto-Cue** — automatically generates hot cues A–H from the beatgrid (every N bars, configurable)
+- Hot cues exported to Rekordbox USB with correct slot assignments, labels, and colours
+- Cue marker overlay on the seekbar for visual reference during playback
 
 ### 🎮 Player
 
@@ -84,7 +102,7 @@ Paste any URL from **YouTube, SoundCloud, Bandcamp, Mixcloud, Vimeo, Twitch, Twi
 - Keyboard shortcuts: **Space** (play/pause), media keys
 - Seek bar, volume control, current time / duration
 - Output device selection
-- Queue management
+- Queue management — queue stays in sync when tracks are added to the library or playlist during playback
 - **Shuffle** and **Repeat** modes (none / all / one)
 - 50-track play history ring buffer
 
@@ -94,6 +112,8 @@ Full **Pioneer CDJ / XDJ-compatible** export — plug the USB in and it just wor
 
 - Exports the full library or individual playlists
 - Writes **ANLZ0000.DAT / .EXT / .2EX** — waveform, beatgrid, intro/outro cue data
+  - Hot cue slots **A–H** with correct Pioneer palette colour codes for CDJ hardware (PCPT) and Rekordbox PC (PCP2 extended colour wheel)
+  - Memory cues, beatgrid (PQT2), high-res waveform (PWV5), colour waveform (PWV4), preview waveform (PWV3)
 - Writes **export.pdb** — full DeviceSQL binary database (tracks, playlists, artwork, keys, ratings)
 - Writes **MYSETTING.DAT / MYSETTING2.DAT / DEVSETTING.DAT** — hardware settings with correct CRC-16/XMODEM checksums
 - USB filesystem validation (FAT32 / exFAT detection, format warnings)

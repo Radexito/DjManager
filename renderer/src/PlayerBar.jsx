@@ -40,6 +40,12 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
   const [showDevices, setShowDevices] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [cuePoints, setCuePoints] = useState([]);
+  const [showHotCues, setShowHotCues] = useState(
+    () => localStorage.getItem('cue-show-hot') !== 'false'
+  );
+  const [showMemCues, setShowMemCues] = useState(
+    () => localStorage.getItem('cue-show-mem') !== 'false'
+  );
   const seekbarRef = useRef(); // uncontrolled range input
   const seekingRef = useRef(false); // true while user drags
   const deviceWrapRef = useRef();
@@ -104,6 +110,16 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     window.addEventListener('cue-points-updated', handler);
     return () => window.removeEventListener('cue-points-updated', handler);
   }, [currentTrack?.id]);
+
+  // Sync visibility toggles with CuePointsEditor
+  useEffect(() => {
+    const handler = ({ detail: { key, val } }) => {
+      if (key === 'cue-show-hot') setShowHotCues(val);
+      if (key === 'cue-show-mem') setShowMemCues(val);
+    };
+    window.addEventListener('cue-visibility-changed', handler);
+    return () => window.removeEventListener('cue-visibility-changed', handler);
+  }, []);
 
   // Keep seekbar max in sync with duration
   useEffect(() => {
@@ -253,23 +269,25 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
               }}
             />
             {duration > 0 &&
-              cuePoints.map((cue) => {
-                const pct = Math.min((cue.position_ms / 1000 / duration) * 100, 100);
-                return (
-                  <button
-                    key={cue.id}
-                    className="player-cue-marker"
-                    style={{ left: `${pct}%`, background: cue.color }}
-                    title={
-                      cue.label ||
-                      (cue.hot_cue_index >= 0
-                        ? `Hot cue ${'ABCDEFGH'[cue.hot_cue_index]}`
-                        : 'Memory cue')
-                    }
-                    onClick={() => seek(cue.position_ms / 1000)}
-                  />
-                );
-              })}
+              cuePoints
+                .filter((cue) => (cue.hot_cue_index >= 0 ? showHotCues : showMemCues))
+                .map((cue) => {
+                  const pct = Math.min((cue.position_ms / 1000 / duration) * 100, 100);
+                  return (
+                    <button
+                      key={cue.id}
+                      className="player-cue-marker"
+                      style={{ left: `${pct}%`, background: cue.color }}
+                      title={
+                        cue.label ||
+                        (cue.hot_cue_index >= 0
+                          ? `Hot cue ${'ABCDEFGH'[cue.hot_cue_index]}`
+                          : 'Memory cue')
+                      }
+                      onClick={() => seek(cue.position_ms / 1000)}
+                    />
+                  );
+                })}
           </div>
           <span className="player-time">{formatTime(duration)}</span>
         </div>
