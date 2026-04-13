@@ -84,6 +84,11 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('track-updated', handler);
     return () => ipcRenderer.removeListener('track-updated', handler);
   },
+  onCuePointsUpdated: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('cue-points-updated', handler);
+    return () => ipcRenderer.removeListener('cue-points-updated', handler);
+  },
   onNormalizeProgress: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('normalize-progress', handler);

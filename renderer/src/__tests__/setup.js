@@ -46,6 +46,7 @@ window.api = {
   openLogDir: vi.fn().mockResolvedValue(undefined),
   log: vi.fn(),
   onTrackUpdated: vi.fn().mockImplementation(noop),
+  onCuePointsUpdated: vi.fn().mockImplementation(noop),
   onLibraryUpdated: vi.fn().mockImplementation(noop),
   onPlaylistsUpdated: vi.fn().mockImplementation(noop),
   onOpenSettings: vi.fn().mockImplementation(noop),

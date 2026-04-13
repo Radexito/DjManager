@@ -99,6 +99,14 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
     window.dispatchEvent(new CustomEvent('cue-points-updated', { detail: { trackId } }));
   }, [trackId]);
 
+  // Listen for auto-cue IPC events from main process (e.g. auto-generate on import)
+  useEffect(() => {
+    const unsub = window.api.onCuePointsUpdated(({ trackId: updatedId }) => {
+      if (updatedId === trackId) reload();
+    });
+    return unsub;
+  }, [trackId, reload]);
+
   useEffect(() => {
     if (!trackId) return;
     let alive = true;

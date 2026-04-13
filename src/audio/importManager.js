@@ -10,6 +10,8 @@ import { getFfmpegRuntimePath } from '../deps.js';
 import { addTrack, updateTrack, getTrackById, getTrackByHash } from '../db/trackRepository.js';
 import { getAnalyzerRuntimePath } from '../deps.js';
 import { getSetting } from '../db/settingsRepository.js';
+import { generateCuePoints } from './cueGen.js';
+import { getCuePoints, addCuePoint } from '../db/cuePointRepository.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -191,6 +193,25 @@ export function spawnAnalysis(trackId, filePath) {
         .catch((err) => {
           console.error(`[auto-normalize] failed for track ${trackId}:`, err.message);
         });
+    }
+
+    // Auto-generate cue points: only when setting is enabled and track has no cue points yet
+    const autoCue = getSetting('auto_cue_on_import', 'false') === 'true';
+    if (autoCue) {
+      try {
+        const existing = getCuePoints(trackId);
+        if (existing.length === 0) {
+          const freshTrack = getTrackById(trackId);
+          const generated = generateCuePoints(freshTrack);
+          generated.forEach((cue) => addCuePoint({ trackId, ...cue }));
+          console.log(`[auto-cue] generated ${generated.length} cue points for track ${trackId}`);
+          if (global.mainWindow) {
+            global.mainWindow.webContents.send('cue-points-updated', { trackId });
+          }
+        }
+      } catch (err) {
+        console.error(`[auto-cue] failed for track ${trackId}:`, err.message);
+      }
     }
   });
 }

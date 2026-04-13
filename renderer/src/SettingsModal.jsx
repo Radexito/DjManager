@@ -17,6 +17,7 @@ function SettingsModal({ onClose }) {
   const [activeSection, setActiveSection] = useState('library');
   const [targetInput, setTargetInput] = useState(String(DEFAULT_TARGET));
   const [autoNormalizeOnImport, setAutoNormalizeOnImport] = useState(false);
+  const [autoCueOnImport, setAutoCueOnImport] = useState(false);
   const [confirmClear, setConfirmClear] = useState(null); // 'library' | 'userdata'
   const [normalizing, setNormalizing] = useState(false);
   const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
@@ -56,6 +57,9 @@ function SettingsModal({ onClose }) {
     window.api
       .getSetting('auto_normalize_on_import', 'false')
       .then((v) => setAutoNormalizeOnImport(v === 'true'));
+    window.api
+      .getSetting('auto_cue_on_import', 'false')
+      .then((v) => setAutoCueOnImport(v === 'true'));
   }, []);
 
   useEffect(() => {
@@ -144,6 +148,11 @@ function SettingsModal({ onClose }) {
     window.api.setSetting('auto_normalize_on_import', String(checked));
   };
 
+  const handleAutoCueToggle = (checked) => {
+    setAutoCueOnImport(checked);
+    window.api.setSetting('auto_cue_on_import', String(checked));
+  };
+
   const handleCookiesBrowserChange = (value) => {
     setCookiesBrowser(value);
     window.api.setSetting('ytdlp_cookies_browser', value);
@@ -185,6 +194,7 @@ function SettingsModal({ onClose }) {
   const sections = [
     { id: 'library', label: 'Library' },
     { id: 'normalization', label: 'Normalization' },
+    { id: 'cuepoints', label: 'Cue Points' },
     { id: 'downloads', label: 'Downloads' },
     { id: 'updates', label: 'Dependencies' },
     { id: 'advanced', label: 'Advanced' },
@@ -383,6 +393,33 @@ function SettingsModal({ onClose }) {
                       : `Reset — removed normalization from ${normalizeResult.count} track${normalizeResult.count !== 1 ? 's' : ''}.`}
                   </div>
                 )}
+              </div>
+            </>
+          )}
+
+          {activeSection === 'cuepoints' && (
+            <>
+              <h3>Cue Points</h3>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Auto-generate on Import</div>
+                <div className="settings-row">
+                  <label htmlFor="auto-cue-toggle">Auto-generate cue points on import</label>
+                  <div className="settings-toggle-row">
+                    <input
+                      id="auto-cue-toggle"
+                      type="checkbox"
+                      checked={autoCueOnImport}
+                      onChange={(e) => handleAutoCueToggle(e.target.checked)}
+                    />
+                    <span className="settings-toggle-desc">
+                      After analysis finishes for a newly imported track (file import, yt-dlp,
+                      TIDAL), automatically run CueGen to place cue points using BPM, intro, and
+                      outro data. Only fires when the track has no existing cue points. Off by
+                      default.
+                    </span>
+                  </div>
+                </div>
               </div>
             </>
           )}
