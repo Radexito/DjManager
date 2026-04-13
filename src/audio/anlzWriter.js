@@ -453,7 +453,7 @@ function buildPcobSlot(slotType, cues) {
  * Build PCOB buffers for the DAT file [slot1, slot2].
  * Verified split from native Rekordbox: hot_cue numbers 1-3 (A,B,C) go in DAT PCOB1.
  * Cues D-H (hot_cue numbers 4-8) go in EXT PCOB1 — see buildExtPcobSections().
- * PCOB2 is always the empty stub (PCOB2 memory cue format still under investigation, #208).
+ * Memory cues (hot_cue_num=0) go in PCOB2 (slotType=0) in both DAT and EXT (#232).
  *
  * @param {Array<{position_ms, color, hot_cue_index}>} cuePoints
  * @returns {[Buffer, Buffer]}
@@ -462,12 +462,14 @@ export function buildPcobSections(cuePoints) {
   if (!cuePoints || cuePoints.length === 0) return [EMPTY_PCOB_1, EMPTY_PCOB_2];
   // hot_cue_index 0,1,2 → hot_cue numbers 1,2,3 (A,B,C) — DAT only
   const datHotCues = cuePoints.filter((c) => c.hot_cue_index >= 0 && c.hot_cue_index <= 2);
-  return [buildPcobSlot(1, datHotCues), EMPTY_PCOB_2];
+  const memoryCues = cuePoints.filter((c) => c.hot_cue_index < 0);
+  return [buildPcobSlot(1, datHotCues), buildPcobSlot(0, memoryCues)];
 }
 
 /**
  * Build PCOB buffers for the EXT file [slot1, slot2].
  * Verified split: hot_cue numbers 4-8 (D-H, hot_cue_index 3-7) go in EXT PCOB1.
+ * Memory cues (hot_cue_num=0) go in PCOB2 (slotType=0) in both DAT and EXT (#232).
  *
  * @param {Array<{position_ms, color, hot_cue_index}>} cuePoints
  * @returns {[Buffer, Buffer]}
@@ -476,7 +478,8 @@ export function buildExtPcobSections(cuePoints) {
   if (!cuePoints || cuePoints.length === 0) return [EMPTY_PCOB_1, EMPTY_PCOB_2];
   // hot_cue_index 3-7 → hot_cue numbers 4-8 (D-H) — EXT only
   const extHotCues = cuePoints.filter((c) => c.hot_cue_index >= 3 && c.hot_cue_index <= 7);
-  return [buildPcobSlot(1, extHotCues), EMPTY_PCOB_2];
+  const memoryCues = cuePoints.filter((c) => c.hot_cue_index < 0);
+  return [buildPcobSlot(1, extHotCues), buildPcobSlot(0, memoryCues)];
 }
 
 /**
