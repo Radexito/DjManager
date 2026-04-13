@@ -1,131 +1,173 @@
 # DJ Manager
 
-Your music library, built for DJs. Import tracks, analyse BPM and key automatically, build playlists, download from anywhere, and prepare sets — all stored locally on your machine.
-
-[![CI](https://github.com/Radexito/DjManager/actions/workflows/ci.yml/badge.svg)](https://github.com/Radexito/DjManager/actions/workflows/ci.yml)
-[![Release](https://github.com/Radexito/DjManager/actions/workflows/release.yml/badge.svg)](https://github.com/Radexito/DjManager/actions/workflows/release.yml)
-[![code style: prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg)](https://github.com/prettier/prettier)
-[![ESLint](https://img.shields.io/badge/linting-ESLint-4B32C3)](https://eslint.org/)
-[![Tested with Vitest](https://img.shields.io/badge/tested_with-Vitest-6E9F18)](https://vitest.dev/)
-[![E2E with Playwright](https://img.shields.io/badge/e2e-Playwright-45ba4b)](https://playwright.dev/)
+A DJ-focused music library manager built with Electron. Manage your tracks, analyze BPM and key, export to Pioneer CDJ USB drives, and download from streaming platforms — all in one offline-first desktop app.
 
 ![DJ Manager screenshot](screenshot.png)
 
 ---
 
+## Features
+
+### 🎵 Music Library
+
+- Import **MP3, FLAC, WAV, OGG, M4A, AAC, OPUS** with full metadata extraction
+- SHA-1 deduplication — importing the same file twice is a no-op
+- Virtualized infinite-scroll list (handles tens of thousands of tracks)
+- Sort by any column: title, artist, album, BPM, key, loudness, duration, bitrate, year…
+- Customizable column visibility and order, persisted between sessions
+- Multi-select with **Ctrl+Click**, **Shift+Click range**, and **Ctrl+A**
+- Inline track preview — click the play icon in any row to audition without leaving the library
+- Per-track normalization status badge
+
+### 🔍 Search & Filter
+
+- Advanced field-qualified query syntax directly in the search bar:
+  ```
+  BPM >= 128 AND KEY:8A GENRE is Techno
+  ARTIST:Burial YEAR > 2010
+  BPM >= 120 AND KEY:12A
+  ```
+- Supports `AND`, `OR`, field names (`BPM`, `KEY`, `ARTIST`, `ALBUM`, `LABEL`, `GENRE`, `YEAR`, `BITRATE`), and comparison operators (`>=`, `<=`, `>`, `<`, `is`, `contains`)
+
+### 📊 Auto-Analysis
+
+- **BPM** detection via Mixxx analyzer (runs in background worker threads — import never blocks the UI)
+- **Musical key** — raw notation + Camelot wheel (e.g. `8B`)
+- **Loudness** — LUFS / ReplayGain
+- **Intro / Outro** timestamps
+- **Beatgrid** generation for CDJ export
+- **Waveform** data (PWAV / PWV2 / PWV4 / PWV6) generated via FFmpeg
+- Frequency band analysis (bass, mid, treble RMS) per slice
+
+### 🎧 Audio Normalization
+
+- Target loudness configurable in Settings (default **-9 LUFS**, range -60 to 0)
+- Original file preserved — normalized copy stored separately, allowing export in either form
+- Bulk normalize entire library or selected tracks
+- Reset normalization per track or library-wide
+- Auto-normalize on import (optional toggle in Settings)
+- Player automatically prefers the normalized file when available
+
+### 📝 Metadata & Auto-Tagging
+
+- Edit title, artist, album, label, year, genres, comments — inline or in the details panel
+- Bulk metadata editing across multiple selected tracks
+- **Auto-tagger** searches MusicBrainz, Discogs, iTunes, and Deezer simultaneously
+- Visual diff of current vs. suggested values — accept or reject per field
+- Cover art picker with zoom/preview, sourced from MusicBrainz Cover Art Archive, iTunes, and Deezer
+- BPM adjust shortcuts: ×2, ×0.5
+
+### 📋 Playlists
+
+- Create, rename, delete playlists (tracks remain in library)
+- Add/remove tracks via context menu or drag-and-drop
+- Drag-and-drop track reordering within a playlist
+- Assign a colour to each playlist (8 presets)
+- Import playlist from file — prompts which library playlist to add tracks to
+- Export playlist as **M3U**
+
+### ⬇️ Downloads (yt-dlp)
+
+Paste any URL from **YouTube, SoundCloud, Bandcamp, Mixcloud, Vimeo, Twitch, Twitter/X, Instagram, Facebook, TikTok, Dailymotion, Deezer**, and 1000+ other yt-dlp-supported sites.
+
+- Fetch playlist metadata before downloading — preview titles, durations, availability
+- Deselect individual tracks from a playlist before starting the download
+- Duplicate detection — URLs already in your library are highlighted
+- Per-track and overall download progress in the sidebar
+- Cancel in-progress downloads
+- Browser cookie authentication (Chrome, Chromium, Brave, Firefox, LibreWolf, Edge) for sites requiring login
+- Downloaded tracks import directly into the library and optionally into a playlist
+
+### 🎮 Player
+
+- Built-in player streaming from a local HTTP server (reliable Range request support for seeking)
+- Keyboard shortcuts: **Space** (play/pause), media keys
+- Seek bar, volume control, current time / duration
+- Output device selection
+- Queue management
+- **Shuffle** and **Repeat** modes (none / all / one)
+- 50-track play history ring buffer
+
+### 💾 Rekordbox USB Export
+
+Full **Pioneer CDJ / XDJ-compatible** export — plug the USB in and it just works.
+
+- Exports the full library or individual playlists
+- Writes **ANLZ0000.DAT / .EXT / .2EX** — waveform, beatgrid, intro/outro cue data
+- Writes **export.pdb** — full DeviceSQL binary database (tracks, playlists, artwork, keys, ratings)
+- Writes **MYSETTING.DAT / MYSETTING2.DAT / DEVSETTING.DAT** — hardware settings with correct CRC-16/XMODEM checksums
+- USB filesystem validation (FAT32 / exFAT detection, format warnings)
+- Export progress tracking
+
+### ⚙️ Settings
+
+| Section       | Options                                                                                   |
+| ------------- | ----------------------------------------------------------------------------------------- |
+| Library       | Custom library path, move library to new location                                         |
+| Normalization | Target LUFS, auto-normalize on import, bulk normalize / reset                             |
+| Downloads     | Browser cookie source, preferred audio format                                             |
+| Dependencies  | View installed versions of ffmpeg / yt-dlp / analyzer, update individually or all at once |
+| Advanced      | Clear library, reset all user data, view log files                                        |
+
+---
+
 ## Download
 
-Grab the latest build for your platform from [**Releases**](https://github.com/Radexito/DjManager/releases).
+Pre-built releases are available on the [GitHub Releases](https://github.com/Radexito/DjManager/releases) page.
 
-FFmpeg and the audio analyser download automatically on first launch — no manual setup required.
+| Platform | Format              |
+| -------- | ------------------- |
+| Linux    | AppImage (x64)      |
+| macOS    | dmg (Apple Silicon) |
+| Windows  | NSIS installer      |
 
-| Platform | File                                              |
-| -------- | ------------------------------------------------- |
-| Linux    | `DJ.Manager-x.x.x-Linux` (AppImage — just run it) |
-| Windows  | `DJ.Manager-x.x.x-Setup.exe`                      |
-| macOS    | `DJ.Manager-x.x.x.dmg`                            |
-
-### Windows — Chocolatey
-
-If you use [Chocolatey](https://chocolatey.org/), you can install and keep DJ Manager up to date with a single command:
-
-```powershell
-choco install djmanager
-```
-
-Package page: [community.chocolatey.org/packages/djmanager](https://community.chocolatey.org/packages/djmanager)
+On first launch, FFmpeg and the mixxx-analyzer binary are downloaded automatically.
 
 ---
 
-## What it does
-
-**Library** — Import audio files once; DJ Manager copies them into managed storage and deduplicates by content hash. Sort and filter by any column. Select multiple tracks with click, Shift+click, Ctrl+click, or Ctrl+A.
-
-**Advanced search** — Type a query into the search bar to filter your library with precision. Filters can be stacked with `AND`:
-
-```
-GENRE is Psytrance AND BPM IN RANGE 140-145
-KEY matches 8A AND BPM > 130
-ARTIST contains Burial AND YEAR > 2010
-TITLE contains intro AND LOUDNESS > -10
-```
-
-Supported fields: `TITLE`, `ARTIST`, `ALBUM`, `GENRE`, `BPM`, `KEY`, `YEAR`, `LOUDNESS`.
-Supported operators vary by field — `is`, `is not`, `contains`, `in range`, `>`, `<` for numbers; `is`, `matches`, `adjacent`, `mode switch` for keys (Camelot notation: `8A`, `8B`, etc.).
-The search bar shows field and operator suggestions as you type, and completed filters appear as removable chips above the track list.
-
-**Analysis** — Every track is analysed automatically on import for BPM, musical key (Camelot notation), loudness (LUFS), replay gain, and intro/outro markers. Right-click any track to re-analyse, or halve/double the detected BPM if the analyzer picked the wrong grid.
-
-**Find Similar** — Right-click a track to find others with a matching or adjacent Camelot key, or within a close BPM range. Results are applied as a live search filter.
-
-**Auto-tag** — Right-click any track and choose **Auto-tag** to look up metadata from [MusicBrainz](https://musicbrainz.org/) and [Discogs](https://www.discogs.com/) simultaneously. A side-by-side diff shows the current value next to every candidate found; pick the value you want per field (Title, Artist, Album, Label, Year, Genres) from a dropdown and apply in one click.
-
-**URL Import** — Paste a URL from YouTube, SoundCloud, Bandcamp, Spotify, or [1000+ other sources](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) into the **Download** tab. DJ Manager fetches the track list first so you can review and deselect anything before downloading. Tracks are imported into the library one by one as they finish — no waiting for the full playlist. A dual progress bar tracks both the current download and overall playlist progress, and a status table shows each track's state (pending → downloading → importing → done / failed).
-
-**Playlists** — Create colour-coded playlists in the sidebar, drag tracks in from the library, reorder by drag-and-drop, and sort by any column. Track count and total duration are shown at all times. Exporting a playlist to M3U is one click. Playlists imported via URL remember their source link.
-
-**Player** — Full playback with seekbar, shuffle, repeat, previous/next, and hardware media key support. Intro and outro zones are shown visually on the seekbar so you know exactly when to mix. Double-click any track to play.
-
-**Settings** — Move your library to any location, including an external drive. Update FFmpeg and the audio analyser in-app without reinstalling. Clear the track library, all playlists, or all user data from the Advanced tab.
-
----
-
-## Running from source
+## Development
 
 ```bash
-git clone https://github.com/Radexito/DjManager.git
-cd DjManager
+# Install dependencies
 npm install
 cd renderer && npm install && cd ..
+
+# Start dev server (Vite + Electron)
 npm run dev
+
+# Lint
+npm run lint:all
+
+# Format
+npm run format
+
+# Run tests
+npm test                    # main process (Vitest)
+cd renderer && npm test     # renderer (React Testing Library)
+
+# Build distributable
+npm run dist:linux          # or :mac / :win
 ```
 
-FFmpeg and mixxx-analyzer are downloaded automatically to `~/.config/dj_manager/bin/` on first run.
-
-### Other useful commands
-
-| Command                 | What it does                                                        |
-| ----------------------- | ------------------------------------------------------------------- |
-| `npm run dev`           | Start Electron + Vite dev server together (default for development) |
-| `npm run react`         | Start the Vite renderer only (UI dev without Electron)              |
-| `npm run build`         | Build the renderer for production                                   |
-| `npm run electron-prod` | Run Electron against the production build                           |
-| `npm run dist`          | Build + package for the current platform                            |
-| `npm run dist:linux`    | Build + package for Linux (AppImage)                                |
-| `npm run dist:win`      | Build + package for Windows (NSIS installer)                        |
-| `npm run dist:mac`      | Build + package for macOS (DMG)                                     |
-| `npm run lint:all`      | Lint main process + renderer                                        |
-| `npm test`              | Run unit tests (Vitest)                                             |
-| `npm run test:e2e`      | Run E2E tests (Playwright)                                          |
+> **Note:** Close the Electron app before running `npm test` — the pretest step rebuilds `better-sqlite3` for Node.js and will fail if Electron holds the binary open.
 
 ---
 
-Upcoming work is tracked on the [**Issues**](https://github.com/Radexito/DjManager/issues) page.
+## Tech Stack
+
+| Layer            | Technology                                        |
+| ---------------- | ------------------------------------------------- |
+| Shell            | **Electron** 40                                   |
+| UI               | **React 19** + **Vite 8**                         |
+| Database         | **better-sqlite3** (synchronous SQLite)           |
+| Analysis         | **Mixxx analyzer** — BPM, key, loudness, beatgrid |
+| Audio processing | **FFmpeg** — decode, waveform, format conversion  |
+| Downloads        | **yt-dlp**                                        |
+| Drag-and-drop    | **@dnd-kit**                                      |
+| Virtual list     | **react-window**                                  |
 
 ---
 
-## Rekordbox USB export
+## License
 
-Right-click any playlist in the sidebar and choose **Export Rekordbox USB** to write a Pioneer CDJ-compatible USB drive — no Rekordbox software required. DJ Manager writes the binary formats CDJs read directly: `export.pdb` (track database), `ANLZ0000.DAT/.EXT/.2EX` (waveforms and beat grids), and `PIONEER/MYSETTING.DAT` (player settings).
-
-### Re-exporting and incremental behaviour
-
-Each export to the same USB folder **merges** with whatever was previously exported there. A manifest (`PIONEER/rekordbox/export-manifest.json`) records all tracks and playlists on the USB; subsequent exports read it and inject new content into the existing database without removing anything.
-
-| What gets written                | Behaviour                                                                    |
-| -------------------------------- | ---------------------------------------------------------------------------- |
-| Audio files (`/music/`)          | **Skipped if already present** — existing files are never overwritten        |
-| ANLZ files (waveform / beatgrid) | **Regenerated for new tracks only** — existing ANLZ files are left untouched |
-| `export.pdb` (track database)    | **Rebuilt from all tracks** — current export merged with previous exports    |
-| `PIONEER/MYSETTING.DAT` etc.     | **Always regenerated**                                                       |
-| `export-manifest.json`           | **Always updated** — records the full set of tracks and playlists on the USB |
-
-You can export playlists to the same USB one at a time — each export adds its tracks and playlists to the CDJ database without touching the ones already there.
-
----
-
-## How files are stored
-
-Audio is stored at `~/.config/dj_manager/audio/<xx>/<hash>.<ext>` (configurable via Settings → Library). The two-character hash prefix keeps directory sizes manageable. Playlists reference tracks by ID — no duplicates, no copies.
-
-Logs are written daily to `~/.config/dj_manager/logs/app-YYYY-MM-DD.log`.
+MIT © [Radexito](https://github.com/Radexito)
