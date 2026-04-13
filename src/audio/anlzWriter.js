@@ -280,17 +280,32 @@ function buildPvbrSection(fileSize) {
 //     [14-23]: zeros
 //     [24-27]: len_comment (u32BE, byte count incl null terminator, 0=no label)
 //     [28+]:   UTF-16BE label (null-terminated), labelByteLen bytes
-//     [28+labelByteLen+0]: color_code (u1): Pioneer palette 1-8 (0=no color, see #220)
+//     [28+labelByteLen+0]: color_code (u1): Pioneer palette 1-8 (0=no color)
 //     [28+labelByteLen+1]: color_red   (u1)
 //     [28+labelByteLen+2]: color_green (u1)
 //     [28+labelByteLen+3]: color_blue  (u1)
 //     rest: 40 trailing zeros
 //   Total body = 28 + labelByteLen + 44  (72 for no-label, 88 for 16-byte label)
 //
-// Pioneer hot cue color palette codes — partially verified (#220):
-//   code 3 = orange (#ff9900) ✓   code 6 = cyan (#00b4d8) ✓
-// Full palette mapping is pending a native Rekordbox hex-diff (see issue #220).
-// Until verified, color_code is left as 0x00 (Rekordbox uses per-slot defaults).
+// Pioneer hot cue color palette codes (#220).
+// Codes 3 and 6 confirmed by native Rekordbox USB hex-diff.
+// Remaining codes inferred from rainbow sequence — verify with scripts/anlz-diff.js.
+//   ✓ = confirmed   ○ = inferred
+const PIONEER_PALETTE = new Map([
+  ['#ff6b35', 1], // orange-red → ○ code 1
+  ['#ff0000', 2], // red        → ○ code 2
+  ['#ff9900', 3], // orange     → ✓ code 3
+  ['#ffff00', 4], // yellow     → ○ code 4
+  ['#00ff00', 5], // green      → ○ code 5
+  ['#00b4d8', 6], // cyan       → ✓ code 6
+  ['#0080ff', 7], // blue       → ○ code 7
+  ['#cc00ff', 8], // violet     → ○ code 8
+]);
+
+function hexToPioneerCode(hex) {
+  if (!hex) return 0;
+  return PIONEER_PALETTE.get(hex.toLowerCase()) ?? 0;
+}
 
 const EMPTY_PCOB_1 = Buffer.from([
   0x50,
@@ -375,7 +390,7 @@ const EMPTY_PCO2_2 = Buffer.from([
  * Builds a single PCPT sub-tag entry (56 bytes, fixed size).
  * Per crate-digger ksy: [12-15]=hot_cue number (0=memory,1=A,2=B…), [28]=type (1=point,2=loop).
  */
-function buildPcptEntry(hotCueNum, positionMs, _color) {
+function buildPcptEntry(hotCueNum, positionMs, color) {
   const buf = Buffer.alloc(56, 0);
   buf.write('PCPT', 0, 'ascii');
   buf.writeUInt32BE(28, 4); // len_header = 28
@@ -389,7 +404,7 @@ function buildPcptEntry(hotCueNum, positionMs, _color) {
   buf.writeUInt16BE(0x03e8, 30); // constant
   buf.writeUInt32BE(positionMs, 32); // time_ms
   buf.writeUInt32BE(0xffffffff, 36); // loop_time: none
-  // [40]: Pioneer palette color code — TODO: reverse-engineer exact palette (#issue)
+  buf[40] = hexToPioneerCode(color); // Pioneer palette code (1-8; 0=no color/use CDJ default)
   // [41-55]: zeros
   return buf;
 }
@@ -455,7 +470,7 @@ export function buildExtPcobSections(cuePoints) {
  *   - No-label entry: len_tag=88 (body=72)
  *   - 16-byte label entry: len_tag=104 (body=88)
  *   - Formula: body = 28 + labelByteLen + 44  (28 fixed + label + 4 color + 40 zeros)
- *   - Color: color_code(u1, Pioneer palette 1-8, currently 0/no-color, see #220) + R + G + B
+ *   - Color: color_code(u1, Pioneer palette 1-8, via hexToPioneerCode()) + R + G + B
  */
 function buildPcp2Entry(hotCueNum, positionMs, label, color) {
   const labelStr = label ?? '';
@@ -495,9 +510,8 @@ function buildPcp2Entry(hotCueNum, positionMs, label, color) {
 
   // Color at [28+labelByteLen]: color_code(u1) + R + G + B
   // color_code=0 means "no color / use Rekordbox default per-slot color".
-  // Full Pioneer palette mapping is tracked in issue #220 — set 0 for now.
   const colorOff = 44 + labelByteLen;
-  buf[colorOff] = 0x00; // TODO: write correct Pioneer palette code (see #220)
+  buf[colorOff] = hexToPioneerCode(color); // Pioneer palette code (1-8; 0=no color/use CDJ default)
   if (color && color.startsWith('#') && color.length >= 7) {
     const n = parseInt(color.slice(1), 16);
     buf[colorOff + 1] = (n >> 16) & 0xff; // R
