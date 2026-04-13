@@ -441,8 +441,8 @@ ipcMain.handle('add-cue-point', (_, { trackId, positionMs, label, color, hotCueI
   return { id };
 });
 
-ipcMain.handle('update-cue-point', (_, { id, label, color, hotCueIndex }) => {
-  updateCuePoint(id, { label, color, hotCueIndex });
+ipcMain.handle('update-cue-point', (_, { id, label, color, hotCueIndex, enabled }) => {
+  updateCuePoint(id, { label, color, hotCueIndex, enabled });
   return { ok: true };
 });
 
@@ -1298,7 +1298,7 @@ ipcMain.handle(
             bpm: t.bpm_override ?? t.bpm ?? 0,
             usbRoot,
             ffmpegPath: getFfmpegRuntimePath(),
-            cuePoints: getCuePoints(t.id),
+            cuePoints: getCuePoints(t.id).filter((c) => c.enabled !== 0),
           });
         } catch (err) {
           console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
@@ -1452,7 +1452,7 @@ ipcMain.handle(
             bpm: t.bpm_override ?? t.bpm ?? 0,
             usbRoot,
             ffmpegPath: getFfmpegRuntimePath(),
-            cuePoints: getCuePoints(t.id),
+            cuePoints: getCuePoints(t.id).filter((c) => c.enabled !== 0),
           });
         } catch (err) {
           console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
