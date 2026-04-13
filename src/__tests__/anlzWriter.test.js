@@ -25,7 +25,7 @@ vi.mock('fs', () => {
 });
 
 // Import after mocks
-import { writeAnlz, getAnlzFolder } from '../audio/anlzWriter.js';
+import { writeAnlz, getAnlzFolder, buildPcobSections } from '../audio/anlzWriter.js';
 import fs from 'fs';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -431,5 +431,68 @@ describe('writeAnlz', () => {
     expect(exBuf.readUInt16BE(pwvcPos + 14)).toBe(0x0064);
     expect(exBuf.readUInt16BE(pwvcPos + 16)).toBe(0x0068);
     expect(exBuf.readUInt16BE(pwvcPos + 18)).toBe(0x00c5);
+  });
+});
+
+// ── buildPcobSections ─────────────────────────────────────────────────────────
+
+describe('buildPcobSections', () => {
+  const hotCue = { position_ms: 1000, color: '#ff0000', hot_cue_index: 0 }; // A
+  const memoryCue = { position_ms: 5000, color: '#00ff00', hot_cue_index: -1 };
+
+  it('returns empty stubs when cuePoints is empty', () => {
+    const [pcob1, pcob2] = buildPcobSections([]);
+    expect(pcob1.slice(0, 4).toString('ascii')).toBe('PCOB');
+    expect(pcob2.slice(0, 4).toString('ascii')).toBe('PCOB');
+    // Both empty: len_tag = 24 (header only, no entries)
+    expect(pcob1.readUInt32BE(8)).toBe(24);
+    expect(pcob2.readUInt32BE(8)).toBe(24);
+  });
+
+  it('PCOB1 type field = 1 (hot_cues slot)', () => {
+    const [pcob1] = buildPcobSections([hotCue]);
+    expect(pcob1.readUInt32BE(12)).toBe(1);
+  });
+
+  it('PCOB2 is always empty stub (memory cues go to PCO2 until PCOB2 format is confirmed)', () => {
+    // Non-empty PCOB2 causes Rekordbox to reject the file — see issue #208
+    const [, pcob2] = buildPcobSections([memoryCue]);
+    expect(pcob2.readUInt32BE(8)).toBe(24); // len_tag = 24 = header only
+    expect(pcob2.readUInt16BE(18)).toBe(0); // num_cues = 0
+  });
+
+  it('PCOB2 stays empty even when there are memory cues', () => {
+    const [, pcob2] = buildPcobSections([hotCue, memoryCue]);
+    expect(pcob2.readUInt32BE(8)).toBe(24);
+  });
+
+  it('PCPT entry for hot cue has status = 0 (native Rekordbox value)', () => {
+    // Verified by hex-diff of native Rekordbox USB export — KSY "disabled" label is misleading
+    const [pcob1] = buildPcobSections([hotCue]);
+    const pcptStart = 24; // first PCPT entry after 24-byte PCOB header
+    expect(pcob1.readUInt32BE(pcptStart + 16)).toBe(0);
+  });
+
+  it('PCPT entry for hot cue A has hot_cue = 1', () => {
+    const [pcob1] = buildPcobSections([hotCue]);
+    const pcptStart = 24;
+    expect(pcob1.readUInt32BE(pcptStart + 12)).toBe(1);
+  });
+
+  it('PCPT time_ms matches position_ms', () => {
+    const [pcob1] = buildPcobSections([hotCue]);
+    const pcptStart = 24;
+    expect(pcob1.readUInt32BE(pcptStart + 32)).toBe(1000);
+  });
+
+  it('PCOB1 len_tag = 24 + N×56 for N hot cues', () => {
+    const [pcob1] = buildPcobSections([hotCue, hotCue]);
+    expect(pcob1.readUInt32BE(8)).toBe(24 + 2 * 56);
+  });
+
+  it('memory cues are NOT placed in PCOB1', () => {
+    const [pcob1] = buildPcobSections([memoryCue]);
+    // No entries in PCOB1 since no hot cues
+    expect(pcob1.readUInt32BE(8)).toBe(24); // empty
   });
 });

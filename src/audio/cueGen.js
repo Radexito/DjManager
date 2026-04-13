@@ -14,7 +14,7 @@
  * format is not yet reverse-engineered and they are invisible in Rekordbox.
  */
 
-const HOT_CUE_COLOR = '#ff6b35'; // orange-red, matches Rekordbox default hot cue A
+const HOT_CUE_COLOR = '#ff0000'; // red → Pioneer palette code 4 (distinct from orange Mix Out)
 const SECTION_COLOR = '#00b4d8'; // cyan for phrase markers
 const OUTRO_COLOR = '#ff9900'; // amber for the outro/mix-out marker
 
