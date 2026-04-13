@@ -441,8 +441,8 @@ ipcMain.handle('add-cue-point', (_, { trackId, positionMs, label, color, hotCueI
   return { id };
 });
 
-ipcMain.handle('update-cue-point', (_, { id, label, color }) => {
-  updateCuePoint(id, { label, color });
+ipcMain.handle('update-cue-point', (_, { id, label, color, hotCueIndex }) => {
+  updateCuePoint(id, { label, color, hotCueIndex });
   return { ok: true };
 });
 

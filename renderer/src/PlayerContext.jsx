@@ -370,6 +370,13 @@ export function PlayerProvider({ children }) {
     [audio]
   );
 
+  // Update the queue in-place without changing the current track or index.
+  // Called by MusicLibrary when tracks are added to the currently-playing source
+  // so shuffle picks from the full up-to-date list.
+  const updateQueue = useCallback((newQueue) => {
+    setQueue(newQueue);
+  }, []);
+
   return (
     <PlayerContext.Provider
       value={{
@@ -399,6 +406,7 @@ export function PlayerProvider({ children }) {
         setVolume,
         patchCurrentTrack,
         reloadCurrentTrack,
+        updateQueue,
       }}
     >
       {children}

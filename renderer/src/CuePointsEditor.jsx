@@ -24,6 +24,27 @@ function msToTime(ms) {
 
 const HOT_CUE_LABELS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 
+// Visibility preference keys in localStorage
+const LS_SHOW_HOT = 'cue-show-hot';
+const LS_SHOW_MEM = 'cue-show-mem';
+
+function readVis(key) {
+  try {
+    return localStorage.getItem(key) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+function writeVis(key, val) {
+  try {
+    localStorage.setItem(key, String(val));
+    window.dispatchEvent(new CustomEvent('cue-visibility-changed', { detail: { key, val } }));
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function CuePointsEditor({ trackId, onCuePointsChange }) {
   const { currentTime } = usePlayer() ?? {};
   const [cuePoints, setCuePoints] = useState([]);
@@ -33,6 +54,42 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editLabel, setEditLabel] = useState('');
+  const [typePickerId, setTypePickerId] = useState(null); // cue id whose type picker is open
+
+  // Close type picker on outside click
+  useEffect(() => {
+    if (typePickerId === null) return;
+    const close = (e) => {
+      if (!e.target.closest('.cpe__badge-wrap')) setTypePickerId(null);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [typePickerId]);
+
+  // Visibility toggles — persisted in localStorage, shared with PlayerBar via custom event
+  const [showHot, setShowHot] = useState(() => readVis(LS_SHOW_HOT));
+  const [showMem, setShowMem] = useState(() => readVis(LS_SHOW_MEM));
+
+  // Keep in sync if another component changes visibility
+  useEffect(() => {
+    const handler = ({ detail: { key, val } }) => {
+      if (key === LS_SHOW_HOT) setShowHot(val);
+      if (key === LS_SHOW_MEM) setShowMem(val);
+    };
+    window.addEventListener('cue-visibility-changed', handler);
+    return () => window.removeEventListener('cue-visibility-changed', handler);
+  }, []);
+
+  const toggleShowHot = () => {
+    const next = !showHot;
+    setShowHot(next);
+    writeVis(LS_SHOW_HOT, next);
+  };
+  const toggleShowMem = () => {
+    const next = !showMem;
+    setShowMem(next);
+    writeVis(LS_SHOW_MEM, next);
+  };
 
   const revRef = useRef(0);
   const [rev, setRev] = useState(0);
@@ -115,12 +172,41 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
     setEditLabel(cue.label ?? '');
   };
 
+  // Change a cue's type: -1 = memory, 0-7 = hot cue A-H
+  const handleTypeChange = async (id, hotCueIndex) => {
+    setTypePickerId(null);
+    await window.api.updateCuePoint(id, { hotCueIndex });
+    reload();
+  };
+
   const { seek } = usePlayer() ?? {};
+
+  // Apply visibility filter for the list
+  const visibleCues = cuePoints.filter((c) => {
+    if (c.hot_cue_index >= 0) return showHot;
+    return showMem;
+  });
 
   return (
     <div className="cpe">
       <div className="cpe__header">
         <span className="cpe__title">Cue Points</span>
+        <div className="cpe__vis-toggles">
+          <button
+            className={`cpe__vis-btn${showHot ? ' cpe__vis-btn--on' : ''}`}
+            onClick={toggleShowHot}
+            title={showHot ? 'Hide hot cues' : 'Show hot cues'}
+          >
+            Hot
+          </button>
+          <button
+            className={`cpe__vis-btn${showMem ? ' cpe__vis-btn--on' : ''}`}
+            onClick={toggleShowMem}
+            title={showMem ? 'Hide memory cues' : 'Show memory cues'}
+          >
+            Mem
+          </button>
+        </div>
         <div className="cpe__actions">
           <button
             className="cpe__btn cpe__btn--add"
@@ -157,21 +243,51 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
 
       {cuePoints.length === 0 ? (
         <div className="cpe__empty">No cue points — add one or use ⚡ Auto</div>
+      ) : visibleCues.length === 0 ? (
+        <div className="cpe__empty">All cue points hidden — toggle Hot / Mem above</div>
       ) : (
         <div className="cpe__list">
-          {cuePoints.map((cue) => (
+          {visibleCues.map((cue) => (
             <div key={cue.id} className="cpe__row">
-              {/* Hot cue badge or memory cue dot */}
-              <div
-                className="cpe__badge"
-                style={{ background: cue.color }}
-                title={
-                  cue.hot_cue_index >= 0
-                    ? `Hot cue ${HOT_CUE_LABELS[cue.hot_cue_index]}`
-                    : 'Memory cue'
-                }
-              >
-                {cue.hot_cue_index >= 0 ? HOT_CUE_LABELS[cue.hot_cue_index] : '●'}
+              {/* Type badge — click to open type picker */}
+              <div className="cpe__badge-wrap">
+                <div
+                  className="cpe__badge"
+                  style={{ background: cue.color }}
+                  title={
+                    cue.hot_cue_index >= 0
+                      ? `Hot cue ${HOT_CUE_LABELS[cue.hot_cue_index]} — click to change type`
+                      : 'Memory cue — click to change type'
+                  }
+                  onClick={() => setTypePickerId(typePickerId === cue.id ? null : cue.id)}
+                >
+                  {cue.hot_cue_index >= 0 ? HOT_CUE_LABELS[cue.hot_cue_index] : '●'}
+                </div>
+
+                {typePickerId === cue.id && (
+                  <div className="cpe__type-picker">
+                    <button
+                      className={`cpe__type-opt cpe__type-opt--mem${cue.hot_cue_index < 0 ? ' cpe__type-opt--active' : ''}`}
+                      onClick={() => handleTypeChange(cue.id, -1)}
+                      title="Memory cue"
+                    >
+                      ●
+                    </button>
+                    {HOT_CUE_LABELS.map((label, i) => (
+                      <button
+                        key={label}
+                        className={`cpe__type-opt${cue.hot_cue_index === i ? ' cpe__type-opt--active' : ''}`}
+                        style={
+                          cue.hot_cue_index === i ? { background: cue.color, color: '#000' } : {}
+                        }
+                        onClick={() => handleTypeChange(cue.id, i)}
+                        title={`Hot cue ${label}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Time — click to seek */}

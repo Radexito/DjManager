@@ -25,7 +25,13 @@ vi.mock('fs', () => {
 });
 
 // Import after mocks
-import { writeAnlz, getAnlzFolder, buildPcobSections } from '../audio/anlzWriter.js';
+import {
+  writeAnlz,
+  getAnlzFolder,
+  buildPcobSections,
+  buildExtPcobSections,
+  buildPco2Sections,
+} from '../audio/anlzWriter.js';
 import fs from 'fs';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -494,5 +500,116 @@ describe('buildPcobSections', () => {
     const [pcob1] = buildPcobSections([memoryCue]);
     // No entries in PCOB1 since no hot cues
     expect(pcob1.readUInt32BE(8)).toBe(24); // empty
+  });
+});
+
+// ── Pioneer color palette (hexToPioneerCode via PCPT / PCP2) ──────────────────
+
+describe('Pioneer color palette — PCPT color_code byte', () => {
+  const pcptStart = 24; // first PCPT entry after 24-byte PCOB header
+  const colorByteOffset = pcptStart + 40; // byte [40] of the PCPT entry
+
+  it('orange (#ff9900) → code 3 (confirmed by native Rekordbox hex-diff)', () => {
+    const [pcob1] = buildPcobSections([{ position_ms: 1000, color: '#ff9900', hot_cue_index: 0 }]);
+    expect(pcob1[colorByteOffset]).toBe(3);
+  });
+
+  it('cyan (#00b4d8) → code 6 (confirmed by native Rekordbox hex-diff)', () => {
+    const [pcob1] = buildPcobSections([{ position_ms: 1000, color: '#00b4d8', hot_cue_index: 0 }]);
+    expect(pcob1[colorByteOffset]).toBe(6);
+  });
+
+  it('unknown color hex → code 0 (no color / CDJ default)', () => {
+    const [pcob1] = buildPcobSections([{ position_ms: 1000, color: '#123456', hot_cue_index: 0 }]);
+    expect(pcob1[colorByteOffset]).toBe(0);
+  });
+
+  it('null/missing color → code 0', () => {
+    const [pcob1] = buildPcobSections([{ position_ms: 1000, color: null, hot_cue_index: 0 }]);
+    expect(pcob1[colorByteOffset]).toBe(0);
+  });
+});
+
+// ── buildExtPcobSections ──────────────────────────────────────────────────────
+
+describe('buildExtPcobSections', () => {
+  it('returns empty stubs when cuePoints is empty', () => {
+    const [ext1, ext2] = buildExtPcobSections([]);
+    expect(ext1.slice(0, 4).toString('ascii')).toBe('PCOB');
+    expect(ext1.readUInt32BE(8)).toBe(24);
+    expect(ext2.readUInt32BE(8)).toBe(24);
+  });
+
+  it('places hot_cue_index 3-7 (D-H) in EXT PCOB1', () => {
+    const cues = [
+      { position_ms: 1000, color: '#ff9900', hot_cue_index: 3 }, // D
+      { position_ms: 2000, color: '#00b4d8', hot_cue_index: 4 }, // E
+    ];
+    const [ext1] = buildExtPcobSections(cues);
+    expect(ext1.readUInt32BE(8)).toBe(24 + 2 * 56);
+    expect(ext1.readUInt16BE(18)).toBe(2); // num_cues
+  });
+
+  it('ignores cues with hot_cue_index 0-2 (A-C belong in DAT)', () => {
+    const datCues = [{ position_ms: 1000, color: '#ff9900', hot_cue_index: 0 }];
+    const [ext1] = buildExtPcobSections(datCues);
+    expect(ext1.readUInt32BE(8)).toBe(24); // empty — no D-H cues
+  });
+
+  it('EXT PCOB2 is always empty stub', () => {
+    const cues = [{ position_ms: 1000, color: '#ff9900', hot_cue_index: 3 }];
+    const [, ext2] = buildExtPcobSections(cues);
+    expect(ext2.readUInt32BE(8)).toBe(24);
+  });
+});
+
+// ── buildPco2Sections ─────────────────────────────────────────────────────────
+
+describe('buildPco2Sections', () => {
+  const hotCue = { position_ms: 1000, color: '#ff9900', label: 'Drop', hot_cue_index: 0 };
+  const memoryCue = { position_ms: 5000, color: '#00b4d8', label: '', hot_cue_index: -1 };
+
+  it('returns empty stubs when cuePoints is empty', () => {
+    const [pco2hot, pco2mem] = buildPco2Sections([]);
+    expect(pco2hot.slice(0, 4).toString('ascii')).toBe('PCO2');
+    expect(pco2mem.slice(0, 4).toString('ascii')).toBe('PCO2');
+  });
+
+  it('slot 1 type field = 1 (hot cues)', () => {
+    const [pco2hot] = buildPco2Sections([hotCue]);
+    expect(pco2hot.readUInt32BE(12)).toBe(1);
+  });
+
+  it('slot 2 type field = 0 (memory cues)', () => {
+    const [, pco2mem] = buildPco2Sections([memoryCue]);
+    expect(pco2mem.readUInt32BE(12)).toBe(0);
+  });
+
+  it('memory cues go to slot 2, not slot 1', () => {
+    const [pco2hot, pco2mem] = buildPco2Sections([memoryCue]);
+    expect(pco2hot.readUInt16BE(16)).toBe(0); // slot 1: 0 cues
+    expect(pco2mem.readUInt16BE(16)).toBe(1); // slot 2: 1 cue
+  });
+
+  it('PCP2 color_code for orange (#ff9900) = 0x23 (extended wheel code 35)', () => {
+    // PCP2 uses a ~64-step extended color wheel, NOT the PCPT 1-8 palette.
+    // code 35 (0x23) corresponds to orange on the wheel (hue ≈ 38°, Δ2° from #FF9900).
+    const cue = { position_ms: 1000, color: '#ff9900', label: '', hot_cue_index: 0 };
+    const [pco2hot] = buildPco2Sections([cue]);
+    // PCO2 header=20; PCP2 entry starts at 20.
+    // Inside PCP2 buf: colorOff = 44 + labelByteLen(0) = 44.
+    // Absolute offset in PCO2 buf: 20 + 44 = 64.
+    const colorOff = 20 + 44;
+    expect(pco2hot[colorOff]).toBe(0x23);
+  });
+
+  it('PCP2 RGB bytes use native Rekordbox wheel RGB (not raw hex) for known palette entry', () => {
+    // #ff9900 maps to wheel code 35 with native RGB (0xff, 0xa2, 0x00).
+    const cue = { position_ms: 1000, color: '#ff9900', label: '', hot_cue_index: 0 };
+    const [pco2hot] = buildPco2Sections([cue]);
+    const colorOff = 20 + 44;
+    expect(pco2hot[colorOff + 1]).toBe(0xff); // R
+    expect(pco2hot[colorOff + 2]).toBe(0xa2); // G  (native wheel, not 0x99)
+    expect(pco2hot[colorOff + 3]).toBe(0x00); // B
   });
 });
