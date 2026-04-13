@@ -719,6 +719,11 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
               return merged;
             });
             offsetRef.current = sortedTracksRef.current.length + newRows.length;
+            // If the batch we fetched is smaller than a full page, we've reached the end.
+            if (rows.length < PAGE_SIZE) {
+              hasMoreRef.current = false;
+              setHasMore(false);
+            }
           }
         }
       } else {
