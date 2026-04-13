@@ -91,8 +91,10 @@ export function PlayerProvider({ children }) {
         console.error('[player] media server not ready yet');
         return;
       }
+      // Prefer the normalized file for playback if available
+      const filePath = track.normalized_file_path || track.file_path;
       // Normalize to forward slashes (Windows paths use backslashes), then encode each segment
-      const posixPath = track.file_path.replace(/\\/g, '/');
+      const posixPath = filePath.replace(/\\/g, '/');
       const encodedPath = posixPath
         .split('/')
         .map((seg) => encodeURIComponent(seg))
@@ -314,6 +316,67 @@ export function PlayerProvider({ children }) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [audio]);
 
+  const patchCurrentTrack = useCallback(
+    (id, fields) => setCurrentTrack((prev) => (prev?.id === id ? { ...prev, ...fields } : prev)),
+    []
+  );
+
+  // Reload audio src for the current track (e.g. after normalization produces a new file).
+  // Pass the new file path explicitly so we don't race with pending React state updates.
+  // Seeks back to the position the player was at before the reload.
+  const reloadCurrentTrack = useCallback(
+    (newFilePath, shouldPlay = false) => {
+      const port = mediaPortRef.current;
+      console.log(
+        '[reloadCurrentTrack] called with path=',
+        newFilePath,
+        'shouldPlay=',
+        shouldPlay,
+        'port=',
+        port
+      );
+      if (!port || !newFilePath) return;
+      const posixPath = newFilePath.replace(/\\/g, '/');
+      const encodedPath = posixPath
+        .split('/')
+        .map((seg) => encodeURIComponent(seg))
+        .join('/');
+      const gen = ++playGenRef.current;
+      const savedTime = audio.currentTime;
+      const src = `http://127.0.0.1:${port}/${encodedPath.replace(/^\//, '')}?t=${gen}`;
+      console.log('[reloadCurrentTrack] setting audio.src =', src, 'savedTime=', savedTime);
+      audio.pause();
+      audio.src = src;
+      audio.addEventListener(
+        'canplay',
+        () => {
+          console.log(
+            '[reloadCurrentTrack] canplay fired, seeking to',
+            savedTime,
+            'shouldPlay=',
+            shouldPlay
+          );
+          audio.currentTime = savedTime;
+          if (shouldPlay) {
+            audio.play().catch((err) => {
+              if (gen === playGenRef.current && err.name !== 'AbortError')
+                console.error('[player] reloadCurrentTrack play error:', err);
+            });
+          }
+        },
+        { once: true }
+      );
+    },
+    [audio]
+  );
+
+  // Update the queue in-place without changing the current track or index.
+  // Called by MusicLibrary when tracks are added to the currently-playing source
+  // so shuffle picks from the full up-to-date list.
+  const updateQueue = useCallback((newQueue) => {
+    setQueue(newQueue);
+  }, []);
+
   return (
     <PlayerContext.Provider
       value={{
@@ -341,6 +404,9 @@ export function PlayerProvider({ children }) {
         cycleRepeat,
         setDevice,
         setVolume,
+        patchCurrentTrack,
+        reloadCurrentTrack,
+        updateQueue,
       }}
     >
       {children}

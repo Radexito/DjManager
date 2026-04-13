@@ -13,6 +13,7 @@
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  position: relative;
 }
 
 /* Search */
@@ -209,6 +210,7 @@
   padding: 4px 0;
   z-index: 1000;
   min-width: 170px;
+  width: max-content;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
   user-select: none;
   max-height: calc(100vh - 16px);
@@ -223,6 +225,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
 }
 
 .context-menu-item:hover {
@@ -272,6 +275,34 @@
 
 .row--playing.row--selected {
   background: #1a3a1a !important;
+}
+
+/* Track is being normalized or re-analyzed */
+.row--analyzing {
+  opacity: 0.45;
+}
+
+/* New row: space slides open (scaleY), then content fades in */
+@keyframes rowSlideIn {
+  0% {
+    transform: scaleY(0);
+    transform-origin: top center;
+    opacity: 0;
+  }
+  45% {
+    transform: scaleY(1);
+    transform-origin: top center;
+    opacity: 0;
+  }
+  100% {
+    transform: scaleY(1);
+    transform-origin: top center;
+    opacity: 1;
+  }
+}
+
+.row--new {
+  animation: rowSlideIn 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
 }
 
 /* BPM overridden indicator */
@@ -559,4 +590,136 @@
 /* ── Details panel layout ─────────────────────────────────────────────── */
 .music-library--with-panel .music-library__main {
   border-right: 1px solid #2a2a2a;
+}
+
+/* ── Toast notification ───────────────────────────────────────────────── */
+.music-library-toast {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #2a2a2a;
+  border: 1px solid #1db954;
+  color: #e0e0e0;
+  font-size: 13px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  z-index: 2000;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.music-library-toast--warn {
+  border-color: #f4a261;
+  color: #f4a261;
+}
+
+/* ── Add to new playlist inline input ── */
+.ctx-new-playlist-item {
+  padding: 6px 12px;
+  cursor: default;
+}
+
+.ctx-new-playlist-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 12px;
+}
+
+.ctx-new-playlist-input {
+  background: #1a1a1a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ctx-new-playlist-input:focus {
+  border-color: #1db954;
+}
+
+.ctx-new-playlist-error {
+  font-size: 11px;
+  color: #e06c6c;
+}
+
+/* ── Cue column indicator ───────────────────────────────────────────────── */
+.cell.cue {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.cue-dot {
+  font-size: 12px;
+  line-height: 1;
+  user-select: none;
+}
+
+.cue-dot--has {
+  color: #ff6b35;
+}
+
+.cue-dot--empty {
+  color: #444;
+}
+
+.cell.cue:hover .cue-dot--empty {
+  color: #888;
+}
+
+/* ── Cue points panel ───────────────────────────────────────────────────── */
+.cue-panel {
+  width: 340px;
+  min-width: 260px;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e1e;
+  border-left: 1px solid #2a2a2a;
+  overflow: hidden;
+}
+
+.cue-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid #2a2a2a;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.cue-panel__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e0e0e0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.cue-panel__close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.cue-panel__close:hover {
+  color: #e0e0e0;
+  background: #2a2a2a;
 }

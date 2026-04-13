@@ -64,6 +64,8 @@ export function initDB() {
     'ALTER TABLE tracks ADD COLUMN user_tags TEXT',
     'ALTER TABLE tracks ADD COLUMN has_artwork INTEGER DEFAULT 0',
     'ALTER TABLE tracks ADD COLUMN artwork_path TEXT',
+    'ALTER TABLE tracks ADD COLUMN normalized_file_path TEXT',
+    'ALTER TABLE tracks ADD COLUMN source_loudness REAL',
   ]) {
     try {
       db.prepare(col).run();
@@ -160,6 +162,27 @@ export function initDB() {
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     )
+  `
+  ).run();
+
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS cue_points (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      track_id      INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+      position_ms   REAL    NOT NULL,
+      label         TEXT    NOT NULL DEFAULT '',
+      color         TEXT    NOT NULL DEFAULT '#00b4d8',
+      hot_cue_index INTEGER NOT NULL DEFAULT -1,
+      created_at    INTEGER NOT NULL
+    )
+  `
+  ).run();
+
+  db.prepare(
+    `
+    CREATE INDEX IF NOT EXISTS idx_cue_points_track_id
+    ON cue_points(track_id)
   `
   ).run();
 }
