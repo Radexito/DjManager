@@ -450,6 +450,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     mediaPort,
     patchCurrentTrack,
     reloadCurrentTrack,
+    updateQueue,
   } = usePlayer();
 
   // Only highlight a track as "playing" when the source context matches this view.
@@ -508,12 +509,20 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   // Refs that stay in sync so the onLibraryUpdated closure (empty deps) can read current values
   const selectedPlaylistRef = useRef(selectedPlaylist);
   const searchRef = useRef(search);
+  const currentPlaylistIdRef = useRef(currentPlaylistId);
+  const updateQueueRef = useRef(updateQueue);
   useEffect(() => {
     selectedPlaylistRef.current = selectedPlaylist;
   }, [selectedPlaylist]);
   useEffect(() => {
     searchRef.current = search;
   }, [search]);
+  useEffect(() => {
+    currentPlaylistIdRef.current = currentPlaylistId;
+  }, [currentPlaylistId]);
+  useEffect(() => {
+    updateQueueRef.current = updateQueue;
+  }, [updateQueue]);
 
   // Track previous view identity so the reset effect knows whether the VIEW changed
   // (search/playlist switch → clear selection) vs. just a data reload (loadKey bump → keep selection)
@@ -699,7 +708,13 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
           setTracks((prev) => {
             const existingIds = new Set(prev.map((t) => t.id));
             const deduped = rows.filter((r) => !existingIds.has(r.id));
-            return deduped.length > 0 ? [...prev, ...deduped] : prev;
+            const merged = deduped.length > 0 ? [...prev, ...deduped] : prev;
+            // Keep the player queue in sync when playing from the music (all-tracks) view.
+            // Without this, shuffle only picks from the original queue snapshot (issue #213).
+            if (deduped.length > 0 && currentPlaylistIdRef.current === null) {
+              updateQueueRef.current(merged);
+            }
+            return merged;
           });
           offsetRef.current = currentCount + rows.length;
           if (rows.length < PAGE_SIZE) {

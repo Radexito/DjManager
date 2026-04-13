@@ -19,7 +19,12 @@ vi.mock('react-window', () => ({
 }));
 
 vi.mock('../PlayerContext.jsx', () => ({
-  usePlayer: () => ({ play: vi.fn(), currentTrack: null, currentPlaylistId: null }),
+  usePlayer: () => ({
+    play: vi.fn(),
+    currentTrack: null,
+    currentPlaylistId: null,
+    updateQueue: vi.fn(),
+  }),
 }));
 
 vi.mock('@dnd-kit/core', () => ({
