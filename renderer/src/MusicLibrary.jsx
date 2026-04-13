@@ -697,29 +697,28 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     const unsub = window.api.onLibraryUpdated(async () => {
       const isDefaultView = selectedPlaylistRef.current === 'music' && !searchRef.current;
       if (isDefaultView) {
-        // Soft append: fetch only the new rows at the current end of the list.
-        // This avoids resetting the list (which shrinks the scroll container and
-        // snaps the user away from their current position).
-        const currentCount = sortedTracksRef.current.length;
-        const rows = await window.api.getTracks({ limit: PAGE_SIZE, offset: currentCount });
+        // getTracks orders by created_at DESC (newest first), so using currentCount as the
+        // offset would skip the N newest tracks and return the (N+1)th oldest — which is
+        // already on screen, not the just-imported track (#204).  Fetch from offset 0 and
+        // dedup against what's already loaded instead.
+        const rows = await window.api.getTracks({ limit: PAGE_SIZE, offset: 0 });
         if (rows.length > 0) {
-          const newIds = new Set(rows.map((r) => r.id));
-          setNewTrackIds((prev) => new Set([...prev, ...newIds]));
-          setTracks((prev) => {
-            const existingIds = new Set(prev.map((t) => t.id));
-            const deduped = rows.filter((r) => !existingIds.has(r.id));
-            const merged = deduped.length > 0 ? [...prev, ...deduped] : prev;
-            // Keep the player queue in sync when playing from the music (all-tracks) view.
-            // Without this, shuffle only picks from the original queue snapshot (issue #213).
-            if (deduped.length > 0 && currentPlaylistIdRef.current === null) {
-              updateQueueRef.current(merged);
-            }
-            return merged;
-          });
-          offsetRef.current = currentCount + rows.length;
-          if (rows.length < PAGE_SIZE) {
-            hasMoreRef.current = false;
-            setHasMore(false);
+          const existingIds = new Set(sortedTracksRef.current.map((t) => t.id));
+          const newRows = rows.filter((r) => !existingIds.has(r.id));
+          if (newRows.length > 0) {
+            setNewTrackIds((prev) => new Set([...prev, ...newRows.map((r) => r.id)]));
+            setTracks((prev) => {
+              const prevIds = new Set(prev.map((t) => t.id));
+              const deduped = newRows.filter((r) => !prevIds.has(r.id));
+              if (deduped.length === 0) return prev;
+              const merged = [...prev, ...deduped];
+              // Keep the player queue in sync when playing from the music (all-tracks) view.
+              if (currentPlaylistIdRef.current === null) {
+                updateQueueRef.current(merged);
+              }
+              return merged;
+            });
+            offsetRef.current = sortedTracksRef.current.length + newRows.length;
           }
         }
       } else {
@@ -731,6 +730,22 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     });
     return unsub;
   }, []);
+
+  // Keep player queue in sync when tracks are added/removed from the current playlist (#213).
+  // The all-tracks view is handled inside onLibraryUpdated; playlist view needs its own sync
+  // because it does a full reload (setLoadKey) rather than a soft-append.
+  useEffect(() => {
+    if (
+      isPlaylistView &&
+      currentPlaylistId !== null &&
+      String(currentPlaylistId) === String(selectedPlaylist) &&
+      sortedTracksRef.current.length > 0
+    ) {
+      updateQueue(sortedTracksRef.current);
+    }
+    // Only react to track count changes — sort-order changes should not reshuffle the queue.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tracks.length, isPlaylistView, selectedPlaylist, currentPlaylistId]);
 
   // Reload playlist info (name, duration) when entering playlist view or tracks change
   useEffect(() => {

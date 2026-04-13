@@ -287,25 +287,40 @@ function buildPvbrSection(fileSize) {
 //     rest: 40 trailing zeros
 //   Total body = 28 + labelByteLen + 44  (72 for no-label, 88 for 16-byte label)
 //
-// Pioneer hot cue color palette codes (#220).
-// Codes 3 and 6 confirmed by native Rekordbox USB hex-diff.
-// Remaining codes inferred from rainbow sequence — verify with scripts/anlz-diff.js.
-//   ✓ = confirmed   ○ = inferred
+// PCPT (DAT/EXT PCOB sections) color palette — read by CDJ hardware.
+// Codes 1–8 are Pioneer's per-slot palette: 1=orange-red(A)…8=violet(H).
+//   ✓ = confirmed from native Rekordbox USB hex-diff   ○ = inferred
 const PIONEER_PALETTE = new Map([
-  ['#ff6b35', 1], // orange-red → ○ code 1
-  ['#ff0000', 2], // red        → ○ code 2
-  ['#ff9900', 3], // orange     → ✓ code 3
-  ['#ffff00', 4], // yellow     → ○ code 4
-  ['#00ff00', 5], // green      → ○ code 5
-  ['#00b4d8', 6], // cyan       → ✓ code 6
-  ['#0080ff', 7], // blue       → ○ code 7
-  ['#cc00ff', 8], // violet     → ○ code 8
+  ['#ff6b35', 1], // orange-red ○
+  ['#ff0000', 2], // red        ○
+  ['#ff9900', 3], // orange     ✓
+  ['#ffff00', 4], // yellow     ○
+  ['#00ff00', 5], // green      ○
+  ['#00b4d8', 6], // cyan       ✓
+  ['#0080ff', 7], // blue       ○
+  ['#cc00ff', 8], // violet     ○
 ]);
 
 function hexToPioneerCode(hex) {
   if (!hex) return 0;
   return PIONEER_PALETTE.get(hex.toLowerCase()) ?? 0;
 }
+
+// PCP2 (EXT PCO2 section) uses a DIFFERENT color encoding — a ~64-step extended color wheel
+// where code 1 = blue (0x00,0x00,0xFF) and code 42 = red (0xFF,0x00,0x00).
+// This is NOT the same numbering as PCPT (1-8).  Confirmed from native Rekordbox USB dumps
+// of "Riders on the Storm" with 16 cues using all available colors.
+//   ✓ = confirmed exact RGB from native dump   ~ = interpolated between confirmed neighbors
+const PIONEER_PCP2_MAP = new Map([
+  ['#ff6b35', { code: 0x27, r: 0xff, g: 0x46, b: 0x00 }], // orange-red  ~ code 39 (hue≈16°, Δ0.5°)
+  ['#ff0000', { code: 0x2a, r: 0xff, g: 0x00, b: 0x00 }], // red         ✓ code 42
+  ['#ff9900', { code: 0x23, r: 0xff, g: 0xa2, b: 0x00 }], // orange      ~ code 35 (hue≈38°, Δ2°)
+  ['#ffff00', { code: 0x1f, r: 0xf3, g: 0xf4, b: 0x00 }], // yellow      ~ code 31 (hue≈57°, Δ3°)
+  ['#00ff00', { code: 0x16, r: 0x1a, g: 0xff, b: 0x00 }], // green       ✓ code 22 (hue=114°, Δ6°)
+  ['#00b4d8', { code: 0x09, r: 0x00, g: 0xe0, b: 0xff }], // cyan        ✓ code 9  (hue=187°, Δ3°)
+  ['#0080ff', { code: 0x05, r: 0x00, g: 0x70, b: 0xff }], // blue        ✓ code 5  (hue=214°, Δ4°)
+  ['#cc00ff', { code: 0x38, r: 0xb3, g: 0x00, b: 0xff }], // violet      ✓ code 56 (hue=282°, Δ6°)
+]);
 
 const EMPTY_PCOB_1 = Buffer.from([
   0x50,
@@ -509,15 +524,16 @@ function buildPcp2Entry(hotCueNum, positionMs, label, color) {
   }
 
   // Color at [28+labelByteLen]: color_code(u1) + R + G + B
-  // color_code=0 means "no color / use Rekordbox default per-slot color".
+  // PCP2 color_code uses the extended wheel (PIONEER_PCP2_MAP) — NOT the PCPT 1-8 palette.
   const colorOff = 44 + labelByteLen;
-  buf[colorOff] = hexToPioneerCode(color); // Pioneer palette code (1-8; 0=no color/use CDJ default)
-  if (color && color.startsWith('#') && color.length >= 7) {
-    const n = parseInt(color.slice(1), 16);
-    buf[colorOff + 1] = (n >> 16) & 0xff; // R
-    buf[colorOff + 2] = (n >> 8) & 0xff; // G
-    buf[colorOff + 3] = n & 0xff; // B
+  const pcp2Color = color ? PIONEER_PCP2_MAP.get(color.toLowerCase()) : null;
+  if (pcp2Color) {
+    buf[colorOff] = pcp2Color.code;
+    buf[colorOff + 1] = pcp2Color.r;
+    buf[colorOff + 2] = pcp2Color.g;
+    buf[colorOff + 3] = pcp2Color.b;
   }
+  // else: bytes remain 0x00 (no color / use Rekordbox default per-slot color)
   // trailing 40 zeros already set by Buffer.alloc
 
   return buf;
