@@ -641,13 +641,13 @@ export async function ensureDeps(onProgress) {
   const tmp = path.join(app.getPath('temp'), 'djman-deps');
   await fs.promises.mkdir(tmp, { recursive: true });
 
+  // Tidal is optional and non-fatal — exclude from required step count so upgrades
+  // that already have FFmpeg/analyzer/yt-dlp don't show a misleading [1/1].
   const totalSteps =
-    (!ffmpegReady ? 1 : 0) +
-    (!analyzerReady ? 1 : 0) +
-    (!ytDlpReady ? 1 : 0) +
-    (!tidalReady ? 1 : 0);
+    (!ffmpegReady ? 1 : 0) + (!analyzerReady ? 1 : 0) + (!ytDlpReady ? 1 : 0);
   let step = 0;
-  const stepCb = (msg, pct) => onProgress?.(`[${step}/${totalSteps}] ${msg}`, pct);
+  const stepCb = (msg, pct) =>
+    onProgress?.(totalSteps > 0 ? `[${step}/${totalSteps}] ${msg}` : msg, pct);
 
   try {
     if (!ffmpegReady) {
@@ -663,17 +663,19 @@ export async function ensureDeps(onProgress) {
       await downloadYtDlp(tmp, stepCb);
     }
     if (!tidalReady) {
-      step++;
-      stepCb('Installing tidal-dl-ng…', 0);
+      onProgress?.('[optional] Installing tidal-dl-ng…', 0);
       try {
-        await installTidalDlNgDep((msg) => stepCb(msg, -1));
-        stepCb('tidal-dl-ng installed.', 100);
+        await installTidalDlNgDep((msg) => onProgress?.(`[optional] ${msg}`, -1));
+        onProgress?.('[optional] tidal-dl-ng installed.', 100);
       } catch (err) {
         console.warn('[deps] tidal-dl-ng install failed (non-fatal):', err.message);
-        stepCb('tidal-dl-ng install failed — Python 3.12+ may not be available.', -1);
+        onProgress?.(
+          '[optional] tidal-dl-ng unavailable — install Python 3.12+ to enable TIDAL downloads.',
+          -1
+        );
       }
     }
-    onProgress?.('Setup complete.', 100);
+    onProgress?.(totalSteps > 0 ? 'Setup complete.' : 'Dependencies up to date.', 100);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
