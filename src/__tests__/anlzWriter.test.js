@@ -591,22 +591,25 @@ describe('buildPco2Sections', () => {
     expect(pco2mem.readUInt16BE(16)).toBe(1); // slot 2: 1 cue
   });
 
-  it('PCP2 color_code for orange (#ff9900) = 3 at no-label color offset', () => {
+  it('PCP2 color_code for orange (#ff9900) = 0x23 (extended wheel code 35)', () => {
+    // PCP2 uses a ~64-step extended color wheel, NOT the PCPT 1-8 palette.
+    // code 35 (0x23) corresponds to orange on the wheel (hue ≈ 38°, Δ2° from #FF9900).
     const cue = { position_ms: 1000, color: '#ff9900', label: '', hot_cue_index: 0 };
     const [pco2hot] = buildPco2Sections([cue]);
     // PCO2 header=20; PCP2 entry starts at 20.
     // Inside PCP2 buf: colorOff = 44 + labelByteLen(0) = 44.
     // Absolute offset in PCO2 buf: 20 + 44 = 64.
     const colorOff = 20 + 44;
-    expect(pco2hot[colorOff]).toBe(3);
+    expect(pco2hot[colorOff]).toBe(0x23);
   });
 
-  it('PCP2 RGB bytes match hex color for known palette entry', () => {
+  it('PCP2 RGB bytes use native Rekordbox wheel RGB (not raw hex) for known palette entry', () => {
+    // #ff9900 maps to wheel code 35 with native RGB (0xff, 0xa2, 0x00).
     const cue = { position_ms: 1000, color: '#ff9900', label: '', hot_cue_index: 0 };
     const [pco2hot] = buildPco2Sections([cue]);
     const colorOff = 20 + 44;
     expect(pco2hot[colorOff + 1]).toBe(0xff); // R
-    expect(pco2hot[colorOff + 2]).toBe(0x99); // G
+    expect(pco2hot[colorOff + 2]).toBe(0xa2); // G  (native wheel, not 0x99)
     expect(pco2hot[colorOff + 3]).toBe(0x00); // B
   });
 });
