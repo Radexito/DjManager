@@ -696,7 +696,11 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
         if (rows.length > 0) {
           const newIds = new Set(rows.map((r) => r.id));
           setNewTrackIds((prev) => new Set([...prev, ...newIds]));
-          setTracks((prev) => [...prev, ...rows]);
+          setTracks((prev) => {
+            const existingIds = new Set(prev.map((t) => t.id));
+            const deduped = rows.filter((r) => !existingIds.has(r.id));
+            return deduped.length > 0 ? [...prev, ...deduped] : prev;
+          });
           offsetRef.current = currentCount + rows.length;
           if (rows.length < PAGE_SIZE) {
             hasMoreRef.current = false;
