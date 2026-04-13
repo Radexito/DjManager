@@ -159,35 +159,35 @@ entire file). Memory cues are stored in EXT PCO2 slot 2 instead.
 
 #### PCOB header (24 bytes)
 
-| Offset | Size | Value                                        |
-| ------ | ---- | -------------------------------------------- |
-| 0      | 4    | `PCOB`                                       |
-| 4      | 4    | `24` (len_header)                            |
-| 8      | 4    | `len_tag` = 24 + N × 56 (0 for empty stub)  |
-| 12     | 4    | `type`: 1 = hot_cues, 0 = memory_cues        |
-| 16     | 2    | `0x0000` (padding)                           |
-| 18     | 2    | `num_cues` (u16BE)                           |
-| 20     | 4    | `0xFFFFFFFF` (memory_count sentinel)         |
+| Offset | Size | Value                                      |
+| ------ | ---- | ------------------------------------------ |
+| 0      | 4    | `PCOB`                                     |
+| 4      | 4    | `24` (len_header)                          |
+| 8      | 4    | `len_tag` = 24 + N × 56 (0 for empty stub) |
+| 12     | 4    | `type`: 1 = hot_cues, 0 = memory_cues      |
+| 16     | 2    | `0x0000` (padding)                         |
+| 18     | 2    | `num_cues` (u16BE)                         |
+| 20     | 4    | `0xFFFFFFFF` (memory_count sentinel)       |
 
 #### PCPT sub-tag (56 bytes fixed, one per cue)
 
-| Offset | Size | Value                                                |
-| ------ | ---- | ---------------------------------------------------- |
-| 0      | 4    | `PCPT`                                               |
-| 4      | 4    | `28` (len_header)                                    |
-| 8      | 4    | `56` (len_tag)                                       |
-| 12     | 4    | `hot_cue`: 0 = memory, 1 = A, 2 = B, … 8 = H        |
-| 16     | 4    | `0x00000000` (status — native Rekordbox writes 0)    |
-| 20     | 4    | `0x00010000` (constant)                              |
-| 24     | 2    | `0xFFFF` (order_first)                               |
-| 26     | 2    | `0xFFFF` (order_last)                                |
-| 28     | 1    | `type`: 1 = cue_point, 2 = loop                      |
-| 29     | 1    | `0x00`                                               |
-| 30     | 2    | `0x03E8` (constant)                                  |
-| 32     | 4    | `time_ms` (u32BE)                                    |
-| 36     | 4    | `0xFFFFFFFF` (loop_time: none for cue points)        |
-| 40     | 1    | `color_code` (Pioneer palette 1–8; 0 = no color)     |
-| 41     | 15   | zeros                                                |
+| Offset | Size | Value                                             |
+| ------ | ---- | ------------------------------------------------- |
+| 0      | 4    | `PCPT`                                            |
+| 4      | 4    | `28` (len_header)                                 |
+| 8      | 4    | `56` (len_tag)                                    |
+| 12     | 4    | `hot_cue`: 0 = memory, 1 = A, 2 = B, … 8 = H      |
+| 16     | 4    | `0x00000000` (status — native Rekordbox writes 0) |
+| 20     | 4    | `0x00010000` (constant)                           |
+| 24     | 2    | `0xFFFF` (order_first)                            |
+| 26     | 2    | `0xFFFF` (order_last)                             |
+| 28     | 1    | `type`: 1 = cue_point, 2 = loop                   |
+| 29     | 1    | `0x00`                                            |
+| 30     | 2    | `0x03E8` (constant)                               |
+| 32     | 4    | `time_ms` (u32BE)                                 |
+| 36     | 4    | `0xFFFFFFFF` (loop_time: none for cue points)     |
+| 40     | 1    | `color_code` (Pioneer palette 1–8; 0 = no color)  |
+| 41     | 15   | zeros                                             |
 
 **Pioneer palette codes** (codes 3 and 6 confirmed by native Rekordbox hex-diff):
 
@@ -264,7 +264,7 @@ where `labelByteLen = (label.length + 1) × 2` (UTF-16BE + null terminator).
 | 0               | 4            | `PCP2`                                             |
 | 4               | 4            | `16` (len_header)                                  |
 | 8               | 4            | `len_tag`                                          |
-| 12              | 4            | `hot_cue`: 0 = memory, 1 = A, 2 = B, … 8 = H      |
+| 12              | 4            | `hot_cue`: 0 = memory, 1 = A, 2 = B, … 8 = H       |
 | 16              | 1            | `type`: 1 = cue_point, 2 = loop                    |
 | 17              | 1            | `0x00`                                             |
 | 18              | 2            | `0x03E8` (constant)                                |
