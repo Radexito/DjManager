@@ -17,6 +17,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [exportState, setExportState] = useState(null); // { playlistId, mode } | null
   const [depsProgress, setDepsProgress] = useState(null); // { msg, pct } or null
+  const [zoomLevel, setZoomLevel] = useState(null); // shown when != 1.0, null = hidden
   const [search, setSearch] = useState('');
 
   const handleArtistSearch = (artist) => {
@@ -41,6 +42,7 @@ function App() {
     const ZOOM_MIN = 0.5;
     const ZOOM_MAX = 2.0;
     const LS_KEY = 'app-zoom-factor';
+    let hideTimer = null;
 
     const clamp = (v) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v));
     const round = (v) => Math.round(v * 10) / 10;
@@ -49,11 +51,18 @@ function App() {
       const clamped = clamp(round(factor));
       window.api.setZoomFactor(clamped);
       localStorage.setItem(LS_KEY, String(clamped));
+      // Show indicator; hide after 2s of inactivity
+      setZoomLevel(clamped);
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => setZoomLevel(null), 2000);
     };
 
-    // Restore persisted zoom
+    // Restore persisted zoom (silently — no indicator on launch)
     const saved = parseFloat(localStorage.getItem(LS_KEY));
-    if (!isNaN(saved)) applyZoom(saved);
+    if (!isNaN(saved)) {
+      const clamped = clamp(round(saved));
+      window.api.setZoomFactor(clamped);
+    }
 
     const onWheel = (e) => {
       if (!e.ctrlKey) return;
@@ -81,6 +90,7 @@ function App() {
     return () => {
       window.removeEventListener('wheel', onWheel);
       window.removeEventListener('keydown', onKeyDown);
+      clearTimeout(hideTimer);
     };
   }, []);
 
@@ -135,6 +145,19 @@ function App() {
               initialMode={exportState.mode}
               onClose={() => setExportState(null)}
             />
+          )}
+          {zoomLevel !== null && zoomLevel !== 1.0 && (
+            <button
+              className="zoom-indicator"
+              onClick={() => {
+                window.api.setZoomFactor(1.0);
+                localStorage.setItem('app-zoom-factor', '1');
+                setZoomLevel(null);
+              }}
+              title="Reset zoom to 100%"
+            >
+              {Math.round(zoomLevel * 100)}% ✕
+            </button>
           )}
           {depsProgress && (
             <div className="deps-overlay">
