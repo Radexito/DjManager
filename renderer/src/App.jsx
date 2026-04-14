@@ -35,6 +35,67 @@ function App() {
     return unsub;
   }, []);
 
+  // ── Zoom control: Ctrl+=/−, Ctrl+0, Ctrl+Scroll ───────────────────────────
+  useEffect(() => {
+    const ZOOM_MIN = 0.5;
+    const ZOOM_MAX = 2.0;
+    const ZOOM_STEP = 0.1;
+    const ZOOM_KEY = 'app-zoom-factor';
+
+    const clamp = (v) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(v * 10) / 10));
+
+    // Restore persisted zoom on mount
+    try {
+      const saved = parseFloat(localStorage.getItem(ZOOM_KEY));
+      if (saved && isFinite(saved)) window.api.setZoomFactor(clamp(saved));
+    } catch {
+      /* ignore */
+    }
+
+    const applyZoom = (delta) => {
+      const current = window.api.getZoomFactor();
+      const next = clamp(current + delta);
+      window.api.setZoomFactor(next);
+      try {
+        localStorage.setItem(ZOOM_KEY, String(next));
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const handleKeyDown = (e) => {
+      if (!e.ctrlKey) return;
+      if (e.key === '=' || e.key === '+') {
+        e.preventDefault();
+        applyZoom(+ZOOM_STEP);
+      } else if (e.key === '-') {
+        e.preventDefault();
+        applyZoom(-ZOOM_STEP);
+      } else if (e.key === '0') {
+        e.preventDefault();
+        window.api.setZoomFactor(1);
+        try {
+          localStorage.removeItem(ZOOM_KEY);
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+
+    const handleWheel = (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      applyZoom(e.deltaY < 0 ? +ZOOM_STEP : -ZOOM_STEP);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('wheel', handleWheel);
+    };
+  }, []);
+
   return (
     <PlayerProvider>
       <DownloadProvider>
