@@ -488,6 +488,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const [detailsTrack, setDetailsTrack] = useState(null);
   const [detailsBulkTracks, setDetailsBulkTracks] = useState(null); // array | null
   const [cueTrack, setCueTrack] = useState(null);
+  const [bpmEditValue, setBpmEditValue] = useState(''); // value for inline Set BPM input
 
   const offsetRef = useRef(0);
   const loadingRef = useRef(false);
@@ -1192,6 +1193,29 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
           const u = updatedById.get(t.id);
           return u ? { ...t, bpm_override: u.bpm_override } : t;
         })
+      );
+    },
+    [contextMenu]
+  );
+
+  const handleSetBpm = useCallback(
+    async (rawValue) => {
+      const targetIds = contextMenu?.targetIds ?? [];
+      const parsed = parseFloat(rawValue);
+      if (!Number.isFinite(parsed) || parsed <= 0) return;
+      const bpmOverride = Math.round(parsed * 10) / 10;
+      setContextMenu(null);
+      setBpmEditValue('');
+      if (!targetIds.length) return;
+
+      // Optimistic update
+      setTracks((prev) =>
+        prev.map((t) => (targetIds.includes(t.id) ? { ...t, bpm_override: bpmOverride } : t))
+      );
+
+      // Persist each track
+      await Promise.all(
+        targetIds.map((id) => window.api.updateTrack(id, { bpm_override: bpmOverride }))
       );
     },
     [contextMenu]
@@ -1935,6 +1959,38 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                         </div>
                         <div className="context-menu-item" onClick={() => handleBpmAdjust(0.5)}>
                           ÷2 Halve BPM
+                        </div>
+                        <div className="context-menu-separator" />
+                        <div
+                          className="context-menu-item context-menu-item--set-bpm"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <span className="set-bpm-label">Set BPM:</span>
+                          <input
+                            className="set-bpm-input"
+                            type="number"
+                            min="20"
+                            max="400"
+                            step="0.1"
+                            placeholder="e.g. 128"
+                            value={bpmEditValue}
+                            onChange={(e) => setBpmEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSetBpm(bpmEditValue);
+                              if (e.key === 'Escape') {
+                                setBpmEditValue('');
+                                setContextMenu(null);
+                              }
+                            }}
+                            autoFocus={false}
+                          />
+                          <button
+                            className="set-bpm-apply"
+                            disabled={!bpmEditValue}
+                            onClick={() => handleSetBpm(bpmEditValue)}
+                          >
+                            ✓
+                          </button>
                         </div>
                       </SubItem>
                     </SubItem>
