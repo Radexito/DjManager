@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   // Track library
@@ -181,6 +181,10 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('tidal-track-update', handler);
     return () => ipcRenderer.removeListener('tidal-track-update', handler);
   },
+
+  // Zoom control (Ctrl+Scroll, Ctrl+=/-, Ctrl+0)
+  getZoomFactor: () => webFrame.getZoomFactor(),
+  setZoomFactor: (factor) => webFrame.setZoomFactor(factor),
 
   clearLibrary: () => ipcRenderer.invoke('clear-library'),
   clearUserData: () => ipcRenderer.invoke('clear-user-data'),

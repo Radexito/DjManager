@@ -40,6 +40,8 @@ window.api = {
   checkDepUpdates: vi.fn().mockResolvedValue({}),
   updateAllDeps: vi.fn().mockResolvedValue(undefined),
   updateTidalDlNg: vi.fn().mockResolvedValue({ ok: true }),
+  getZoomFactor: vi.fn().mockReturnValue(1),
+  setZoomFactor: vi.fn(),
   clearLibrary: vi.fn().mockResolvedValue(undefined),
   clearUserData: vi.fn().mockResolvedValue(undefined),
   getLogDir: vi.fn().mockResolvedValue('/tmp/logs'),
