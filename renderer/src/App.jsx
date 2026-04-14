@@ -165,7 +165,7 @@ function App() {
               }}
               title="Reset zoom to 100%"
             >
-              <span className="zoom-indicator-label">✕</span>
+              <span className="zoom-indicator-label">{Math.round(zoomLevel * 100)}% ✕</span>
               <span className="zoom-indicator-bar" />
             </button>
           )}
