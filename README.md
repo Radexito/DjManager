@@ -188,6 +188,12 @@ npm run dist:linux          # or :mac / :win
 
 ---
 
+## Acknowledgements
+
+A huge thank you to **[meiremans](https://github.com/meiremans)** for creating [beirbox-gui](https://github.com/meiremans/beirbox-gui), which gave us a solid starting point for understanding the Pioneer Rekordbox USB binary format. Their work on reverse engineering the DeviceSQL PDB structure, ANLZ file sections, and USB layout saved an enormous amount of time and made the Rekordbox export feature in DJ Manager possible.
+
+---
+
 ## License
 
 MIT © [Radexito](https://github.com/Radexito)
