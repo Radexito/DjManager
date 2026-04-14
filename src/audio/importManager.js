@@ -13,6 +13,24 @@ import { getSetting } from '../db/settingsRepository.js';
 
 const execFileAsync = promisify(execFile);
 
+// ─── Analysis progress tracking ─────────────────────────────────────────────
+
+let analysisActive = 0; // workers currently running
+let analysisTotal = 0; // total spawned in the current batch
+let analysisDone = 0; // completed in the current batch
+
+function sendAnalysisProgress() {
+  if (!global.mainWindow) return;
+  global.mainWindow.webContents.send('analysis-progress', {
+    active: analysisActive,
+    total: analysisTotal,
+    done: analysisDone,
+    finished: analysisActive === 0,
+  });
+}
+
+// ─── File hashing ────────────────────────────────────────────────────────────
+
 function hashFile(filePath) {
   const hash = crypto.createHash('sha1');
   const stream = fs.createReadStream(filePath);
@@ -109,12 +127,24 @@ export async function normalizeAudioFile(track, targetLufs) {
 }
 
 export function spawnAnalysis(trackId, filePath) {
+  // Track this worker in the batch counter; reset totals when starting fresh
+  if (analysisActive === 0) {
+    analysisTotal = 0;
+    analysisDone = 0;
+  }
+  analysisActive++;
+  analysisTotal++;
+  sendAnalysisProgress();
+
   const worker = new Worker(new URL('./analysisWorker.js', import.meta.url), {
     workerData: { filePath, trackId, analyzerPath: getAnalyzerRuntimePath() },
   });
 
   worker.on('error', (err) => {
     console.error(`Analysis worker error for track ID ${trackId}:`, err.message);
+    analysisActive--;
+    analysisDone++;
+    sendAnalysisProgress();
   });
 
   worker.on('exit', (code) => {
@@ -125,6 +155,9 @@ export function spawnAnalysis(trackId, filePath) {
   worker.on('message', ({ ok, result, error }) => {
     if (!ok) {
       console.error(`Analysis failed for track ID ${trackId}:`, error);
+      analysisActive--;
+      analysisDone++;
+      sendAnalysisProgress();
       return;
     }
     console.log(`Analysis finished for track ID ${trackId}:`, result);
@@ -169,6 +202,11 @@ export function spawnAnalysis(trackId, filePath) {
         analysis: { ...update, normalized_file_path },
       });
     }
+
+    // Mark this worker as done
+    analysisActive--;
+    analysisDone++;
+    sendAnalysisProgress();
 
     // Auto-normalize on import: only when setting is enabled AND this is a fresh (non-normalized) track
     const autoNormalize = getSetting('auto_normalize_on_import', 'false') === 'true';

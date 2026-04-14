@@ -89,6 +89,11 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('normalize-progress', handler);
     return () => ipcRenderer.removeListener('normalize-progress', handler);
   },
+  onAnalysisProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('analysis-progress', handler);
+    return () => ipcRenderer.removeListener('analysis-progress', handler);
+  },
   onLibraryUpdated: (callback) => {
     const handler = () => callback();
     ipcRenderer.on('library-updated', handler);
