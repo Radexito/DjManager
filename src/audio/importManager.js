@@ -15,6 +15,17 @@ import { getCuePoints, addCuePoint } from '../db/cuePointRepository.js';
 
 const execFileAsync = promisify(execFile);
 
+// Map of trackId → Worker for active analysis jobs (enables cancellation)
+const activeAnalysisWorkers = new Map();
+
+export function cancelAnalysis(trackId) {
+  const worker = activeAnalysisWorkers.get(trackId);
+  if (!worker) return false;
+  worker.terminate();
+  activeAnalysisWorkers.delete(trackId);
+  return true;
+}
+
 function hashFile(filePath) {
   const hash = crypto.createHash('sha1');
   const stream = fs.createReadStream(filePath);
@@ -111,15 +122,22 @@ export async function normalizeAudioFile(track, targetLufs) {
 }
 
 export function spawnAnalysis(trackId, filePath) {
+  // Cancel any existing analysis for this track before spawning a new one
+  cancelAnalysis(trackId);
+
   const worker = new Worker(new URL('./analysisWorker.js', import.meta.url), {
     workerData: { filePath, trackId, analyzerPath: getAnalyzerRuntimePath() },
   });
 
+  activeAnalysisWorkers.set(trackId, worker);
+
   worker.on('error', (err) => {
+    activeAnalysisWorkers.delete(trackId);
     console.error(`Analysis worker error for track ID ${trackId}:`, err.message);
   });
 
   worker.on('exit', (code) => {
+    activeAnalysisWorkers.delete(trackId);
     if (code !== 0)
       console.warn(`Analysis worker exited with code ${code} for track ID ${trackId}`);
   });

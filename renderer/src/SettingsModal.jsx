@@ -18,6 +18,13 @@ function SettingsModal({ onClose }) {
   const [targetInput, setTargetInput] = useState(String(DEFAULT_TARGET));
   const [autoNormalizeOnImport, setAutoNormalizeOnImport] = useState(false);
   const [autoCueOnImport, setAutoCueOnImport] = useState(false);
+  const [generatingCues, setGeneratingCues] = useState(false);
+  const [cueGenProgress, setCueGenProgress] = useState(null); // { completed, total } | null
+  const [cueGenResult, setCueGenResult] = useState(null); // { generated, skipped, total } | null
+  const [confirmCueGen, setConfirmCueGen] = useState(false);
+  const [confirmDeleteAllCues, setConfirmDeleteAllCues] = useState(false);
+  const [deletingAllCues, setDeletingAllCues] = useState(false);
+  const [deleteAllCuesResult, setDeleteAllCuesResult] = useState(null);
   const [confirmClear, setConfirmClear] = useState(null); // 'library' | 'userdata'
   const [normalizing, setNormalizing] = useState(false);
   const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
@@ -146,6 +153,37 @@ function SettingsModal({ onClose }) {
   const handleAutoNormalizeToggle = (checked) => {
     setAutoNormalizeOnImport(checked);
     window.api.setSetting('auto_normalize_on_import', String(checked));
+  };
+
+  const handleGenerateCueLibrary = async (overwrite) => {
+    setConfirmCueGen(false);
+    setGeneratingCues(true);
+    setCueGenResult(null);
+    setCueGenProgress(null);
+    const unsub = window.api.onCueGenProgress(({ completed, total, done }) => {
+      setCueGenProgress(done ? null : { completed, total });
+      if (done) unsub();
+    });
+    try {
+      const result = await window.api.generateCuePointsLibrary({ overwrite });
+      setCueGenResult(result);
+    } finally {
+      unsub();
+      setGeneratingCues(false);
+      setCueGenProgress(null);
+    }
+  };
+
+  const handleDeleteAllCuePoints = async () => {
+    setConfirmDeleteAllCues(false);
+    setDeletingAllCues(true);
+    setDeleteAllCuesResult(null);
+    try {
+      const { deleted } = await window.api.deleteAllCuePointsLibrary();
+      setDeleteAllCuesResult(deleted);
+    } finally {
+      setDeletingAllCues(false);
+    }
   };
 
   const handleAutoCueToggle = (checked) => {
@@ -420,6 +458,127 @@ function SettingsModal({ onClose }) {
                     </span>
                   </div>
                 </div>
+              </div>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Generate for Whole Library</div>
+                <div className="settings-row settings-row-action">
+                  <div>
+                    <div className="settings-action-label">Generate Cue Points</div>
+                    <div className="settings-action-desc">
+                      Runs CueGen on every analyzed track. Tracks that already have cue points are
+                      skipped unless you choose to overwrite.
+                    </div>
+                  </div>
+                  {confirmCueGen ? (
+                    <div className="settings-confirm-row">
+                      <span>Skip tracks with existing cue points?</span>
+                      <button
+                        className="btn-primary"
+                        onClick={() => handleGenerateCueLibrary(false)}
+                        disabled={generatingCues}
+                      >
+                        Skip existing
+                      </button>
+                      <button
+                        className="btn-secondary"
+                        onClick={() => handleGenerateCueLibrary(true)}
+                        disabled={generatingCues}
+                      >
+                        Overwrite all
+                      </button>
+                      <button className="btn-secondary" onClick={() => setConfirmCueGen(false)}>
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="btn-primary"
+                      onClick={() => {
+                        setConfirmCueGen(true);
+                        setCueGenResult(null);
+                      }}
+                      disabled={generatingCues}
+                    >
+                      {generatingCues ? 'Generating…' : 'Generate Library'}
+                    </button>
+                  )}
+                </div>
+                {generatingCues && cueGenProgress && (
+                  <div className="settings-normalize-progress">
+                    <div className="settings-normalize-progress-bar">
+                      <div
+                        className="settings-normalize-progress-fill"
+                        style={{
+                          width:
+                            cueGenProgress.total > 0
+                              ? `${Math.round((cueGenProgress.completed / cueGenProgress.total) * 100)}%`
+                              : '0%',
+                        }}
+                      />
+                    </div>
+                    <span className="settings-normalize-progress-label">
+                      {cueGenProgress.completed} / {cueGenProgress.total}
+                    </span>
+                  </div>
+                )}
+                {cueGenResult && (
+                  <div className="settings-normalize-result">
+                    {cueGenResult.generated === 0
+                      ? cueGenResult.total === 0
+                        ? 'No analyzed tracks found — import and analyze tracks first.'
+                        : `Nothing generated — all ${cueGenResult.skipped} track${cueGenResult.skipped !== 1 ? 's' : ''} already had cue points.`
+                      : `Done — generated cue points for ${cueGenResult.generated} track${cueGenResult.generated !== 1 ? 's' : ''}${cueGenResult.skipped > 0 ? `, skipped ${cueGenResult.skipped}` : ''}.`}
+                  </div>
+                )}
+              </div>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Danger Zone</div>
+                <div className="settings-row settings-row-action">
+                  <div>
+                    <div className="settings-action-label">Delete All Cue Points</div>
+                    <div className="settings-action-desc">
+                      Permanently removes every cue point from every track in the library.
+                    </div>
+                  </div>
+                  {confirmDeleteAllCues ? (
+                    <div className="settings-confirm-row">
+                      <span>Delete all cue points?</span>
+                      <button
+                        className="btn-danger"
+                        onClick={handleDeleteAllCuePoints}
+                        disabled={deletingAllCues}
+                      >
+                        {deletingAllCues ? 'Deleting…' : 'Yes, delete all'}
+                      </button>
+                      <button
+                        className="btn-secondary"
+                        onClick={() => setConfirmDeleteAllCues(false)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="btn-danger"
+                      onClick={() => {
+                        setConfirmDeleteAllCues(true);
+                        setDeleteAllCuesResult(null);
+                      }}
+                      disabled={deletingAllCues || generatingCues}
+                    >
+                      Delete All Cue Points
+                    </button>
+                  )}
+                </div>
+                {deleteAllCuesResult !== null && (
+                  <div className="settings-normalize-result">
+                    {deleteAllCuesResult === 0
+                      ? 'Nothing to delete — no cue points in the library.'
+                      : `Deleted cue points from ${deleteAllCuesResult} track${deleteAllCuesResult !== 1 ? 's' : ''}.`}
+                  </div>
+                )}
               </div>
             </>
           )}
