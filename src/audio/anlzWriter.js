@@ -460,8 +460,10 @@ function buildPcobSlot(slotType, cues) {
  */
 export function buildPcobSections(cuePoints) {
   if (!cuePoints || cuePoints.length === 0) return [EMPTY_PCOB_1, EMPTY_PCOB_2];
-  // hot_cue_index 0,1,2 → hot_cue numbers 1,2,3 (A,B,C) — DAT only
-  const datHotCues = cuePoints.filter((c) => c.hot_cue_index >= 0 && c.hot_cue_index <= 2);
+  // hot_cue_index 0,1,2 → hot_cue numbers 1,2,3 (A,B,C) — DAT only; skip disabled cues
+  const datHotCues = cuePoints.filter(
+    (c) => c.enabled !== 0 && c.hot_cue_index >= 0 && c.hot_cue_index <= 2
+  );
   return [buildPcobSlot(1, datHotCues), EMPTY_PCOB_2];
 }
 
@@ -474,8 +476,10 @@ export function buildPcobSections(cuePoints) {
  */
 export function buildExtPcobSections(cuePoints) {
   if (!cuePoints || cuePoints.length === 0) return [EMPTY_PCOB_1, EMPTY_PCOB_2];
-  // hot_cue_index 3-7 → hot_cue numbers 4-8 (D-H) — EXT only
-  const extHotCues = cuePoints.filter((c) => c.hot_cue_index >= 3 && c.hot_cue_index <= 7);
+  // hot_cue_index 3-7 → hot_cue numbers 4-8 (D-H) — EXT only; skip disabled cues
+  const extHotCues = cuePoints.filter(
+    (c) => c.enabled !== 0 && c.hot_cue_index >= 3 && c.hot_cue_index <= 7
+  );
   return [buildPcobSlot(1, extHotCues), EMPTY_PCOB_2];
 }
 
@@ -570,8 +574,10 @@ function buildPco2Slot(slotType, cues) {
  */
 export function buildPco2Sections(cuePoints) {
   if (!cuePoints || cuePoints.length === 0) return [EMPTY_PCO2_1, EMPTY_PCO2_2];
-  const hotCues = cuePoints.filter((c) => c.hot_cue_index >= 0);
-  const memoryCues = cuePoints.filter((c) => c.hot_cue_index < 0);
+  // Skip disabled cues
+  const enabled = cuePoints.filter((c) => c.enabled !== 0);
+  const hotCues = enabled.filter((c) => c.hot_cue_index >= 0);
+  const memoryCues = enabled.filter((c) => c.hot_cue_index < 0);
   return [buildPco2Slot(1, hotCues), buildPco2Slot(0, memoryCues)];
 }
 

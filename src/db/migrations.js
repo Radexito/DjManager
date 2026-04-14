@@ -185,4 +185,13 @@ export function initDB() {
     ON cue_points(track_id)
   `
   ).run();
+
+  // Migrate existing cue_points table
+  for (const col of ['ALTER TABLE cue_points ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1']) {
+    try {
+      db.prepare(col).run();
+    } catch {
+      /* column already exists */
+    }
+  }
 }

@@ -156,6 +156,11 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
     reload();
   };
 
+  const handleToggleEnabled = async (id, currentEnabled) => {
+    await window.api.updateCuePoint(id, { enabled: currentEnabled === false || currentEnabled === 0 ? 1 : 0 });
+    reload();
+  };
+
   const handleColorChange = async (id, color) => {
     await window.api.updateCuePoint(id, { color });
     reload();
@@ -248,7 +253,7 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
       ) : (
         <div className="cpe__list">
           {visibleCues.map((cue) => (
-            <div key={cue.id} className="cpe__row">
+            <div key={cue.id} className={`cpe__row${cue.enabled === 0 ? ' cpe__row--disabled' : ''}`}>
               {/* Type badge — click to open type picker */}
               <div className="cpe__badge-wrap">
                 <div
@@ -334,6 +339,15 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
                   />
                 ))}
               </div>
+
+              {/* Enable / disable toggle */}
+              <button
+                className={`cpe__toggle${cue.enabled === 0 ? ' cpe__toggle--off' : ''}`}
+                onClick={() => handleToggleEnabled(cue.id, cue.enabled)}
+                title={cue.enabled === 0 ? 'Enable cue point' : 'Disable cue point'}
+              >
+                {cue.enabled === 0 ? '○' : '●'}
+              </button>
 
               {/* Delete */}
               {confirmDeleteId === cue.id ? (

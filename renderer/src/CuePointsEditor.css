@@ -258,6 +258,33 @@
   transform: scale(1.2);
 }
 
+.cpe__toggle {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #1db954;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  opacity: 1;
+}
+
+.cpe__toggle--off {
+  color: #555;
+}
+
+.cpe__toggle:hover {
+  opacity: 0.75;
+}
+
+.cpe__row--disabled .cpe__badge,
+.cpe__row--disabled .cpe__time,
+.cpe__row--disabled .cpe__label,
+.cpe__row--disabled .cpe__colors {
+  opacity: 0.35;
+}
+
 .cpe__del {
   flex-shrink: 0;
   font-size: 10px;
