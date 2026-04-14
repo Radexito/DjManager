@@ -692,6 +692,15 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     return unsub;
   }, [patchCurrentTrack, reloadCurrentTrack]);
 
+  // Patch cue_count when cue points are added/removed for any track (e.g. library-wide gen)
+  useEffect(() => {
+    const unsub = window.api.onCuePointsUpdated(({ trackId, cueCount }) => {
+      if (cueCount == null) return; // events without a count (e.g. CuePointsEditor) are handled there
+      setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, cue_count: cueCount } : t)));
+    });
+    return unsub;
+  }, []);
+
   // Refresh list when new tracks are imported
   useEffect(() => {
     const unsub = window.api.onLibraryUpdated(async () => {

@@ -53,3 +53,13 @@ export function deleteCuePoint(id) {
 export function deleteAllCuePoints(trackId) {
   db.prepare('DELETE FROM cue_points WHERE track_id = ?').run(trackId);
 }
+
+export function deleteAllCuePointsLibrary() {
+  // Returns the list of affected track IDs before wiping
+  const affected = db
+    .prepare('SELECT DISTINCT track_id FROM cue_points')
+    .all()
+    .map((r) => r.track_id);
+  db.prepare('DELETE FROM cue_points').run();
+  return affected;
+}
