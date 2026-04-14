@@ -656,11 +656,36 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
           </p>
         </div>
 
+        <div className="dl-playlist-target">
+          <label className="dl-playlist-target-label">1. Save to playlist</label>
+          <select
+            className="dl-playlist-select"
+            value={targetPlaylistId ?? ''}
+            onChange={(e) => handleTargetPlaylistChange(e.target.value || null)}
+          >
+            <option value="">None / new playlist</option>
+            {playlists.map((pl) => (
+              <option key={pl.id} value={pl.id}>
+                {pl.name}
+              </option>
+            ))}
+          </select>
+          {!targetPlaylistId && (
+            <input
+              className="dl-playlist-name-input"
+              type="text"
+              placeholder="New playlist name (optional)"
+              value={targetPlaylistName}
+              onChange={(e) => setTargetPlaylistName(e.target.value)}
+            />
+          )}
+        </div>
+
         <div className="dl-select-list">
           <div className="dl-select-header">
             <label className="dl-select-all">
               <input type="checkbox" checked={allSelected} onChange={handleToggleAll} />
-              <span>Select all</span>
+              <span>2. Select tracks</span>
             </label>
             <span className="dl-select-count">
               {totalActive} / {entries.length} selected
@@ -704,31 +729,6 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
               );
             })}
           </div>
-        </div>
-
-        <div className="dl-playlist-target">
-          <label className="dl-playlist-target-label">Save to playlist</label>
-          <select
-            className="dl-playlist-select"
-            value={targetPlaylistId ?? ''}
-            onChange={(e) => handleTargetPlaylistChange(e.target.value || null)}
-          >
-            <option value="">None / new playlist</option>
-            {playlists.map((pl) => (
-              <option key={pl.id} value={pl.id}>
-                {pl.name}
-              </option>
-            ))}
-          </select>
-          {!targetPlaylistId && (
-            <input
-              className="dl-playlist-name-input"
-              type="text"
-              placeholder="New playlist name (optional)"
-              value={targetPlaylistName}
-              onChange={(e) => setTargetPlaylistName(e.target.value)}
-            />
-          )}
         </div>
 
         <div className="dl-select-actions">

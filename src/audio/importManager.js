@@ -10,6 +10,8 @@ import { getFfmpegRuntimePath } from '../deps.js';
 import { addTrack, updateTrack, getTrackById, getTrackByHash } from '../db/trackRepository.js';
 import { getAnalyzerRuntimePath } from '../deps.js';
 import { getSetting } from '../db/settingsRepository.js';
+import { generateCuePoints } from './cueGen.js';
+import { getCuePoints, addCuePoint } from '../db/cuePointRepository.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -27,6 +29,17 @@ function sendAnalysisProgress() {
     done: analysisDone,
     finished: analysisActive === 0,
   });
+}
+
+// Map of trackId → Worker for active analysis jobs (enables cancellation)
+const activeAnalysisWorkers = new Map();
+
+export function cancelAnalysis(trackId) {
+  const worker = activeAnalysisWorkers.get(trackId);
+  if (!worker) return false;
+  worker.terminate();
+  activeAnalysisWorkers.delete(trackId);
+  return true;
 }
 
 // ─── File hashing ────────────────────────────────────────────────────────────
@@ -127,6 +140,9 @@ export async function normalizeAudioFile(track, targetLufs) {
 }
 
 export function spawnAnalysis(trackId, filePath) {
+  // Cancel any existing analysis for this track before spawning a new one
+  cancelAnalysis(trackId);
+
   // Track this worker in the batch counter; reset totals when starting fresh
   if (analysisActive === 0) {
     analysisTotal = 0;
@@ -140,7 +156,10 @@ export function spawnAnalysis(trackId, filePath) {
     workerData: { filePath, trackId, analyzerPath: getAnalyzerRuntimePath() },
   });
 
+  activeAnalysisWorkers.set(trackId, worker);
+
   worker.on('error', (err) => {
+    activeAnalysisWorkers.delete(trackId);
     console.error(`Analysis worker error for track ID ${trackId}:`, err.message);
     analysisActive--;
     analysisDone++;
@@ -148,6 +167,7 @@ export function spawnAnalysis(trackId, filePath) {
   });
 
   worker.on('exit', (code) => {
+    activeAnalysisWorkers.delete(trackId);
     if (code !== 0)
       console.warn(`Analysis worker exited with code ${code} for track ID ${trackId}`);
   });
@@ -229,6 +249,25 @@ export function spawnAnalysis(trackId, filePath) {
         .catch((err) => {
           console.error(`[auto-normalize] failed for track ${trackId}:`, err.message);
         });
+    }
+
+    // Auto-generate cue points: only when setting is enabled and track has no cue points yet
+    const autoCue = getSetting('auto_cue_on_import', 'false') === 'true';
+    if (autoCue) {
+      try {
+        const existing = getCuePoints(trackId);
+        if (existing.length === 0) {
+          const freshTrack = getTrackById(trackId);
+          const generated = generateCuePoints(freshTrack);
+          generated.forEach((cue) => addCuePoint({ trackId, ...cue }));
+          console.log(`[auto-cue] generated ${generated.length} cue points for track ${trackId}`);
+          if (global.mainWindow) {
+            global.mainWindow.webContents.send('cue-points-updated', { trackId });
+          }
+        }
+      } catch (err) {
+        console.error(`[auto-cue] failed for track ${trackId}:`, err.message);
+      }
     }
   });
 }
