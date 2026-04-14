@@ -99,6 +99,14 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
     window.dispatchEvent(new CustomEvent('cue-points-updated', { detail: { trackId } }));
   }, [trackId]);
 
+  // Listen for auto-cue IPC events from main process (e.g. auto-generate on import)
+  useEffect(() => {
+    const unsub = window.api.onCuePointsUpdated(({ trackId: updatedId }) => {
+      if (updatedId === trackId) reload();
+    });
+    return unsub;
+  }, [trackId, reload]);
+
   useEffect(() => {
     if (!trackId) return;
     let alive = true;
@@ -170,6 +178,11 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
   const startEdit = (cue) => {
     setEditingId(cue.id);
     setEditLabel(cue.label ?? '');
+  };
+
+  const handleToggleEnabled = async (id, currentEnabled) => {
+    await window.api.updateCuePoint(id, { enabled: currentEnabled === 0 ? 1 : 0 });
+    reload();
   };
 
   // Change a cue's type: -1 = memory, 0-7 = hot cue A-H
@@ -248,7 +261,10 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
       ) : (
         <div className="cpe__list">
           {visibleCues.map((cue) => (
-            <div key={cue.id} className="cpe__row">
+            <div
+              key={cue.id}
+              className={`cpe__row${cue.enabled === 0 ? ' cpe__row--disabled' : ''}`}
+            >
               {/* Type badge — click to open type picker */}
               <div className="cpe__badge-wrap">
                 <div
@@ -334,6 +350,19 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
                   />
                 ))}
               </div>
+
+              {/* Export toggle */}
+              <button
+                className={`cpe__export-toggle${cue.enabled === 0 ? ' cpe__export-toggle--off' : ''}`}
+                onClick={() => handleToggleEnabled(cue.id, cue.enabled)}
+                title={
+                  cue.enabled === 0
+                    ? 'Excluded from USB export — click to include'
+                    : 'Included in USB export — click to exclude'
+                }
+              >
+                {cue.enabled === 0 ? '⊘' : '⊙'}
+              </button>
 
               {/* Delete */}
               {confirmDeleteId === cue.id ? (

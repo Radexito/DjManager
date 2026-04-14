@@ -24,6 +24,7 @@ export default defineConfig({
           include: [
             'src/__tests__/trackRepository.test.js',
             'src/__tests__/playlistRepository.test.js',
+            'src/__tests__/cuePointRepository.test.js',
           ],
           setupFiles: ['./src/__tests__/setup.js'],
         },
