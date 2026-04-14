@@ -68,14 +68,14 @@ body {
 
 .zoom-indicator {
   position: fixed;
-  bottom: 56px;
-  right: 14px;
+  top: 20px;
+  right: 56px;
   z-index: 999;
   background: #2a2a2a;
   border: 1px solid #444;
   border-radius: 6px;
-  color: #ccc;
-  font-size: 12px;
+  color: #888;
+  font-size: 11px;
   font-family: monospace;
   padding: 0;
   cursor: pointer;
@@ -97,7 +97,7 @@ body {
 }
 
 .zoom-indicator-label {
-  padding: 4px 10px;
+  padding: 3px 8px;
 }
 
 .zoom-indicator-bar {
@@ -115,7 +115,7 @@ body {
 @keyframes zoom-fadein {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(-4px);
   }
   to {
     opacity: 1;
