@@ -35,6 +35,55 @@ function App() {
     return unsub;
   }, []);
 
+  // Zoom control: Ctrl+Scroll and Ctrl+=/−/0, persisted to localStorage
+  useEffect(() => {
+    const ZOOM_STEP = 0.1;
+    const ZOOM_MIN = 0.5;
+    const ZOOM_MAX = 2.0;
+    const LS_KEY = 'app-zoom-factor';
+
+    const clamp = (v) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v));
+    const round = (v) => Math.round(v * 10) / 10;
+
+    const applyZoom = (factor) => {
+      const clamped = clamp(round(factor));
+      window.api.setZoomFactor(clamped);
+      localStorage.setItem(LS_KEY, String(clamped));
+    };
+
+    // Restore persisted zoom
+    const saved = parseFloat(localStorage.getItem(LS_KEY));
+    if (!isNaN(saved)) applyZoom(saved);
+
+    const onWheel = (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const current = window.api.getZoomFactor();
+      applyZoom(e.deltaY < 0 ? current + ZOOM_STEP : current - ZOOM_STEP);
+    };
+
+    const onKeyDown = (e) => {
+      if (!e.ctrlKey) return;
+      if (e.key === '=' || e.key === '+') {
+        e.preventDefault();
+        applyZoom(window.api.getZoomFactor() + ZOOM_STEP);
+      } else if (e.key === '-') {
+        e.preventDefault();
+        applyZoom(window.api.getZoomFactor() - ZOOM_STEP);
+      } else if (e.key === '0') {
+        e.preventDefault();
+        applyZoom(1.0);
+      }
+    };
+
+    window.addEventListener('wheel', onWheel, { passive: false });
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('wheel', onWheel);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, []);
+
   return (
     <PlayerProvider>
       <DownloadProvider>
