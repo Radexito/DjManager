@@ -77,19 +77,39 @@ body {
   color: #ccc;
   font-size: 12px;
   font-family: monospace;
-  padding: 4px 10px;
+  padding: 0;
   cursor: pointer;
   white-space: nowrap;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   animation: zoom-fadein 0.12s ease;
   transition:
     background 0.12s,
-    color 0.12s;
+    color 0.12s,
+    border-color 0.12s;
 }
 
 .zoom-indicator:hover {
   background: #3a3a3a;
   color: #fff;
   border-color: #666;
+}
+
+.zoom-indicator-label {
+  padding: 4px 10px;
+}
+
+.zoom-indicator-bar {
+  display: block;
+  height: 2px;
+  background: #5a8f5a;
+  transform-origin: left center;
+  animation: zoom-countdown 3s linear forwards;
+}
+
+.zoom-indicator:hover .zoom-indicator-bar {
+  animation-play-state: paused;
 }
 
 @keyframes zoom-fadein {
@@ -100,5 +120,14 @@ body {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes zoom-countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
   }
 }
