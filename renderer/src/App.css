@@ -97,7 +97,10 @@ body {
 }
 
 .zoom-indicator-label {
-  padding: 3px 8px;
+  display: block;
+  padding: 3px 0;
+  min-width: 52px;
+  text-align: center;
 }
 
 .zoom-indicator-bar {
