@@ -636,6 +636,33 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
           </div>
 
           {playlistInfo.type === 'playlist' && (
+            <div className="dl-playlist-target">
+              <label className="dl-playlist-target-label">1. Save to playlist</label>
+              <select
+                className="dl-playlist-select"
+                value={targetPlaylistId ?? ''}
+                onChange={(e) => handleTargetPlaylistChange(e.target.value || null)}
+              >
+                <option value="">New playlist</option>
+                {playlists.map((pl) => (
+                  <option key={pl.id} value={pl.id}>
+                    {pl.name}
+                  </option>
+                ))}
+              </select>
+              {!targetPlaylistId && (
+                <input
+                  className="dl-playlist-name-input"
+                  type="text"
+                  placeholder="Playlist name"
+                  value={targetPlaylistName}
+                  onChange={(e) => setTargetPlaylistName(e.target.value)}
+                />
+              )}
+            </div>
+          )}
+
+          {playlistInfo.type === 'playlist' && (
             <div className="dl-select-toolbar">
               <label className="dl-select-all-label">
                 <input
@@ -646,7 +673,7 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
                   }}
                   onChange={handleToggleAll}
                 />
-                {allSelected ? 'Deselect all' : 'Select all'}
+                {allSelected ? 'Deselect all' : '2. Select tracks'}
               </label>
               <div className="dl-select-filter-btns">
                 {downloadableEntries.length > 0 && (
@@ -743,32 +770,6 @@ export default function DownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
           </div>
 
           <div className="dl-select-footer">
-            {playlistInfo.type === 'playlist' && (
-              <div className="dl-playlist-target">
-                <label className="dl-playlist-target-label">Save to playlist</label>
-                <select
-                  className="dl-playlist-select"
-                  value={targetPlaylistId ?? ''}
-                  onChange={(e) => handleTargetPlaylistChange(e.target.value || null)}
-                >
-                  <option value="">New playlist</option>
-                  {playlists.map((pl) => (
-                    <option key={pl.id} value={pl.id}>
-                      {pl.name}
-                    </option>
-                  ))}
-                </select>
-                {!targetPlaylistId && (
-                  <input
-                    className="dl-playlist-name-input"
-                    type="text"
-                    placeholder="Playlist name"
-                    value={targetPlaylistName}
-                    onChange={(e) => setTargetPlaylistName(e.target.value)}
-                  />
-                )}
-              </div>
-            )}
             <button
               className="dl-btn"
               onClick={handleDownload}
