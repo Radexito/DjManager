@@ -190,7 +190,17 @@ npm run dist:linux          # or :mac / :win
 
 ## Acknowledgements
 
-A huge thank you to **[meiremans](https://github.com/meiremans)** for creating [beirbox-gui](https://github.com/meiremans/beirbox-gui), which gave us a solid starting point for understanding the Pioneer Rekordbox USB binary format. Their work on reverse engineering the DeviceSQL PDB structure, ANLZ file sections, and USB layout saved an enormous amount of time and made the Rekordbox export feature in DJ Manager possible.
+The Rekordbox USB export feature stands on the shoulders of a lot of excellent prior work in the Pioneer reverse engineering community.
+
+- **[meiremans](https://github.com/meiremans)** — [beirbox-gui](https://github.com/meiremans/beirbox-gui) gave us our starting point for understanding the overall USB layout, ANLZ file sections, and DeviceSQL PDB structure.
+
+- **[kimtore](https://github.com/kimtore)** — [rex](https://github.com/kimtore/rex), a Rekordbox USB exporter whose DeviceSQL PDB writing logic we studied closely and rewrote in JavaScript for DJ Manager.
+
+- **[Deep-Symmetry](https://github.com/Deep-Symmetry)** — [crate-digger](https://github.com/Deep-Symmetry/crate-digger) and its Kaitai Struct definitions for `.DAT` / `.EXT` file parsing were invaluable for understanding the binary layout of ANLZ sections.
+
+- **[jandk](https://github.com/jandk)** — for figuring out how Pioneer derives the USBANLZ folder path hash from the track's USB file path.
+
+- **[bartvg](https://github.com/bartvg)** (Vettige Weust) — for patiently listening to way too much bacon. 🥓
 
 ---
 
