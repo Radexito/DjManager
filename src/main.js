@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import { app, BrowserWindow, ipcMain, dialog, Menu, MenuItem, shell } from 'electron';
 
@@ -170,17 +171,42 @@ function createWindow() {
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'));
-    // Block DevTools keyboard shortcut in production
-    mainWindow.webContents.on('before-input-event', (event, input) => {
-      if (input.key === 'F12' || (input.control && input.shift && input.key === 'I')) {
-        event.preventDefault();
-      }
-    });
+    // DevTools intentionally unblocked on this diagnostic build — F12 / Ctrl+Shift+I opens console
   }
+}
+
+function logDiagnostics() {
+  const userData = app.getPath('userData');
+  const binDir = path.join(userData, 'bin');
+  const keyPaths = {
+    userData,
+    bin: binDir,
+    'ffmpeg.exe': path.join(binDir, 'ffmpeg', 'ffmpeg.exe'),
+    'ffprobe.exe': path.join(binDir, 'ffmpeg', 'ffprobe.exe'),
+    'analysis.exe': path.join(binDir, 'analysis.exe'),
+    'yt-dlp.exe': path.join(binDir, 'yt-dlp.exe'),
+  };
+
+  console.log('[diag] ── Windows 11 diagnostics ──────────────────────────');
+  console.log(`[diag] os.platform   = ${os.platform()}`);
+  console.log(`[diag] os.release    = ${os.release()}`);
+  console.log(`[diag] os.version    = ${os.version()}`);
+  console.log(`[diag] process.arch  = ${process.arch}`);
+  console.log(`[diag] app.version   = ${app.getVersion()}`);
+  console.log('[diag] key paths (length / exists):');
+  for (const [label, p] of Object.entries(keyPaths)) {
+    const exists = fs.existsSync(p);
+    const tooLong = p.length >= 260;
+    console.log(
+      `[diag]   ${label.padEnd(14)} len=${p.length}${tooLong ? ' ⚠ NEAR/OVER MAX_PATH' : ''} exists=${exists}  ${p}`
+    );
+  }
+  console.log('[diag] ─────────────────────────────────────────────────────');
 }
 
 async function initApp() {
   initLogger();
+  if (process.platform === 'win32') logDiagnostics();
   console.log('Initializing database...');
   initDB();
   await startMediaServer();
