@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Sidebar from './Sidebar.jsx';
 import MusicLibrary from './MusicLibrary.jsx';
 import DownloadView from './DownloadView.jsx';
@@ -18,6 +18,9 @@ function App() {
   const [exportState, setExportState] = useState(null); // { playlistId, mode } | null
   const [depsProgress, setDepsProgress] = useState(null); // { msg, pct } or null
   const [zoomLevel, setZoomLevel] = useState(null); // shown when != 1.0, null = hidden
+  const [zoomKey, setZoomKey] = useState(0); // incremented on each zoom change to restart bar animation
+  const zoomHideTimer = useRef(null);
+  const ZOOM_HIDE_DELAY = 3000;
   const [search, setSearch] = useState('');
 
   const handleArtistSearch = (artist) => {
@@ -42,7 +45,6 @@ function App() {
     const ZOOM_MIN = 0.5;
     const ZOOM_MAX = 2.0;
     const LS_KEY = 'app-zoom-factor';
-    let hideTimer = null;
 
     const clamp = (v) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v));
     const round = (v) => Math.round(v * 10) / 10;
@@ -51,10 +53,11 @@ function App() {
       const clamped = clamp(round(factor));
       window.api.setZoomFactor(clamped);
       localStorage.setItem(LS_KEY, String(clamped));
-      // Show indicator; hide after 2s of inactivity
+      // Show indicator; increment key to restart countdown bar, hide after ZOOM_HIDE_DELAY
       setZoomLevel(clamped);
-      clearTimeout(hideTimer);
-      hideTimer = setTimeout(() => setZoomLevel(null), 2000);
+      setZoomKey((k) => k + 1);
+      clearTimeout(zoomHideTimer.current);
+      zoomHideTimer.current = setTimeout(() => setZoomLevel(null), ZOOM_HIDE_DELAY);
     };
 
     // Restore persisted zoom (silently — no indicator on launch)
@@ -90,7 +93,7 @@ function App() {
     return () => {
       window.removeEventListener('wheel', onWheel);
       window.removeEventListener('keydown', onKeyDown);
-      clearTimeout(hideTimer);
+      clearTimeout(zoomHideTimer.current);
     };
   }, []);
 
@@ -148,15 +151,22 @@ function App() {
           )}
           {zoomLevel !== null && zoomLevel !== 1.0 && (
             <button
+              key={zoomKey}
               className="zoom-indicator"
               onClick={() => {
+                clearTimeout(zoomHideTimer.current);
                 window.api.setZoomFactor(1.0);
                 localStorage.setItem('app-zoom-factor', '1');
                 setZoomLevel(null);
               }}
+              onMouseEnter={() => clearTimeout(zoomHideTimer.current)}
+              onMouseLeave={() => {
+                zoomHideTimer.current = setTimeout(() => setZoomLevel(null), ZOOM_HIDE_DELAY);
+              }}
               title="Reset zoom to 100%"
             >
-              {Math.round(zoomLevel * 100)}% ✕
+              <span className="zoom-indicator-label">{Math.round(zoomLevel * 100)}% ✕</span>
+              <span className="zoom-indicator-bar" />
             </button>
           )}
           {depsProgress && (
