@@ -139,18 +139,21 @@ export async function normalizeAudioFile(track, targetLufs) {
   return normalizedPath;
 }
 
-export function spawnAnalysis(trackId, filePath) {
+export function spawnAnalysis(trackId, filePath, { silent = false } = {}) {
   // Cancel any existing analysis for this track before spawning a new one
   cancelAnalysis(trackId);
 
-  // Track this worker in the batch counter; reset totals when starting fresh
-  if (analysisActive === 0) {
-    analysisTotal = 0;
-    analysisDone = 0;
+  // Track this worker in the batch counter; reset totals when starting fresh.
+  // Silent re-analyses (e.g. post-normalization) don't affect the progress bar.
+  if (!silent) {
+    if (analysisActive === 0) {
+      analysisTotal = 0;
+      analysisDone = 0;
+    }
+    analysisActive++;
+    analysisTotal++;
+    sendAnalysisProgress();
   }
-  analysisActive++;
-  analysisTotal++;
-  sendAnalysisProgress();
 
   const worker = new Worker(new URL('./analysisWorker.js', import.meta.url), {
     workerData: { filePath, trackId, analyzerPath: getAnalyzerRuntimePath() },
@@ -161,9 +164,11 @@ export function spawnAnalysis(trackId, filePath) {
   worker.on('error', (err) => {
     activeAnalysisWorkers.delete(trackId);
     console.error(`Analysis worker error for track ID ${trackId}:`, err.message);
-    analysisActive--;
-    analysisDone++;
-    sendAnalysisProgress();
+    if (!silent) {
+      analysisActive--;
+      analysisDone++;
+      sendAnalysisProgress();
+    }
   });
 
   worker.on('exit', (code) => {
@@ -175,9 +180,11 @@ export function spawnAnalysis(trackId, filePath) {
   worker.on('message', ({ ok, result, error }) => {
     if (!ok) {
       console.error(`Analysis failed for track ID ${trackId}:`, error);
-      analysisActive--;
-      analysisDone++;
-      sendAnalysisProgress();
+      if (!silent) {
+        analysisActive--;
+        analysisDone++;
+        sendAnalysisProgress();
+      }
       return;
     }
     console.log(`Analysis finished for track ID ${trackId}:`, result);
@@ -223,10 +230,12 @@ export function spawnAnalysis(trackId, filePath) {
       });
     }
 
-    // Mark this worker as done
-    analysisActive--;
-    analysisDone++;
-    sendAnalysisProgress();
+    // Mark this worker as done (silent re-analyses don't affect the counter)
+    if (!silent) {
+      analysisActive--;
+      analysisDone++;
+      sendAnalysisProgress();
+    }
 
     // Auto-normalize on import: only when setting is enabled AND this is a fresh (non-normalized) track
     const autoNormalize = getSetting('auto_normalize_on_import', 'false') === 'true';
@@ -244,7 +253,7 @@ export function spawnAnalysis(trackId, filePath) {
               analysis: { normalized_file_path: normalizedPath, analyzed: 0 },
             });
           }
-          spawnAnalysis(trackId, normalizedPath);
+          spawnAnalysis(trackId, normalizedPath, { silent: true });
         })
         .catch((err) => {
           console.error(`[auto-normalize] failed for track ${trackId}:`, err.message);
