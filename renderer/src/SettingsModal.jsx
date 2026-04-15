@@ -627,6 +627,9 @@ function SettingsModal({ onClose }) {
                       const v = e.target.value;
                       setWaveformColorMode(v);
                       window.api.setSetting('waveform_color_mode', v);
+                      window.dispatchEvent(
+                        new CustomEvent('waveform-color-mode-changed', { detail: v })
+                      );
                     }}
                   >
                     <option value="rgb">RGB — Red=treble · Green=mid · Blue=bass</option>

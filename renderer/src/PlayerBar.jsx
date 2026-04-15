@@ -53,7 +53,10 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
   const historyWrapRef = useRef();
   const waveCanvasRef = useRef();
   const waveDataRef = useRef(null); // Uint8Array | null
-  const seekbarBgRef = useRef(); // thin overlay for intro/outro gradient
+  const seekbarBgRef = useRef(); // thin bg line behind waveform
+  const colorModeRef = useRef('rgb');
+  const introFracRef = useRef(0); // 0-1 fraction where intro ends
+  const outroFracRef = useRef(1); // 0-1 fraction where outro starts
 
   useEffect(() => {
     async function loadDevices() {
@@ -130,24 +133,15 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     if (seekbarRef.current) seekbarRef.current.max = duration || 0;
   }, [duration]);
 
-  // Paint intro/outro zones on the seekbar bg overlay as a CSS gradient
+  // Recompute intro/outro fracs and redraw waveform when track or duration changes
   useEffect(() => {
-    if (!seekbarBgRef.current || !duration) return;
+    if (!duration) return;
     const intro = currentTrack?.intro_secs || 0;
     const outro = currentTrack?.outro_secs || 0;
-    const introFrac = Math.min(intro / duration, 1) * 100;
-    const outroFrac = Math.min(outro / duration, 1) * 100;
-
-    if (introFrac <= 0 && outroFrac >= 100) {
-      seekbarBgRef.current.style.background = '#333';
-      return;
-    }
-    seekbarBgRef.current.style.background =
-      `linear-gradient(to right, ` +
-      `#5a3800 0%, #5a3800 ${introFrac}%, ` +
-      `#333 ${introFrac}%, #333 ${outroFrac}%, ` +
-      `#5a3800 ${outroFrac}%, #5a3800 100%)`;
-  }, [duration, currentTrack]);
+    introFracRef.current = intro > 0 ? Math.min(intro / duration, 1) : 0;
+    outroFracRef.current = outro > 0 ? Math.min(outro / duration, 1) : 1;
+    paintWaveform(); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [duration, currentTrack]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Advance seekbar at ~60fps via rAF so the position tracks audio smoothly
   // instead of jumping every ~250ms from timeupdate events.
@@ -192,9 +186,34 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     return () => document.removeEventListener('mousedown', handler);
   }, [showHistory]);
 
+  // ── Waveform color mode — load once, sync live from Settings ────────────────
+  const [colorMode, setColorMode] = useState('rgb');
+
+  useEffect(() => {
+    window.api.getSetting('waveform_color_mode', 'rgb').then((m) => {
+      colorModeRef.current = m;
+      setColorMode(m);
+    });
+  }, []);
+
+  useEffect(() => {
+    colorModeRef.current = colorMode;
+  }, [colorMode]);
+
+  useEffect(() => {
+    const handler = (e) => setColorMode(e.detail);
+    window.addEventListener('waveform-color-mode-changed', handler);
+    return () => window.removeEventListener('waveform-color-mode-changed', handler);
+  }, []);
+
+  // Redraw when color mode changes (data already loaded)
+  useEffect(() => {
+    paintWaveform(); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [colorMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Waveform canvas ─────────────────────────────────────────────────────────
 
-  function drawWaveform(canvas, data, colorMode) {
+  function drawWaveform(canvas, data, mode) {
     const W = canvas.width;
     const H = canvas.height;
     const ctx = canvas.getContext('2d');
@@ -207,38 +226,42 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
 
     for (let i = 0; i < numCols; i++) {
       const rms = data[i * 4] / 255;
-      const bass = data[i * 4 + 1] / 255;
-      const mid = data[i * 4 + 2] / 255;
-      const treble = data[i * 4 + 3] / 255;
+      const bass = data[i * 4 + 1];
+      const mid = data[i * 4 + 2];
+      const treble = data[i * 4 + 3];
 
-      const halfH = Math.max(1, Math.round(rms * midY * 0.9));
+      const halfH = Math.max(1, Math.round(rms * midY * 1.8));
       const x = Math.floor(i * colW);
       const w = Math.max(1, Math.ceil(colW));
 
-      // Normalize per column: dominant band saturates, RMS sets brightness.
-      // Raw band values are EMA-derived so bass always >> mid >> treble in absolute
-      // terms. Without normalization everything renders blue. Dividing by the dominant
-      // makes colors legible while RMS controls how bright the column is overall.
-      const dominant = Math.max(bass, mid, treble) || 0.001;
-      const brightness = Math.min(1, rms * 3); // rms ~0.1-0.3 → 0.3-0.9
-      const nr = (treble / dominant) * brightness; // normalized treble 0-1
-      const ng = (mid / dominant) * brightness; // normalized mid 0-1
-      const nb = (bass / dominant) * brightness; // normalized bass 0-1
+      // EMA-derived band values have bass >> mid >> treble by ~10-30x, so naive
+      // normalisation always picks bass as dominant and renders everything blue.
+      // Gamma-compress each channel independently before normalisation so weaker
+      // channels (treble, mid) become visually comparable to bass.
+      const bassC = Math.pow(bass / 255, 0.55);
+      const midC = Math.pow(mid / 255, 0.3);
+      const trebleC = Math.pow(treble / 255, 0.2);
+
+      const dominant = Math.max(bassC, midC, trebleC) || 0.001;
+      const brightness = Math.min(1, rms * 2.5);
+
+      const nb = (bassC / dominant) * brightness;
+      const ng = (midC / dominant) * brightness;
+      const nr = (trebleC / dominant) * brightness;
 
       let r, g, b;
-      if (colorMode === 'classic') {
-        // Blue body, white highlights at high-treble transients
+      if (mode === 'classic') {
         const white = Math.min(1, nr * 2);
         r = Math.round(white * 220);
         g = Math.round(white * 220);
-        b = Math.round(55 + nb * 200 + white * 55);
-      } else if (colorMode === '3band') {
-        // Blue=bass, Orange=mid, White=treble — weighted blend
+        b = Math.round(55 + nb * 180 + white * 55);
+      } else if (mode === '3band') {
+        // Blue=bass, Orange=mid, White=treble
         r = Math.min(255, Math.round(nb * 30 + ng * 255 + nr * 255));
         g = Math.min(255, Math.round(nb * 30 + ng * 140 + nr * 255));
         b = Math.min(255, Math.round(nb * 255 + ng * 0 + nr * 255));
       } else {
-        // RGB — Red=treble, Green=mid, Blue=bass (per-column normalised)
+        // RGB: treble→red, mid→green, bass→blue
         r = Math.round(nr * 255);
         g = Math.round(ng * 255);
         b = Math.round(nb * 255);
@@ -247,18 +270,28 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(x, midY - halfH, w, halfH * 2);
     }
+
+    // ── Intro / outro amber overlay drawn on the canvas ──────────────────────
+    const iF = introFracRef.current;
+    const oF = outroFracRef.current;
+    if (iF > 0.001) {
+      ctx.fillStyle = 'rgba(90, 56, 0, 0.52)';
+      ctx.fillRect(0, 0, iF * W, H);
+    }
+    if (oF < 0.999) {
+      ctx.fillStyle = 'rgba(90, 56, 0, 0.52)';
+      ctx.fillRect(oF * W, 0, (1 - oF) * W, H);
+    }
   }
 
   function paintWaveform() {
     const canvas = waveCanvasRef.current;
     if (!canvas || !waveDataRef.current) return;
-    // Use rAF to ensure the canvas has been laid out and offsetWidth > 0
+    // rAF ensures the canvas has been laid out and offsetWidth > 0
     requestAnimationFrame(() => {
       canvas.width = canvas.offsetWidth || canvas.clientWidth || 400;
       canvas.height = canvas.offsetHeight || canvas.clientHeight || 40;
-      window.api.getSetting('waveform_color_mode', 'rgb').then((mode) => {
-        drawWaveform(canvas, waveDataRef.current, mode);
-      });
+      drawWaveform(canvas, waveDataRef.current, colorModeRef.current);
     });
   }
 
