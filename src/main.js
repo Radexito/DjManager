@@ -413,8 +413,12 @@ ipcMain.handle('remove-track', (_, trackId) => {
 });
 ipcMain.handle('update-track', (_, { id, data }) => {
   updateTrack(id, data);
-  // Fire-and-forget ID3 tag write-back (non-blocking, best-effort)
   const track = getTrackById(id);
+  // Notify renderer so MusicLibrary + PlayerContext stay in sync
+  if (global.mainWindow) {
+    global.mainWindow.webContents.send('track-updated', { trackId: id, analysis: data });
+  }
+  // Fire-and-forget ID3 tag write-back (non-blocking, best-effort)
   if (track?.file_path) {
     writeId3Tags(track.file_path, data).catch((e) =>
       console.error('[update-track] id3 write failed:', e.message)

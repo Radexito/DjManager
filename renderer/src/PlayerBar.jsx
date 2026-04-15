@@ -34,6 +34,7 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     setDevice,
     setVolume,
     play,
+    patchCurrentTrack,
   } = usePlayer();
 
   const [devices, setDevices] = useState([]);
@@ -211,10 +212,12 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
 
   const applyTapBpm = async () => {
     if (!currentTrack || tapBpm == null) return;
-    await window.api.updateTrack(currentTrack.id, { bpm_override: tapBpm });
+    const bpm = tapBpm;
     setTapBpm(null);
     tapTimesRef.current = [];
     clearTimeout(tapResetTimerRef.current);
+    patchCurrentTrack(currentTrack.id, { bpm_override: bpm });
+    await window.api.updateTrack(currentTrack.id, { bpm_override: bpm });
   };
 
   // 'T' key shortcut for tap tempo (only when not typing in an input)
@@ -403,15 +406,13 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
           <button className="player-btn player-tap-btn" onClick={handleTap} title="Tap tempo (T)">
             {tapBpm != null ? `${tapBpm}` : 'TAP'}
           </button>
-          {tapBpm != null && currentTrack && (
-            <button
-              className="player-btn player-tap-apply"
-              onClick={applyTapBpm}
-              title={`Set BPM to ${tapBpm} for current track`}
-            >
-              ✓
-            </button>
-          )}
+          <button
+            className={`player-btn player-tap-apply${tapBpm == null || !currentTrack ? ' player-tap-apply--hidden' : ''}`}
+            onClick={applyTapBpm}
+            title={tapBpm != null ? `Set BPM to ${tapBpm} for current track` : ''}
+          >
+            ✓
+          </button>
         </div>
 
         {/* Playback history */}

@@ -29,6 +29,7 @@ import { parseQuery } from './searchParser.js';
 import TrackDetails from './TrackDetails.jsx';
 import CuePointsEditor from './CuePointsEditor.jsx';
 import RatingStars from './RatingStars.jsx';
+import BeatGridEditor from './BeatGridEditor.jsx';
 import './MusicLibrary.css';
 
 const PAGE_SIZE = 50;
@@ -495,6 +496,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const [colVis, setColVis] = useState(loadColVis);
   const [colOrder, setColOrder] = useState(loadColOrder);
   const [colMenuAnchor, setColMenuAnchor] = useState(null); // { x, y } | null
+  const [beatGridEditorTrack, setBeatGridEditorTrack] = useState(null);
   const [detailsTrack, setDetailsTrack] = useState(null);
   const [detailsBulkTracks, setDetailsBulkTracks] = useState(null); // array | null
   const [cueTrack, setCueTrack] = useState(null);
@@ -1240,34 +1242,16 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     [contextMenu]
   );
 
-  const handleNudgeGrid = useCallback(
-    async (deltaMs) => {
-      const targetIds = contextMenu?.targetIds ?? [];
-      if (!targetIds.length) return;
-      const updates = [];
-      setTracks((prev) =>
-        prev.map((t) => {
-          if (!targetIds.includes(t.id)) return t;
-          const newOffset = (t.beatgrid_offset ?? 0) + deltaMs;
-          updates.push({ id: t.id, beatgrid_offset: newOffset });
-          return { ...t, beatgrid_offset: newOffset };
-        })
-      );
-      await Promise.all(
-        updates.map(({ id, beatgrid_offset }) => window.api.updateTrack(id, { beatgrid_offset }))
-      );
+  const handleApplyBeatGrid = useCallback(
+    async (trackId, { beatgrid_offset, bpm_override }) => {
+      const update = { beatgrid_offset };
+      if (bpm_override != null) update.bpm_override = bpm_override;
+      setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, ...update } : t)));
+      patchCurrentTrack(trackId, update);
+      await window.api.updateTrack(trackId, update);
     },
-    [contextMenu]
+    [patchCurrentTrack]
   );
-
-  const handleResetGrid = useCallback(async () => {
-    const targetIds = contextMenu?.targetIds ?? [];
-    if (!targetIds.length) return;
-    setTracks((prev) =>
-      prev.map((t) => (targetIds.includes(t.id) ? { ...t, beatgrid_offset: 0 } : t))
-    );
-    await Promise.all(targetIds.map((id) => window.api.updateTrack(id, { beatgrid_offset: 0 })));
-  }, [contextMenu]);
 
   const handleFindSimilar = useCallback(
     (queryText) => {
@@ -2041,59 +2025,18 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                           </button>
                         </div>
                         <div className="context-menu-separator" />
-                        {/* ── Grid offset nudge ── */}
                         <div
-                          className="context-menu-item context-menu-item--shift-grid"
-                          onClick={(e) => e.stopPropagation()}
+                          className="context-menu-item"
+                          onClick={() => {
+                            const t =
+                              tracks.find((tr) => tr.id === contextMenu?.track?.id) ??
+                              contextMenu?.track;
+                            setContextMenu(null);
+                            if (t) setBeatGridEditorTrack(t);
+                          }}
                         >
-                          <span className="set-bpm-label">Shift grid:</span>
-                          <div className="grid-nudge-row">
-                            <button
-                              className="grid-nudge-btn"
-                              onClick={() => handleNudgeGrid(-10)}
-                              title="Shift grid −10 ms"
-                            >
-                              −10
-                            </button>
-                            <button
-                              className="grid-nudge-btn"
-                              onClick={() => handleNudgeGrid(-1)}
-                              title="Shift grid −1 ms"
-                            >
-                              −1
-                            </button>
-                            <span className="grid-offset-value">
-                              {(() => {
-                                const offset =
-                                  tracks.find((t) => t.id === contextMenu?.track?.id)
-                                    ?.beatgrid_offset ?? 0;
-                                return offset === 0
-                                  ? '0 ms'
-                                  : `${offset > 0 ? '+' : ''}${offset} ms`;
-                              })()}
-                            </span>
-                            <button
-                              className="grid-nudge-btn"
-                              onClick={() => handleNudgeGrid(1)}
-                              title="Shift grid +1 ms"
-                            >
-                              +1
-                            </button>
-                            <button
-                              className="grid-nudge-btn"
-                              onClick={() => handleNudgeGrid(10)}
-                              title="Shift grid +10 ms"
-                            >
-                              +10
-                            </button>
-                          </div>
+                          ⬡ Edit Beat Grid…
                         </div>
-                        {(tracks.find((t) => t.id === contextMenu?.track?.id)?.beatgrid_offset ??
-                          0) !== 0 && (
-                          <div className="context-menu-item" onClick={handleResetGrid}>
-                            ↺ Reset grid offset
-                          </div>
-                        )}
                       </SubItem>
                     </SubItem>
 
@@ -2168,6 +2111,14 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
           </div>
           <CuePointsEditor trackId={cueTrack.id} onCuePointsChange={handleCuePointsChange} />
         </div>
+      )}
+
+      {beatGridEditorTrack && (
+        <BeatGridEditor
+          track={beatGridEditorTrack}
+          onClose={() => setBeatGridEditorTrack(null)}
+          onApply={handleApplyBeatGrid}
+        />
       )}
     </div>
   );
