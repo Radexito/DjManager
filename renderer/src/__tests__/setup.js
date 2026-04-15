@@ -26,6 +26,8 @@ window.api = {
   selectAudioFiles: vi.fn().mockResolvedValue([]),
   importAudioFiles: vi.fn().mockResolvedValue([]),
   reanalyzeTrack: vi.fn().mockResolvedValue({ ok: true }),
+  getZoomFactor: vi.fn().mockReturnValue(1.0),
+  setZoomFactor: vi.fn(),
   removeTrack: vi.fn().mockResolvedValue({ ok: true }),
   adjustBpm: vi.fn().mockResolvedValue([]),
   updateTrack: vi.fn().mockResolvedValue({}),
