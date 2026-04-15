@@ -7,11 +7,18 @@ import { app } from 'electron';
 import { Worker } from 'worker_threads';
 import { ffprobe } from './ffmpeg.js';
 import { getFfmpegRuntimePath } from '../deps.js';
-import { addTrack, updateTrack, getTrackById, getTrackByHash } from '../db/trackRepository.js';
+import {
+  addTrack,
+  updateTrack,
+  getTrackById,
+  getTrackByHash,
+  updateTrackWaveform,
+} from '../db/trackRepository.js';
 import { getAnalyzerRuntimePath } from '../deps.js';
 import { getSetting } from '../db/settingsRepository.js';
 import { generateCuePoints } from './cueGen.js';
 import { getCuePoints, addCuePoint } from '../db/cuePointRepository.js';
+import { generateWaveformOverview } from './waveformGenerator.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -214,6 +221,14 @@ export function spawnAnalysis(trackId, filePath, { silent = false } = {}) {
     }
 
     updateTrack(trackId, update);
+
+    // Generate waveform overview for in-app seek bar (fire-and-forget — does not
+    // block analysis progress or track-updated event)
+    generateWaveformOverview(filePath, getFfmpegRuntimePath())
+      .then((buf) => updateTrackWaveform(trackId, buf))
+      .catch((err) =>
+        console.warn(`[waveform] overview failed for track ${trackId}:`, err.message)
+      );
 
     // Include normalized_file_path from DB so renderer knows to switch playback to the normalized file
     const trackAfterUpdate = getTrackById(trackId);
