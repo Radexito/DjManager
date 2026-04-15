@@ -224,26 +224,30 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     }
   }
 
+  function paintWaveform() {
+    const canvas = waveCanvasRef.current;
+    if (!canvas || !waveDataRef.current) return;
+    // Use rAF to ensure the canvas has been laid out and offsetWidth > 0
+    requestAnimationFrame(() => {
+      canvas.width = canvas.offsetWidth || canvas.clientWidth || 400;
+      canvas.height = canvas.offsetHeight || canvas.clientHeight || 40;
+      window.api.getSetting('waveform_color_mode', 'rgb').then((mode) => {
+        drawWaveform(canvas, waveDataRef.current, mode);
+      });
+    });
+  }
+
   // Fetch waveform data when track changes, then draw
   useEffect(() => {
     const canvas = waveCanvasRef.current;
     if (!currentTrack) {
       waveDataRef.current = null;
-      if (canvas) {
-        canvas.width = canvas.offsetWidth || 1;
-        canvas.height = canvas.offsetHeight || 1;
-        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
-      }
+      if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
       return;
     }
     window.api.getTrackWaveform(currentTrack.id).then((raw) => {
       waveDataRef.current = raw ? new Uint8Array(raw) : null;
-      if (!canvas || !waveDataRef.current) return;
-      canvas.width = canvas.offsetWidth || 1;
-      canvas.height = canvas.offsetHeight || 1;
-      window.api.getSetting('waveform_color_mode', 'rgb').then((mode) => {
-        drawWaveform(canvas, waveDataRef.current, mode);
-      });
+      paintWaveform();
     });
   }, [currentTrack?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 

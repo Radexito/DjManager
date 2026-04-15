@@ -82,6 +82,7 @@ import {
   downloadTidal,
   fetchTidalInfo,
 } from './audio/tidalDlManager.js';
+import { generateWaveformOverview } from './audio/waveformGenerator.js';
 import { ensureDeps, getFfmpegRuntimePath } from './deps.js';
 import {
   getInstalledVersions,
@@ -520,6 +521,45 @@ ipcMain.handle('delete-all-cue-points-library', () => {
     }
   }
   return { deleted: affected.length };
+});
+
+// Generate waveform overviews for all analyzed tracks in the library
+ipcMain.handle('generate-waveforms-library', async (_, { overwrite = false } = {}) => {
+  const tracks = getTracks({ limit: 999999 });
+  const analyzed = tracks.filter((t) => t.analyzed === 1);
+  const total = analyzed.length;
+  let generated = 0;
+  let skipped = 0;
+
+  const sendProgress = (done = false) => {
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('waveform-gen-progress', {
+        completed: generated + skipped,
+        total,
+        done,
+      });
+    }
+  };
+
+  for (const track of analyzed) {
+    if (!overwrite && track.waveform_overview != null) {
+      skipped++;
+      sendProgress();
+      continue;
+    }
+    try {
+      const buf = await generateWaveformOverview(track.file_path, getFfmpegRuntimePath());
+      updateTrackWaveform(track.id, buf);
+      generated++;
+    } catch (err) {
+      console.warn(`[waveform-gen] failed for track ${track.id}:`, err.message);
+      skipped++;
+    }
+    sendProgress();
+  }
+
+  sendProgress(true);
+  return { generated, skipped, total };
 });
 
 // Playlist IPC handlers
