@@ -30,10 +30,13 @@
 }
 
 .player-seekbar-wrap .player-seekbar {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  position: relative;
+  height: 100%;
   z-index: 1;
   background: transparent !important;
+  cursor: pointer;
 }
 
 .player-cue-marker {
