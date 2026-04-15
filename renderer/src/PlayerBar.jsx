@@ -34,6 +34,7 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     setDevice,
     setVolume,
     play,
+    audioRef,
   } = usePlayer();
 
   const [devices, setDevices] = useState([]);
@@ -148,7 +149,22 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
       `#5a3800 ${outroFrac}%, #5a3800 100%)`;
   }, [duration, currentTrack]);
 
-  // Advance seekbar during playback — skip when user is dragging
+  // Advance seekbar at ~60fps via rAF so the position tracks audio smoothly
+  // instead of jumping every ~250ms from timeupdate events.
+  useEffect(() => {
+    if (!isPlaying) return;
+    let rafId;
+    const tick = () => {
+      if (!seekingRef.current && seekbarRef.current && audioRef?.current) {
+        seekbarRef.current.value = audioRef.current.currentTime;
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [isPlaying, audioRef]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync seekbar position on pause / track change (rAF loop stopped)
   useEffect(() => {
     if (!seekingRef.current && seekbarRef.current) {
       seekbarRef.current.value = currentTime;
