@@ -39,6 +39,9 @@ function SettingsModal({ onClose }) {
   const [tidalUpdating, setTidalUpdating] = useState(false);
   const [cookiesBrowser, setCookiesBrowser] = useState('');
   const [waveformColorMode, setWaveformColorMode] = useState('rgb');
+  const [generatingWaveforms, setGeneratingWaveforms] = useState(false);
+  const [waveformGenProgress, setWaveformGenProgress] = useState(null);
+  const [waveformGenResult, setWaveformGenResult] = useState(null);
 
   // Library location
   const [libraryPath, setLibraryPath] = useState('');
@@ -191,6 +194,24 @@ function SettingsModal({ onClose }) {
   const handleAutoCueToggle = (checked) => {
     setAutoCueOnImport(checked);
     window.api.setSetting('auto_cue_on_import', String(checked));
+  };
+
+  const handleGenerateWaveformsLibrary = async (overwrite) => {
+    setGeneratingWaveforms(true);
+    setWaveformGenResult(null);
+    setWaveformGenProgress(null);
+    const unsub = window.api.onWaveformGenProgress(({ completed, total, done }) => {
+      setWaveformGenProgress(done ? null : { completed, total });
+      if (done) unsub();
+    });
+    try {
+      const result = await window.api.generateWaveformsLibrary({ overwrite });
+      setWaveformGenResult(result);
+    } finally {
+      unsub();
+      setGeneratingWaveforms(false);
+      setWaveformGenProgress(null);
+    }
   };
 
   const handleCookiesBrowserChange = (value) => {
@@ -613,6 +634,56 @@ function SettingsModal({ onClose }) {
                     <option value="3band">3-Band — Blue=bass · Orange=mid · White=treble</option>
                   </select>
                 </div>
+              </div>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Generate for whole library</div>
+                <p className="settings-desc">
+                  Existing tracks do not have waveform data until generated here. New tracks are
+                  processed automatically after analysis.
+                </p>
+                <div className="settings-row">
+                  <button
+                    className="btn"
+                    onClick={() => handleGenerateWaveformsLibrary(false)}
+                    disabled={generatingWaveforms}
+                  >
+                    {generatingWaveforms ? 'Generating…' : 'Generate missing waveforms'}
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => handleGenerateWaveformsLibrary(true)}
+                    disabled={generatingWaveforms}
+                    style={{ marginLeft: 8 }}
+                  >
+                    Regenerate all
+                  </button>
+                </div>
+                {generatingWaveforms && waveformGenProgress && (
+                  <div className="settings-normalize-progress">
+                    <div className="settings-normalize-progress-bar">
+                      <div
+                        className="settings-normalize-progress-fill"
+                        style={{
+                          width:
+                            waveformGenProgress.total > 0
+                              ? `${Math.round((waveformGenProgress.completed / waveformGenProgress.total) * 100)}%`
+                              : '0%',
+                        }}
+                      />
+                    </div>
+                    <span className="settings-normalize-progress-label">
+                      {waveformGenProgress.completed} / {waveformGenProgress.total}
+                    </span>
+                  </div>
+                )}
+                {waveformGenResult && (
+                  <div className="settings-normalize-result">
+                    Generated {waveformGenResult.generated} waveform
+                    {waveformGenResult.generated !== 1 ? 's' : ''}, skipped{' '}
+                    {waveformGenResult.skipped}.
+                  </div>
+                )}
               </div>
             </>
           )}
