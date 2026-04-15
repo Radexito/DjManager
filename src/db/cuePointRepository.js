@@ -22,7 +22,7 @@ export function addCuePoint({
   return info.lastInsertRowid;
 }
 
-export function updateCuePoint(id, { label, color, hotCueIndex }) {
+export function updateCuePoint(id, { label, color, hotCueIndex, enabled }) {
   const fields = [];
   const vals = [];
   if (label !== undefined) {
@@ -37,6 +37,10 @@ export function updateCuePoint(id, { label, color, hotCueIndex }) {
     fields.push('hot_cue_index = ?');
     vals.push(hotCueIndex);
   }
+  if (enabled !== undefined) {
+    fields.push('enabled = ?');
+    vals.push(enabled ? 1 : 0);
+  }
   if (fields.length === 0) return;
   vals.push(id);
   db.prepare(`UPDATE cue_points SET ${fields.join(', ')} WHERE id = ?`).run(...vals);
@@ -48,4 +52,14 @@ export function deleteCuePoint(id) {
 
 export function deleteAllCuePoints(trackId) {
   db.prepare('DELETE FROM cue_points WHERE track_id = ?').run(trackId);
+}
+
+export function deleteAllCuePointsLibrary() {
+  // Returns the list of affected track IDs before wiping
+  const affected = db
+    .prepare('SELECT DISTINCT track_id FROM cue_points')
+    .all()
+    .map((r) => r.track_id);
+  db.prepare('DELETE FROM cue_points').run();
+  return affected;
 }

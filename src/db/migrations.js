@@ -185,4 +185,9 @@ export function initDB() {
     ON cue_points(track_id)
   `
   ).run();
+
+  // #209: per-cue export enable/disable toggle
+  try {
+    db.prepare('ALTER TABLE cue_points ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1').run();
+  } catch {}
 }
