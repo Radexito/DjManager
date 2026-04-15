@@ -82,6 +82,7 @@ import {
   fetchTidalInfo,
 } from './audio/tidalDlManager.js';
 import { ensureDeps, getFfmpegRuntimePath } from './deps.js';
+import { generateEditorWaveform } from './audio/waveformGenerator.js';
 import {
   getInstalledVersions,
   checkForUpdates,
@@ -426,6 +427,18 @@ ipcMain.handle('update-track', (_, { id, data }) => {
   }
   return { ok: true };
 });
+ipcMain.handle('get-editor-waveform', async (_, trackId) => {
+  const track = getTrackById(trackId);
+  if (!track?.file_path) return null;
+  try {
+    const result = await generateEditorWaveform(track.file_path, getFfmpegRuntimePath());
+    return result;
+  } catch (e) {
+    console.error('[get-editor-waveform]', e.message);
+    return null;
+  }
+});
+
 ipcMain.handle('adjust-bpm', (_, { trackIds, factor }) => {
   if (factor !== 2 && factor !== 0.5) throw new Error('Invalid factor: must be 2 or 0.5');
   if (!Array.isArray(trackIds) || trackIds.length === 0 || trackIds.length > 500) {
