@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import Sidebar from './Sidebar.jsx';
 import MusicLibrary from './MusicLibrary.jsx';
 import DownloadView from './DownloadView.jsx';
@@ -51,11 +52,14 @@ function App() {
 
     const applyZoom = (factor) => {
       const clamped = clamp(round(factor));
-      window.api.setZoomFactor(clamped);
       localStorage.setItem(LS_KEY, String(clamped));
-      // Show indicator; increment key to restart countdown bar, hide after ZOOM_HIDE_DELAY
-      setZoomLevel(clamped);
-      setZoomKey((k) => k + 1);
+      // Flush counter-scale state synchronously BEFORE applying zoom so the
+      // pill is already at the correct size when the page zooms — no jump.
+      flushSync(() => {
+        setZoomLevel(clamped);
+        setZoomKey((k) => k + 1);
+      });
+      window.api.setZoomFactor(clamped);
       clearTimeout(zoomHideTimer.current);
       zoomHideTimer.current = setTimeout(() => setZoomLevel(null), ZOOM_HIDE_DELAY);
     };
@@ -151,7 +155,6 @@ function App() {
           )}
           {zoomLevel !== null && zoomLevel !== 1.0 && (
             <button
-              key={zoomKey}
               className="zoom-indicator"
               style={{ transform: `scale(${1 / zoomLevel})`, transformOrigin: 'top left' }}
               onClick={() => {
@@ -167,7 +170,7 @@ function App() {
               title="Reset zoom to 100%"
             >
               <span className="zoom-indicator-label">{Math.round(zoomLevel * 100)}% ✕</span>
-              <span className="zoom-indicator-bar" />
+              <span key={zoomKey} className="zoom-indicator-bar" />
             </button>
           )}
           {depsProgress && (
