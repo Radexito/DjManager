@@ -50,6 +50,9 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
   const seekingRef = useRef(false); // true while user drags
   const deviceWrapRef = useRef();
   const historyWrapRef = useRef();
+  const waveCanvasRef = useRef();
+  const waveDataRef = useRef(null); // Uint8Array | null
+  const seekbarBgRef = useRef(); // thin overlay for intro/outro gradient
 
   useEffect(() => {
     async function loadDevices() {
@@ -126,21 +129,19 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     if (seekbarRef.current) seekbarRef.current.max = duration || 0;
   }, [duration]);
 
-  // Paint intro/outro zones on the seekbar track as a CSS gradient
+  // Paint intro/outro zones on the seekbar bg overlay as a CSS gradient
   useEffect(() => {
-    if (!seekbarRef.current || !duration) return;
+    if (!seekbarBgRef.current || !duration) return;
     const intro = currentTrack?.intro_secs || 0;
     const outro = currentTrack?.outro_secs || 0;
     const introFrac = Math.min(intro / duration, 1) * 100;
     const outroFrac = Math.min(outro / duration, 1) * 100;
 
-    // No visible zones: intro at very start, outro at very end
     if (introFrac <= 0 && outroFrac >= 100) {
-      seekbarRef.current.style.background = '#333';
+      seekbarBgRef.current.style.background = '#333';
       return;
     }
-    // Amber zones for cut-off intro/outro, neutral middle for the mix window
-    seekbarRef.current.style.background =
+    seekbarBgRef.current.style.background =
       `linear-gradient(to right, ` +
       `#5a3800 0%, #5a3800 ${introFrac}%, ` +
       `#333 ${introFrac}%, #333 ${outroFrac}%, ` +
@@ -174,6 +175,77 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showHistory]);
+
+  // ── Waveform canvas ─────────────────────────────────────────────────────────
+
+  function drawWaveform(canvas, data, colorMode) {
+    const W = canvas.width;
+    const H = canvas.height;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+    if (!data || data.length < 4) return;
+
+    const numCols = data.length / 4;
+    const colW = W / numCols;
+    const midY = H / 2;
+
+    for (let i = 0; i < numCols; i++) {
+      const rms = data[i * 4] / 255;
+      const bass = data[i * 4 + 1] / 255;
+      const mid = data[i * 4 + 2] / 255;
+      const treble = data[i * 4 + 3] / 255;
+
+      const halfH = Math.max(1, Math.round(rms * midY * 0.9));
+      const x = Math.floor(i * colW);
+      const w = Math.max(1, Math.ceil(colW));
+
+      let r, g, b;
+      if (colorMode === 'classic') {
+        // Blue body, white at transients (high treble)
+        const white = Math.min(1, treble * 4);
+        r = Math.round(white * 220);
+        g = Math.round(white * 220);
+        b = 200 + Math.round(white * 55);
+      } else if (colorMode === '3band') {
+        // Blue=bass, Orange=mid, White=treble — weighted blend
+        const total = bass + mid + treble + 0.001;
+        r = Math.round((bass * 30 + mid * 255 + treble * 255) / total);
+        g = Math.round((bass * 30 + mid * 140 + treble * 255) / total);
+        b = Math.round((bass * 255 + mid * 0 + treble * 255) / total);
+      } else {
+        // RGB — Red=treble, Green=mid, Blue=bass
+        r = Math.round(treble * 255);
+        g = Math.round(mid * 255);
+        b = Math.round(bass * 255);
+      }
+
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(x, midY - halfH, w, halfH * 2);
+    }
+  }
+
+  // Fetch waveform data when track changes, then draw
+  useEffect(() => {
+    const canvas = waveCanvasRef.current;
+    if (!currentTrack) {
+      waveDataRef.current = null;
+      if (canvas) {
+        canvas.width = canvas.offsetWidth || 1;
+        canvas.height = canvas.offsetHeight || 1;
+        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+      }
+      return;
+    }
+    window.api.getTrackWaveform(currentTrack.id).then((raw) => {
+      waveDataRef.current = raw ? new Uint8Array(raw) : null;
+      if (!canvas || !waveDataRef.current) return;
+      canvas.width = canvas.offsetWidth || 1;
+      canvas.height = canvas.offsetHeight || 1;
+      window.api.getSetting('waveform_color_mode', 'rgb').then((mode) => {
+        drawWaveform(canvas, waveDataRef.current, mode);
+      });
+    });
+  }, [currentTrack?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const artSrc = artworkUrl(
     currentTrack?.has_artwork ? currentTrack?.artwork_path : null,
@@ -249,6 +321,8 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
         <div className="player-seek">
           <span className="player-time">{formatTime(currentTime)}</span>
           <div className="player-seekbar-wrap">
+            <div ref={seekbarBgRef} className="player-seekbar-bg" />
+            <canvas ref={waveCanvasRef} className="player-waveform-canvas" />
             <input
               ref={seekbarRef}
               type="range"

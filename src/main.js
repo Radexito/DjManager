@@ -55,6 +55,7 @@ import {
   getNormalizedTrackCount,
   getExistingSourceUrls,
   getPlaylistSourceUrls,
+  getTrackWaveform,
 } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import {
@@ -225,6 +226,10 @@ async function initApp() {
 ipcMain.handle('get-media-port', () => mediaServerPort);
 ipcMain.handle('get-tracks', (_, params) => getTracks(params));
 ipcMain.handle('get-track-ids', (_, params) => getTrackIds(params));
+ipcMain.handle('get-track-waveform', (_, trackId) => {
+  const buf = getTrackWaveform(trackId);
+  return buf ? new Uint8Array(buf) : null;
+});
 ipcMain.handle('get-setting', (_, key, def) => getSetting(key, def));
 ipcMain.handle('set-setting', (_, key, value) => setSetting(key, value));
 ipcMain.handle('get-library-path', () => getLibraryBase());

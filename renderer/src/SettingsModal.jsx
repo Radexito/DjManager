@@ -38,6 +38,7 @@ function SettingsModal({ onClose }) {
   const [ytdlpUpdating, setYtdlpUpdating] = useState(false);
   const [tidalUpdating, setTidalUpdating] = useState(false);
   const [cookiesBrowser, setCookiesBrowser] = useState('');
+  const [waveformColorMode, setWaveformColorMode] = useState('rgb');
 
   // Library location
   const [libraryPath, setLibraryPath] = useState('');
@@ -67,6 +68,7 @@ function SettingsModal({ onClose }) {
     window.api
       .getSetting('auto_cue_on_import', 'false')
       .then((v) => setAutoCueOnImport(v === 'true'));
+    window.api.getSetting('waveform_color_mode', 'rgb').then((v) => setWaveformColorMode(v));
   }, []);
 
   useEffect(() => {
@@ -233,6 +235,7 @@ function SettingsModal({ onClose }) {
     { id: 'library', label: 'Library' },
     { id: 'normalization', label: 'Normalization' },
     { id: 'cuepoints', label: 'Cue Points' },
+    { id: 'waveform', label: 'Waveform' },
     { id: 'downloads', label: 'Downloads' },
     { id: 'updates', label: 'Dependencies' },
     { id: 'advanced', label: 'Advanced' },
@@ -579,6 +582,37 @@ function SettingsModal({ onClose }) {
                       : `Deleted cue points from ${deleteAllCuesResult} track${deleteAllCuesResult !== 1 ? 's' : ''}.`}
                   </div>
                 )}
+              </div>
+            </>
+          )}
+
+          {activeSection === 'waveform' && (
+            <>
+              <h3>Waveform</h3>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Seek bar color mode</div>
+                <p className="settings-desc">
+                  Choose how the waveform is colored in the seek bar. Waveforms are generated
+                  automatically after each track is analyzed.
+                </p>
+                <div className="settings-row">
+                  <label htmlFor="waveform-color-mode">Color mode</label>
+                  <select
+                    id="waveform-color-mode"
+                    className="settings-select"
+                    value={waveformColorMode}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setWaveformColorMode(v);
+                      window.api.setSetting('waveform_color_mode', v);
+                    }}
+                  >
+                    <option value="rgb">RGB — Red=treble · Green=mid · Blue=bass</option>
+                    <option value="classic">Classic — Blue body · White peaks</option>
+                    <option value="3band">3-Band — Blue=bass · Orange=mid · White=treble</option>
+                  </select>
+                </div>
               </div>
             </>
           )}

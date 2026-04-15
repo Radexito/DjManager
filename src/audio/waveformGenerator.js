@@ -266,3 +266,27 @@ export async function generateWaveform(filePath, ffmpegBin = 'ffmpeg') {
   const samples = await extractPcm(filePath, ffmpegBin);
   return computeColumns(samples);
 }
+
+/**
+ * Generate a compact waveform overview suitable for in-app seek bar rendering.
+ *
+ * Returns a flat Buffer of PWV4_COLS (1200) columns × 4 bytes each:
+ *   [rms, bass, mid, treble] per column, each 0-255.
+ *
+ * Supports all color modes (Classic / RGB / 3-Band) in the renderer.
+ * Total size: 4 800 bytes per track.
+ */
+export async function generateWaveformOverview(filePath, ffmpegBin = 'ffmpeg') {
+  const samples = await extractPcm(filePath, ffmpegBin);
+  const { pwv4 } = computeColumns(samples);
+  // pwv4 layout per column: [peak, 255-peak, rms, bass, mid, treble]
+  const numCols = pwv4.length / 6;
+  const out = Buffer.alloc(numCols * 4);
+  for (let i = 0; i < numCols; i++) {
+    out[i * 4 + 0] = pwv4[i * 6 + 2]; // rms
+    out[i * 4 + 1] = pwv4[i * 6 + 3]; // bass
+    out[i * 4 + 2] = pwv4[i * 6 + 4]; // mid
+    out[i * 4 + 3] = pwv4[i * 6 + 5]; // treble
+  }
+  return out;
+}
