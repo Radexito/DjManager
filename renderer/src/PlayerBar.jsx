@@ -229,7 +229,7 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const artSrc = artworkUrl(
     currentTrack?.has_artwork ? currentTrack?.artwork_path : null,

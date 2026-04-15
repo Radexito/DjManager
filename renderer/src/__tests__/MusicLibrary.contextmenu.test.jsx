@@ -173,7 +173,7 @@ describe('context menu — submenu CSS classes', () => {
     renderLibrary();
     await openContextMenu('Track One');
 
-    const bpmParent = getSubmenuParent('🎵 BPM');
+    const bpmParent = getSubmenuParent('🥁 Beat Grid');
     expect(bpmParent).toBeTruthy();
 
     const submenu = bpmParent.querySelector(':scope > .context-submenu');
@@ -187,7 +187,7 @@ describe('context menu — submenu CSS classes', () => {
 
     const analysisParent = getSubmenuParent('🔬 Analysis');
     const analysisSubmenu = analysisParent.querySelector(':scope > .context-submenu');
-    const bpmParent = getSubmenuParent('🎵 BPM');
+    const bpmParent = getSubmenuParent('🥁 Beat Grid');
 
     // BPM item must be a descendant of the Analysis submenu
     expect(analysisSubmenu.contains(bpmParent)).toBe(true);
@@ -197,7 +197,7 @@ describe('context menu — submenu CSS classes', () => {
     renderLibrary();
     await openContextMenu('Track One');
 
-    const bpmParent = getSubmenuParent('🎵 BPM');
+    const bpmParent = getSubmenuParent('🥁 Beat Grid');
     const directSubmenus = [...bpmParent.children].filter((el) =>
       el.classList.contains('context-submenu')
     );
