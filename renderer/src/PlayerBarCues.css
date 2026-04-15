@@ -39,6 +39,15 @@
   cursor: pointer;
 }
 
+/* Center the thumb on its value position (default is left-edge aligned) */
+.player-seekbar-wrap .player-seekbar::-webkit-slider-thumb {
+  transform: translateX(-50%);
+}
+
+.player-seekbar-wrap .player-seekbar:hover::-webkit-slider-thumb {
+  transform: translateX(-50%);
+}
+
 .player-cue-marker {
   position: absolute;
   width: 3px;
