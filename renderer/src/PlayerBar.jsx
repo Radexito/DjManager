@@ -199,24 +199,33 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
       const x = Math.floor(i * colW);
       const w = Math.max(1, Math.ceil(colW));
 
+      // Normalize per column: dominant band saturates, RMS sets brightness.
+      // Raw band values are EMA-derived so bass always >> mid >> treble in absolute
+      // terms. Without normalization everything renders blue. Dividing by the dominant
+      // makes colors legible while RMS controls how bright the column is overall.
+      const dominant = Math.max(bass, mid, treble) || 0.001;
+      const brightness = Math.min(1, rms * 3); // rms ~0.1-0.3 → 0.3-0.9
+      const nr = (treble / dominant) * brightness; // normalized treble 0-1
+      const ng = (mid / dominant) * brightness; // normalized mid 0-1
+      const nb = (bass / dominant) * brightness; // normalized bass 0-1
+
       let r, g, b;
       if (colorMode === 'classic') {
-        // Blue body, white at transients (high treble)
-        const white = Math.min(1, treble * 4);
+        // Blue body, white highlights at high-treble transients
+        const white = Math.min(1, nr * 2);
         r = Math.round(white * 220);
         g = Math.round(white * 220);
-        b = 200 + Math.round(white * 55);
+        b = Math.round(55 + nb * 200 + white * 55);
       } else if (colorMode === '3band') {
         // Blue=bass, Orange=mid, White=treble — weighted blend
-        const total = bass + mid + treble + 0.001;
-        r = Math.round((bass * 30 + mid * 255 + treble * 255) / total);
-        g = Math.round((bass * 30 + mid * 140 + treble * 255) / total);
-        b = Math.round((bass * 255 + mid * 0 + treble * 255) / total);
+        r = Math.min(255, Math.round(nb * 30 + ng * 255 + nr * 255));
+        g = Math.min(255, Math.round(nb * 30 + ng * 140 + nr * 255));
+        b = Math.min(255, Math.round(nb * 255 + ng * 0 + nr * 255));
       } else {
-        // RGB — Red=treble, Green=mid, Blue=bass
-        r = Math.round(treble * 255);
-        g = Math.round(mid * 255);
-        b = Math.round(bass * 255);
+        // RGB — Red=treble, Green=mid, Blue=bass (per-column normalised)
+        r = Math.round(nr * 255);
+        g = Math.round(ng * 255);
+        b = Math.round(nb * 255);
       }
 
       ctx.fillStyle = `rgb(${r},${g},${b})`;
