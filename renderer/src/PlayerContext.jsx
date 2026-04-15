@@ -178,7 +178,9 @@ export function PlayerProvider({ children }) {
       const plName = currentPlaylistNameRef.current;
       if (rep === 'one') {
         audio.currentTime = 0;
-        audio.play().catch(console.error);
+        audio.play().catch((err) => {
+          if (err.name !== 'AbortError') console.error(err);
+        });
         return;
       }
       if (shuf) {
@@ -230,7 +232,10 @@ export function PlayerProvider({ children }) {
   );
 
   const togglePlay = useCallback(() => {
-    if (audio.paused) audio.play().catch(console.error);
+    if (audio.paused)
+      audio.play().catch((err) => {
+        if (err.name !== 'AbortError') console.error(err);
+      });
     else audio.pause();
   }, [audio]);
 
@@ -318,7 +323,10 @@ export function PlayerProvider({ children }) {
   useEffect(() => {
     if (!navigator.mediaSession) return;
     navigator.mediaSession.setActionHandler('play', () => {
-      if (audio.src) audio.play().catch(console.error);
+      if (audio.src)
+        audio.play().catch((err) => {
+          if (err.name !== 'AbortError') console.error(err);
+        });
     });
     navigator.mediaSession.setActionHandler('pause', () => audio.pause());
     navigator.mediaSession.setActionHandler('nexttrack', () => next());
@@ -349,7 +357,10 @@ export function PlayerProvider({ children }) {
       const tag = document.activeElement?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       e.preventDefault();
-      if (audio.paused) audio.play().catch(console.error);
+      if (audio.paused)
+        audio.play().catch((err) => {
+          if (err.name !== 'AbortError') console.error(err);
+        });
       else audio.pause();
     };
     window.addEventListener('keydown', onKeyDown);

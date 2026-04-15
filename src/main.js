@@ -61,6 +61,7 @@ import { getSetting, setSetting } from './db/settingsRepository.js';
 import {
   importAudioFile,
   spawnAnalysis,
+  cancelAnalysis,
   getLibraryBase,
   normalizeAudioFile,
 } from './audio/importManager.js';
@@ -102,6 +103,7 @@ import {
   updateCuePoint,
   deleteCuePoint,
   deleteAllCuePoints,
+  deleteAllCuePointsLibrary,
 } from './db/cuePointRepository.js';
 import { generateCuePoints } from './audio/cueGen.js';
 
@@ -426,6 +428,10 @@ ipcMain.handle('reanalyze-track', (_, trackId) => {
   spawnAnalysis(trackId, track.file_path);
   return { ok: true };
 });
+ipcMain.handle('cancel-analysis', (_, trackId) => {
+  const cancelled = cancelAnalysis(trackId);
+  return { cancelled };
+});
 ipcMain.handle('remove-track', (_, trackId) => {
   removeTrack(trackId); // ON DELETE CASCADE removes playlist_tracks rows
   if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
@@ -467,8 +473,8 @@ ipcMain.handle('add-cue-point', (_, { trackId, positionMs, label, color, hotCueI
   return { id };
 });
 
-ipcMain.handle('update-cue-point', (_, { id, label, color, hotCueIndex }) => {
-  updateCuePoint(id, { label, color, hotCueIndex });
+ipcMain.handle('update-cue-point', (_, { id, label, color, hotCueIndex, enabled }) => {
+  updateCuePoint(id, { label, color, hotCueIndex, enabled });
   return { ok: true };
 });
 
@@ -484,6 +490,57 @@ ipcMain.handle('generate-cue-points', (_, trackId) => {
   const generated = generateCuePoints(track);
   generated.forEach((cue) => addCuePoint({ trackId, ...cue }));
   return getCuePoints(trackId);
+});
+
+ipcMain.handle('generate-cue-points-library', (_, { overwrite = false } = {}) => {
+  const tracks = getTracks({ limit: 999999 });
+  const analyzed = tracks.filter((t) => t.analyzed === 1);
+  const total = analyzed.length;
+  let generated = 0;
+  let skipped = 0;
+
+  const sendProgress = (done = false) => {
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('cue-gen-progress', {
+        completed: generated + skipped,
+        total,
+        done,
+      });
+    }
+  };
+
+  for (const track of analyzed) {
+    const existing = getCuePoints(track.id);
+    if (!overwrite && existing.length > 0) {
+      skipped++;
+      sendProgress();
+      continue;
+    }
+    deleteAllCuePoints(track.id);
+    const cues = generateCuePoints(track);
+    cues.forEach((cue) => addCuePoint({ trackId: track.id, ...cue }));
+    generated++;
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('cue-points-updated', {
+        trackId: track.id,
+        cueCount: cues.length,
+      });
+    }
+    sendProgress();
+  }
+
+  sendProgress(true);
+  return { generated, skipped, total };
+});
+
+ipcMain.handle('delete-all-cue-points-library', () => {
+  const affected = deleteAllCuePointsLibrary();
+  if (global.mainWindow) {
+    for (const trackId of affected) {
+      global.mainWindow.webContents.send('cue-points-updated', { trackId, cueCount: 0 });
+    }
+  }
+  return { deleted: affected.length };
 });
 
 // Playlist IPC handlers
@@ -1324,7 +1381,7 @@ ipcMain.handle(
             bpm: t.bpm_override ?? t.bpm ?? 0,
             usbRoot,
             ffmpegPath: getFfmpegRuntimePath(),
-            cuePoints: getCuePoints(t.id),
+            cuePoints: getCuePoints(t.id).filter((c) => c.enabled !== 0),
           });
         } catch (err) {
           console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
@@ -1478,7 +1535,7 @@ ipcMain.handle(
             bpm: t.bpm_override ?? t.bpm ?? 0,
             usbRoot,
             ffmpegPath: getFfmpegRuntimePath(),
-            cuePoints: getCuePoints(t.id),
+            cuePoints: getCuePoints(t.id).filter((c) => c.enabled !== 0),
           });
         } catch (err) {
           console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
