@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import Sidebar from './Sidebar.jsx';
 import MusicLibrary from './MusicLibrary.jsx';
 import DownloadView from './DownloadView.jsx';
@@ -17,6 +18,10 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [exportState, setExportState] = useState(null); // { playlistId, mode } | null
   const [depsProgress, setDepsProgress] = useState(null); // { msg, pct } or null
+  const [zoomLevel, setZoomLevel] = useState(null); // shown when != 1.0, null = hidden
+  const [zoomKey, setZoomKey] = useState(0); // incremented on each zoom change to restart bar animation
+  const zoomHideTimer = useRef(null);
+  const ZOOM_HIDE_DELAY = 3000;
   const [search, setSearch] = useState('');
 
   const handleArtistSearch = (artist) => {
@@ -35,64 +40,64 @@ function App() {
     return unsub;
   }, []);
 
-  // ── Zoom control: Ctrl+=/−, Ctrl+0, Ctrl+Scroll ───────────────────────────
+  // Zoom control: Ctrl+Scroll and Ctrl+=/−/0, persisted to localStorage
   useEffect(() => {
+    const ZOOM_STEP = 0.1;
     const ZOOM_MIN = 0.5;
     const ZOOM_MAX = 2.0;
-    const ZOOM_STEP = 0.1;
-    const ZOOM_KEY = 'app-zoom-factor';
+    const LS_KEY = 'app-zoom-factor';
 
-    const clamp = (v) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(v * 10) / 10));
+    const clamp = (v) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v));
+    const round = (v) => Math.round(v * 10) / 10;
 
-    // Restore persisted zoom on mount
-    try {
-      const saved = parseFloat(localStorage.getItem(ZOOM_KEY));
-      if (saved && isFinite(saved)) window.api.setZoomFactor(clamp(saved));
-    } catch {
-      /* ignore */
-    }
-
-    const applyZoom = (delta) => {
-      const current = window.api.getZoomFactor();
-      const next = clamp(current + delta);
-      window.api.setZoomFactor(next);
-      try {
-        localStorage.setItem(ZOOM_KEY, String(next));
-      } catch {
-        /* ignore */
-      }
+    const applyZoom = (factor) => {
+      const clamped = clamp(round(factor));
+      localStorage.setItem(LS_KEY, String(clamped));
+      // Flush counter-scale state synchronously BEFORE applying zoom so the
+      // pill is already at the correct size when the page zooms — no jump.
+      flushSync(() => {
+        setZoomLevel(clamped);
+        setZoomKey((k) => k + 1);
+      });
+      window.api.setZoomFactor(clamped);
+      clearTimeout(zoomHideTimer.current);
+      zoomHideTimer.current = setTimeout(() => setZoomLevel(null), ZOOM_HIDE_DELAY);
     };
 
-    const handleKeyDown = (e) => {
+    // Restore persisted zoom (silently — no indicator on launch)
+    const saved = parseFloat(localStorage.getItem(LS_KEY));
+    if (!isNaN(saved)) {
+      const clamped = clamp(round(saved));
+      window.api.setZoomFactor(clamped);
+    }
+
+    const onWheel = (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const current = window.api.getZoomFactor();
+      applyZoom(e.deltaY < 0 ? current + ZOOM_STEP : current - ZOOM_STEP);
+    };
+
+    const onKeyDown = (e) => {
       if (!e.ctrlKey) return;
       if (e.key === '=' || e.key === '+') {
         e.preventDefault();
-        applyZoom(+ZOOM_STEP);
+        applyZoom(window.api.getZoomFactor() + ZOOM_STEP);
       } else if (e.key === '-') {
         e.preventDefault();
-        applyZoom(-ZOOM_STEP);
+        applyZoom(window.api.getZoomFactor() - ZOOM_STEP);
       } else if (e.key === '0') {
         e.preventDefault();
-        window.api.setZoomFactor(1);
-        try {
-          localStorage.removeItem(ZOOM_KEY);
-        } catch {
-          /* ignore */
-        }
+        applyZoom(1.0);
       }
     };
 
-    const handleWheel = (e) => {
-      if (!e.ctrlKey) return;
-      e.preventDefault();
-      applyZoom(e.deltaY < 0 ? +ZOOM_STEP : -ZOOM_STEP);
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('wheel', handleWheel, { passive: false });
+    window.addEventListener('wheel', onWheel, { passive: false });
+    window.addEventListener('keydown', onKeyDown);
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('wheel', onWheel);
+      window.removeEventListener('keydown', onKeyDown);
+      clearTimeout(zoomHideTimer.current);
     };
   }, []);
 
@@ -147,6 +152,26 @@ function App() {
               initialMode={exportState.mode}
               onClose={() => setExportState(null)}
             />
+          )}
+          {zoomLevel !== null && zoomLevel !== 1.0 && (
+            <button
+              className="zoom-indicator"
+              style={{ transform: `scale(${1 / zoomLevel})`, transformOrigin: 'top left' }}
+              onClick={() => {
+                clearTimeout(zoomHideTimer.current);
+                window.api.setZoomFactor(1.0);
+                localStorage.setItem('app-zoom-factor', '1');
+                setZoomLevel(null);
+              }}
+              onMouseEnter={() => clearTimeout(zoomHideTimer.current)}
+              onMouseLeave={() => {
+                zoomHideTimer.current = setTimeout(() => setZoomLevel(null), ZOOM_HIDE_DELAY);
+              }}
+              title="Reset zoom to 100%"
+            >
+              <span className="zoom-indicator-label">{Math.round(zoomLevel * 100)}% ✕</span>
+              <span key={zoomKey} className="zoom-indicator-bar" />
+            </button>
           )}
           {depsProgress && (
             <div className="deps-overlay">
