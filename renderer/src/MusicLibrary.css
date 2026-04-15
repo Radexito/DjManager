@@ -395,49 +395,6 @@
   cursor: default;
 }
 
-/* ── Shift Grid inline row ──────────────────────────────────────────────── */
-.context-menu-item--shift-grid {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  cursor: default;
-}
-
-.context-menu-item--shift-grid:hover {
-  background: transparent;
-}
-
-.grid-nudge-row {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.grid-nudge-btn {
-  background: #2a2a2a;
-  border: 1px solid #444;
-  border-radius: 3px;
-  color: #ccc;
-  font-size: 11px;
-  padding: 2px 5px;
-  cursor: pointer;
-  line-height: 1;
-}
-
-.grid-nudge-btn:hover {
-  background: #3a3a3a;
-  color: #fff;
-}
-
-.grid-offset-value {
-  min-width: 52px;
-  text-align: center;
-  font-size: 11px;
-  color: #7eb8f7;
-  font-variant-numeric: tabular-nums;
-}
-
 /* ── BPM cell grid-shift indicator dot ──────────────────────────────────── */
 .bpm-grid-shift-dot {
   display: inline-block;

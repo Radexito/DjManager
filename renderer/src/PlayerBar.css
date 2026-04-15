@@ -530,15 +530,20 @@
 .player-tap-wrap {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 0;
+  /* Fixed width: TAP button (54px) + gap (2px) + confirm button (22px) */
+  width: 78px;
+  flex-shrink: 0;
 }
 
 .player-tap-btn {
-  min-width: 44px;
+  width: 54px;
+  flex-shrink: 0;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  padding: 4px 8px;
+  padding: 4px 0;
+  text-align: center;
   border-radius: 4px;
   background: #2a2a2a;
   border: 1px solid #444;
@@ -553,7 +558,16 @@
 }
 
 .player-tap-apply {
+  width: 22px;
+  flex-shrink: 0;
+  margin-left: 2px;
   color: #7eb8f7;
   font-size: 13px;
-  padding: 4px 6px;
+  padding: 4px 0;
+  text-align: center;
+}
+
+.player-tap-apply--hidden {
+  visibility: hidden;
+  pointer-events: none;
 }

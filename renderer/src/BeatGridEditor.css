@@ -1,0 +1,223 @@
+/* ── Beat Grid Editor modal ──────────────────────────────────────────────── */
+
+.bge-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+
+.bge-modal {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  width: min(780px, 94vw);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.bge-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #2a2a2a;
+  gap: 12px;
+}
+
+.bge-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e0e0e0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.bge-track-name {
+  font-weight: 400;
+  color: #888;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bge-close {
+  background: none;
+  border: none;
+  color: #666;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.bge-close:hover {
+  color: #ccc;
+}
+
+/* ── Canvas ─────────────────────────────────────────────────────────────── */
+.bge-canvas-wrap {
+  position: relative;
+  background: #111;
+  cursor: grab;
+  user-select: none;
+}
+
+.bge-canvas-wrap:active {
+  cursor: grabbing;
+}
+
+.bge-canvas {
+  display: block;
+  width: 100%;
+  height: 130px;
+}
+
+.bge-canvas-hint {
+  position: absolute;
+  bottom: 4px;
+  right: 8px;
+  font-size: 10px;
+  color: #444;
+  pointer-events: none;
+}
+
+/* ── Controls ───────────────────────────────────────────────────────────── */
+.bge-controls {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.bge-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.bge-label {
+  font-size: 12px;
+  color: #888;
+  width: 80px;
+  flex-shrink: 0;
+}
+
+.bge-nudge-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.bge-nudge-btn {
+  background: #252525;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  color: #bbb;
+  font-size: 11px;
+  padding: 3px 7px;
+  cursor: pointer;
+  transition: background 0.08s;
+  font-variant-numeric: tabular-nums;
+}
+
+.bge-nudge-btn:hover {
+  background: #333;
+  color: #fff;
+}
+
+.bge-nudge-reset {
+  color: #888;
+  border-color: #333;
+}
+
+.bge-nudge-reset:hover {
+  color: #f7c07e;
+  border-color: #f7c07e;
+}
+
+.bge-offset-val {
+  min-width: 60px;
+  text-align: center;
+  font-size: 12px;
+  color: #7eb8f7;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+}
+
+.bge-bpm-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bge-bpm-input {
+  width: 80px;
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  padding: 3px 8px;
+  outline: none;
+}
+
+.bge-bpm-input:focus {
+  border-color: #7eb8f7;
+}
+
+.bge-bpm-hint {
+  font-size: 11px;
+  color: #555;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+.bge-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+}
+
+.bge-btn {
+  font-size: 12px;
+  padding: 5px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid #444;
+}
+
+.bge-btn--cancel {
+  background: #252525;
+  color: #aaa;
+}
+
+.bge-btn--cancel:hover {
+  background: #333;
+  color: #e0e0e0;
+}
+
+.bge-btn--apply {
+  background: #1a4a6a;
+  border-color: #7eb8f7;
+  color: #7eb8f7;
+  font-weight: 600;
+}
+
+.bge-btn--apply:hover {
+  background: #1e5a80;
+}
