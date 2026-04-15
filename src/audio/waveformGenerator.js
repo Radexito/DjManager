@@ -266,3 +266,28 @@ export async function generateWaveform(filePath, ffmpegBin = 'ffmpeg') {
   const samples = await extractPcm(filePath, ffmpegBin);
   return computeColumns(samples);
 }
+
+/**
+ * Generate waveform data optimised for the Beat Grid Editor UI.
+ *
+ * Returns:
+ *   detail   — pwv7 scroll waveform (3 bytes/col: treble, mid, bass each 0-255)
+ *              at COLS_PER_SEC columns per second (variable length)
+ *   overview — 4 bytes/col × PWV4_COLS cols [rms, bass, mid, treble] each 0-255
+ *              for the full-track navigation strip
+ *   numCols  — number of detail columns
+ *   colsPerSec — COLS_PER_SEC (150)
+ */
+export async function generateEditorWaveform(filePath, ffmpegBin = 'ffmpeg') {
+  const { pwv7, pwv4, numCols } = await generateWaveform(filePath, ffmpegBin);
+  // Build 4-byte/col overview [rms, bass, mid, treble] from pwv4
+  // pwv4 layout: [peak, complement, rms, bass, mid, treble] per col (6 bytes/col)
+  const overview = Buffer.alloc(PWV4_COLS * 4);
+  for (let i = 0; i < PWV4_COLS; i++) {
+    overview[i * 4 + 0] = pwv4[i * 6 + 2]; // rms
+    overview[i * 4 + 1] = pwv4[i * 6 + 3]; // bass
+    overview[i * 4 + 2] = pwv4[i * 6 + 4]; // mid
+    overview[i * 4 + 3] = pwv4[i * 6 + 5]; // treble
+  }
+  return { detail: pwv7, overview, numCols, colsPerSec: COLS_PER_SEC };
+}

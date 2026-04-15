@@ -27,7 +27,6 @@ import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
 import { parseQuery } from './searchParser.js';
 import TrackDetails from './TrackDetails.jsx';
-import CuePointsEditor from './CuePointsEditor.jsx';
 import RatingStars from './RatingStars.jsx';
 import BeatGridEditor from './BeatGridEditor.jsx';
 import './MusicLibrary.css';
@@ -499,7 +498,6 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const [beatGridEditorTrack, setBeatGridEditorTrack] = useState(null);
   const [detailsTrack, setDetailsTrack] = useState(null);
   const [detailsBulkTracks, setDetailsBulkTracks] = useState(null); // array | null
-  const [cueTrack, setCueTrack] = useState(null);
   const [bpmEditValue, setBpmEditValue] = useState(''); // value for inline Set BPM input
 
   const offsetRef = useRef(0);
@@ -866,8 +864,6 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     } else {
       setSelectedIds(new Set([track.id]));
       lastSelectedIndexRef.current = index;
-      // If the cue panel is already open, follow the selection
-      setCueTrack((prev) => (prev ? track : null));
     }
   }, []);
 
@@ -891,23 +887,11 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     setDetailsBulkTracks(null);
   }, []);
 
-  // ── Cue points panel ───────────────────────────────────────────────────────
+  // ── Cue column click — open Prepare Track window ──────────────────────────
 
   const handleCueClick = useCallback((track) => {
-    setCueTrack((prev) => (prev?.id === track.id ? null : track));
+    setBeatGridEditorTrack(track);
   }, []);
-
-  const handleCueClose = useCallback(() => setCueTrack(null), []);
-
-  const handleCuePointsChange = useCallback(
-    (pts) => {
-      setCueTrack((prev) => (prev ? { ...prev, cue_count: pts.length } : prev));
-      setTracks((prev) =>
-        prev.map((t) => (t.id === cueTrack?.id ? { ...t, cue_count: pts.length } : t))
-      );
-    },
-    [cueTrack?.id]
-  );
 
   const handleDetailsSave = useCallback((result) => {
     if (Array.isArray(result)) {
@@ -1358,7 +1342,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
 
   return (
     <div
-      className={`music-library${detailsTrack || detailsBulkTracks || cueTrack ? ' music-library--with-panel' : ''}`}
+      className={`music-library${detailsTrack || detailsBulkTracks ? ' music-library--with-panel' : ''}`}
     >
       <div className="music-library__main">
         {/* Playlist header bar */}
@@ -1958,17 +1942,19 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                       ✏️ Edit Details{selectionLabel}
                     </div>
 
-                    {/* ── Edit Cue Points ── */}
+                    {/* ── Prepare Track ── */}
                     {contextMenu?.targetTracks?.length === 1 && (
                       <div
                         className="context-menu-item"
                         onClick={() => {
-                          const track = contextMenu.targetTracks[0];
+                          const track =
+                            tracks.find((tr) => tr.id === contextMenu.targetTracks[0]?.id) ??
+                            contextMenu.targetTracks[0];
                           setContextMenu(null);
-                          handleCueClick(track);
+                          if (track) setBeatGridEditorTrack(track);
                         }}
                       >
-                        ◆ Edit Cue Points
+                        🎛 Prepare Track…
                       </div>
                     )}
 
@@ -2023,19 +2009,6 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                           >
                             ✓
                           </button>
-                        </div>
-                        <div className="context-menu-separator" />
-                        <div
-                          className="context-menu-item"
-                          onClick={() => {
-                            const t =
-                              tracks.find((tr) => tr.id === contextMenu?.track?.id) ??
-                              contextMenu?.track;
-                            setContextMenu(null);
-                            if (t) setBeatGridEditorTrack(t);
-                          }}
-                        >
-                          ⬡ Edit Beat Grid…
                         </div>
                       </SubItem>
                     </SubItem>
@@ -2101,18 +2074,6 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
           onCancel={handleDetailsClose}
         />
       )}
-      {cueTrack && (
-        <div className="cue-panel">
-          <div className="cue-panel__header">
-            <span className="cue-panel__title">{cueTrack.title}</span>
-            <button className="cue-panel__close" onClick={handleCueClose} title="Close">
-              ✕
-            </button>
-          </div>
-          <CuePointsEditor trackId={cueTrack.id} onCuePointsChange={handleCuePointsChange} />
-        </div>
-      )}
-
       {beatGridEditorTrack && (
         <BeatGridEditor
           track={beatGridEditorTrack}
