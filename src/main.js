@@ -56,6 +56,7 @@ import {
   getExistingSourceUrls,
   getPlaylistSourceUrls,
   getTrackWaveform,
+  updateTrackWaveform,
 } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import {
@@ -183,6 +184,39 @@ function createWindow() {
   }
 }
 
+async function autoGenerateMissingWaveforms() {
+  const tracks = getTracks({ limit: 999999 });
+  const missing = tracks.filter((t) => t.analyzed === 1 && t.waveform_overview == null);
+  if (missing.length === 0) return;
+
+  console.log(`[waveform] generating overviews for ${missing.length} tracks…`);
+  let completed = 0;
+
+  const sendProgress = (done = false) => {
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('waveform-gen-progress', {
+        completed,
+        total: missing.length,
+        done,
+      });
+    }
+  };
+
+  for (const track of missing) {
+    try {
+      const buf = await generateWaveformOverview(track.file_path, getFfmpegRuntimePath());
+      updateTrackWaveform(track.id, buf);
+    } catch (err) {
+      console.warn(`[waveform] failed for track ${track.id}:`, err.message);
+    }
+    completed++;
+    sendProgress();
+  }
+
+  sendProgress(true);
+  console.log(`[waveform] done — generated ${completed} overviews`);
+}
+
 async function initApp() {
   initLogger();
   console.log('Initializing database...');
@@ -206,6 +240,8 @@ async function initApp() {
   })
     .then(() => {
       if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+      // Auto-generate waveforms for any analyzed tracks missing overview data
+      autoGenerateMissingWaveforms();
     })
     .catch((err) => {
       console.error('[deps] Failed to download FFmpeg:', err.message);

@@ -637,26 +637,19 @@ function SettingsModal({ onClose }) {
               </div>
 
               <div className="settings-group">
-                <div className="settings-group-title">Generate for whole library</div>
+                <div className="settings-group-title">Regenerate waveforms</div>
                 <p className="settings-desc">
-                  Existing tracks do not have waveform data until generated here. New tracks are
-                  processed automatically after analysis.
+                  Missing waveforms are generated automatically on startup. Use this to
+                  force-rebuild all waveforms (e.g. after changing the color mode you want to
+                  preview).
                 </p>
                 <div className="settings-row">
                   <button
                     className="btn"
-                    onClick={() => handleGenerateWaveformsLibrary(false)}
-                    disabled={generatingWaveforms}
-                  >
-                    {generatingWaveforms ? 'Generating…' : 'Generate missing waveforms'}
-                  </button>
-                  <button
-                    className="btn btn-secondary"
                     onClick={() => handleGenerateWaveformsLibrary(true)}
                     disabled={generatingWaveforms}
-                    style={{ marginLeft: 8 }}
                   >
-                    Regenerate all
+                    {generatingWaveforms ? 'Generating…' : 'Regenerate all waveforms'}
                   </button>
                 </div>
                 {generatingWaveforms && waveformGenProgress && (
