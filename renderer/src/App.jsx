@@ -153,6 +153,7 @@ function App() {
             <button
               key={zoomKey}
               className="zoom-indicator"
+              style={{ transform: `scale(${1 / zoomLevel})`, transformOrigin: 'top left' }}
               onClick={() => {
                 clearTimeout(zoomHideTimer.current);
                 window.api.setZoomFactor(1.0);
