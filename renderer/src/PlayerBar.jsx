@@ -51,9 +51,6 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
   const seekingRef = useRef(false); // true while user drags
   const deviceWrapRef = useRef();
   const historyWrapRef = useRef();
-  const [tapBpm, setTapBpm] = useState(null); // computed BPM from taps, or null
-  const tapTimesRef = useRef([]); // timestamps of recent taps
-  const tapResetTimerRef = useRef(null); // clears tap sequence after 3s idle
 
   useEffect(() => {
     async function loadDevices() {
@@ -178,61 +175,6 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showHistory]);
-
-  const handleTap = () => {
-    const now = performance.now();
-    const times = tapTimesRef.current;
-
-    // Reset sequence if last tap was more than 3 seconds ago
-    if (times.length > 0 && now - times[times.length - 1] > 3000) {
-      times.length = 0;
-    }
-
-    times.push(now);
-
-    // Keep only the last 8 taps
-    if (times.length > 8) times.splice(0, times.length - 8);
-
-    // Need at least 2 taps to compute a BPM
-    if (times.length >= 2) {
-      const intervals = [];
-      for (let i = 1; i < times.length; i++) intervals.push(times[i] - times[i - 1]);
-      const avgMs = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-      const bpm = Math.round((60000 / avgMs) * 10) / 10;
-      setTapBpm(bpm);
-    }
-
-    // Reset 3s after the last tap
-    clearTimeout(tapResetTimerRef.current);
-    tapResetTimerRef.current = setTimeout(() => {
-      tapTimesRef.current = [];
-      setTapBpm(null);
-    }, 3000);
-  };
-
-  const applyTapBpm = async () => {
-    if (!currentTrack || tapBpm == null) return;
-    const bpm = tapBpm;
-    setTapBpm(null);
-    tapTimesRef.current = [];
-    clearTimeout(tapResetTimerRef.current);
-    patchCurrentTrack(currentTrack.id, { bpm_override: bpm });
-    await window.api.updateTrack(currentTrack.id, { bpm_override: bpm });
-  };
-
-  // 'T' key shortcut for tap tempo (only when not typing in an input)
-  useEffect(() => {
-    const handler = (e) => {
-      if (e.key !== 't' && e.key !== 'T') return;
-      const tag = document.activeElement?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable)
-        return;
-      e.preventDefault();
-      handleTap();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
 
   const artSrc = artworkUrl(
     currentTrack?.has_artwork ? currentTrack?.artwork_path : null,
@@ -399,20 +341,6 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
               ))}
             </div>
           )}
-        </div>
-
-        {/* Tap tempo */}
-        <div className="player-tap-wrap">
-          <button className="player-btn player-tap-btn" onClick={handleTap} title="Tap tempo (T)">
-            {tapBpm != null ? `${tapBpm}` : 'TAP'}
-          </button>
-          <button
-            className={`player-btn player-tap-apply${tapBpm == null || !currentTrack ? ' player-tap-apply--hidden' : ''}`}
-            onClick={applyTapBpm}
-            title={tapBpm != null ? `Set BPM to ${tapBpm} for current track` : ''}
-          >
-            ✓
-          </button>
         </div>
 
         {/* Playback history */}
