@@ -33,6 +33,7 @@ function Sidebar({
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
   const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
   const [analysisProgress, setAnalysisProgress] = useState(null); // { done, total } | null
+  const [waveformGenProgress, setWaveformGenProgress] = useState(null); // { completed, total } | null
   const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
   const [ytDlpCheckProgress, setYtDlpCheckProgress] = useState(null); // { checked, total } | null during fetch/check
   const [newPlaylistName, setNewPlaylistName] = useState('');
@@ -151,6 +152,18 @@ function Sidebar({
         setTimeout(() => setNormalizeProgress(null), 1500);
       } else {
         setNormalizeProgress({ completed: data.completed, total: data.total });
+      }
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (!window.api.onWaveformGenProgress) return;
+    const unsub = window.api.onWaveformGenProgress((data) => {
+      if (data.done) {
+        setTimeout(() => setWaveformGenProgress(null), 1500);
+      } else {
+        setWaveformGenProgress({ completed: data.completed, total: data.total });
       }
     });
     return unsub;
@@ -364,6 +377,24 @@ function Sidebar({
                 className="normalize-progress-fill"
                 style={{
                   width: `${Math.round((normalizeProgress.completed / normalizeProgress.total) * 100)}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
+        {waveformGenProgress && (
+          <div className="normalize-progress-wrap">
+            <div className="normalize-progress-label">
+              <span>Waveforms</span>
+              <span>
+                {waveformGenProgress.completed} / {waveformGenProgress.total}
+              </span>
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill"
+                style={{
+                  width: `${waveformGenProgress.total > 0 ? Math.round((waveformGenProgress.completed / waveformGenProgress.total) * 100) : 0}%`,
                 }}
               />
             </div>
