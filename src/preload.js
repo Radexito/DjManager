@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('api', {
   cancelAnalysis: (trackId) => ipcRenderer.invoke('cancel-analysis', trackId),
   removeTrack: (trackId) => ipcRenderer.invoke('remove-track', trackId),
   updateTrack: (id, data) => ipcRenderer.invoke('update-track', { id, data }),
+  getEditorWaveform: (trackId) => ipcRenderer.invoke('get-editor-waveform', trackId),
   adjustBpm: (payload) => ipcRenderer.invoke('adjust-bpm', payload),
 
   // Cue points

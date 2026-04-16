@@ -1,0 +1,460 @@
+/* ── Beat Grid Editor modal ──────────────────────────────────────────────── */
+
+.bge-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+
+.bge-modal {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  width: min(860px, 96vw);
+  max-height: min(96vh, 900px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.bge-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #2a2a2a;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.bge-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e0e0e0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.bge-track-name {
+  font-weight: 400;
+  color: #888;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bge-close {
+  background: none;
+  border: none;
+  color: #666;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.bge-close:hover {
+  color: #ccc;
+}
+
+/* ── Detail waveform canvas ─────────────────────────────────────────────── */
+.bge-canvas-wrap {
+  position: relative;
+  background: #111;
+  cursor: crosshair;
+  user-select: none;
+  border-bottom: 1px solid #1e1e1e;
+  flex-shrink: 0;
+}
+
+.bge-canvas-wrap:active {
+  cursor: grabbing;
+}
+
+.bge-canvas {
+  display: block;
+  width: 100%;
+  height: 160px;
+}
+
+.bge-canvas-hint {
+  position: absolute;
+  bottom: 4px;
+  right: 8px;
+  font-size: 10px;
+  color: #3a3a3a;
+  pointer-events: none;
+}
+
+.bge-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 11px;
+  color: #555;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ── Play/pause overlay button ───────────────────────────────────────────── */
+.bge-play-overlay {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: #ccc;
+  font-size: 13px;
+  width: 28px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background 0.1s,
+    border-color 0.1s,
+    color 0.1s;
+}
+
+.bge-play-overlay:hover {
+  background: rgba(224, 48, 48, 0.3);
+  border-color: rgba(224, 48, 48, 0.6);
+  color: #fff;
+}
+
+.bge-play-overlay--playing {
+  background: rgba(224, 48, 48, 0.2);
+  border-color: rgba(224, 48, 48, 0.5);
+  color: #e03030;
+}
+
+.bge-play-overlay--playing:hover {
+  background: rgba(224, 48, 48, 0.35);
+}
+
+/* ── Overview / navigation waveform ─────────────────────────────────────── */
+.bge-overview-wrap {
+  background: #0d0d0d;
+  cursor: pointer;
+  border-bottom: 1px solid #2a2a2a;
+  flex-shrink: 0;
+}
+
+.bge-overview-canvas {
+  display: block;
+  width: 100%;
+  height: 44px;
+}
+
+/* ── Controls ───────────────────────────────────────────────────────────── */
+.bge-controls {
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-bottom: 1px solid #2a2a2a;
+  flex-shrink: 0;
+}
+
+.bge-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bge-label {
+  font-size: 12px;
+  color: #888;
+  width: 80px;
+  flex-shrink: 0;
+}
+
+/* ── Nudge group ────────────────────────────────────────────────────────── */
+.bge-nudge-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.bge-nudge-btn {
+  background: #252525;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  color: #bbb;
+  font-size: 11px;
+  padding: 3px 7px;
+  cursor: pointer;
+  transition: background 0.08s;
+  font-variant-numeric: tabular-nums;
+}
+
+.bge-nudge-btn:hover {
+  background: #333;
+  color: #fff;
+}
+
+.bge-nudge-reset {
+  color: #888;
+  border-color: #333;
+}
+
+.bge-nudge-reset:hover {
+  color: #f7c07e;
+  border-color: #f7c07e;
+}
+
+.bge-offset-val {
+  min-width: 60px;
+  text-align: center;
+  font-size: 12px;
+  color: #7eb8f7;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+}
+
+/* ── Zoom controls (top-right of waveform) ──────────────────────────────── */
+.bge-zoom-controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.bge-zoom-btn {
+  background: none;
+  border: none;
+  color: #aaa;
+  font-size: 14px;
+  font-weight: 600;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  border-radius: 2px;
+  transition:
+    color 0.08s,
+    background 0.08s;
+}
+
+.bge-zoom-btn:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.bge-zoom-btn:disabled {
+  color: #444;
+  cursor: default;
+}
+
+.bge-zoom-label {
+  font-size: 10px;
+  color: #666;
+  min-width: 28px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── BPM + TAP inline row ───────────────────────────────────────────────── */
+.bge-bpm-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.bge-bpm-input {
+  width: 80px;
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  padding: 3px 8px;
+  outline: none;
+}
+
+.bge-bpm-input:focus {
+  border-color: #7eb8f7;
+}
+
+.bge-bpm-hint {
+  font-size: 11px;
+  color: #555;
+}
+
+.bge-bpm-hint--override {
+  color: #f7c07e;
+}
+
+/* ── TAP tempo ──────────────────────────────────────────────────────────── */
+.bge-tap-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bge-tap-btn {
+  min-width: 72px;
+  background: #252525;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  color: #bbb;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition:
+    background 0.08s,
+    border-color 0.08s,
+    color 0.08s;
+  font-variant-numeric: tabular-nums;
+}
+
+.bge-tap-btn:hover {
+  background: #333;
+  color: #fff;
+  border-color: #555;
+}
+
+.bge-tap-btn--active {
+  background: #1e3a1e;
+  border-color: #4caf50;
+  color: #7ed87e;
+}
+
+.bge-tap-apply-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* Hidden by default — shown when there's a tapped BPM */
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-4px);
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+}
+
+.bge-tap-apply-wrap--visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.bge-tap-arrow {
+  font-size: 12px;
+  color: #666;
+}
+
+.bge-tap-apply-btn {
+  background: #1a4a1a;
+  border: 1px solid #4caf50;
+  border-radius: 4px;
+  color: #7ed87e;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition:
+    background 0.08s,
+    box-shadow 0.08s;
+  font-variant-numeric: tabular-nums;
+  /* Pulse animation to draw attention */
+  animation: bge-tap-pulse 1.2s ease-in-out infinite;
+}
+
+.bge-tap-apply-btn:hover {
+  background: #1f5c1f;
+  box-shadow: 0 0 8px rgba(76, 175, 80, 0.4);
+  animation: none;
+}
+
+@keyframes bge-tap-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
+  }
+  50% {
+    box-shadow: 0 0 6px 2px rgba(76, 175, 80, 0.35);
+  }
+}
+
+/* ── Cue points section ─────────────────────────────────────────────────── */
+.bge-cue-section {
+  overflow-y: auto;
+  max-height: 220px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+/* Remove the top border that CuePointsEditor adds since we provide our own */
+.bge-cue-section .cpe {
+  border-top: none;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+.bge-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  flex-shrink: 0;
+}
+
+.bge-btn {
+  font-size: 12px;
+  padding: 5px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid #444;
+}
+
+.bge-btn--cancel {
+  background: #252525;
+  color: #aaa;
+}
+
+.bge-btn--cancel:hover {
+  background: #333;
+  color: #e0e0e0;
+}
+
+.bge-btn--apply {
+  background: #1a4a6a;
+  border-color: #7eb8f7;
+  color: #7eb8f7;
+  font-weight: 600;
+}
+
+.bge-btn--apply:hover {
+  background: #1e5a80;
+}
