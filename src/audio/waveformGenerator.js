@@ -266,3 +266,75 @@ export async function generateWaveform(filePath, ffmpegBin = 'ffmpeg') {
   const samples = await extractPcm(filePath, ffmpegBin);
   return computeColumns(samples);
 }
+
+/**
+ * Generate waveform data optimised for the Beat Grid Editor UI.
+ *
+ * Returns:
+ *   detail   — pwv7 scroll waveform (3 bytes/col: treble, mid, bass each 0-255)
+ *              at COLS_PER_SEC columns per second (variable length)
+ *   overview — 4 bytes/col × PWV4_COLS cols [rms, bass, mid, treble] each 0-255
+ *              for the full-track navigation strip
+ *   numCols  — number of detail columns
+ *   colsPerSec — COLS_PER_SEC (150)
+ */
+export async function generateEditorWaveform(filePath, ffmpegBin = 'ffmpeg') {
+  const { pwv7, pwv4, numCols } = await generateWaveform(filePath, ffmpegBin);
+  // Build 4-byte/col overview [rms, bass, mid, treble] from pwv4
+  // pwv4 layout: [peak, complement, rms, bass, mid, treble] per col (6 bytes/col)
+  const overview = Buffer.alloc(PWV4_COLS * 4);
+  for (let i = 0; i < PWV4_COLS; i++) {
+    overview[i * 4 + 0] = pwv4[i * 6 + 2]; // rms
+    overview[i * 4 + 1] = pwv4[i * 6 + 3]; // bass
+    overview[i * 4 + 2] = pwv4[i * 6 + 4]; // mid
+    overview[i * 4 + 3] = pwv4[i * 6 + 5]; // treble
+  }
+  return { detail: pwv7, overview, numCols, colsPerSec: COLS_PER_SEC };
+}
+
+/**
+ * Generate a compact waveform overview suitable for in-app seek bar rendering.
+ *
+ * Returns a flat Buffer of PWV4_COLS (1200) columns × 4 bytes each:
+ *   [rms, bass, mid, treble] per column, each 0-255.
+ *
+ * Supports all color modes (Classic / RGB / 3-Band) in the renderer.
+ * Total size: 4 800 bytes per track.
+ */
+export async function generateWaveformOverview(filePath, ffmpegBin = 'ffmpeg') {
+  const samples = await extractPcm(filePath, ffmpegBin);
+  const { pwv4 } = computeColumns(samples);
+  // pwv4 layout per column: [peak, 255-peak, rms, bass, mid, treble]
+  const numCols = pwv4.length / 6;
+
+  // Collect raw band values for per-band 95th-percentile normalisation.
+  // EMA-derived values have bass >> mid >> treble by ~10-30x; without this
+  // normalisation every track renders almost entirely blue regardless of
+  // colour mode. Each band is scaled to its own 95th percentile so the full
+  // 0-220 range is used for every channel.
+  const bassArr = new Array(numCols);
+  const midArr = new Array(numCols);
+  const trebleArr = new Array(numCols);
+  for (let i = 0; i < numCols; i++) {
+    bassArr[i] = pwv4[i * 6 + 3];
+    midArr[i] = pwv4[i * 6 + 4];
+    trebleArr[i] = pwv4[i * 6 + 5];
+  }
+
+  const p95 = (arr) => {
+    const sorted = arr.slice().sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length * 0.95)] || 1;
+  };
+  const maxBass = p95(bassArr);
+  const maxMid = p95(midArr);
+  const maxTreble = p95(trebleArr);
+
+  const out = Buffer.alloc(numCols * 4);
+  for (let i = 0; i < numCols; i++) {
+    out[i * 4 + 0] = pwv4[i * 6 + 2]; // rms (unchanged)
+    out[i * 4 + 1] = Math.min(255, Math.round((bassArr[i] / maxBass) * 220));
+    out[i * 4 + 2] = Math.min(255, Math.round((midArr[i] / maxMid) * 220));
+    out[i * 4 + 3] = Math.min(255, Math.round((trebleArr[i] / maxTreble) * 220));
+  }
+  return out;
+}

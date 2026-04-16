@@ -32,6 +32,7 @@ export function initDB() {
       intro_secs REAL,
       outro_secs REAL,
       beatgrid TEXT,
+      beatgrid_offset INTEGER DEFAULT 0,
 
       -- User
       rating INTEGER,
@@ -66,6 +67,8 @@ export function initDB() {
     'ALTER TABLE tracks ADD COLUMN artwork_path TEXT',
     'ALTER TABLE tracks ADD COLUMN normalized_file_path TEXT',
     'ALTER TABLE tracks ADD COLUMN source_loudness REAL',
+    'ALTER TABLE tracks ADD COLUMN beatgrid_offset INTEGER DEFAULT 0',
+    'ALTER TABLE tracks ADD COLUMN waveform_overview BLOB',
   ]) {
     try {
       db.prepare(col).run();
@@ -185,4 +188,9 @@ export function initDB() {
     ON cue_points(track_id)
   `
   ).run();
+
+  // #209: per-cue export enable/disable toggle
+  try {
+    db.prepare('ALTER TABLE cue_points ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1').run();
+  } catch {}
 }

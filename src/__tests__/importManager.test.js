@@ -24,6 +24,7 @@ vi.mock('electron', () => ({
 vi.mock('worker_threads', () => ({
   Worker: vi.fn(function () {
     this.on = vi.fn();
+    this.terminate = vi.fn();
   }),
 }));
 
@@ -40,6 +41,11 @@ vi.mock('child_process', () => ({
 
 vi.mock('../db/settingsRepository.js', () => ({
   getSetting: vi.fn().mockReturnValue(null),
+}));
+
+vi.mock('../db/cuePointRepository.js', () => ({
+  getCuePoints: vi.fn().mockReturnValue([]),
+  addCuePoint: vi.fn().mockReturnValue(1),
 }));
 
 const FAKE_HASH = 'deadbeef1234567890abcdef1234567890abcdef';
