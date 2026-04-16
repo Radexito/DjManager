@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import { app, BrowserWindow, ipcMain, dialog, Menu, MenuItem, shell } from 'electron';
 
@@ -26,6 +27,7 @@ if (process.platform === 'linux') {
   app.commandLine.appendSwitch('no-zygote');
 }
 import { initDB } from './db/migrations.js';
+import { closeDB } from './db/database.js';
 import {
   createPlaylist,
   findOrCreatePlaylist,
@@ -55,11 +57,14 @@ import {
   getNormalizedTrackCount,
   getExistingSourceUrls,
   getPlaylistSourceUrls,
+  getTrackWaveform,
+  updateTrackWaveform,
 } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import {
   importAudioFile,
   spawnAnalysis,
+  cancelAnalysis,
   getLibraryBase,
   normalizeAudioFile,
 } from './audio/importManager.js';
@@ -80,7 +85,9 @@ import {
   downloadTidal,
   fetchTidalInfo,
 } from './audio/tidalDlManager.js';
+import { generateWaveformOverview } from './audio/waveformGenerator.js';
 import { ensureDeps, getFfmpegRuntimePath } from './deps.js';
+import { generateEditorWaveform } from './audio/waveformGenerator.js';
 import {
   getInstalledVersions,
   checkForUpdates,
@@ -95,12 +102,14 @@ import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtil
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
+import { getResetCleanupTargets, startResetCleanup } from './resetCleanup.js';
 import {
   getCuePoints,
   addCuePoint,
   updateCuePoint,
   deleteCuePoint,
   deleteAllCuePoints,
+  deleteAllCuePointsLibrary,
 } from './db/cuePointRepository.js';
 import { generateCuePoints } from './audio/cueGen.js';
 
@@ -170,7 +179,6 @@ function createWindow() {
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'));
-    // Block DevTools keyboard shortcut in production
     mainWindow.webContents.on('before-input-event', (event, input) => {
       if (input.key === 'F12' || (input.control && input.shift && input.key === 'I')) {
         event.preventDefault();
@@ -179,8 +187,71 @@ function createWindow() {
   }
 }
 
+function logDiagnostics() {
+  const userData = app.getPath('userData');
+  const binDir = path.join(userData, 'bin');
+  const keyPaths = {
+    userData,
+    bin: binDir,
+    'ffmpeg.exe': path.join(binDir, 'ffmpeg', 'ffmpeg.exe'),
+    'ffprobe.exe': path.join(binDir, 'ffmpeg', 'ffprobe.exe'),
+    'analysis.exe': path.join(binDir, 'analysis.exe'),
+    'yt-dlp.exe': path.join(binDir, 'yt-dlp.exe'),
+  };
+
+  console.log('[diag] ── Windows 11 diagnostics ──────────────────────────');
+  console.log(`[diag] os.platform   = ${os.platform()}`);
+  console.log(`[diag] os.release    = ${os.release()}`);
+  console.log(`[diag] os.version    = ${os.version()}`);
+  console.log(`[diag] process.arch  = ${process.arch}`);
+  console.log(`[diag] app.version   = ${app.getVersion()}`);
+  console.log('[diag] key paths (length / exists):');
+  for (const [label, p] of Object.entries(keyPaths)) {
+    const exists = fs.existsSync(p);
+    const tooLong = p.length >= 260;
+    console.log(
+      `[diag]   ${label.padEnd(14)} len=${p.length}${tooLong ? ' ⚠ NEAR/OVER MAX_PATH' : ''} exists=${exists}  ${p}`
+    );
+  }
+  console.log('[diag] ─────────────────────────────────────────────────────');
+}
+
+async function autoGenerateMissingWaveforms() {
+  const tracks = getTracks({ limit: 999999 });
+  const missing = tracks.filter((t) => t.analyzed === 1 && t.waveform_overview == null);
+  if (missing.length === 0) return;
+
+  console.log(`[waveform] generating overviews for ${missing.length} tracks…`);
+  let completed = 0;
+
+  const sendProgress = (done = false) => {
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('waveform-gen-progress', {
+        completed,
+        total: missing.length,
+        done,
+      });
+    }
+  };
+
+  for (const track of missing) {
+    try {
+      const buf = await generateWaveformOverview(track.file_path, getFfmpegRuntimePath());
+      updateTrackWaveform(track.id, buf);
+    } catch (err) {
+      console.warn(`[waveform] failed for track ${track.id}:`, err.message);
+    }
+    completed++;
+    sendProgress();
+  }
+
+  sendProgress(true);
+  console.log(`[waveform] done — generated ${completed} overviews`);
+}
+
 async function initApp() {
   initLogger();
+  if (process.platform === 'win32') logDiagnostics();
   console.log('Initializing database...');
   initDB();
   await startMediaServer();
@@ -202,6 +273,8 @@ async function initApp() {
   })
     .then(() => {
       if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+      // Auto-generate waveforms for any analyzed tracks missing overview data
+      autoGenerateMissingWaveforms();
     })
     .catch((err) => {
       console.error('[deps] Failed to download FFmpeg:', err.message);
@@ -223,6 +296,10 @@ async function initApp() {
 ipcMain.handle('get-media-port', () => mediaServerPort);
 ipcMain.handle('get-tracks', (_, params) => getTracks(params));
 ipcMain.handle('get-track-ids', (_, params) => getTrackIds(params));
+ipcMain.handle('get-track-waveform', (_, trackId) => {
+  const buf = getTrackWaveform(trackId);
+  return buf ? new Uint8Array(buf) : null;
+});
 ipcMain.handle('get-setting', (_, key, def) => getSetting(key, def));
 ipcMain.handle('set-setting', (_, key, value) => setSetting(key, value));
 ipcMain.handle('get-library-path', () => getLibraryBase());
@@ -400,6 +477,10 @@ ipcMain.handle('reanalyze-track', (_, trackId) => {
   spawnAnalysis(trackId, track.file_path);
   return { ok: true };
 });
+ipcMain.handle('cancel-analysis', (_, trackId) => {
+  const cancelled = cancelAnalysis(trackId);
+  return { cancelled };
+});
 ipcMain.handle('remove-track', (_, trackId) => {
   removeTrack(trackId); // ON DELETE CASCADE removes playlist_tracks rows
   if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
@@ -407,8 +488,12 @@ ipcMain.handle('remove-track', (_, trackId) => {
 });
 ipcMain.handle('update-track', (_, { id, data }) => {
   updateTrack(id, data);
-  // Fire-and-forget ID3 tag write-back (non-blocking, best-effort)
   const track = getTrackById(id);
+  // Notify renderer so MusicLibrary + PlayerContext stay in sync
+  if (global.mainWindow) {
+    global.mainWindow.webContents.send('track-updated', { trackId: id, analysis: data });
+  }
+  // Fire-and-forget ID3 tag write-back (non-blocking, best-effort)
   if (track?.file_path) {
     writeId3Tags(track.file_path, data).catch((e) =>
       console.error('[update-track] id3 write failed:', e.message)
@@ -416,6 +501,18 @@ ipcMain.handle('update-track', (_, { id, data }) => {
   }
   return { ok: true };
 });
+ipcMain.handle('get-editor-waveform', async (_, trackId) => {
+  const track = getTrackById(trackId);
+  if (!track?.file_path) return null;
+  try {
+    const result = await generateEditorWaveform(track.file_path, getFfmpegRuntimePath());
+    return result;
+  } catch (e) {
+    console.error('[get-editor-waveform]', e.message);
+    return null;
+  }
+});
+
 ipcMain.handle('adjust-bpm', (_, { trackIds, factor }) => {
   if (factor !== 2 && factor !== 0.5) throw new Error('Invalid factor: must be 2 or 0.5');
   if (!Array.isArray(trackIds) || trackIds.length === 0 || trackIds.length > 500) {
@@ -441,8 +538,8 @@ ipcMain.handle('add-cue-point', (_, { trackId, positionMs, label, color, hotCueI
   return { id };
 });
 
-ipcMain.handle('update-cue-point', (_, { id, label, color, hotCueIndex }) => {
-  updateCuePoint(id, { label, color, hotCueIndex });
+ipcMain.handle('update-cue-point', (_, { id, label, color, hotCueIndex, enabled }) => {
+  updateCuePoint(id, { label, color, hotCueIndex, enabled });
   return { ok: true };
 });
 
@@ -458,6 +555,96 @@ ipcMain.handle('generate-cue-points', (_, trackId) => {
   const generated = generateCuePoints(track);
   generated.forEach((cue) => addCuePoint({ trackId, ...cue }));
   return getCuePoints(trackId);
+});
+
+ipcMain.handle('generate-cue-points-library', (_, { overwrite = false } = {}) => {
+  const tracks = getTracks({ limit: 999999 });
+  const analyzed = tracks.filter((t) => t.analyzed === 1);
+  const total = analyzed.length;
+  let generated = 0;
+  let skipped = 0;
+
+  const sendProgress = (done = false) => {
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('cue-gen-progress', {
+        completed: generated + skipped,
+        total,
+        done,
+      });
+    }
+  };
+
+  for (const track of analyzed) {
+    const existing = getCuePoints(track.id);
+    if (!overwrite && existing.length > 0) {
+      skipped++;
+      sendProgress();
+      continue;
+    }
+    deleteAllCuePoints(track.id);
+    const cues = generateCuePoints(track);
+    cues.forEach((cue) => addCuePoint({ trackId: track.id, ...cue }));
+    generated++;
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('cue-points-updated', {
+        trackId: track.id,
+        cueCount: cues.length,
+      });
+    }
+    sendProgress();
+  }
+
+  sendProgress(true);
+  return { generated, skipped, total };
+});
+
+ipcMain.handle('delete-all-cue-points-library', () => {
+  const affected = deleteAllCuePointsLibrary();
+  if (global.mainWindow) {
+    for (const trackId of affected) {
+      global.mainWindow.webContents.send('cue-points-updated', { trackId, cueCount: 0 });
+    }
+  }
+  return { deleted: affected.length };
+});
+
+// Generate waveform overviews for all analyzed tracks in the library
+ipcMain.handle('generate-waveforms-library', async (_, { overwrite = false } = {}) => {
+  const tracks = getTracks({ limit: 999999 });
+  const analyzed = tracks.filter((t) => t.analyzed === 1);
+  const total = analyzed.length;
+  let generated = 0;
+  let skipped = 0;
+
+  const sendProgress = (done = false) => {
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('waveform-gen-progress', {
+        completed: generated + skipped,
+        total,
+        done,
+      });
+    }
+  };
+
+  for (const track of analyzed) {
+    if (!overwrite && track.waveform_overview != null) {
+      skipped++;
+      sendProgress();
+      continue;
+    }
+    try {
+      const buf = await generateWaveformOverview(track.file_path, getFfmpegRuntimePath());
+      updateTrackWaveform(track.id, buf);
+      generated++;
+    } catch (err) {
+      console.warn(`[waveform-gen] failed for track ${track.id}:`, err.message);
+      skipped++;
+    }
+    sendProgress();
+  }
+
+  sendProgress(true);
+  return { generated, skipped, total };
 });
 
 // Playlist IPC handlers
@@ -614,14 +801,16 @@ ipcMain.handle('clear-library', async () => {
 });
 
 ipcMain.handle('clear-user-data', async () => {
-  const toDelete = [app.getPath('userData'), app.getPath('cache'), app.getPath('logs')];
-  app.on('quit', () => {
-    for (const p of toDelete) {
-      try {
-        if (fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true });
-      } catch {}
-    }
+  const toDelete = getResetCleanupTargets({
+    userDataPath: app.getPath('userData'),
+    cachePath: app.getPath('cache'),
+    logsPath: app.getPath('logs'),
   });
+  // Run the actual deletion in a detached helper after this process exits so
+  // Windows/Electron file handles cannot keep the database or userData tree
+  // alive during the reset.
+  closeDB();
+  startResetCleanup({ parentPid: process.pid, targets: toDelete });
   app.quit();
 });
 
@@ -1296,9 +1485,10 @@ ipcMain.handle(
             sourceFilePath,
             beatgrid: t.beatgrid ?? null,
             bpm: t.bpm_override ?? t.bpm ?? 0,
+            beatgridOffset: t.beatgrid_offset ?? 0,
             usbRoot,
             ffmpegPath: getFfmpegRuntimePath(),
-            cuePoints: getCuePoints(t.id),
+            cuePoints: getCuePoints(t.id).filter((c) => c.enabled !== 0),
           });
         } catch (err) {
           console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
@@ -1450,9 +1640,10 @@ ipcMain.handle(
             sourceFilePath,
             beatgrid: t.beatgrid ?? null,
             bpm: t.bpm_override ?? t.bpm ?? 0,
+            beatgridOffset: t.beatgrid_offset ?? 0,
             usbRoot,
             ffmpegPath: getFfmpegRuntimePath(),
-            cuePoints: getCuePoints(t.id),
+            cuePoints: getCuePoints(t.id).filter((c) => c.enabled !== 0),
           });
         } catch (err) {
           console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
