@@ -66,6 +66,7 @@ export function initDB() {
     'ALTER TABLE tracks ADD COLUMN artwork_path TEXT',
     'ALTER TABLE tracks ADD COLUMN normalized_file_path TEXT',
     'ALTER TABLE tracks ADD COLUMN source_loudness REAL',
+    'ALTER TABLE tracks ADD COLUMN waveform_overview BLOB',
   ]) {
     try {
       db.prepare(col).run();
