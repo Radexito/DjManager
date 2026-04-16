@@ -34,7 +34,6 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     setDevice,
     setVolume,
     play,
-    patchCurrentTrack,
     audioRef,
   } = usePlayer();
 

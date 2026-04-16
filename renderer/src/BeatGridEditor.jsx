@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { usePlayer } from './PlayerContext.jsx';
 import CuePointsEditor from './CuePointsEditor.jsx';
 import './BeatGridEditor.css';
@@ -302,8 +302,6 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
   const trackDurationMs = (track.duration ?? duration ?? 0) * 1000;
   const isThisTrack = currentTrack?.id === track.id;
 
-  seekRef.current = seek;
-
   // Live preview BPM: use whatever is in the input field (so tapping updates grid immediately)
   const previewBpm = (() => {
     const p = parseFloat(bpmInput);
@@ -311,14 +309,19 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
   })();
 
   const beats = computeBeats(track.beatgrid, previewBpm, offset);
-  beatsRef.current = beats;
 
-  // Keep zoom ref in sync with state
-  viewMsRef.current = ZOOM_LEVELS[zoomIdx];
-
-  trackDurationMsRef.current = trackDurationMs;
-  isPlayingRef.current = isPlaying;
-  isThisTrackRef.current = isThisTrack;
+  // Keep refs in sync with latest render values so RAF callbacks always read
+  // current state without stale-closure issues. useLayoutEffect runs
+  // synchronously after every render (before paint) — equivalent to assigning
+  // during render but avoids the react-compiler lint rule.
+  useLayoutEffect(() => {
+    seekRef.current = seek;
+    beatsRef.current = beats;
+    viewMsRef.current = ZOOM_LEVELS[zoomIdx];
+    trackDurationMsRef.current = trackDurationMs;
+    isPlayingRef.current = isPlaying;
+    isThisTrackRef.current = isThisTrack;
+  });
 
   useEffect(() => {
     currentTimeSecRef.current = currentTime;
