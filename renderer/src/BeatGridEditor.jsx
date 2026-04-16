@@ -67,16 +67,22 @@ function drawDetail(canvas, detail, viewCenter, beats, cuePoints, viewMs) {
       const col = Math.floor((msAtPx / totalMs) * numCols);
       if (col < 0 || col >= numCols) continue;
 
-      const treble = detail[col * 3 + 0] / 255;
-      const mid = detail[col * 3 + 1] / 255;
-      const bass = detail[col * 3 + 2] / 255;
+      const treble = detail[col * 3 + 0];
+      const mid = detail[col * 3 + 1];
+      const bass = detail[col * 3 + 2];
 
-      const amplitude = Math.max(treble, mid, bass);
+      const amplitude = Math.max(treble, mid, bass) / 255;
       const halfH = Math.max(1, amplitude * midY * 0.85);
 
-      const r = Math.round(treble * 255);
-      const g = Math.round(mid * 255);
-      const b = Math.round(bass * 180 + 75);
+      // Gamma-compress to prevent bass domination (same logic as PlayerBar)
+      const bassC = Math.pow(bass / 255, 0.55);
+      const midC = Math.pow(mid / 255, 0.3);
+      const trebleC = Math.pow(treble / 255, 0.2);
+      const dominant = Math.max(bassC, midC, trebleC) || 0.001;
+      const brightness = Math.min(1, amplitude * 2.5);
+      const r = Math.round((trebleC / dominant) * brightness * 255);
+      const g = Math.round((midC / dominant) * brightness * 255);
+      const b = Math.round((bassC / dominant) * brightness * 255);
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(px, midY - halfH, 1, halfH * 2);
     }
@@ -203,16 +209,22 @@ function drawOverview(canvas, overview, viewCenter, durationMs, playheadMs, cueP
       if (col >= numCols) continue;
 
       const rms = overview[col * 4 + 0] / 255;
-      const bass = overview[col * 4 + 1] / 255;
-      const mid = overview[col * 4 + 2] / 255;
-      const treble = overview[col * 4 + 3] / 255;
+      const bass = overview[col * 4 + 1];
+      const mid = overview[col * 4 + 2];
+      const treble = overview[col * 4 + 3];
 
-      const amplitude = Math.max(rms, bass, mid, treble);
+      const amplitude = Math.max(rms, bass / 255, mid / 255, treble / 255);
       const halfH = Math.max(1, amplitude * midY * 0.9);
 
-      const r = Math.round(treble * 220);
-      const g = Math.round(mid * 200);
-      const b = Math.round(bass * 160 + 60);
+      // Gamma-compress to prevent bass domination (same logic as PlayerBar)
+      const bassC = Math.pow(bass / 255, 0.55);
+      const midC = Math.pow(mid / 255, 0.3);
+      const trebleC = Math.pow(treble / 255, 0.2);
+      const dominant = Math.max(bassC, midC, trebleC) || 0.001;
+      const brightness = Math.min(1, rms * 2.5);
+      const r = Math.round((trebleC / dominant) * brightness * 255);
+      const g = Math.round((midC / dominant) * brightness * 255);
+      const b = Math.round((bassC / dominant) * brightness * 255);
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(px, midY - halfH, 1, halfH * 2);
     }
@@ -270,6 +282,9 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
     return bpm > 0 ? String(Math.round(bpm * 10) / 10) : '';
   });
   const [waveformLoading, setWaveformLoading] = useState(true);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const initialCuesRef = useRef(null);
+  const showCancelConfirmRef = useRef(false);
 
   // Zoom level — index into ZOOM_LEVELS
   const [zoomIdx, setZoomIdx] = useState(3); // default: 8000 ms
@@ -289,14 +304,13 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
   const waveformOverviewRef = useRef(null);
   const beatsRef = useRef([]);
   const cuePointsRef = useRef([]);
-  const viewCenterRef = useRef(-1000); // 1 s pre-roll so track start sits right of the playhead
+  const viewCenterRef = useRef(0); // track start at playhead on open
   const trackDurationMsRef = useRef(0);
   const isPlayingRef = useRef(false);
   const isThisTrackRef = useRef(false);
   const currentTimeSecRef = useRef(0);
   const lastTimeUpdateRef = useRef(0);
   const userScrollingRef = useRef(false);
-  const wheelTimerRef = useRef(null);
   const seekRef = useRef(seek);
 
   const trackDurationMs = (track.duration ?? duration ?? 0) * 1000;
@@ -321,6 +335,7 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
     trackDurationMsRef.current = trackDurationMs;
     isPlayingRef.current = isPlaying;
     isThisTrackRef.current = isThisTrack;
+    showCancelConfirmRef.current = showCancelConfirm;
   });
 
   useEffect(() => {
@@ -357,21 +372,14 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
   useEffect(() => {
     let alive = true;
     window.api.getCuePoints(track.id).then((pts) => {
-      if (alive) cuePointsRef.current = pts ?? [];
+      if (!alive) return;
+      const list = pts ?? [];
+      cuePointsRef.current = list;
+      if (initialCuesRef.current === null) initialCuesRef.current = list;
     });
     return () => {
       alive = false;
     };
-  }, [track.id]);
-
-  useEffect(() => {
-    const unsub = window.api.onCuePointsUpdated(({ trackId }) => {
-      if (trackId !== track.id) return;
-      window.api.getCuePoints(track.id).then((pts) => {
-        cuePointsRef.current = pts ?? [];
-      });
-    });
-    return unsub;
   }, [track.id]);
 
   // ── RAF loop ──────────────────────────────────────────────────────────────
@@ -424,8 +432,43 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
     return () => ro.disconnect();
   }, []);
 
-  // ── Close — stop playback ─────────────────────────────────────────────────
+  // ── Dirty check ───────────────────────────────────────────────────────────
+  const computeIsDirty = useCallback(() => {
+    const initial = initialCuesRef.current;
+    if (initial === null) return false; // cues not loaded yet
+    const pending = cuePointsRef.current;
+    const initialBpmStr = (() => {
+      const bpm = track.bpm_override ?? track.bpm ?? 0;
+      return bpm > 0 ? String(Math.round(bpm * 10) / 10) : '';
+    })();
+    if (bpmInput !== initialBpmStr || offset !== (track.beatgrid_offset ?? 0)) return true;
+    if (initial.length !== pending.length) return true;
+    return initial.some((c, i) => {
+      const p = pending[i];
+      return (
+        !p ||
+        c.id !== p.id ||
+        c.position_ms !== p.position_ms ||
+        c.hot_cue_index !== p.hot_cue_index ||
+        c.color !== p.color ||
+        (c.label ?? '') !== (p.label ?? '')
+      );
+    });
+  }, [bpmInput, offset, track]);
+
+  // ── Close — show confirmation if there are unsaved changes ────────────────
   const handleClose = useCallback(() => {
+    if (computeIsDirty()) {
+      setShowCancelConfirm(true);
+      return;
+    }
+    if (isThisTrackRef.current) stop();
+    onClose();
+  }, [computeIsDirty, stop, onClose]);
+
+  // Discard: nothing was written to DB, so just close
+  const handleForceClose = useCallback(() => {
+    setShowCancelConfirm(false);
     if (isThisTrackRef.current) stop();
     onClose();
   }, [stop, onClose]);
@@ -486,21 +529,23 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
     userScrollingRef.current = false;
   };
 
-  // ── Wheel to scroll ───────────────────────────────────────────────────────
+  // ── Wheel to zoom ─────────────────────────────────────────────────────────
   const onDetailWheel = useCallback((e) => {
     e.preventDefault();
-    userScrollingRef.current = true;
-    const canvas = detailCanvasRef.current;
-    if (!canvas) return;
-    const pxPerMs = canvas.offsetWidth / viewMsRef.current;
-    const deltaMs = e.deltaX / pxPerMs || e.deltaY / pxPerMs;
-    const maxCenter = trackDurationMsRef.current || 600_000;
-    viewCenterRef.current = Math.max(0, Math.min(maxCenter, viewCenterRef.current + deltaMs));
-    clearTimeout(wheelTimerRef.current);
-    // Short delay so a scroll burst doesn't immediately snap back to playhead
-    wheelTimerRef.current = setTimeout(() => {
-      userScrollingRef.current = false;
-    }, 600);
+    const delta = e.deltaY || e.deltaX;
+    if (delta < 0) {
+      setZoomIdx((i) => {
+        const next = Math.max(0, i - 1);
+        viewMsRef.current = ZOOM_LEVELS[next];
+        return next;
+      });
+    } else if (delta > 0) {
+      setZoomIdx((i) => {
+        const next = Math.min(ZOOM_LEVELS.length - 1, i + 1);
+        viewMsRef.current = ZOOM_LEVELS[next];
+        return next;
+      });
+    }
   }, []);
 
   // ── Overview click-to-jump ────────────────────────────────────────────────
@@ -527,7 +572,15 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
     if (isThisTrack) {
       togglePlay();
     } else {
+      // Start from wherever the user scrolled the waveform to (or 0 if untouched).
+      const startMs = Math.max(0, viewCenterRef.current);
+      const startSec = startMs / 1000;
+      currentTimeSecRef.current = startSec;
+      lastTimeUpdateRef.current = performance.now();
       play(track, [track], 0, null, null);
+      // play() resets audio.src, clearing currentTime to 0. Defer the seek by
+      // one frame so the element has initialised before we set currentTime.
+      if (startSec > 0) requestAnimationFrame(() => seekRef.current(startSec));
       userScrollingRef.current = false;
     }
   }, [isThisTrack, togglePlay, play, track]);
@@ -564,19 +617,75 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
     clearTimeout(tapResetTimerRef.current);
   }, [tapBpm]);
 
-  // ── Apply ─────────────────────────────────────────────────────────────────
-  const handleApply = () => {
+  // ── Apply — commit all pending cue changes, then save BPM/offset ──────────
+  const handleApply = async () => {
     const parsed = parseFloat(bpmInput);
     const bpmOverride = Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 10) / 10 : null;
+
+    // Diff pending cues (local state) against initial DB snapshot
+    const initial = initialCuesRef.current ?? [];
+    const pending = cuePointsRef.current;
+    const initialMap = new Map(initial.map((c) => [String(c.id), c]));
+    const pendingIds = new Set(pending.map((c) => String(c.id)));
+
+    // Delete cues removed during this session
+    for (const c of initial) {
+      if (!pendingIds.has(String(c.id))) await window.api.deleteCuePoint(c.id);
+    }
+    // Add new (temp ID) cues and update modified existing cues
+    for (const c of pending) {
+      const sid = String(c.id);
+      if (sid.startsWith('tmp-')) {
+        await window.api.addCuePoint({
+          trackId: track.id,
+          positionMs: c.position_ms,
+          label: c.label ?? '',
+          color: c.color ?? '#00b4d8',
+          hotCueIndex: c.hot_cue_index,
+        });
+      } else if (initialMap.has(sid)) {
+        const orig = initialMap.get(sid);
+        if (
+          orig.color !== c.color ||
+          (orig.label ?? '') !== (c.label ?? '') ||
+          orig.hot_cue_index !== c.hot_cue_index ||
+          orig.enabled !== c.enabled
+        ) {
+          await window.api.updateCuePoint(c.id, {
+            color: c.color,
+            label: c.label ?? '',
+            hotCueIndex: c.hot_cue_index,
+          });
+        }
+      }
+    }
+
     onApply(track.id, { beatgrid_offset: offset, bpm_override: bpmOverride });
     onClose();
   };
 
+  // Keep a ref to handleApply so the keyboard handler always calls the current
+  // version without needing it in the deps array (it closes over offset/bpmInput
+  // which are already tracked below).
+  const handleApplyRef = useRef(handleApply);
+  useLayoutEffect(() => {
+    handleApplyRef.current = handleApply;
+  });
+
   // ── Keyboard ──────────────────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e) => {
-      if (e.target.tagName === 'INPUT') return;
-      if (e.key === 'Escape') handleClose();
+      // Allow normal typing in inputs, but Space must still work for play/pause
+      // even when a button has focus — only block in real text inputs.
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.key === 'Escape') {
+        if (showCancelConfirmRef.current) {
+          setShowCancelConfirm(false);
+          return;
+        }
+        handleClose();
+        return;
+      }
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         nudge(e.shiftKey ? -10 : -1);
@@ -587,6 +696,9 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
       }
       if (e.key === ' ') {
         e.preventDefault();
+        // stopPropagation prevents PlayerContext's own Space handler (bubble phase)
+        // from immediately reversing the play/pause we just triggered.
+        e.stopPropagation();
         handlePlayPause();
       }
       if (e.key === 't' || e.key === 'T') {
@@ -595,15 +707,28 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
       }
       if (e.key === '+' || e.key === '=') zoomIn();
       if (e.key === '-') zoomOut();
-      if (e.key === 'Enter') handleApply();
+      if (e.key === 'Enter') handleApplyRef.current();
     };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [offset, bpmInput, handlePlayPause, handleClose, handleTap]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Capture phase: fires before any focused element (buttons, etc.) so Space
+    // can't be consumed by a focused Cancel/Apply button before we handle it.
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
+  }, [handlePlayPause, handleClose, handleTap]);
 
   // ── Cue points callback ───────────────────────────────────────────────────
+  // Called by CuePointsEditor whenever its local state changes (deferred mode).
+  // Keeps cuePointsRef in sync for the RAF renderer, and captures the initial
+  // snapshot on first call so Apply can diff against it.
   const handleCuePointsChange = useCallback((pts) => {
-    cuePointsRef.current = pts ?? [];
+    const list = pts ?? [];
+    cuePointsRef.current = list;
+    if (initialCuesRef.current === null) initialCuesRef.current = list;
+  }, []);
+
+  // Called by CuePointsEditor after auto-generate writes to DB — rebase the
+  // initial snapshot so Cancel after auto-generate doesn't undo it.
+  const handleCuesRebase = useCallback((pts) => {
+    initialCuesRef.current = pts ?? [];
   }, []);
 
   const offsetLabel = offset === 0 ? '0 ms' : `${offset > 0 ? '+' : ''}${offset} ms`;
@@ -668,10 +793,10 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
             ref={detailCanvasRef}
             className="bge-canvas"
             onMouseDown={onDetailMouseDown}
-            title="Click to seek · Drag to scrub · Scroll to navigate"
+            title="Click to seek · Drag to scrub · Scroll to zoom"
           />
           <div className="bge-canvas-hint">
-            click / drag to seek · scroll to navigate · ← → nudge grid · +/− zoom
+            click / drag to seek · scroll to zoom · ← → nudge grid · +/− zoom
           </div>
         </div>
 
@@ -769,17 +894,39 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
 
         {/* Cue Points */}
         <div className="bge-cue-section">
-          <CuePointsEditor trackId={track.id} onCuePointsChange={handleCuePointsChange} />
+          <CuePointsEditor
+            trackId={track.id}
+            onCuePointsChange={handleCuePointsChange}
+            deferred
+            onRebase={handleCuesRebase}
+          />
         </div>
 
         {/* Footer */}
         <div className="bge-footer">
-          <button className="bge-btn bge-btn--cancel" onClick={handleClose}>
-            Cancel
-          </button>
-          <button className="bge-btn bge-btn--apply" onClick={handleApply}>
-            Apply
-          </button>
+          {showCancelConfirm ? (
+            <div className="bge-cancel-confirm">
+              <span className="bge-cancel-confirm__msg">Discard unsaved changes?</span>
+              <button className="bge-btn bge-btn--apply" onClick={handleApply}>
+                Save &amp; Close
+              </button>
+              <button className="bge-btn bge-btn--cancel" onClick={handleForceClose}>
+                Discard
+              </button>
+              <button className="bge-btn" onClick={() => setShowCancelConfirm(false)}>
+                Keep Editing
+              </button>
+            </div>
+          ) : (
+            <>
+              <button className="bge-btn bge-btn--cancel" onClick={handleClose}>
+                Cancel
+              </button>
+              <button className="bge-btn bge-btn--apply" onClick={handleApply}>
+                Apply
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
