@@ -31,6 +31,7 @@ window.api = {
   removeTrack: vi.fn().mockResolvedValue({ ok: true }),
   adjustBpm: vi.fn().mockResolvedValue([]),
   updateTrack: vi.fn().mockResolvedValue({}),
+  getEditorWaveform: vi.fn().mockResolvedValue(null),
   exportPlaylistAsM3U: vi.fn().mockResolvedValue({ canceled: true }),
   getSetting: vi.fn().mockResolvedValue(null),
   setSetting: vi.fn().mockResolvedValue(undefined),
