@@ -722,6 +722,10 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
         // already on screen, not the just-imported track (#204).  Fetch from offset 0 and
         // dedup against what's already loaded instead.
         const rows = await window.api.getTracks({ limit: PAGE_SIZE, offset: 0 });
+        // Re-check: user may have navigated to a playlist while the fetch was in flight.
+        // Without this guard the stale all-music rows would be appended on top of the
+        // playlist's tracks, showing the wrong list.
+        if (selectedPlaylistRef.current !== 'music' || searchRef.current) return;
         if (rows.length > 0) {
           const existingIds = new Set(sortedTracksRef.current.map((t) => t.id));
           const newRows = rows.filter((r) => !existingIds.has(r.id));
