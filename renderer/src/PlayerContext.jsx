@@ -39,7 +39,25 @@ export function PlayerProvider({ children }) {
     window.api.getMediaPort().then((port) => {
       mediaPortRef.current = port;
       setMediaPort(port);
+      console.log('[diag] media server port =', port);
+      // Probe reachability — a 404/403/500 still means the server is up; a network error means blocked
+      fetch(`http://127.0.0.1:${port}/__diag_probe__`)
+        .then((r) => console.log('[diag] media server reachable, probe status =', r.status))
+        .catch((e) => console.warn('[diag] media server UNREACHABLE:', e.message));
     });
+
+    // Log available audio output devices
+    if (navigator.mediaDevices?.enumerateDevices) {
+      navigator.mediaDevices.enumerateDevices().then((devices) => {
+        const outputs = devices.filter((d) => d.kind === 'audiooutput');
+        console.log(`[diag] audio output devices (${outputs.length}):`);
+        outputs.forEach((d) =>
+          console.log(
+            `[diag]   id=${d.deviceId.slice(0, 16)}… label=${d.label || '(no label — needs permission)'}`
+          )
+        );
+      });
+    }
   }, []);
 
   // Keep mutable refs so event handlers always see latest values
@@ -109,14 +127,30 @@ export function PlayerProvider({ children }) {
           return next.length > HISTORY_MAX ? next.slice(0, HISTORY_MAX) : next;
         });
       }
+      console.log('[diag] playAtIndex src =', src);
       audio.pause(); // cleanly stop current pipeline before swapping source
       audio.src = src;
       // Setting src triggers an implicit load; calling audio.load() would race with play()
-      audio.play().catch((err) => {
-        // AbortError is expected when we switch tracks before play() resolves
-        if (gen === playGenRef.current && err.name !== 'AbortError')
-          console.error('[player] play error:', err.name, err.message);
-      });
+      audio
+        .play()
+        .then(() => {
+          console.log('[diag] play() resolved OK  readyState=', audio.readyState);
+        })
+        .catch((err) => {
+          // AbortError is expected when we switch tracks before play() resolves
+          if (gen === playGenRef.current && err.name !== 'AbortError')
+            console.error(
+              '[diag] play() FAILED:',
+              err.name,
+              err.message,
+              'readyState=',
+              audio.readyState,
+              'networkState=',
+              audio.networkState,
+              'src=',
+              audio.src
+            );
+        });
       setCurrentTrack(track);
       setQueue(newQueue);
       setQueueIndex(index);
@@ -273,7 +307,13 @@ export function PlayerProvider({ children }) {
     async (deviceId) => {
       setOutputDeviceId(deviceId);
       if (typeof audio.setSinkId === 'function') {
-        await audio.setSinkId(deviceId).catch(console.error);
+        console.log('[diag] setSinkId →', deviceId || '(default)');
+        await audio.setSinkId(deviceId).catch((err) => {
+          console.error('[diag] setSinkId FAILED:', err.name, err.message);
+        });
+        console.log('[diag] setSinkId resolved, sinkId =', audio.sinkId);
+      } else {
+        console.warn('[diag] setSinkId not available on this audio element');
       }
     },
     [audio]
