@@ -4,10 +4,18 @@ contextBridge.exposeInMainWorld('api', {
   // Track library
   getTracks: (params) => ipcRenderer.invoke('get-tracks', params),
   getTrackIds: (params) => ipcRenderer.invoke('get-track-ids', params),
+  getTrackWaveform: (trackId) => ipcRenderer.invoke('get-track-waveform', trackId),
+  generateWaveformsLibrary: (opts) => ipcRenderer.invoke('generate-waveforms-library', opts),
+  onWaveformGenProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('waveform-gen-progress', handler);
+    return () => ipcRenderer.removeListener('waveform-gen-progress', handler);
+  },
   reanalyzeTrack: (trackId) => ipcRenderer.invoke('reanalyze-track', trackId),
   cancelAnalysis: (trackId) => ipcRenderer.invoke('cancel-analysis', trackId),
   removeTrack: (trackId) => ipcRenderer.invoke('remove-track', trackId),
   updateTrack: (id, data) => ipcRenderer.invoke('update-track', { id, data }),
+  getEditorWaveform: (trackId) => ipcRenderer.invoke('get-editor-waveform', trackId),
   adjustBpm: (payload) => ipcRenderer.invoke('adjust-bpm', payload),
 
   // Cue points

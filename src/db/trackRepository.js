@@ -397,6 +397,15 @@ export function getExistingSourceUrls(entries) {
   return results;
 }
 
+export function updateTrackWaveform(trackId, buf) {
+  db.prepare('UPDATE tracks SET waveform_overview = ? WHERE id = ?').run(buf, trackId);
+}
+
+export function getTrackWaveform(trackId) {
+  const row = db.prepare('SELECT waveform_overview FROM tracks WHERE id = ?').get(trackId);
+  return row?.waveform_overview ?? null;
+}
+
 /**
  * Returns all tracks in a playlist with their source URL fields,
  * used to determine "already in playlist" status on the selection screen.

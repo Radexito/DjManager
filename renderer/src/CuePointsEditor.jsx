@@ -52,6 +52,7 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
   const [generating, setGenerating] = useState(false);
   const [confirmGen, setConfirmGen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editLabel, setEditLabel] = useState('');
   const [typePickerId, setTypePickerId] = useState(null); // cue id whose type picker is open
@@ -164,6 +165,16 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
     reload();
   };
 
+  const handleDeleteAll = () => setConfirmDeleteAll(true);
+
+  const confirmDeleteAllCues = async () => {
+    setConfirmDeleteAll(false);
+    for (const cue of cuePoints) {
+      await window.api.deleteCuePoint(cue.id);
+    }
+    reload();
+  };
+
   const handleColorChange = async (id, color) => {
     await window.api.updateCuePoint(id, { color });
     reload();
@@ -237,8 +248,31 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
           >
             {generating ? '…' : '⚡ Auto'}
           </button>
+          {cuePoints.length > 0 && (
+            <button
+              className="cpe__btn cpe__btn--danger-subtle"
+              onClick={handleDeleteAll}
+              title="Delete all cue points"
+            >
+              ✕ All
+            </button>
+          )}
         </div>
       </div>
+
+      {confirmDeleteAll && (
+        <div className="cpe__confirm">
+          <span>
+            Delete all {cuePoints.length} cue point{cuePoints.length !== 1 ? 's' : ''}?
+          </span>
+          <button className="cpe__btn cpe__btn--danger" onClick={confirmDeleteAllCues}>
+            Delete all
+          </button>
+          <button className="cpe__btn" onClick={() => setConfirmDeleteAll(false)}>
+            Cancel
+          </button>
+        </div>
+      )}
 
       {confirmGen && (
         <div className="cpe__confirm">
