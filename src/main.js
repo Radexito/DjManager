@@ -55,6 +55,8 @@ import {
   getNormalizedTrackCount,
   getExistingSourceUrls,
   getPlaylistSourceUrls,
+  getTrackWaveform,
+  updateTrackWaveform,
 } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import {
@@ -81,6 +83,7 @@ import {
   downloadTidal,
   fetchTidalInfo,
 } from './audio/tidalDlManager.js';
+import { generateWaveformOverview } from './audio/waveformGenerator.js';
 import { ensureDeps, getFfmpegRuntimePath } from './deps.js';
 import { generateEditorWaveform } from './audio/waveformGenerator.js';
 import {
@@ -182,6 +185,39 @@ function createWindow() {
   }
 }
 
+async function autoGenerateMissingWaveforms() {
+  const tracks = getTracks({ limit: 999999 });
+  const missing = tracks.filter((t) => t.analyzed === 1 && t.waveform_overview == null);
+  if (missing.length === 0) return;
+
+  console.log(`[waveform] generating overviews for ${missing.length} tracks…`);
+  let completed = 0;
+
+  const sendProgress = (done = false) => {
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('waveform-gen-progress', {
+        completed,
+        total: missing.length,
+        done,
+      });
+    }
+  };
+
+  for (const track of missing) {
+    try {
+      const buf = await generateWaveformOverview(track.file_path, getFfmpegRuntimePath());
+      updateTrackWaveform(track.id, buf);
+    } catch (err) {
+      console.warn(`[waveform] failed for track ${track.id}:`, err.message);
+    }
+    completed++;
+    sendProgress();
+  }
+
+  sendProgress(true);
+  console.log(`[waveform] done — generated ${completed} overviews`);
+}
+
 async function initApp() {
   initLogger();
   console.log('Initializing database...');
@@ -205,6 +241,8 @@ async function initApp() {
   })
     .then(() => {
       if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+      // Auto-generate waveforms for any analyzed tracks missing overview data
+      autoGenerateMissingWaveforms();
     })
     .catch((err) => {
       console.error('[deps] Failed to download FFmpeg:', err.message);
@@ -226,6 +264,10 @@ async function initApp() {
 ipcMain.handle('get-media-port', () => mediaServerPort);
 ipcMain.handle('get-tracks', (_, params) => getTracks(params));
 ipcMain.handle('get-track-ids', (_, params) => getTrackIds(params));
+ipcMain.handle('get-track-waveform', (_, trackId) => {
+  const buf = getTrackWaveform(trackId);
+  return buf ? new Uint8Array(buf) : null;
+});
 ipcMain.handle('get-setting', (_, key, def) => getSetting(key, def));
 ipcMain.handle('set-setting', (_, key, value) => setSetting(key, value));
 ipcMain.handle('get-library-path', () => getLibraryBase());
@@ -532,6 +574,45 @@ ipcMain.handle('delete-all-cue-points-library', () => {
     }
   }
   return { deleted: affected.length };
+});
+
+// Generate waveform overviews for all analyzed tracks in the library
+ipcMain.handle('generate-waveforms-library', async (_, { overwrite = false } = {}) => {
+  const tracks = getTracks({ limit: 999999 });
+  const analyzed = tracks.filter((t) => t.analyzed === 1);
+  const total = analyzed.length;
+  let generated = 0;
+  let skipped = 0;
+
+  const sendProgress = (done = false) => {
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('waveform-gen-progress', {
+        completed: generated + skipped,
+        total,
+        done,
+      });
+    }
+  };
+
+  for (const track of analyzed) {
+    if (!overwrite && track.waveform_overview != null) {
+      skipped++;
+      sendProgress();
+      continue;
+    }
+    try {
+      const buf = await generateWaveformOverview(track.file_path, getFfmpegRuntimePath());
+      updateTrackWaveform(track.id, buf);
+      generated++;
+    } catch (err) {
+      console.warn(`[waveform-gen] failed for track ${track.id}:`, err.message);
+      skipped++;
+    }
+    sendProgress();
+  }
+
+  sendProgress(true);
+  return { generated, skipped, total };
 });
 
 // Playlist IPC handlers
