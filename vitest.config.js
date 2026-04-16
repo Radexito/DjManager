@@ -40,6 +40,7 @@ export default defineConfig({
             'src/__tests__/mediaServer.test.js',
             'src/__tests__/anlzWriter.test.js',
             'src/__tests__/waveformGenerator.test.js',
+            'src/__tests__/resetCleanup.test.js',
             'src/__tests__/usbUtils.test.js',
             'src/__tests__/settingWriter.test.js',
             'src/__tests__/pdbWriter.test.js',
