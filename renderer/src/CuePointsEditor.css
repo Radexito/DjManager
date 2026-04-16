@@ -336,3 +336,14 @@
   background: #cc333322;
   color: #ff4444;
 }
+
+.cpe__btn--danger-subtle {
+  border-color: #553333;
+  color: #996666;
+}
+
+.cpe__btn--danger-subtle:hover:not(:disabled) {
+  border-color: #cc3333;
+  color: #ff6666;
+  background: #cc333315;
+}

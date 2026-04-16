@@ -56,6 +56,8 @@ import {
   getNormalizedTrackCount,
   getExistingSourceUrls,
   getPlaylistSourceUrls,
+  getTrackWaveform,
+  updateTrackWaveform,
 } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import {
@@ -82,7 +84,9 @@ import {
   downloadTidal,
   fetchTidalInfo,
 } from './audio/tidalDlManager.js';
+import { generateWaveformOverview } from './audio/waveformGenerator.js';
 import { ensureDeps, getFfmpegRuntimePath } from './deps.js';
+import { generateEditorWaveform } from './audio/waveformGenerator.js';
 import {
   getInstalledVersions,
   checkForUpdates,
@@ -206,6 +210,39 @@ function logDiagnostics() {
   console.log('[diag] ─────────────────────────────────────────────────────');
 }
 
+async function autoGenerateMissingWaveforms() {
+  const tracks = getTracks({ limit: 999999 });
+  const missing = tracks.filter((t) => t.analyzed === 1 && t.waveform_overview == null);
+  if (missing.length === 0) return;
+
+  console.log(`[waveform] generating overviews for ${missing.length} tracks…`);
+  let completed = 0;
+
+  const sendProgress = (done = false) => {
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('waveform-gen-progress', {
+        completed,
+        total: missing.length,
+        done,
+      });
+    }
+  };
+
+  for (const track of missing) {
+    try {
+      const buf = await generateWaveformOverview(track.file_path, getFfmpegRuntimePath());
+      updateTrackWaveform(track.id, buf);
+    } catch (err) {
+      console.warn(`[waveform] failed for track ${track.id}:`, err.message);
+    }
+    completed++;
+    sendProgress();
+  }
+
+  sendProgress(true);
+  console.log(`[waveform] done — generated ${completed} overviews`);
+}
+
 async function initApp() {
   initLogger();
   if (process.platform === 'win32') logDiagnostics();
@@ -230,6 +267,8 @@ async function initApp() {
   })
     .then(() => {
       if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+      // Auto-generate waveforms for any analyzed tracks missing overview data
+      autoGenerateMissingWaveforms();
     })
     .catch((err) => {
       console.error('[deps] Failed to download FFmpeg:', err.message);
@@ -251,6 +290,10 @@ async function initApp() {
 ipcMain.handle('get-media-port', () => mediaServerPort);
 ipcMain.handle('get-tracks', (_, params) => getTracks(params));
 ipcMain.handle('get-track-ids', (_, params) => getTrackIds(params));
+ipcMain.handle('get-track-waveform', (_, trackId) => {
+  const buf = getTrackWaveform(trackId);
+  return buf ? new Uint8Array(buf) : null;
+});
 ipcMain.handle('get-setting', (_, key, def) => getSetting(key, def));
 ipcMain.handle('set-setting', (_, key, value) => setSetting(key, value));
 ipcMain.handle('get-library-path', () => getLibraryBase());
@@ -439,8 +482,12 @@ ipcMain.handle('remove-track', (_, trackId) => {
 });
 ipcMain.handle('update-track', (_, { id, data }) => {
   updateTrack(id, data);
-  // Fire-and-forget ID3 tag write-back (non-blocking, best-effort)
   const track = getTrackById(id);
+  // Notify renderer so MusicLibrary + PlayerContext stay in sync
+  if (global.mainWindow) {
+    global.mainWindow.webContents.send('track-updated', { trackId: id, analysis: data });
+  }
+  // Fire-and-forget ID3 tag write-back (non-blocking, best-effort)
   if (track?.file_path) {
     writeId3Tags(track.file_path, data).catch((e) =>
       console.error('[update-track] id3 write failed:', e.message)
@@ -448,6 +495,18 @@ ipcMain.handle('update-track', (_, { id, data }) => {
   }
   return { ok: true };
 });
+ipcMain.handle('get-editor-waveform', async (_, trackId) => {
+  const track = getTrackById(trackId);
+  if (!track?.file_path) return null;
+  try {
+    const result = await generateEditorWaveform(track.file_path, getFfmpegRuntimePath());
+    return result;
+  } catch (e) {
+    console.error('[get-editor-waveform]', e.message);
+    return null;
+  }
+});
+
 ipcMain.handle('adjust-bpm', (_, { trackIds, factor }) => {
   if (factor !== 2 && factor !== 0.5) throw new Error('Invalid factor: must be 2 or 0.5');
   if (!Array.isArray(trackIds) || trackIds.length === 0 || trackIds.length > 500) {
@@ -541,6 +600,45 @@ ipcMain.handle('delete-all-cue-points-library', () => {
     }
   }
   return { deleted: affected.length };
+});
+
+// Generate waveform overviews for all analyzed tracks in the library
+ipcMain.handle('generate-waveforms-library', async (_, { overwrite = false } = {}) => {
+  const tracks = getTracks({ limit: 999999 });
+  const analyzed = tracks.filter((t) => t.analyzed === 1);
+  const total = analyzed.length;
+  let generated = 0;
+  let skipped = 0;
+
+  const sendProgress = (done = false) => {
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('waveform-gen-progress', {
+        completed: generated + skipped,
+        total,
+        done,
+      });
+    }
+  };
+
+  for (const track of analyzed) {
+    if (!overwrite && track.waveform_overview != null) {
+      skipped++;
+      sendProgress();
+      continue;
+    }
+    try {
+      const buf = await generateWaveformOverview(track.file_path, getFfmpegRuntimePath());
+      updateTrackWaveform(track.id, buf);
+      generated++;
+    } catch (err) {
+      console.warn(`[waveform-gen] failed for track ${track.id}:`, err.message);
+      skipped++;
+    }
+    sendProgress();
+  }
+
+  sendProgress(true);
+  return { generated, skipped, total };
 });
 
 // Playlist IPC handlers
@@ -1379,6 +1477,7 @@ ipcMain.handle(
             sourceFilePath,
             beatgrid: t.beatgrid ?? null,
             bpm: t.bpm_override ?? t.bpm ?? 0,
+            beatgridOffset: t.beatgrid_offset ?? 0,
             usbRoot,
             ffmpegPath: getFfmpegRuntimePath(),
             cuePoints: getCuePoints(t.id).filter((c) => c.enabled !== 0),
@@ -1533,6 +1632,7 @@ ipcMain.handle(
             sourceFilePath,
             beatgrid: t.beatgrid ?? null,
             bpm: t.bpm_override ?? t.bpm ?? 0,
+            beatgridOffset: t.beatgrid_offset ?? 0,
             usbRoot,
             ffmpegPath: getFfmpegRuntimePath(),
             cuePoints: getCuePoints(t.id).filter((c) => c.enabled !== 0),

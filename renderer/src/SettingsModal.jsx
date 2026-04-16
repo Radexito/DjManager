@@ -38,6 +38,10 @@ function SettingsModal({ onClose }) {
   const [ytdlpUpdating, setYtdlpUpdating] = useState(false);
   const [tidalUpdating, setTidalUpdating] = useState(false);
   const [cookiesBrowser, setCookiesBrowser] = useState('');
+  const [waveformColorMode, setWaveformColorMode] = useState('rgb');
+  const [generatingWaveforms, setGeneratingWaveforms] = useState(false);
+  const [waveformGenProgress, setWaveformGenProgress] = useState(null);
+  const [waveformGenResult, setWaveformGenResult] = useState(null);
 
   // Library location
   const [libraryPath, setLibraryPath] = useState('');
@@ -67,6 +71,7 @@ function SettingsModal({ onClose }) {
     window.api
       .getSetting('auto_cue_on_import', 'false')
       .then((v) => setAutoCueOnImport(v === 'true'));
+    window.api.getSetting('waveform_color_mode', 'rgb').then((v) => setWaveformColorMode(v));
   }, []);
 
   useEffect(() => {
@@ -191,6 +196,24 @@ function SettingsModal({ onClose }) {
     window.api.setSetting('auto_cue_on_import', String(checked));
   };
 
+  const handleGenerateWaveformsLibrary = async (overwrite) => {
+    setGeneratingWaveforms(true);
+    setWaveformGenResult(null);
+    setWaveformGenProgress(null);
+    const unsub = window.api.onWaveformGenProgress(({ completed, total, done }) => {
+      setWaveformGenProgress(done ? null : { completed, total });
+      if (done) unsub();
+    });
+    try {
+      const result = await window.api.generateWaveformsLibrary({ overwrite });
+      setWaveformGenResult(result);
+    } finally {
+      unsub();
+      setGeneratingWaveforms(false);
+      setWaveformGenProgress(null);
+    }
+  };
+
   const handleCookiesBrowserChange = (value) => {
     setCookiesBrowser(value);
     window.api.setSetting('ytdlp_cookies_browser', value);
@@ -233,6 +256,7 @@ function SettingsModal({ onClose }) {
     { id: 'library', label: 'Library' },
     { id: 'normalization', label: 'Normalization' },
     { id: 'cuepoints', label: 'Cue Points' },
+    { id: 'waveform', label: 'Waveform' },
     { id: 'downloads', label: 'Downloads' },
     { id: 'updates', label: 'Dependencies' },
     { id: 'advanced', label: 'Advanced' },
@@ -577,6 +601,83 @@ function SettingsModal({ onClose }) {
                     {deleteAllCuesResult === 0
                       ? 'Nothing to delete — no cue points in the library.'
                       : `Deleted cue points from ${deleteAllCuesResult} track${deleteAllCuesResult !== 1 ? 's' : ''}.`}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {activeSection === 'waveform' && (
+            <>
+              <h3>Waveform</h3>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Seek bar color mode</div>
+                <p className="settings-desc">
+                  Choose how the waveform is colored in the seek bar. Waveforms are generated
+                  automatically after each track is analyzed.
+                </p>
+                <div className="settings-row">
+                  <label htmlFor="waveform-color-mode">Color mode</label>
+                  <select
+                    id="waveform-color-mode"
+                    className="settings-select"
+                    value={waveformColorMode}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setWaveformColorMode(v);
+                      window.api.setSetting('waveform_color_mode', v);
+                      window.dispatchEvent(
+                        new CustomEvent('waveform-color-mode-changed', { detail: v })
+                      );
+                    }}
+                  >
+                    <option value="rgb">RGB — Red=treble · Green=mid · Blue=bass</option>
+                    <option value="classic">Classic — Blue body · White peaks</option>
+                    <option value="3band">3-Band — Blue=bass · Orange=mid · White=treble</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Regenerate waveforms</div>
+                <p className="settings-desc">
+                  Missing waveforms are generated automatically on startup. Use this to
+                  force-rebuild all waveforms (e.g. after changing the color mode you want to
+                  preview).
+                </p>
+                <div className="settings-row">
+                  <button
+                    className="btn"
+                    onClick={() => handleGenerateWaveformsLibrary(true)}
+                    disabled={generatingWaveforms}
+                  >
+                    {generatingWaveforms ? 'Generating…' : 'Regenerate all waveforms'}
+                  </button>
+                </div>
+                {generatingWaveforms && waveformGenProgress && (
+                  <div className="settings-normalize-progress">
+                    <div className="settings-normalize-progress-bar">
+                      <div
+                        className="settings-normalize-progress-fill"
+                        style={{
+                          width:
+                            waveformGenProgress.total > 0
+                              ? `${Math.round((waveformGenProgress.completed / waveformGenProgress.total) * 100)}%`
+                              : '0%',
+                        }}
+                      />
+                    </div>
+                    <span className="settings-normalize-progress-label">
+                      {waveformGenProgress.completed} / {waveformGenProgress.total}
+                    </span>
+                  </div>
+                )}
+                {waveformGenResult && (
+                  <div className="settings-normalize-result">
+                    Generated {waveformGenResult.generated} waveform
+                    {waveformGenResult.generated !== 1 ? 's' : ''}, skipped{' '}
+                    {waveformGenResult.skipped}.
                   </div>
                 )}
               </div>

@@ -458,6 +458,7 @@ export function PlayerProvider({ children }) {
         patchCurrentTrack,
         reloadCurrentTrack,
         updateQueue,
+        audioRef,
       }}
     >
       {children}
