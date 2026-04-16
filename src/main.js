@@ -27,6 +27,7 @@ if (process.platform === 'linux') {
   app.commandLine.appendSwitch('no-zygote');
 }
 import { initDB } from './db/migrations.js';
+import { closeDB } from './db/database.js';
 import {
   createPlaylist,
   findOrCreatePlaylist,
@@ -800,11 +801,17 @@ ipcMain.handle('clear-library', async () => {
 
 ipcMain.handle('clear-user-data', async () => {
   const toDelete = [app.getPath('userData'), app.getPath('cache'), app.getPath('logs')];
+  // Close the SQLite connection before quitting so Windows releases the file
+  // lock on library.db — without this, rmSync silently fails with EPERM/EBUSY
+  // and the database (and all tracks) survive the "reset" on Windows.
+  closeDB();
   app.on('quit', () => {
     for (const p of toDelete) {
       try {
         if (fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true });
-      } catch {}
+      } catch (err) {
+        console.error('[clear-user-data] failed to delete', p, err.message);
+      }
     }
   });
   app.quit();
