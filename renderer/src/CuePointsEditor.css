@@ -51,6 +51,43 @@
 .cpe__actions {
   display: flex;
   gap: 4px;
+  align-items: center;
+}
+
+/* Add dropdown wrapper */
+.cpe__add-wrap {
+  position: relative;
+}
+
+.cpe__add-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 200;
+  background: #1e1e1e;
+  border: 1px solid #444;
+  border-radius: 5px;
+  overflow: hidden;
+  min-width: 140px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
+}
+
+.cpe__add-option {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 11px;
+  text-align: left;
+  background: none;
+  border: none;
+  color: #ccc;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.cpe__add-option:hover {
+  background: #2a2a2a;
+  color: #fff;
 }
 
 .cpe__btn {

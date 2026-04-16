@@ -458,3 +458,18 @@
 .bge-btn--apply:hover {
   background: #1e5a80;
 }
+
+/* Cancel confirmation inline row */
+.bge-cancel-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.bge-cancel-confirm__msg {
+  color: #f0a030;
+  font-size: 13px;
+  margin-right: 4px;
+}
