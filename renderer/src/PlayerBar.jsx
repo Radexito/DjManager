@@ -133,85 +133,7 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     if (seekbarRef.current) seekbarRef.current.max = duration || 0;
   }, [duration]);
 
-  // Recompute intro/outro fracs and redraw waveform when track or duration changes
-  useEffect(() => {
-    if (!duration) return;
-    const intro = currentTrack?.intro_secs || 0;
-    const outro = currentTrack?.outro_secs || 0;
-    introFracRef.current = intro > 0 ? Math.min(intro / duration, 1) : 0;
-    outroFracRef.current = outro > 0 ? Math.min(outro / duration, 1) : 1;
-    paintWaveform(); // eslint-disable-line react-hooks/exhaustive-deps
-  }, [duration, currentTrack]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Advance seekbar at ~60fps via rAF so the position tracks audio smoothly
-  // instead of jumping every ~250ms from timeupdate events.
-  useEffect(() => {
-    if (!isPlaying) return;
-    let rafId;
-    const tick = () => {
-      if (!seekingRef.current && seekbarRef.current && audioRef?.current) {
-        seekbarRef.current.value = audioRef.current.currentTime;
-      }
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [isPlaying, audioRef]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Sync seekbar position on pause / track change (rAF loop stopped)
-  useEffect(() => {
-    if (!seekingRef.current && seekbarRef.current) {
-      seekbarRef.current.value = currentTime;
-    }
-  }, [currentTime]);
-
-  // Close device dropdown on outside click
-  useEffect(() => {
-    if (!showDevices) return;
-    const handler = (e) => {
-      if (deviceWrapRef.current && !deviceWrapRef.current.contains(e.target)) setShowDevices(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [showDevices]);
-
-  // Close history dropdown on outside click
-  useEffect(() => {
-    if (!showHistory) return;
-    const handler = (e) => {
-      if (historyWrapRef.current && !historyWrapRef.current.contains(e.target))
-        setShowHistory(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [showHistory]);
-
-  // ── Waveform color mode — load once, sync live from Settings ────────────────
-  const [colorMode, setColorMode] = useState('rgb');
-
-  useEffect(() => {
-    window.api.getSetting('waveform_color_mode', 'rgb').then((m) => {
-      colorModeRef.current = m;
-      setColorMode(m);
-    });
-  }, []);
-
-  useEffect(() => {
-    colorModeRef.current = colorMode;
-  }, [colorMode]);
-
-  useEffect(() => {
-    const handler = (e) => setColorMode(e.detail);
-    window.addEventListener('waveform-color-mode-changed', handler);
-    return () => window.removeEventListener('waveform-color-mode-changed', handler);
-  }, []);
-
-  // Redraw when color mode changes (data already loaded)
-  useEffect(() => {
-    paintWaveform(); // eslint-disable-line react-hooks/exhaustive-deps
-  }, [colorMode]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Waveform canvas ─────────────────────────────────────────────────────────
+  // ── Waveform canvas helpers (declared before the effects that call them) ─────
 
   function drawWaveform(canvas, data, mode) {
     const W = canvas.width;
@@ -294,6 +216,84 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
       drawWaveform(canvas, waveDataRef.current, colorModeRef.current);
     });
   }
+
+  // Recompute intro/outro fracs and redraw waveform when track or duration changes
+  useEffect(() => {
+    if (!duration) return;
+    const intro = currentTrack?.intro_secs || 0;
+    const outro = currentTrack?.outro_secs || 0;
+    introFracRef.current = intro > 0 ? Math.min(intro / duration, 1) : 0;
+    outroFracRef.current = outro > 0 ? Math.min(outro / duration, 1) : 1;
+    paintWaveform(); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [duration, currentTrack]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Advance seekbar at ~60fps via rAF so the position tracks audio smoothly
+  // instead of jumping every ~250ms from timeupdate events.
+  useEffect(() => {
+    if (!isPlaying) return;
+    let rafId;
+    const tick = () => {
+      if (!seekingRef.current && seekbarRef.current && audioRef?.current) {
+        seekbarRef.current.value = audioRef.current.currentTime;
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [isPlaying, audioRef]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync seekbar position on pause / track change (rAF loop stopped)
+  useEffect(() => {
+    if (!seekingRef.current && seekbarRef.current) {
+      seekbarRef.current.value = currentTime;
+    }
+  }, [currentTime]);
+
+  // Close device dropdown on outside click
+  useEffect(() => {
+    if (!showDevices) return;
+    const handler = (e) => {
+      if (deviceWrapRef.current && !deviceWrapRef.current.contains(e.target)) setShowDevices(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showDevices]);
+
+  // Close history dropdown on outside click
+  useEffect(() => {
+    if (!showHistory) return;
+    const handler = (e) => {
+      if (historyWrapRef.current && !historyWrapRef.current.contains(e.target))
+        setShowHistory(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showHistory]);
+
+  // ── Waveform color mode — load once, sync live from Settings ────────────────
+  const [colorMode, setColorMode] = useState('rgb');
+
+  useEffect(() => {
+    window.api.getSetting('waveform_color_mode', 'rgb').then((m) => {
+      colorModeRef.current = m;
+      setColorMode(m);
+    });
+  }, []);
+
+  useEffect(() => {
+    colorModeRef.current = colorMode;
+  }, [colorMode]);
+
+  useEffect(() => {
+    const handler = (e) => setColorMode(e.detail);
+    window.addEventListener('waveform-color-mode-changed', handler);
+    return () => window.removeEventListener('waveform-color-mode-changed', handler);
+  }, []);
+
+  // Redraw when color mode changes (data already loaded)
+  useEffect(() => {
+    paintWaveform(); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [colorMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch waveform data when track changes, then draw
   useEffect(() => {
