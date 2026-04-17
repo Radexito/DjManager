@@ -194,8 +194,6 @@ export default function FileExplorerView({ style }) {
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [tracksMap, setTracksMap] = useState(new Map());
-  // trackId → file_path reverse map for onTrackUpdated
-  const tracksByIdRef = useRef(new Map());
   const [selectedPaths, setSelectedPaths] = useState(new Set());
   const [playlists, setPlaylists] = useState([]);
   const [contextMenu, setContextMenu] = useState(null);
@@ -307,28 +305,24 @@ export default function FileExplorerView({ style }) {
     });
   }, [currentPath, fsRoot]);
 
-  // Keep reverse index (trackId → filePath) in sync with tracksMap
-  useEffect(() => {
-    const byId = new Map();
-    for (const [fp, t] of tracksMap) {
-      if (typeof t.id === 'number') byId.set(t.id, fp);
-    }
-    tracksByIdRef.current = byId;
-  }, [tracksMap]);
-
-  // Update rows and player bar as analysis results arrive
+  // Update rows and player bar as analysis results arrive.
+  // Scan tracksMap inside the state setter (always latest state, no ref race).
   useEffect(() => {
     const unsub = window.api.onTrackUpdated(({ trackId, analysis }) => {
       const merged = { ...analysis, analyzed: analysis.analyzed !== 0 ? 1 : 0 };
-      const filePath = tracksByIdRef.current.get(trackId);
-      if (filePath) {
-        setTracksMap((prev) => {
-          if (!prev.has(filePath)) return prev;
-          const next = new Map(prev);
-          next.set(filePath, { ...prev.get(filePath), ...merged });
-          return next;
-        });
-      }
+      setTracksMap((prev) => {
+        let filePath = null;
+        for (const [fp, t] of prev) {
+          if (t.id === trackId) {
+            filePath = fp;
+            break;
+          }
+        }
+        if (!filePath) return prev;
+        const next = new Map(prev);
+        next.set(filePath, { ...prev.get(filePath), ...merged });
+        return next;
+      });
       patchCurrentTrack(trackId, merged);
     });
     return unsub;

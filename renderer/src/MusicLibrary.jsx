@@ -308,6 +308,11 @@ function LibraryRow({
             ) : (
               <span className="cell-artwork cell-artwork--placeholder">♪</span>
             )}
+            {t.is_linked ? (
+              <span className="cell-linked-badge" title="Explorer-linked file">
+                🔗
+              </span>
+            ) : null}
             <span className="cell-title-text">{t.title}</span>
           </div>
         ) : (
@@ -415,6 +420,11 @@ function SortableRow({
             ) : (
               <span className="cell-artwork cell-artwork--placeholder">♪</span>
             )}
+            {t.is_linked ? (
+              <span className="cell-linked-badge" title="Explorer-linked file">
+                🔗
+              </span>
+            ) : null}
             <span className="cell-title-text">{t.title}</span>
           </div>
         ) : (

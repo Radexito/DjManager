@@ -158,6 +158,14 @@
   flex-shrink: 0;
 }
 
+.cell-linked-badge {
+  font-size: 11px;
+  flex-shrink: 0;
+  margin-right: 3px;
+  opacity: 0.75;
+  cursor: default;
+}
+
 .cell-title-text {
   overflow: hidden;
   text-overflow: ellipsis;
