@@ -95,8 +95,17 @@ function Toast({ message, onDone }) {
 
 // ── Row component (must be outside to avoid remounts) ────────────────────────
 
-function ExplorerRow({ index, style, ariaAttributes, rowProps }) {
-  const { items, linkedPaths, selectedPaths, onSelect, onOpen, onContextMenu } = rowProps;
+function ExplorerRow({
+  index,
+  style,
+  ariaAttributes,
+  items,
+  linkedPaths,
+  selectedPaths,
+  onSelect,
+  onOpen,
+  onContextMenu,
+}) {
   const item = items[index];
   if (!item) return <div style={style} />;
 
