@@ -12,6 +12,7 @@ import {
   updateTrack,
   getTrackById,
   getTrackByHash,
+  getTracksByPaths,
   updateTrackWaveform,
 } from '../db/trackRepository.js';
 import { getAnalyzerRuntimePath } from '../deps.js';
@@ -367,4 +368,61 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
 
   spawnAnalysis(trackId, dest);
   return trackId;
+}
+
+export async function linkAudioFile(filePath) {
+  const byPath = getTracksByPaths([filePath]);
+  if (byPath.length > 0) return { id: byPath[0].id, duplicate: true };
+
+  const basename = path.basename(filePath, path.extname(filePath));
+  let title = basename;
+  let artist = null;
+  let album = null;
+  let duration = 0;
+  let format = path.extname(filePath).slice(1).toLowerCase();
+  let bitrate = null;
+  let year = null;
+  let label = null;
+  let bpm = null;
+  let genre = [];
+
+  try {
+    const meta = await ffprobe(filePath);
+    const tags = meta.format?.tags ?? {};
+    title = tags.title || tags.TITLE || basename;
+    artist = tags.artist || tags.ARTIST || null;
+    album = tags.album || tags.ALBUM || null;
+    duration = parseFloat(meta.format?.duration ?? 0);
+    bitrate = parseInt(meta.format?.bit_rate ?? 0, 10) || null;
+    year = parseInt(tags.date || tags.year || '', 10) || null;
+    label = tags.label || tags.publisher || null;
+    bpm = parseFloat(tags.bpm || tags.BPM || '') || null;
+    const g = tags.genre || tags.GENRE || '';
+    genre = g ? [g] : [];
+  } catch {}
+
+  const trackId = addTrack({
+    title,
+    artist,
+    album,
+    duration,
+    file_path: filePath,
+    file_hash: null,
+    format,
+    bitrate,
+    year,
+    label,
+    bpm,
+    genres: JSON.stringify(genre),
+    source_url: null,
+    source_platform: null,
+    source_quality: null,
+    source_link: null,
+    has_artwork: 0,
+    artwork_path: null,
+    is_linked: 1,
+  });
+
+  spawnAnalysis(trackId, filePath);
+  return { id: trackId, duplicate: false };
 }
