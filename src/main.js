@@ -49,6 +49,9 @@ import {
   getTracks,
   getTrackIds,
   getTrackById,
+  getTracksByPaths,
+  getLinkedTrackDirs,
+  remapTracksByPrefix,
   removeTrack,
   updateTrack,
   resetNormalization,
@@ -63,6 +66,7 @@ import {
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import {
   importAudioFile,
+  linkAudioFile,
   spawnAnalysis,
   cancelAnalysis,
   getLibraryBase,
@@ -127,10 +131,15 @@ import { writeId3Tags } from './audio/id3Writer.js';
 // unreliable Range support in Electron 28+ and cause PIPELINE_ERROR_READ on seek.
 let mediaServerPort = null;
 
+// Mutable list of extra allowed base paths for the media server.
+// Push the explorer root folder here when the user picks one so the server
+// will serve files from that directory tree.
+const explorerAllowedBases = [];
+
 function startMediaServer() {
   const audioBase = path.join(app.getPath('userData'), 'audio');
   const artworkBase = getArtworkBase();
-  return _startMediaServer(audioBase, artworkBase).then(({ port }) => {
+  return _startMediaServer(audioBase, artworkBase, explorerAllowedBases).then(({ port }) => {
     mediaServerPort = port;
   });
 }
@@ -141,6 +150,7 @@ function createWindow() {
     width: 1200,
     height: 800,
     backgroundColor: '#0f0f0f',
+    icon: path.join(app.getAppPath(), 'build-resources/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -254,6 +264,11 @@ async function initApp() {
   if (process.platform === 'win32') logDiagnostics();
   console.log('Initializing database...');
   initDB();
+  // Pre-allow all directories of existing linked tracks so the media server
+  // can serve them without requiring the user to re-open the Explorer.
+  for (const dir of getLinkedTrackDirs()) {
+    if (!explorerAllowedBases.includes(dir)) explorerAllowedBases.push(dir);
+  }
   await startMediaServer();
   console.log('Creating window.');
   createWindow();
@@ -1327,6 +1342,396 @@ function trackToFilename(track, ext) {
     (ext || path.extname(track.file_path || ''))
   );
 }
+
+// ── File Explorer IPC ──────────────────────────────────────────────────────────
+
+const AUDIO_EXTENSIONS = new Set([
+  '.mp3',
+  '.flac',
+  '.wav',
+  '.ogg',
+  '.m4a',
+  '.aac',
+  '.aiff',
+  '.aif',
+  '.opus',
+]);
+
+ipcMain.handle('select-explorer-folder', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+    title: 'Select Folder to Browse',
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  const folderPath = result.filePaths[0];
+  if (!explorerAllowedBases.includes(folderPath)) {
+    explorerAllowedBases.push(folderPath);
+  }
+  return folderPath;
+});
+
+ipcMain.handle('browse-directory', (_, dirPath) => {
+  if (!explorerAllowedBases.some((base) => dirPath.startsWith(base))) {
+    explorerAllowedBases.push(dirPath);
+  }
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    const dirs = [];
+    const files = [];
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory() && !entry.name.startsWith('.')) {
+        dirs.push({ name: entry.name, path: fullPath });
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (AUDIO_EXTENSIONS.has(ext)) {
+          let size = 0;
+          try {
+            size = fs.statSync(fullPath).size;
+          } catch {}
+          files.push({ name: entry.name, path: fullPath, size });
+        }
+      }
+    }
+    dirs.sort((a, b) => a.name.localeCompare(b.name));
+    files.sort((a, b) => a.name.localeCompare(b.name));
+    return { dirs, files };
+  } catch (err) {
+    return { dirs: [], files: [], error: err.message };
+  }
+});
+
+ipcMain.handle('get-explorer-track-metadata', async (_, filePath) => {
+  try {
+    const { ffprobe: runFfprobe } = await import('./audio/ffmpeg.js');
+    const data = await runFfprobe(filePath);
+    const tags = data.format?.tags || {};
+    const stream = data.streams?.find((s) => s.codec_type === 'audio') || {};
+    const bpmTag = tags.bpm || tags.BPM || tags.TBPM || tags['tbpm'];
+    const keyTag = tags.key || tags.KEY || tags.initialkey || tags.INITIALKEY || null;
+    return {
+      title: tags.title || path.basename(filePath, path.extname(filePath)),
+      artist: tags.artist || '',
+      album: tags.album || '',
+      year: tags.date ? parseInt(tags.date.slice(0, 4)) : null,
+      label: tags.label || '',
+      genre: tags.genre ? tags.genre.split(',').map((g) => g.trim()) : [],
+      bpm: bpmTag ? parseFloat(bpmTag) || null : null,
+      key_raw: keyTag,
+      duration: parseFloat(data.format?.duration) || null,
+      bitrate: parseInt(stream.bit_rate || data.format?.bit_rate || 0, 10) || null,
+    };
+  } catch (err) {
+    return {
+      title: path.basename(filePath, path.extname(filePath)),
+      artist: '',
+      album: '',
+      bpm: null,
+      key_raw: null,
+      duration: null,
+      bitrate: null,
+      error: err.message,
+    };
+  }
+});
+
+ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlistName }) => {
+  try {
+    const total = filePaths.length;
+    send('export-explorer-progress', { msg: `Exporting ${total} tracks to USB…`, pct: 0 });
+
+    const usedNames = new Map();
+    const pdbTracks = [];
+    const anlzPaths = new Map();
+
+    for (let i = 0; i < filePaths.length; i++) {
+      const srcPath = filePaths[i];
+      const ext = path.extname(srcPath);
+
+      // Extract metadata
+      let meta = {
+        title: path.basename(srcPath, ext),
+        artist: '',
+        album: '',
+        bpm: null,
+        key_raw: '',
+        duration: 0,
+        bitrate: 0,
+      };
+      try {
+        const { ffprobe: runFfprobe } = await import('./audio/ffmpeg.js');
+        const data = await runFfprobe(srcPath);
+        const tags = data.format?.tags || {};
+        const stream = data.streams?.find((s) => s.codec_type === 'audio') || {};
+        const bpmTag = tags.bpm || tags.BPM || tags.TBPM || tags['tbpm'];
+        meta = {
+          title: tags.title || path.basename(srcPath, ext),
+          artist: tags.artist || '',
+          album: tags.album || '',
+          bpm: bpmTag ? parseFloat(bpmTag) || null : null,
+          key_raw: tags.key || tags.KEY || tags.initialkey || tags.INITIALKEY || '',
+          duration: parseFloat(data.format?.duration) || 0,
+          bitrate: parseInt(stream.bit_rate || data.format?.bit_rate || 0, 10) || 0,
+        };
+      } catch {}
+
+      // Copy to USB /music/
+      const rawBase =
+        [meta.artist, meta.title].filter(Boolean).join(' - ') || path.basename(srcPath, ext);
+      const safeBase = rawBase.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+      let filename = `${safeBase}${ext}`;
+      let n = 1;
+      while (usedNames.has(filename.toLowerCase())) {
+        filename = `${safeBase} (${n++})${ext}`;
+      }
+      usedNames.set(filename.toLowerCase(), true);
+
+      const destDir = path.join(usbRoot, 'music');
+      fs.mkdirSync(destDir, { recursive: true });
+      const destPath = path.join(destDir, filename);
+      if (!fs.existsSync(destPath)) fs.copyFileSync(srcPath, destPath);
+      const usbFilePath = `/music/${filename}`;
+
+      // Write minimal ANLZ (path + beatgrid only, no waveform for speed)
+      try {
+        const anlzDat = await writeAnlz({
+          usbFilePath,
+          sourceFilePath: null,
+          beatgrid: null,
+          bpm: meta.bpm || 0,
+          beatgridOffset: 0,
+          usbRoot,
+          ffmpegPath: getFfmpegRuntimePath(),
+          cuePoints: [],
+        });
+        anlzPaths.set(i, anlzDat);
+      } catch {}
+
+      let fileSize = 0;
+      try {
+        fileSize = fs.statSync(destPath).size;
+      } catch {}
+
+      pdbTracks.push({
+        id: i + 1,
+        title: meta.title,
+        artist: meta.artist,
+        album: meta.album,
+        duration: meta.duration,
+        bpm: meta.bpm || 0,
+        key_raw: meta.key_raw,
+        file_path: usbFilePath,
+        track_number: i + 1,
+        year: '',
+        label: '',
+        genres: [],
+        file_size: fileSize,
+        bitrate: meta.bitrate,
+        comments: '',
+        rating: 0,
+        analyzePath: anlzPaths.get(i) || '',
+      });
+
+      const pct = Math.round(((i + 1) / total) * 90);
+      send('export-explorer-progress', { msg: `Copying ${i + 1}/${total}: ${filename}`, pct });
+    }
+
+    send('export-explorer-progress', { msg: 'Writing PDB database…', pct: 92 });
+
+    const pdbPlaylists = playlistName
+      ? [{ id: 1, name: playlistName, track_ids: pdbTracks.map((t) => t.id) }]
+      : [];
+
+    const outputPath = path.join(usbRoot, 'PIONEER', 'rekordbox', 'export.pdb');
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    writePdb({ tracks: pdbTracks, playlists: pdbPlaylists }, outputPath);
+
+    send('export-explorer-progress', { msg: 'Writing settings files…', pct: 96 });
+    try {
+      await writeSettingFiles(usbRoot);
+    } catch {}
+
+    send('export-explorer-progress', null);
+    return { ok: true, trackCount: pdbTracks.length, usbRoot };
+  } catch (err) {
+    send('export-explorer-progress', null);
+    return { ok: false, error: err.message };
+  }
+});
+
+// ── File Explorer v2 IPC ───────────────────────────────────────────────────────
+
+ipcMain.handle('get-computer-root', () => {
+  const home = os.homedir();
+  let root;
+  if (process.platform === 'win32') {
+    root = path.parse(home).root || 'C:\\';
+  } else {
+    root = '/';
+  }
+  return { root, home };
+});
+
+ipcMain.handle('get-tracks-by-paths', (_, filePaths) => {
+  return getTracksByPaths(filePaths);
+});
+
+let activeRecursiveWalker = null;
+
+ipcMain.handle('explorer-start-recursive', (_, dirPath) => {
+  if (activeRecursiveWalker) activeRecursiveWalker.cancelled = true;
+  const walker = { cancelled: false };
+  activeRecursiveWalker = walker;
+
+  if (!explorerAllowedBases.includes(dirPath)) explorerAllowedBases.push(dirPath);
+
+  async function walk(d) {
+    if (walker.cancelled) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    const batch = [];
+    const dirs = [];
+    for (const entry of entries) {
+      if (walker.cancelled) return;
+      const fullPath = path.join(d, entry.name);
+      if (entry.isDirectory() && !entry.name.startsWith('.')) {
+        dirs.push(fullPath);
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (AUDIO_EXTENSIONS.has(ext)) {
+          let size = 0;
+          try {
+            size = fs.statSync(fullPath).size;
+          } catch {}
+          batch.push({ name: entry.name, path: fullPath, size });
+        }
+      }
+    }
+    if (batch.length > 0 && !walker.cancelled) {
+      send('explorer-recursive-batch', batch);
+    }
+    for (const subdir of dirs) {
+      if (walker.cancelled) return;
+      await new Promise((r) => setImmediate(r));
+      await walk(subdir);
+    }
+  }
+
+  walk(dirPath).then(() => {
+    if (!walker.cancelled) send('explorer-recursive-done', null);
+  });
+
+  return { ok: true };
+});
+
+ipcMain.handle('explorer-cancel-recursive', () => {
+  if (activeRecursiveWalker) activeRecursiveWalker.cancelled = true;
+  activeRecursiveWalker = null;
+});
+
+ipcMain.handle('link-audio-files', async (_, { filePaths, playlistId }) => {
+  const results = [];
+  for (const filePath of filePaths) {
+    try {
+      const result = await linkAudioFile(filePath);
+      if (!result.duplicate && playlistId) {
+        await addTrackToPlaylist(playlistId, result.id);
+      }
+      const dir = path.dirname(filePath);
+      if (!explorerAllowedBases.includes(dir)) explorerAllowedBases.push(dir);
+      results.push(result);
+    } catch (err) {
+      results.push({ id: null, duplicate: false, error: err.message, path: filePath });
+    }
+  }
+  send('library-updated');
+  if (playlistId) send('playlists-updated');
+  return results;
+});
+
+ipcMain.handle('link-directory', async (_, { dirPath, recursive, playlistId }) => {
+  if (!explorerAllowedBases.includes(dirPath)) explorerAllowedBases.push(dirPath);
+  const filePaths = [];
+
+  function collectFiles(d) {
+    let entries;
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(d, entry.name);
+      if (recursive && entry.isDirectory() && !entry.name.startsWith('.')) {
+        collectFiles(fullPath);
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (AUDIO_EXTENSIONS.has(ext)) filePaths.push(fullPath);
+      }
+    }
+  }
+  collectFiles(dirPath);
+
+  let linked = 0;
+  for (const filePath of filePaths) {
+    try {
+      const result = await linkAudioFile(filePath);
+      if (!result.duplicate) linked++;
+      if (!result.duplicate && playlistId) await addTrackToPlaylist(playlistId, result.id);
+      const dir = path.dirname(filePath);
+      if (!explorerAllowedBases.includes(dir)) explorerAllowedBases.push(dir);
+    } catch {}
+  }
+
+  send('library-updated');
+  if (playlistId) send('playlists-updated');
+  return { ok: true, linked, total: filePaths.length };
+});
+
+ipcMain.handle('remap-track', async (_, { trackId, newPath }) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    defaultPath: newPath || undefined,
+    filters: [
+      {
+        name: 'Audio Files',
+        extensions: ['mp3', 'flac', 'wav', 'ogg', 'm4a', 'aac', 'aiff', 'aif', 'opus'],
+      },
+    ],
+  });
+  if (result.canceled || !result.filePaths.length) return { ok: false };
+  const resolvedPath = result.filePaths[0];
+  updateTrack(trackId, { file_path: resolvedPath });
+  const dir = path.dirname(resolvedPath);
+  if (!explorerAllowedBases.includes(dir)) explorerAllowedBases.push(dir);
+  return { ok: true, newPath: resolvedPath };
+});
+
+ipcMain.handle('remap-folder', async (_, { oldDir }) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+    title: `Select new location for folder: ${path.basename(oldDir)}`,
+  });
+  if (result.canceled || !result.filePaths.length) return { ok: false };
+  const newDir = result.filePaths[0];
+  const oldSep = oldDir.endsWith(path.sep) ? oldDir : oldDir + path.sep;
+  const newSep = newDir.endsWith(path.sep) ? newDir : newDir + path.sep;
+  const count = remapTracksByPrefix(oldSep, newSep);
+  if (!explorerAllowedBases.includes(newDir)) explorerAllowedBases.push(newDir);
+  return { ok: true, count, newDir };
+});
+
+ipcMain.handle('check-linked-track-status', (_, trackIds) => {
+  return trackIds.map((id) => {
+    const t = getTrackById(id);
+    if (!t) return { id, exists: false };
+    return { id, exists: !t.is_linked || fs.existsSync(t.file_path) };
+  });
+});
 
 ipcMain.handle('check-usb-format', async (_, mountPath) => {
   const info = await detectFilesystem(mountPath);

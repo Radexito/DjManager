@@ -6,6 +6,7 @@ import ImportPlaylistDialog from './ImportPlaylistDialog';
 
 const MENU_ITEMS = [
   { id: 'music', name: 'Music', icon: '🎵' },
+  { id: 'explorer', name: 'Explorer', icon: '📁' },
   { id: 'download', name: 'YT-DLP', icon: '⬇️' },
   { id: 'tidal', name: 'TIDAL', icon: '🌊' },
 ];
