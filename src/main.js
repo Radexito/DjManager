@@ -53,6 +53,7 @@ import {
   getTrackById,
   getTracksByPaths,
   getLinkedTrackDirs,
+  getLinkedTracksBasic,
   remapTracksByPrefix,
   removeTrack,
   updateTrack,
@@ -1733,6 +1734,10 @@ ipcMain.handle('check-linked-track-status', (_, trackIds) => {
     if (!t) return { id, exists: false };
     return { id, exists: !t.is_linked || fs.existsSync(t.file_path) };
   });
+});
+
+ipcMain.handle('get-linked-tracks-basic', () => {
+  return getLinkedTracksBasic();
 });
 
 ipcMain.handle('check-usb-format', async (_, mountPath) => {

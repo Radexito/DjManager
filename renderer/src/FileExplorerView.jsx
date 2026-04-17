@@ -1,41 +1,178 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { List } from 'react-window';
+import { usePlayer } from './PlayerContext.jsx';
+import { artworkUrl } from './artworkUrl.js';
+import TrackDetails from './TrackDetails.jsx';
+import BeatGridEditor from './BeatGridEditor.jsx';
+import './MusicLibrary.css';
 import './FileExplorerView.css';
 
-const ROW_HEIGHT = 36;
-const AUDIO_EXTENSIONS = new Set([
-  '.mp3',
-  '.flac',
-  '.wav',
-  '.ogg',
-  '.m4a',
-  '.aac',
-  '.aiff',
-  '.aif',
-  '.opus',
-  '.wv',
-]);
+// ── Column definitions (matches MusicLibrary) ────────────────────────────────
 
-function isAudio(name) {
-  return AUDIO_EXTENSIONS.has(name.slice(name.lastIndexOf('.')).toLowerCase());
+const COLUMNS = [
+  { key: 'index', label: '#', width: '40px' },
+  { key: 'status', label: '', width: '24px' },
+  { key: 'title', label: 'Title', width: 'minmax(120px,2fr)' },
+  { key: 'artist', label: 'Artist', width: 'minmax(90px,1.5fr)' },
+  { key: 'bpm', label: 'BPM', width: '62px' },
+  { key: 'key_camelot', label: 'Key', width: '52px' },
+  { key: 'loudness', label: 'Loudness', width: '90px' },
+  { key: 'duration', label: 'Duration', width: '65px' },
+];
+
+const GRID = COLUMNS.map((c) => c.width).join(' ');
+const MIN_WIDTH = 680;
+const ROW_HEIGHT = 50;
+
+function fmtDuration(secs) {
+  if (secs == null) return '—';
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-// ── Breadcrumbs ───────────────────────────────────────────────────────────────
+function basename(p) {
+  return p.replace(/.*[\\/]/, '');
+}
 
-function getBreadcrumbs(currentPath) {
-  if (!currentPath) return [];
-  const isWin = /^[A-Za-z]:/.test(currentPath);
-  if (isWin) {
-    const parts = currentPath.split('\\').filter(Boolean);
-    const crumbs = [];
-    let acc = '';
-    for (const part of parts) {
-      acc = acc ? `${acc}\\${part}` : `${part}\\`;
-      crumbs.push({ label: part, path: acc });
-    }
-    return crumbs;
+function fileToSyntheticTrack(f) {
+  const name = basename(f.path);
+  const dot = name.lastIndexOf('.');
+  return {
+    id: `explorer:${f.path}`,
+    file_path: f.path,
+    normalized_file_path: null,
+    title: dot > 0 ? name.slice(0, dot) : name,
+    artist: null,
+    album: null,
+    bpm: null,
+    bpm_override: null,
+    key_camelot: null,
+    loudness: null,
+    duration: null,
+    bitrate: null,
+    has_artwork: 0,
+    artwork_path: null,
+    analyzed: 0,
+    is_linked: 0,
+    replay_gain: null,
+    beatgrid_offset: 0,
+    cue_count: 0,
+    rating: 0,
+    genres: '[]',
+    user_tags: null,
+  };
+}
+
+// ── Row component (outside to prevent remounts) ──────────────────────────────
+
+function ExplorerRow({
+  index,
+  style,
+  items,
+  tracksMap,
+  selectedPaths,
+  playingFilePath,
+  onRowClick,
+  onDoubleClick,
+  onContextMenu,
+  mediaPort,
+}) {
+  const item = items[index];
+  if (!item) return <div style={style} />;
+
+  const track =
+    tracksMap.get(item.path) ?? (item.type === 'file' ? fileToSyntheticTrack(item) : null);
+  const isSelected = selectedPaths.has(item.path);
+  const isPlaying = item.type === 'file' && item.path === playingFilePath;
+  const isLinked = track?.is_linked === 1;
+  const isAnalyzing = isLinked && track?.analyzed === 0;
+
+  if (item.type === 'dir') {
+    return (
+      <div
+        style={{ ...style, gridTemplateColumns: GRID, minWidth: MIN_WIDTH }}
+        className={`row row-even explorer-dir-row${isSelected ? ' row--selected' : ''}`}
+        onClick={(e) => onRowClick(e, item)}
+        onDoubleClick={() => onDoubleClick(item)}
+        onContextMenu={(e) => onContextMenu(e, item)}
+      >
+        <div className="cell index">
+          <span className="index-num">📁</span>
+        </div>
+        <div className="cell" />
+        <div className="cell title">
+          <span className="cell-artwork cell-artwork--placeholder">📁</span>
+          <span className="cell-title-text">{item.name}</span>
+        </div>
+        <div className="cell artist" />
+        <div className="cell bpm numeric" />
+        <div className="cell key_camelot numeric" />
+        <div className="cell loudness numeric" />
+        <div className="cell duration numeric" />
+      </div>
+    );
   }
-  const parts = currentPath.split('/').filter(Boolean);
+
+  const bpmVal = track?.bpm_override ?? track?.bpm;
+  const artSrc = artworkUrl(track?.has_artwork ? track.artwork_path : null, mediaPort);
+
+  return (
+    <div
+      style={{ ...style, gridTemplateColumns: GRID, minWidth: MIN_WIDTH }}
+      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${isAnalyzing ? ' row--analyzing' : ''}`}
+      onClick={(e) => onRowClick(e, item)}
+      onDoubleClick={() => onDoubleClick(item)}
+      onContextMenu={(e) => onContextMenu(e, item)}
+    >
+      <div className="cell index">
+        <span className="index-num">{index + 1}</span>
+        <button
+          className="index-play"
+          title="Play"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDoubleClick(item);
+          }}
+        >
+          ▶
+        </button>
+      </div>
+      <div className="cell explorer-status-cell" title={isLinked ? 'In library' : 'Not in library'}>
+        {isLinked ? '🔗' : ''}
+      </div>
+      <div className="cell title">
+        {artSrc ? (
+          <img className="cell-artwork" src={artSrc} alt="" draggable={false} />
+        ) : (
+          <span className="cell-artwork cell-artwork--placeholder">♪</span>
+        )}
+        <span className="cell-title-text">{track?.title ?? item.name}</span>
+      </div>
+      <div className="cell artist">{track?.artist || '—'}</div>
+      <div className="cell bpm numeric">{bpmVal != null ? bpmVal : '—'}</div>
+      <div className="cell key_camelot numeric">{track?.key_camelot ?? '—'}</div>
+      <div className="cell loudness numeric">{track?.loudness != null ? track.loudness : '—'}</div>
+      <div className="cell duration numeric">{fmtDuration(track?.duration)}</div>
+    </div>
+  );
+}
+
+// ── Breadcrumbs ──────────────────────────────────────────────────────────────
+
+function getBreadcrumbs(p) {
+  if (!p) return [];
+  if (/^[A-Za-z]:/.test(p)) {
+    let acc = '';
+    return p
+      .split('\\')
+      .filter(Boolean)
+      .map((part) => {
+        acc = acc ? `${acc}\\${part}` : `${part}\\`;
+        return { label: part, path: acc };
+      });
+  }
+  const parts = p.split('/').filter(Boolean);
   const crumbs = [{ label: '/', path: '/' }];
   let acc = '';
   for (const part of parts) {
@@ -45,118 +182,44 @@ function getBreadcrumbs(currentPath) {
   return crumbs;
 }
 
-// ── Context menu ──────────────────────────────────────────────────────────────
-
-function ContextMenu({ x, y, items, onClose }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    const handler = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) onClose();
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [onClose]);
-
-  return (
-    <div
-      ref={ref}
-      className="explorer-context-menu"
-      style={{ position: 'fixed', left: x, top: y, zIndex: 9999 }}
-    >
-      {items.map((item, i) =>
-        item === 'separator' ? (
-          <div key={i} className="explorer-context-separator" />
-        ) : (
-          <button
-            key={i}
-            className="explorer-context-item"
-            onClick={() => {
-              item.action();
-              onClose();
-            }}
-          >
-            {item.label}
-          </button>
-        )
-      )}
-    </div>
-  );
-}
-
-// ── Toast ─────────────────────────────────────────────────────────────────────
-
-function Toast({ message, onDone }) {
-  useEffect(() => {
-    const t = setTimeout(onDone, 3000);
-    return () => clearTimeout(t);
-  }, [onDone]);
-  return <div className="explorer-toast">{message}</div>;
-}
-
-// ── Row component (must be outside to avoid remounts) ────────────────────────
-
-function ExplorerRow({
-  index,
-  style,
-  ariaAttributes,
-  items,
-  linkedPaths,
-  selectedPaths,
-  onSelect,
-  onOpen,
-  onContextMenu,
-}) {
-  const item = items[index];
-  if (!item) return <div style={style} />;
-
-  const isSelected = selectedPaths.has(item.path);
-  const isLinked = item.type === 'file' && linkedPaths.has(item.path);
-
-  return (
-    <div
-      {...ariaAttributes}
-      style={style}
-      className={`explorer-row${isSelected ? ' selected' : ''}${item.type === 'dir' ? ' dir' : ''}`}
-      onClick={(e) => onSelect(e, item)}
-      onDoubleClick={() => onOpen(item)}
-      onContextMenu={(e) => onContextMenu(e, item)}
-    >
-      <span className="explorer-row-icon">
-        {item.type === 'dir' ? '📁' : isLinked ? '🔗' : '🎵'}
-      </span>
-      <span className="explorer-row-name">{item.name}</span>
-      {item.type === 'file' && item.size != null && (
-        <span className="explorer-row-size">{(item.size / 1024 / 1024).toFixed(1)} MB</span>
-      )}
-    </div>
-  );
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function FileExplorerView({ style }) {
+  const { play, currentTrack, mediaPort } = usePlayer();
+
   const [fsRoot, setFsRoot] = useState(null);
   const [homeDir, setHomeDir] = useState(null);
   const [currentPath, setCurrentPath] = useState(null);
-  const [dirs, setDirs] = useState([]);
-  const [files, setFiles] = useState([]);
+  const [dirEntries, setDirEntries] = useState({ dirs: [], files: [] });
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [tracksMap, setTracksMap] = useState(new Map());
   const [selectedPaths, setSelectedPaths] = useState(new Set());
-  const [linkedPaths, setLinkedPaths] = useState(new Set());
   const [playlists, setPlaylists] = useState([]);
   const [contextMenu, setContextMenu] = useState(null);
+  const [detailsTrack, setDetailsTrack] = useState(null);
+  const [beatGridTrack, setBeatGridTrack] = useState(null);
   const [toast, setToast] = useState(null);
-  const [recursiveFiles, setRecursiveFiles] = useState(null); // null = off, [] = scanning
+
+  // Broken links — populated by slow background scan
+  const [brokenTracks, setBrokenTracks] = useState([]);
+  const brokenScanRunning = useRef(false);
+
+  // Recursive scan
+  const [recursiveFiles, setRecursiveFiles] = useState(null);
   const [recursiveScanning, setRecursiveScanning] = useState(false);
+
   const listRef = useRef();
   const containerRef = useRef();
   const [listHeight, setListHeight] = useState(500);
   const lastClickIndex = useRef(null);
 
-  const showToast = useCallback((msg) => setToast(msg), []);
+  const showToast = useCallback((msg, ok = true) => {
+    setToast({ msg, ok });
+    setTimeout(() => setToast(null), 3000);
+  }, []);
 
-  // Init
+  // ── Init ──────────────────────────────────────────────────────────────────
+
   useEffect(() => {
     window.api.getComputerRoot().then(({ root, home }) => {
       setFsRoot(root);
@@ -168,96 +231,150 @@ export default function FileExplorerView({ style }) {
     return unsub;
   }, []);
 
-  // Resize observer for list height
+  // ── Background broken-link scan ──────────────────────────────────────────
+
+  const runBrokenScan = useCallback(async () => {
+    if (brokenScanRunning.current) return;
+    brokenScanRunning.current = true;
+    try {
+      const linked = await window.api.getLinkedTracksBasic();
+      if (!linked.length) return;
+      const BATCH = 20;
+      const broken = [];
+      for (let i = 0; i < linked.length; i += BATCH) {
+        const batch = linked.slice(i, i + BATCH);
+        const results = await window.api.checkLinkedTrackStatus(batch.map((t) => t.id));
+        for (const r of results) {
+          if (!r.exists) {
+            const t = batch.find((b) => b.id === r.id);
+            if (t) broken.push(t);
+          }
+        }
+        // Yield between batches — keep CPU low
+        await new Promise((res) => setTimeout(res, 150));
+      }
+      setBrokenTracks(broken);
+    } finally {
+      brokenScanRunning.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    runBrokenScan();
+  }, [runBrokenScan]);
+
+  useEffect(() => {
+    const unsub = window.api.onLibraryUpdated(() => {
+      brokenScanRunning.current = false;
+      setBrokenTracks([]);
+      runBrokenScan();
+    });
+    return unsub;
+  }, [runBrokenScan]);
+
+  // ── Resize observer ──────────────────────────────────────────────────────
+
   useEffect(() => {
     if (!containerRef.current) return;
-    const obs = new ResizeObserver((entries) => {
-      for (const entry of entries) setListHeight(entry.contentRect.height);
-    });
+    const obs = new ResizeObserver(([e]) => setListHeight(e.contentRect.height));
     obs.observe(containerRef.current);
     return () => obs.disconnect();
   }, []);
 
-  // Load directory
+  // ── Load directory ────────────────────────────────────────────────────────
+
   useEffect(() => {
     if (!currentPath || !fsRoot) return;
     setLoading(true);
-    setError(null);
     setSelectedPaths(new Set());
     setRecursiveFiles(null);
     setRecursiveScanning(false);
     window.api.explorerCancelRecursive();
-    window.api
-      .browseDirectory(currentPath)
-      .then(({ dirs: d, files: f, error: e }) => {
-        if (e) setError(e);
-        setDirs(d ?? []);
-        setFiles(f ?? []);
-        // Refresh linked status
-        if (f?.length) {
-          window.api.getTracksByPaths(f.map((x) => x.path)).then((tracks) => {
-            setLinkedPaths(new Set(tracks.map((t) => t.file_path)));
-          });
-        } else {
-          setLinkedPaths(new Set());
-        }
-      })
-      .finally(() => setLoading(false));
+    window.api.browseDirectory(currentPath).then(({ dirs, files }) => {
+      setDirEntries({ dirs: dirs ?? [], files: files ?? [] });
+      const paths = (files ?? []).map((f) => f.path);
+      if (paths.length) {
+        window.api.getTracksByPaths(paths).then((tracks) => {
+          setTracksMap(new Map(tracks.map((t) => [t.file_path, t])));
+        });
+      } else {
+        setTracksMap(new Map());
+      }
+      setLoading(false);
+    });
   }, [currentPath, fsRoot]);
 
-  // Recursive batch events
+  // Update track data in-place as analysis results arrive
   useEffect(() => {
-    const unsubBatch = window.api.onExplorerRecursiveBatch((batch) => {
-      setRecursiveFiles((prev) => [...(prev ?? []), ...batch]);
+    const unsub = window.api.onTrackUpdated((updated) => {
+      setTracksMap((prev) => {
+        if (!prev.has(updated.file_path)) return prev;
+        const next = new Map(prev);
+        next.set(updated.file_path, { ...prev.get(updated.file_path), ...updated });
+        return next;
+      });
     });
-    const unsubDone = window.api.onExplorerRecursiveDone(() => {
-      setRecursiveScanning(false);
-    });
+    return unsub;
+  }, []);
+
+  // ── Recursive scan events ────────────────────────────────────────────────
+
+  useEffect(() => {
+    const u1 = window.api.onExplorerRecursiveBatch((batch) =>
+      setRecursiveFiles((p) => [...(p ?? []), ...batch])
+    );
+    const u2 = window.api.onExplorerRecursiveDone(() => setRecursiveScanning(false));
     return () => {
-      unsubBatch();
-      unsubDone();
+      u1();
+      u2();
     };
   }, []);
 
+  // ── Derived state ─────────────────────────────────────────────────────────
+
   const displayItems = useMemo(() => {
-    if (recursiveFiles !== null) {
-      return recursiveFiles.map((f) => ({ ...f, type: 'file' }));
-    }
+    if (recursiveFiles !== null) return recursiveFiles.map((f) => ({ ...f, type: 'file' }));
     return [
-      ...dirs.map((d) => ({ ...d, type: 'dir' })),
-      ...files.map((f) => ({ ...f, type: 'file' })),
+      ...dirEntries.dirs.map((d) => ({ ...d, type: 'dir' })),
+      ...dirEntries.files.map((f) => ({ ...f, type: 'file' })),
     ];
-  }, [dirs, files, recursiveFiles]);
+  }, [dirEntries, recursiveFiles]);
+
+  const brokenByFilename = useMemo(() => {
+    const m = new Map();
+    for (const t of brokenTracks) {
+      const name = basename(t.file_path);
+      if (!m.has(name)) m.set(name, t);
+    }
+    return m;
+  }, [brokenTracks]);
+
+  const playingFilePath = currentTrack?.file_path ?? null;
+
+  // ── Navigation ────────────────────────────────────────────────────────────
 
   const navigateTo = useCallback((p) => {
     setCurrentPath(p);
     lastClickIndex.current = null;
   }, []);
 
-  const handleOpen = useCallback(
-    (item) => {
-      if (item.type === 'dir') navigateTo(item.path);
-    },
-    [navigateTo]
-  );
+  // ── Selection ────────────────────────────────────────────────────────────
 
-  const handleSelect = useCallback(
+  const handleRowClick = useCallback(
     (e, item) => {
       const idx = displayItems.findIndex((x) => x.path === item.path);
       if (e.shiftKey && lastClickIndex.current != null) {
         const lo = Math.min(lastClickIndex.current, idx);
         const hi = Math.max(lastClickIndex.current, idx);
-        const range = new Set(displayItems.slice(lo, hi + 1).map((x) => x.path));
         setSelectedPaths((prev) => {
           const next = new Set(prev);
-          range.forEach((p) => next.add(p));
+          displayItems.slice(lo, hi + 1).forEach((x) => next.add(x.path));
           return next;
         });
       } else if (e.ctrlKey || e.metaKey) {
         setSelectedPaths((prev) => {
           const next = new Set(prev);
-          if (next.has(item.path)) next.delete(item.path);
-          else next.add(item.path);
+          next.has(item.path) ? next.delete(item.path) : next.add(item.path);
           return next;
         });
         lastClickIndex.current = idx;
@@ -269,33 +386,38 @@ export default function FileExplorerView({ style }) {
     [displayItems]
   );
 
-  const selectedFilePaths = useMemo(() => {
-    return displayItems
-      .filter((x) => x.type === 'file' && selectedPaths.has(x.path))
-      .map((x) => x.path);
-  }, [displayItems, selectedPaths]);
+  // ── Playback ─────────────────────────────────────────────────────────────
 
-  const selectedDirPaths = useMemo(() => {
-    return displayItems
-      .filter((x) => x.type === 'dir' && selectedPaths.has(x.path))
-      .map((x) => x.path);
-  }, [displayItems, selectedPaths]);
+  const handleDoubleClick = useCallback(
+    (item) => {
+      if (item.type === 'dir') {
+        navigateTo(item.path);
+        return;
+      }
+      const fileItems = displayItems.filter((x) => x.type === 'file');
+      const idx = fileItems.findIndex((x) => x.path === item.path);
+      const queue = fileItems.map((f) => tracksMap.get(f.path) ?? fileToSyntheticTrack(f));
+      play(queue[idx], queue, idx);
+    },
+    [displayItems, tracksMap, play, navigateTo]
+  );
 
-  const linkSelected = useCallback(
-    async (playlistId = null) => {
-      if (!selectedFilePaths.length) return;
-      const results = await window.api.linkAudioFiles(selectedFilePaths, playlistId);
-      const linked = results.filter((r) => !r.duplicate).length;
+  // ── Link helpers ──────────────────────────────────────────────────────────
+
+  const linkFiles = useCallback(
+    async (filePaths, playlistId = null) => {
+      const results = await window.api.linkAudioFiles(filePaths, playlistId);
+      const linked = results.filter((r) => !r.duplicate && r.id).length;
       showToast(`Linked ${linked} track(s)`);
-      setLinkedPaths((prev) => {
-        const next = new Set(prev);
-        results.forEach((r) => {
-          if (r.id) next.add(selectedFilePaths[results.indexOf(r)]);
-        });
+      const tracks = await window.api.getTracksByPaths(filePaths);
+      setTracksMap((prev) => {
+        const next = new Map(prev);
+        tracks.forEach((t) => next.set(t.file_path, t));
         return next;
       });
+      return results;
     },
-    [selectedFilePaths, showToast]
+    [showToast]
   );
 
   const linkDir = useCallback(
@@ -306,6 +428,8 @@ export default function FileExplorerView({ style }) {
     [showToast]
   );
 
+  // ── Context menu ──────────────────────────────────────────────────────────
+
   const handleContextMenu = useCallback(
     (e, item) => {
       e.preventDefault();
@@ -313,116 +437,85 @@ export default function FileExplorerView({ style }) {
         setSelectedPaths(new Set([item.path]));
         lastClickIndex.current = displayItems.findIndex((x) => x.path === item.path);
       }
-
-      const playlistItems = playlists.map((pl) => ({
-        label: `  Add to "${pl.name}"`,
-        action: () => {
-          if (item.type === 'file') {
-            window.api.linkAudioFiles([item.path], pl.id).then(() => showToast('Added'));
-          } else {
-            linkDir(item.path, false, pl.id);
-          }
-        },
-      }));
-
-      let items = [];
-
-      if (item.type === 'file') {
-        const isLinked = linkedPaths.has(item.path);
-        items = [
-          {
-            label: isLinked ? '✓ Already in library' : 'Add to library',
-            action: () => !isLinked && linkSelected(null),
-          },
-          'separator',
-          { label: 'Add to playlist ▸', action: () => {} },
-          ...playlistItems,
-          'separator',
-          {
-            label: 'Remap broken link…',
-            action: async () => {
-              const tracks = await window.api.getTracksByPaths([item.path]);
-              if (!tracks.length) {
-                showToast('Not in library');
-                return;
-              }
-              const res = await window.api.remapTrack(tracks[0].id, item.path);
-              showToast(res.ok ? 'Remapped' : 'Remap failed');
-            },
-          },
-        ];
-      } else {
-        items = [
-          { label: 'Import folder (flat)', action: () => linkDir(item.path, false, null) },
-          { label: 'Import folder (recursive)', action: () => linkDir(item.path, true, null) },
-          'separator',
-          {
-            label: 'Import as playlist (flat)',
-            action: async () => {
-              const pl = await window.api.createPlaylist(item.name);
-              linkDir(item.path, false, pl.id);
-            },
-          },
-          {
-            label: 'Import as playlist (recursive)',
-            action: async () => {
-              const pl = await window.api.createPlaylist(item.name);
-              linkDir(item.path, true, pl.id);
-            },
-          },
-          'separator',
-          { label: 'Add to playlist ▸', action: () => {} },
-          ...playlistItems,
-          'separator',
-          {
-            label: 'Remap broken folder…',
-            action: async () => {
-              const res = await window.api.remapFolder(item.path);
-              showToast(res.ok ? `Remapped ${res.count} track(s)` : 'Remap failed');
-            },
-          },
-        ];
-      }
-
-      setContextMenu({ x: e.clientX, y: e.clientY, items });
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      setContextMenu({
+        x: Math.min(e.clientX, vw - 220),
+        y: Math.min(e.clientY, vh - 16),
+        item,
+        flipLeft: e.clientX > vw / 2,
+        flipUp: e.clientY > vh * 0.5,
+      });
     },
-    [selectedPaths, displayItems, playlists, linkedPaths, linkSelected, linkDir, showToast]
+    [selectedPaths, displayItems]
   );
 
-  const toggleRecursive = useCallback(() => {
-    if (recursiveScanning) {
-      window.api.explorerCancelRecursive();
-      setRecursiveScanning(false);
-      return;
-    }
-    if (recursiveFiles !== null) {
-      setRecursiveFiles(null);
-      return;
-    }
-    setRecursiveFiles([]);
-    setRecursiveScanning(true);
-    window.api.explorerStartRecursive(currentPath);
-  }, [recursiveFiles, recursiveScanning, currentPath]);
+  const closeMenu = useCallback(() => setContextMenu(null), []);
+
+  // ── Details save ──────────────────────────────────────────────────────────
+
+  const handleDetailsSave = useCallback(async (updatedTrack) => {
+    await window.api.updateTrack(updatedTrack.id, updatedTrack);
+    setTracksMap((prev) => {
+      const next = new Map(prev);
+      for (const [k, v] of next) {
+        if (v.id === updatedTrack.id) {
+          next.set(k, { ...v, ...updatedTrack });
+          break;
+        }
+      }
+      return next;
+    });
+    setDetailsTrack(null);
+  }, []);
+
+  // ── Render helpers ────────────────────────────────────────────────────────
 
   const breadcrumbs = useMemo(() => getBreadcrumbs(currentPath), [currentPath]);
+
+  const selectedFileItems = useMemo(
+    () => displayItems.filter((x) => x.type === 'file' && selectedPaths.has(x.path)),
+    [displayItems, selectedPaths]
+  );
 
   const rowProps = useMemo(
     () => ({
       items: displayItems,
-      linkedPaths,
+      tracksMap,
       selectedPaths,
-      onSelect: handleSelect,
-      onOpen: handleOpen,
+      playingFilePath,
+      onRowClick: handleRowClick,
+      onDoubleClick: handleDoubleClick,
       onContextMenu: handleContextMenu,
+      mediaPort,
     }),
-    [displayItems, linkedPaths, selectedPaths, handleSelect, handleOpen, handleContextMenu]
+    [
+      displayItems,
+      tracksMap,
+      selectedPaths,
+      playingFilePath,
+      handleRowClick,
+      handleDoubleClick,
+      handleContextMenu,
+      mediaPort,
+    ]
   );
 
-  const canLinkSelected = selectedFilePaths.length > 0;
+  // Context menu computed values
+  const menuItem = contextMenu?.item ?? null;
+  const menuTrack = menuItem ? (tracksMap.get(menuItem.path) ?? null) : null;
+  const menuIsLinked = menuTrack?.is_linked === 1;
+  const menuIsDir = menuItem?.type === 'dir';
+  const menuFilename = menuItem ? basename(menuItem.path) : '';
+  const menuBrokenMatch =
+    menuItem && !menuIsLinked && !menuIsDir ? (brokenByFilename.get(menuFilename) ?? null) : null;
+  const menuLinkedBroken = menuIsLinked
+    ? (brokenTracks.find((b) => b.id === menuTrack?.id) ?? null)
+    : null;
 
   return (
     <div className="explorer-view" style={style}>
-      {/* Toolbar */}
+      {/* ── Toolbar ───────────────────────────────────────────────────────── */}
       <div className="explorer-toolbar">
         <button
           className="explorer-btn"
@@ -454,34 +547,64 @@ export default function FileExplorerView({ style }) {
             recursiveScanning
               ? 'Cancel scan'
               : recursiveFiles !== null
-                ? 'Exit recursive view'
+                ? 'Exit recursive'
                 : 'Scan recursively'
           }
-          onClick={toggleRecursive}
+          onClick={() => {
+            if (recursiveScanning) {
+              window.api.explorerCancelRecursive();
+              setRecursiveScanning(false);
+              return;
+            }
+            if (recursiveFiles !== null) {
+              setRecursiveFiles(null);
+              return;
+            }
+            setRecursiveFiles([]);
+            setRecursiveScanning(true);
+            window.api.explorerStartRecursive(currentPath);
+          }}
         >
           {recursiveScanning ? '⏳' : '🔍'}
         </button>
-        {canLinkSelected && (
-          <button className="explorer-btn accent" onClick={() => linkSelected(null)}>
-            + Library ({selectedFilePaths.length})
+        {brokenTracks.length > 0 && (
+          <span
+            className="explorer-broken-badge"
+            title={`${brokenTracks.length} broken link(s) detected`}
+          >
+            ⚠️ {brokenTracks.length}
+          </span>
+        )}
+        {selectedFileItems.length > 0 && (
+          <button
+            className="explorer-btn accent"
+            onClick={() => linkFiles(selectedFileItems.map((f) => f.path))}
+          >
+            + Library ({selectedFileItems.length})
           </button>
         )}
       </div>
 
-      {/* Breadcrumb path for recursive view */}
       {recursiveFiles !== null && (
         <div className="explorer-recursive-banner">
           Recursive view of <strong>{currentPath}</strong>
-          {recursiveScanning && ' — scanning…'}
-          {!recursiveScanning && ` — ${recursiveFiles.length} file(s)`}
+          {recursiveScanning ? ' — scanning…' : ` — ${recursiveFiles.length} file(s)`}
         </div>
       )}
 
-      {/* File list */}
+      {/* ── Header row ────────────────────────────────────────────────────── */}
+      <div className="header" style={{ gridTemplateColumns: GRID, minWidth: MIN_WIDTH }}>
+        {COLUMNS.map((col) => (
+          <div key={col.key} className="header-cell">
+            {col.label}
+          </div>
+        ))}
+      </div>
+
+      {/* ── File list ─────────────────────────────────────────────────────── */}
       <div className="explorer-list-container" ref={containerRef}>
         {loading && <div className="explorer-empty">Loading…</div>}
-        {!loading && error && <div className="explorer-empty error">{error}</div>}
-        {!loading && !error && displayItems.length === 0 && (
+        {!loading && displayItems.length === 0 && (
           <div className="explorer-empty">No audio files here</div>
         )}
         {!loading && displayItems.length > 0 && (
@@ -498,15 +621,276 @@ export default function FileExplorerView({ style }) {
         )}
       </div>
 
+      {/* ── Context menu ──────────────────────────────────────────────────── */}
       {contextMenu && (
-        <ContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          items={contextMenu.items}
-          onClose={() => setContextMenu(null)}
+        <>
+          <div className="context-backdrop-invisible" onClick={closeMenu} />
+          <div
+            className={`context-menu${contextMenu.flipLeft ? ' context-menu--flip-left' : ''}${contextMenu.flipUp ? ' context-menu--flip-up' : ''}`}
+            style={{ top: contextMenu.y, left: contextMenu.x }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            {menuIsDir ? (
+              <>
+                <div
+                  className="context-menu-item"
+                  onClick={() => {
+                    closeMenu();
+                    linkDir(menuItem.path, false);
+                  }}
+                >
+                  📁 Import folder (flat)
+                </div>
+                <div
+                  className="context-menu-item"
+                  onClick={() => {
+                    closeMenu();
+                    linkDir(menuItem.path, true);
+                  }}
+                >
+                  📁 Import folder (recursive)
+                </div>
+                <div className="context-menu-separator" />
+                <div
+                  className="context-menu-item"
+                  onClick={async () => {
+                    closeMenu();
+                    const pl = await window.api.createPlaylist(menuItem.name);
+                    linkDir(menuItem.path, false, pl.id);
+                  }}
+                >
+                  ➕ Create playlist (flat)
+                </div>
+                <div
+                  className="context-menu-item"
+                  onClick={async () => {
+                    closeMenu();
+                    const pl = await window.api.createPlaylist(menuItem.name);
+                    linkDir(menuItem.path, true, pl.id);
+                  }}
+                >
+                  ➕ Create playlist (recursive)
+                </div>
+                {brokenTracks.some((b) => b.file_path.startsWith(menuItem.path)) && (
+                  <>
+                    <div className="context-menu-separator" />
+                    <div
+                      className="context-menu-item"
+                      onClick={async () => {
+                        closeMenu();
+                        const r = await window.api.remapFolder(menuItem.path);
+                        showToast(r.ok ? `Remapped ${r.count} track(s)` : 'Remap failed', r.ok);
+                      }}
+                    >
+                      🔗 Remap broken folder…
+                    </div>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                {/* Add to library — unlinked files only */}
+                {!menuIsLinked && (
+                  <>
+                    <div
+                      className="context-menu-item"
+                      onClick={() => {
+                        closeMenu();
+                        linkFiles([menuItem.path]);
+                      }}
+                    >
+                      ➕ Add to library
+                    </div>
+                    <div className="context-menu-separator" />
+                  </>
+                )}
+
+                {/* Add to playlist submenu */}
+                <div className="context-menu-item context-menu-item--has-submenu">
+                  ➕ Add to playlist
+                  <div className="context-submenu context-submenu--scrollable">
+                    <div
+                      className="context-menu-item"
+                      onClick={async () => {
+                        closeMenu();
+                        const pl = await window.api.createPlaylist(menuFilename);
+                        await linkFiles([menuItem.path], pl.id);
+                      }}
+                    >
+                      ✚ New playlist…
+                    </div>
+                    {playlists.length > 0 && <div className="context-menu-separator" />}
+                    {playlists.map((pl) => (
+                      <div
+                        key={pl.id}
+                        className="context-menu-item"
+                        onClick={async () => {
+                          closeMenu();
+                          let trackId = menuTrack?.id;
+                          if (!menuIsLinked || typeof trackId === 'string') {
+                            const results = await linkFiles([menuItem.path]);
+                            trackId = results[0]?.id ?? null;
+                          }
+                          if (trackId && typeof trackId === 'number')
+                            await window.api.addTracksToPlaylist(pl.id, [trackId]);
+                          showToast(`Added to "${pl.name}"`);
+                        }}
+                      >
+                        {pl.color && <span style={{ color: pl.color }}>● </span>}
+                        {pl.name}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="context-menu-separator" />
+
+                {/* Play */}
+                <div
+                  className="context-menu-item"
+                  onClick={() => {
+                    closeMenu();
+                    handleDoubleClick(menuItem);
+                  }}
+                >
+                  ▶ Play
+                </div>
+
+                {/* Edit / Analysis — linked tracks only */}
+                {menuIsLinked && menuTrack && (
+                  <>
+                    <div className="context-menu-separator" />
+                    <div
+                      className="context-menu-item"
+                      onClick={() => {
+                        closeMenu();
+                        setDetailsTrack(menuTrack);
+                      }}
+                    >
+                      ✏️ Edit Details
+                    </div>
+                    <div className="context-menu-item context-menu-item--has-submenu">
+                      🔬 Analysis
+                      <div className="context-submenu">
+                        <div
+                          className="context-menu-item"
+                          onClick={() => {
+                            closeMenu();
+                            window.api.reanalyzeTrack(menuTrack.id);
+                            showToast('Re-analysis started');
+                          }}
+                        >
+                          🔄 Re-analyze
+                        </div>
+                        <div className="context-menu-separator" />
+                        <div
+                          className="context-menu-item"
+                          onClick={() => {
+                            closeMenu();
+                            window.api.normalizeTracksAudio({ trackIds: [menuTrack.id] });
+                            showToast('Normalization started');
+                          }}
+                        >
+                          🔊 Normalize
+                        </div>
+                        <div className="context-menu-separator" />
+                        <div
+                          className="context-menu-item"
+                          onClick={() => {
+                            closeMenu();
+                            setBeatGridTrack(menuTrack);
+                          }}
+                        >
+                          🥁 Beat Grid…
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* Remap — only when broken link detected */}
+                {(menuBrokenMatch || menuLinkedBroken) && (
+                  <>
+                    <div className="context-menu-separator" />
+                    {menuBrokenMatch && (
+                      <div
+                        className="context-menu-item"
+                        title={`Remap broken track: ${menuBrokenMatch.title}`}
+                        onClick={async () => {
+                          closeMenu();
+                          const r = await window.api.remapTrack(menuBrokenMatch.id, menuItem.path);
+                          if (r.ok) {
+                            setBrokenTracks((p) => p.filter((b) => b.id !== menuBrokenMatch.id));
+                            showToast(`Remapped: ${menuBrokenMatch.title}`);
+                          } else showToast('Remap failed', false);
+                        }}
+                      >
+                        🔗 Remap &ldquo;{menuBrokenMatch.title}&rdquo; to this file
+                      </div>
+                    )}
+                    {menuLinkedBroken && (
+                      <div
+                        className="context-menu-item context-menu-item--disabled"
+                        title="This track's file is missing from disk"
+                      >
+                        ⚠️ Broken link — file missing
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Remove */}
+                {menuIsLinked && (
+                  <>
+                    <div className="context-menu-separator" />
+                    <div
+                      className="context-menu-item context-menu-item--danger"
+                      onClick={async () => {
+                        closeMenu();
+                        await window.api.removeTrack(menuTrack.id);
+                        setTracksMap((prev) => {
+                          const next = new Map(prev);
+                          next.delete(menuItem.path);
+                          return next;
+                        });
+                        showToast('Removed from library');
+                      }}
+                    >
+                      🗑️ Remove from library
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ── Modals ────────────────────────────────────────────────────────── */}
+      {detailsTrack && (
+        <TrackDetails
+          track={detailsTrack}
+          onSave={handleDetailsSave}
+          onCancel={() => setDetailsTrack(null)}
         />
       )}
-      {toast && <Toast message={toast} onDone={() => setToast(null)} />}
+      {beatGridTrack && (
+        <BeatGridEditor
+          track={beatGridTrack}
+          onClose={() => setBeatGridTrack(null)}
+          onApply={async (data) => {
+            await window.api.adjustBpm({ trackId: beatGridTrack.id, ...data });
+            setBeatGridTrack(null);
+          }}
+        />
+      )}
+
+      {/* ── Toast ─────────────────────────────────────────────────────────── */}
+      {toast && (
+        <div className={`music-library-toast${toast.ok ? '' : ' music-library-toast--warn'}`}>
+          {toast.msg}
+        </div>
+      )}
     </div>
   );
 }

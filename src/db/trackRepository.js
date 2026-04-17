@@ -429,6 +429,10 @@ export function getTracksByPaths(filePaths) {
   return db.prepare(`SELECT * FROM tracks WHERE file_path IN (${placeholders})`).all(filePaths);
 }
 
+export function getLinkedTracksBasic() {
+  return db.prepare(`SELECT id, file_path, title, artist FROM tracks WHERE is_linked = 1`).all();
+}
+
 export function getLinkedTrackDirs() {
   const rows = db.prepare(`SELECT DISTINCT file_path FROM tracks WHERE is_linked = 1`).all();
   return [...new Set(rows.map((r) => path.dirname(r.file_path)))];

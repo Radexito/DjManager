@@ -235,6 +235,7 @@ contextBridge.exposeInMainWorld('api', {
   remapTrack: (trackId, newPath) => ipcRenderer.invoke('remap-track', { trackId, newPath }),
   remapFolder: (oldDir) => ipcRenderer.invoke('remap-folder', { oldDir }),
   checkLinkedTrackStatus: (trackIds) => ipcRenderer.invoke('check-linked-track-status', trackIds),
+  getLinkedTracksBasic: () => ipcRenderer.invoke('get-linked-tracks-basic'),
 
   clearLibrary: () => ipcRenderer.invoke('clear-library'),
   clearUserData: () => ipcRenderer.invoke('clear-user-data'),

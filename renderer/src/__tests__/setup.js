@@ -98,6 +98,7 @@ window.api = {
   remapTrack: vi.fn().mockResolvedValue({ ok: true }),
   remapFolder: vi.fn().mockResolvedValue({ ok: true, count: 0 }),
   checkLinkedTrackStatus: vi.fn().mockResolvedValue([]),
+  getLinkedTracksBasic: vi.fn().mockResolvedValue([]),
   checkUsbFormat: vi
     .fn()
     .mockResolvedValue({ needsFormat: false, fs: 'fat32', fsLabel: 'fat32', device: '/dev/sdb1' }),
