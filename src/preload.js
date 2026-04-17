@@ -211,6 +211,31 @@ contextBridge.exposeInMainWorld('api', {
   getZoomFactor: () => webFrame.getZoomFactor(),
   setZoomFactor: (factor) => webFrame.setZoomFactor(factor),
 
+  // File Explorer
+  getComputerRoot: () => ipcRenderer.invoke('get-computer-root'),
+  browseDirectory: (dirPath) => ipcRenderer.invoke('browse-directory', dirPath),
+  selectExplorerFolder: () => ipcRenderer.invoke('select-explorer-folder'),
+  getTracksByPaths: (filePaths) => ipcRenderer.invoke('get-tracks-by-paths', filePaths),
+  explorerStartRecursive: (dirPath) => ipcRenderer.invoke('explorer-start-recursive', dirPath),
+  explorerCancelRecursive: () => ipcRenderer.invoke('explorer-cancel-recursive'),
+  onExplorerRecursiveBatch: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('explorer-recursive-batch', handler);
+    return () => ipcRenderer.removeListener('explorer-recursive-batch', handler);
+  },
+  onExplorerRecursiveDone: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on('explorer-recursive-done', handler);
+    return () => ipcRenderer.removeListener('explorer-recursive-done', handler);
+  },
+  linkAudioFiles: (filePaths, playlistId) =>
+    ipcRenderer.invoke('link-audio-files', { filePaths, playlistId }),
+  linkDirectory: (dirPath, recursive, playlistId) =>
+    ipcRenderer.invoke('link-directory', { dirPath, recursive, playlistId }),
+  remapTrack: (trackId, newPath) => ipcRenderer.invoke('remap-track', { trackId, newPath }),
+  remapFolder: (oldDir) => ipcRenderer.invoke('remap-folder', { oldDir }),
+  checkLinkedTrackStatus: (trackIds) => ipcRenderer.invoke('check-linked-track-status', trackIds),
+
   clearLibrary: () => ipcRenderer.invoke('clear-library'),
   clearUserData: () => ipcRenderer.invoke('clear-user-data'),
   getLogDir: () => ipcRenderer.invoke('get-log-dir'),
