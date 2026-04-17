@@ -185,14 +185,17 @@ function getBreadcrumbs(p) {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function FileExplorerView({ style }) {
-  const { play, currentTrack, mediaPort } = usePlayer();
+  const { play, currentTrack, mediaPort, patchCurrentTrack } = usePlayer();
 
   const [fsRoot, setFsRoot] = useState(null);
   const [homeDir, setHomeDir] = useState(null);
   const [currentPath, setCurrentPath] = useState(null);
   const [dirEntries, setDirEntries] = useState({ dirs: [], files: [] });
   const [loading, setLoading] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
   const [tracksMap, setTracksMap] = useState(new Map());
+  // trackId → file_path reverse map for onTrackUpdated
+  const tracksByIdRef = useRef(new Map());
   const [selectedPaths, setSelectedPaths] = useState(new Set());
   const [playlists, setPlaylists] = useState([]);
   const [contextMenu, setContextMenu] = useState(null);
@@ -304,18 +307,32 @@ export default function FileExplorerView({ style }) {
     });
   }, [currentPath, fsRoot]);
 
-  // Update track data in-place as analysis results arrive
+  // Keep reverse index (trackId → filePath) in sync with tracksMap
   useEffect(() => {
-    const unsub = window.api.onTrackUpdated((updated) => {
-      setTracksMap((prev) => {
-        if (!prev.has(updated.file_path)) return prev;
-        const next = new Map(prev);
-        next.set(updated.file_path, { ...prev.get(updated.file_path), ...updated });
-        return next;
-      });
+    const byId = new Map();
+    for (const [fp, t] of tracksMap) {
+      if (typeof t.id === 'number') byId.set(t.id, fp);
+    }
+    tracksByIdRef.current = byId;
+  }, [tracksMap]);
+
+  // Update rows and player bar as analysis results arrive
+  useEffect(() => {
+    const unsub = window.api.onTrackUpdated(({ trackId, analysis }) => {
+      const merged = { ...analysis, analyzed: analysis.analyzed !== 0 ? 1 : 0 };
+      const filePath = tracksByIdRef.current.get(trackId);
+      if (filePath) {
+        setTracksMap((prev) => {
+          if (!prev.has(filePath)) return prev;
+          const next = new Map(prev);
+          next.set(filePath, { ...prev.get(filePath), ...merged });
+          return next;
+        });
+      }
+      patchCurrentTrack(trackId, merged);
     });
     return unsub;
-  }, []);
+  }, [patchCurrentTrack]);
 
   // ── Recursive scan events ────────────────────────────────────────────────
 
@@ -396,10 +413,31 @@ export default function FileExplorerView({ style }) {
       }
       const fileItems = displayItems.filter((x) => x.type === 'file');
       const idx = fileItems.findIndex((x) => x.path === item.path);
+      const trackForItem = tracksMap.get(item.path) ?? fileToSyntheticTrack(item);
       const queue = fileItems.map((f) => tracksMap.get(f.path) ?? fileToSyntheticTrack(f));
-      play(queue[idx], queue, idx);
+
+      // Play immediately — no waiting regardless of link status
+      play(trackForItem, queue, idx);
+
+      // If unlinked, auto-link in background so analysis starts and player bar updates
+      if (typeof trackForItem.id === 'string') {
+        const syntheticId = trackForItem.id;
+        window.api.linkAudioFiles([item.path], null).then(async (results) => {
+          if (!results[0]?.id || typeof results[0].id !== 'number') return;
+          const linked = await window.api.getTracksByPaths([item.path]);
+          if (!linked[0]) return;
+          setTracksMap((prev) => {
+            const next = new Map(prev);
+            next.set(item.path, linked[0]);
+            return next;
+          });
+          // Upgrade the synthetic player entry to the real track so analysis
+          // results (patchCurrentTrack by numeric id) land correctly
+          patchCurrentTrack(syntheticId, linked[0]);
+        });
+      }
     },
-    [displayItems, tracksMap, play, navigateTo]
+    [displayItems, tracksMap, play, navigateTo, patchCurrentTrack]
   );
 
   // ── Link helpers ──────────────────────────────────────────────────────────
@@ -426,6 +464,20 @@ export default function FileExplorerView({ style }) {
       showToast(`Linked ${res.linked}/${res.total} tracks`);
     },
     [showToast]
+  );
+
+  const analyzeFolder = useCallback(
+    async (recursive = false) => {
+      if (!currentPath) return;
+      setAnalyzing(true);
+      try {
+        const res = await window.api.linkDirectory(currentPath, recursive, null);
+        showToast(`Analyzing ${res.total} track(s)…`);
+      } finally {
+        setAnalyzing(false);
+      }
+    },
+    [currentPath, showToast]
   );
 
   // ── Context menu ──────────────────────────────────────────────────────────
@@ -566,6 +618,14 @@ export default function FileExplorerView({ style }) {
           }}
         >
           {recursiveScanning ? '⏳' : '🔍'}
+        </button>
+        <button
+          className="explorer-btn"
+          title="Analyze all audio files in current folder"
+          disabled={analyzing}
+          onClick={() => analyzeFolder(false)}
+        >
+          {analyzing ? '⏳' : '⚡'} Analyze
         </button>
         {brokenTracks.length > 0 && (
           <span
