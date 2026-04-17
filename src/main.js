@@ -15,6 +15,8 @@ import { app, BrowserWindow, ipcMain, dialog, Menu, MenuItem, shell } from 'elec
 //
 // NOTE: --ozone-platform=wayland is ONLY set when WAYLAND_DISPLAY is present.
 // Forcing Wayland on X11/xvfb (e.g. CI) breaks Playwright click interactions.
+app.name = 'Dj Manager';
+
 if (process.platform === 'linux') {
   app.disableHardwareAcceleration();
   if (process.env.WAYLAND_DISPLAY) {
