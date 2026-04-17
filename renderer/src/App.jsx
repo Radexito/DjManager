@@ -4,6 +4,7 @@ import Sidebar from './Sidebar.jsx';
 import MusicLibrary from './MusicLibrary.jsx';
 import DownloadView from './DownloadView.jsx';
 import TidalDownloadView from './TidalDownloadView.jsx';
+import FileExplorerView from './FileExplorerView.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import ExportModal from './ExportModal.jsx';
 import PlayerBar from './PlayerBar.jsx';
@@ -132,13 +133,18 @@ function App() {
                 onGoToLibrary={() => setSelectedPlaylistId('music')}
                 onGoToPlaylist={(id) => setSelectedPlaylistId(id)}
               />
-              {selectedPlaylistId !== 'download' && selectedPlaylistId !== 'tidal' && (
-                <MusicLibrary
-                  selectedPlaylist={selectedPlaylistId}
-                  search={search}
-                  onSearchChange={setSearch}
-                />
-              )}
+              <FileExplorerView
+                style={{ display: selectedPlaylistId === 'explorer' ? '' : 'none' }}
+              />
+              {selectedPlaylistId !== 'download' &&
+                selectedPlaylistId !== 'tidal' &&
+                selectedPlaylistId !== 'explorer' && (
+                  <MusicLibrary
+                    selectedPlaylist={selectedPlaylistId}
+                    search={search}
+                    onSearchChange={setSearch}
+                  />
+                )}
             </div>
           </div>
           <PlayerBar
