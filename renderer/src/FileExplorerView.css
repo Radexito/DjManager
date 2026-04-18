@@ -144,3 +144,79 @@
 .context-menu {
   z-index: 1000;
 }
+
+/* ── Link-to-library dialog ──────────────────────────────────────────────── */
+
+.explorer-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.explorer-dialog {
+  background: var(--bg-secondary, #1e1e1e);
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  padding: 20px 24px;
+  min-width: 300px;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+.explorer-dialog__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+  margin-bottom: 4px;
+}
+
+.explorer-dialog__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary, #ddd);
+  cursor: pointer;
+  user-select: none;
+}
+
+.explorer-dialog__option input[type='radio'] {
+  cursor: pointer;
+  accent-color: var(--accent, #4a90d9);
+}
+
+.explorer-dialog__input {
+  background: var(--bg-tertiary, #2a2a2a);
+  border: 1px solid var(--border, #444);
+  color: var(--text-primary, #ddd);
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.explorer-dialog__select {
+  background: var(--bg-tertiary, #2a2a2a);
+  border: 1px solid var(--border, #444);
+  color: var(--text-primary, #ddd);
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.explorer-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}

@@ -389,7 +389,7 @@ export async function linkAudioFile(filePath) {
   try {
     const meta = await ffprobe(filePath);
     const tags = meta.format?.tags ?? {};
-    title = tags.title || tags.TITLE || basename;
+    title = tags.title || tags.TITLE || '';
     artist = tags.artist || tags.ARTIST || null;
     album = tags.album || tags.ALBUM || null;
     duration = parseFloat(meta.format?.duration ?? 0);
@@ -401,8 +401,17 @@ export async function linkAudioFile(filePath) {
     genre = g ? [g] : [];
   } catch {}
 
+  // Fallback: parse "Artist - Title" from filename when tags are absent
+  if (!artist) {
+    const dashIdx = basename.indexOf(' - ');
+    if (dashIdx !== -1) {
+      artist = basename.slice(0, dashIdx).trim();
+      if (!title) title = basename.slice(dashIdx + 3).trim();
+    }
+  }
+
   const trackId = addTrack({
-    title,
+    title: title || basename,
     artist,
     album,
     duration,
