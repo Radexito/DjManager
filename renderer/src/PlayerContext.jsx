@@ -67,32 +67,42 @@ export function PlayerProvider({ children }) {
 
   // Build the Web Audio graph once. MediaElementSource captures the audio element's
   // output so all routing goes through the graph; audio.volume stays at 1.0.
+  // Wrapped in try-catch: if AudioContext is unavailable the gain effect falls back
+  // to audio.volume so the app still loads and plays audio.
   useEffect(() => {
-    const ctx = new AudioContext();
+    let ctx;
+    try {
+      ctx = new AudioContext();
 
-    const source = ctx.createMediaElementSource(audio);
+      const source = ctx.createMediaElementSource(audio);
 
-    const gain = ctx.createGain();
-    gain.gain.value = 1.0;
+      const gain = ctx.createGain();
+      gain.gain.value = 1.0;
 
-    // Hard limiter — catches any peaks pushed above 0 dBFS by positive gain
-    const limiter = ctx.createDynamicsCompressor();
-    limiter.threshold.value = -1.0; // start limiting 1 dB before ceiling
-    limiter.knee.value = 0; // hard knee — no soft transition
-    limiter.ratio.value = 20; // near-infinite ratio
-    limiter.attack.value = 0.001; // 1 ms
-    limiter.release.value = 0.1; // 100 ms
+      // Hard limiter — catches any peaks pushed above 0 dBFS by positive gain
+      const limiter = ctx.createDynamicsCompressor();
+      limiter.threshold.value = -1.0; // start limiting 1 dB before ceiling
+      limiter.knee.value = 0; // hard knee — no soft transition
+      limiter.ratio.value = 20; // near-infinite ratio
+      limiter.attack.value = 0.001; // 1 ms
+      limiter.release.value = 0.1; // 100 ms
 
-    source.connect(gain);
-    gain.connect(limiter);
-    limiter.connect(ctx.destination);
+      source.connect(gain);
+      gain.connect(limiter);
+      limiter.connect(ctx.destination);
 
-    audioCtxRef.current = ctx;
-    gainNodeRef.current = gain;
-    audio.volume = 1.0; // GainNode owns volume from here on
+      audioCtxRef.current = ctx;
+      gainNodeRef.current = gain;
+      audio.volume = 1.0; // GainNode owns volume from here on
+    } catch (err) {
+      console.warn(
+        '[player] Web Audio graph unavailable, falling back to audio.volume:',
+        err.message
+      );
+    }
 
     return () => {
-      ctx.close();
+      ctx?.close();
       audioCtxRef.current = null;
       gainNodeRef.current = null;
     };
