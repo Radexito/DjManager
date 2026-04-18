@@ -182,6 +182,89 @@ function getBreadcrumbs(p) {
   return crumbs;
 }
 
+// ── Link-to-library dialog ────────────────────────────────────────────────────
+
+function LinkFolderDialog({ defaultName, playlists, onConfirm, onCancel }) {
+  const [mode, setMode] = useState('music');
+  const [newName, setNewName] = useState(defaultName);
+  const [existingId, setExistingId] = useState(playlists[0]?.id ?? '');
+
+  return (
+    <div className="explorer-dialog-backdrop" onMouseDown={onCancel}>
+      <div className="explorer-dialog" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="explorer-dialog__title">Add to Library</div>
+
+        <label className="explorer-dialog__option">
+          <input
+            type="radio"
+            name="lfd-mode"
+            checked={mode === 'music'}
+            onChange={() => setMode('music')}
+          />
+          Music only (no playlist)
+        </label>
+
+        <label className="explorer-dialog__option">
+          <input
+            type="radio"
+            name="lfd-mode"
+            checked={mode === 'new'}
+            onChange={() => setMode('new')}
+          />
+          Create new playlist
+        </label>
+        {mode === 'new' && (
+          <input
+            className="explorer-dialog__input"
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="Playlist name"
+            autoFocus
+          />
+        )}
+
+        {playlists.length > 0 && (
+          <label className="explorer-dialog__option">
+            <input
+              type="radio"
+              name="lfd-mode"
+              checked={mode === 'existing'}
+              onChange={() => setMode('existing')}
+            />
+            Add to existing playlist
+          </label>
+        )}
+        {mode === 'existing' && playlists.length > 0 && (
+          <select
+            className="explorer-dialog__select"
+            value={existingId}
+            onChange={(e) => setExistingId(e.target.value)}
+          >
+            {playlists.map((pl) => (
+              <option key={pl.id} value={pl.id}>
+                {pl.name}
+              </option>
+            ))}
+          </select>
+        )}
+
+        <div className="explorer-dialog__actions">
+          <button className="explorer-btn" onClick={onCancel}>
+            Cancel
+          </button>
+          <button
+            className="explorer-btn accent"
+            onClick={() => onConfirm({ mode, newName, existingId: existingId || null })}
+          >
+            Add
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function FileExplorerView({ style }) {
@@ -200,6 +283,7 @@ export default function FileExplorerView({ style }) {
   const [detailsTrack, setDetailsTrack] = useState(null);
   const [beatGridTrack, setBeatGridTrack] = useState(null);
   const [toast, setToast] = useState(null);
+  const [linkDialog, setLinkDialog] = useState(null); // { defaultName, paths|null }
 
   // Broken links — populated by slow background scan
   const [brokenTracks, setBrokenTracks] = useState([]);
@@ -452,6 +536,19 @@ export default function FileExplorerView({ style }) {
     [showToast]
   );
 
+  // Refresh tracksMap for all files currently visible — called after any link op
+  // so onTrackUpdated can find newly linked tracks by their numeric DB id.
+  const refreshVisibleTracks = useCallback(async (items) => {
+    const filePaths = items.filter((x) => x.type === 'file').map((x) => x.path);
+    if (!filePaths.length) return;
+    const tracks = await window.api.getTracksByPaths(filePaths);
+    setTracksMap((prev) => {
+      const next = new Map(prev);
+      tracks.forEach((t) => next.set(t.file_path, t));
+      return next;
+    });
+  }, []);
+
   const linkDir = useCallback(
     async (dirPath, recursive, playlistId = null) => {
       const res = await window.api.linkDirectory(dirPath, recursive, playlistId);
@@ -467,11 +564,13 @@ export default function FileExplorerView({ style }) {
       try {
         const res = await window.api.linkDirectory(currentPath, recursive, null);
         showToast(`Analyzing ${res.total} track(s)…`);
+        // Populate tracksMap so onTrackUpdated can find newly-linked tracks
+        await refreshVisibleTracks(displayItems);
       } finally {
         setAnalyzing(false);
       }
     },
-    [currentPath, showToast]
+    [currentPath, showToast, displayItems, refreshVisibleTracks]
   );
 
   // ── Context menu ──────────────────────────────────────────────────────────
@@ -611,7 +710,7 @@ export default function FileExplorerView({ style }) {
             window.api.explorerStartRecursive(currentPath);
           }}
         >
-          {recursiveScanning ? '⏳' : '🔍'}
+          {recursiveScanning ? '⏳' : '🌲'}
         </button>
         <button
           className="explorer-btn"
@@ -629,14 +728,23 @@ export default function FileExplorerView({ style }) {
             ⚠️ {brokenTracks.length}
           </span>
         )}
-        {selectedFileItems.length > 0 && (
-          <button
-            className="explorer-btn accent"
-            onClick={() => linkFiles(selectedFileItems.map((f) => f.path))}
-          >
-            + Library ({selectedFileItems.length})
-          </button>
-        )}
+        <button
+          className="explorer-btn accent"
+          title={
+            selectedFileItems.length > 0
+              ? `Add ${selectedFileItems.length} selected file(s) to library`
+              : 'Add folder to library'
+          }
+          onClick={() => {
+            const folderName = currentPath ? basename(currentPath) : 'Folder';
+            setLinkDialog({
+              defaultName: folderName,
+              paths: selectedFileItems.length > 0 ? selectedFileItems.map((f) => f.path) : null,
+            });
+          }}
+        >
+          {selectedFileItems.length > 0 ? `+ Library (${selectedFileItems.length})` : '+ Library'}
+        </button>
       </div>
 
       {recursiveFiles !== null && (
@@ -918,6 +1026,33 @@ export default function FileExplorerView({ style }) {
             )}
           </div>
         </>
+      )}
+
+      {/* ── Link-to-library dialog ────────────────────────────────────────── */}
+      {linkDialog && (
+        <LinkFolderDialog
+          defaultName={linkDialog.defaultName}
+          playlists={playlists}
+          onCancel={() => setLinkDialog(null)}
+          onConfirm={async ({ mode, newName, existingId }) => {
+            const { paths } = linkDialog;
+            setLinkDialog(null);
+            let playlistId = null;
+            if (mode === 'new') {
+              const pl = await window.api.createPlaylist(newName || linkDialog.defaultName);
+              playlistId = pl.id;
+            } else if (mode === 'existing') {
+              playlistId = existingId;
+            }
+            if (paths) {
+              await linkFiles(paths, playlistId);
+            } else {
+              const res = await window.api.linkDirectory(currentPath, false, playlistId);
+              showToast(`Linked ${res.linked}/${res.total} tracks`);
+              await refreshVisibleTracks(displayItems);
+            }
+          }}
+        />
       )}
 
       {/* ── Modals ────────────────────────────────────────────────────────── */}
