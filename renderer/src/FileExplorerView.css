@@ -214,6 +214,25 @@
   box-sizing: border-box;
 }
 
+.explorer-dialog__body {
+  font-size: 13px;
+  color: var(--text-secondary, #aaa);
+  margin: 0;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.explorer-dialog__warn {
+  font-size: 12px;
+  color: var(--text-secondary, #999);
+  margin: 0;
+  background: rgba(255, 170, 0, 0.07);
+  border: 1px solid rgba(255, 170, 0, 0.18);
+  border-radius: 4px;
+  padding: 6px 8px;
+  line-height: 1.45;
+}
+
 .explorer-dialog__actions {
   display: flex;
   justify-content: flex-end;
