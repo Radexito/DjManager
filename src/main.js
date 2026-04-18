@@ -295,6 +295,9 @@ async function initApp() {
   console.log('Initializing database...');
   initDB();
   cleanupLegacyNormalizedFiles();
+  // Ensure the normalization target is stored so replay_gain is computed for every
+  // newly-analyzed track even before the user visits the Settings page.
+  if (getSetting('normalize_target_lufs') == null) setSetting('normalize_target_lufs', '-9');
   // Pre-allow all directories of existing linked tracks so the media server
   // can serve them without requiring the user to re-open the Explorer.
   for (const dir of getLinkedTrackDirs()) {

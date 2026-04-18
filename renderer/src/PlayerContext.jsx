@@ -18,6 +18,11 @@ export function PlayerProvider({ children }) {
   // eslint-disable-next-line react-hooks/refs
   const audio = audioRef.current;
 
+  // Web Audio graph: MediaElementSource → GainNode → DynamicsCompressor (limiter) → destination
+  // GainNode has no 1.0 ceiling so positive replay_gain boosts work without clipping.
+  const audioCtxRef = useRef(null);
+  const gainNodeRef = useRef(null);
+
   const [currentTrack, setCurrentTrack] = useState(null);
   const [currentPlaylistId, setCurrentPlaylistId] = useState(null);
   const [currentPlaylistName, setCurrentPlaylistName] = useState(null);
@@ -59,6 +64,40 @@ export function PlayerProvider({ children }) {
       });
     }
   }, []);
+
+  // Build the Web Audio graph once. MediaElementSource captures the audio element's
+  // output so all routing goes through the graph; audio.volume stays at 1.0.
+  useEffect(() => {
+    const ctx = new AudioContext();
+
+    const source = ctx.createMediaElementSource(audio);
+
+    const gain = ctx.createGain();
+    gain.gain.value = 1.0;
+
+    // Hard limiter — catches any peaks pushed above 0 dBFS by positive gain
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -1.0; // start limiting 1 dB before ceiling
+    limiter.knee.value = 0; // hard knee — no soft transition
+    limiter.ratio.value = 20; // near-infinite ratio
+    limiter.attack.value = 0.001; // 1 ms
+    limiter.release.value = 0.1; // 100 ms
+
+    source.connect(gain);
+    gain.connect(limiter);
+    limiter.connect(ctx.destination);
+
+    audioCtxRef.current = ctx;
+    gainNodeRef.current = gain;
+    audio.volume = 1.0; // GainNode owns volume from here on
+
+    return () => {
+      ctx.close();
+      audioCtxRef.current = null;
+      gainNodeRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // audio element is stable for the provider lifetime
 
   // Keep mutable refs so event handlers always see latest values
   const queueRef = useRef(queue);
@@ -129,6 +168,8 @@ export function PlayerProvider({ children }) {
       console.log('[diag] playAtIndex src =', src);
       audio.pause(); // cleanly stop current pipeline before swapping source
       audio.src = src;
+      // Ensure AudioContext is running (may start suspended on some Electron builds)
+      audioCtxRef.current?.resume();
       // Setting src triggers an implicit load; calling audio.load() would race with play()
       audio
         .play()
@@ -290,11 +331,18 @@ export function PlayerProvider({ children }) {
     setVolumeState(clamped);
   }, []);
 
-  // Apply user volume combined with per-track replay_gain
+  // Apply user volume combined with per-track replay_gain through the GainNode.
+  // GainNode has no 1.0 ceiling so positive gain (boosting quiet tracks) works correctly.
   useEffect(() => {
     const rg = currentTrack?.replay_gain ?? 0;
     const gainLinear = Math.pow(10, rg / 20);
-    audio.volume = Math.min(1.0, volume * gainLinear);
+    const gain = gainNodeRef.current;
+    if (gain) {
+      gain.gain.value = gainLinear * volume;
+    } else {
+      // Fallback before the Web Audio graph is initialised
+      audio.volume = Math.min(1.0, gainLinear * volume);
+    }
   }, [volume, currentTrack, audio]);
 
   const cycleRepeat = useCallback(
@@ -305,14 +353,22 @@ export function PlayerProvider({ children }) {
   const setDevice = useCallback(
     async (deviceId) => {
       setOutputDeviceId(deviceId);
-      if (typeof audio.setSinkId === 'function') {
-        console.log('[diag] setSinkId →', deviceId || '(default)');
+      const ctx = audioCtxRef.current;
+      // When the Web Audio graph is active, audio routes through AudioContext — use
+      // ctx.setSinkId() to redirect output. Fall back to audio.setSinkId() if the
+      // graph is not yet initialised (should be rare).
+      if (ctx && typeof ctx.setSinkId === 'function') {
+        console.log('[diag] ctx.setSinkId →', deviceId || '(default)');
+        await ctx.setSinkId(deviceId || '').catch((err) => {
+          console.error('[diag] ctx.setSinkId FAILED:', err.name, err.message);
+        });
+      } else if (typeof audio.setSinkId === 'function') {
+        console.log('[diag] setSinkId (fallback) →', deviceId || '(default)');
         await audio.setSinkId(deviceId).catch((err) => {
           console.error('[diag] setSinkId FAILED:', err.name, err.message);
         });
-        console.log('[diag] setSinkId resolved, sinkId =', audio.sinkId);
       } else {
-        console.warn('[diag] setSinkId not available on this audio element');
+        console.warn('[diag] setSinkId not available');
       }
     },
     [audio]

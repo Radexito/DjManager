@@ -42,7 +42,15 @@ export function convertAudio(srcPath, destPath, { gainDb = 0 } = {}) {
   fs.mkdirSync(path.dirname(destPath), { recursive: true });
 
   const args = ['-y', '-i', srcPath];
-  if (gainDb !== 0) args.push('-filter:a', `volume=${gainDb.toFixed(2)}dB`);
+  if (gainDb !== 0) {
+    // Positive gain can push peaks above 0 dBFS — chain a true-peak limiter to prevent
+    // clipping in the output file. alimiter is a no-op when all peaks stay below the limit.
+    const filter =
+      gainDb > 0
+        ? `volume=${gainDb.toFixed(2)}dB,alimiter=level_in=1:level_out=1:limit=1:attack=5:release=50:asc=1`
+        : `volume=${gainDb.toFixed(2)}dB`;
+    args.push('-filter:a', filter);
+  }
   // Copy video/artwork stream unchanged; re-encode audio only when gain is applied
   if (gainDb === 0) args.push('-c', 'copy');
   else args.push('-c:v', 'copy');
