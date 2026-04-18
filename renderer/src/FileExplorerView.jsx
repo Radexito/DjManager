@@ -342,7 +342,10 @@ export default function FileExplorerView({ style }) {
       setCurrentPath(home ?? root);
     });
     window.api.getPlaylists().then(setPlaylists);
-    window.api.getSetting('explorer_favourites', []).then((favs) => setFavourites(favs ?? []));
+    window.api.getSetting('explorer_favourites', []).then((favs) => {
+      const parsed = typeof favs === 'string' ? JSON.parse(favs) : favs;
+      setFavourites(Array.isArray(parsed) ? parsed : []);
+    });
     const unsub = window.api.onPlaylistsUpdated(() => window.api.getPlaylists().then(setPlaylists));
     return unsub;
   }, []);
