@@ -305,8 +305,25 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     }
     window.api.getTrackWaveform(currentTrack.id).then((raw) => {
       waveDataRef.current = raw ? new Uint8Array(raw) : null;
-      paintWaveform();
+      if (!waveDataRef.current && canvas) {
+        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+      } else {
+        paintWaveform();
+      }
     });
+  }, [currentTrack?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reload waveform when analysis finishes for the currently playing track
+  useEffect(() => {
+    const unsub = window.api.onTrackUpdated(({ trackId }) => {
+      if (!currentTrack || trackId !== currentTrack.id) return;
+      window.api.getTrackWaveform(trackId).then((raw) => {
+        if (!raw) return; // waveform not ready yet — don't clear what we have
+        waveDataRef.current = new Uint8Array(raw);
+        paintWaveform();
+      });
+    });
+    return unsub;
   }, [currentTrack?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const artSrc = artworkUrl(
