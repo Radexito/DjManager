@@ -5,6 +5,11 @@ contextBridge.exposeInMainWorld('api', {
   getTracks: (params) => ipcRenderer.invoke('get-tracks', params),
   getTrackIds: (params) => ipcRenderer.invoke('get-track-ids', params),
   getTrackWaveform: (trackId) => ipcRenderer.invoke('get-track-waveform', trackId),
+  onWaveformReady: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('waveform-ready', handler);
+    return () => ipcRenderer.removeListener('waveform-ready', handler);
+  },
   generateWaveformsLibrary: (opts) => ipcRenderer.invoke('generate-waveforms-library', opts),
   onWaveformGenProgress: (cb) => {
     const handler = (_, data) => cb(data);

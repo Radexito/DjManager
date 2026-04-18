@@ -313,12 +313,12 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     });
   }, [currentTrack?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reload waveform when analysis finishes for the currently playing track
+  // Reload waveform once the background generator finishes for the current track
   useEffect(() => {
-    const unsub = window.api.onTrackUpdated(({ trackId }) => {
+    const unsub = window.api.onWaveformReady(({ trackId }) => {
       if (!currentTrack || trackId !== currentTrack.id) return;
       window.api.getTrackWaveform(trackId).then((raw) => {
-        if (!raw) return; // waveform not ready yet — don't clear what we have
+        if (!raw) return;
         waveDataRef.current = new Uint8Array(raw);
         paintWaveform();
       });

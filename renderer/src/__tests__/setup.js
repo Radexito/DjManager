@@ -64,6 +64,7 @@ window.api = {
   onAnalysisProgress: vi.fn().mockImplementation(noop),
   onCueGenProgress: vi.fn().mockImplementation(noop),
   getTrackWaveform: vi.fn().mockResolvedValue(null),
+  onWaveformReady: vi.fn().mockImplementation(noop),
   generateWaveformsLibrary: vi.fn().mockResolvedValue({ generated: 0, skipped: 0, total: 0 }),
   onWaveformGenProgress: vi.fn().mockImplementation(noop),
   getMediaPort: vi.fn().mockResolvedValue(19876),

@@ -226,7 +226,12 @@ export function spawnAnalysis(trackId, filePath, { silent = false } = {}) {
     // Generate waveform overview for in-app seek bar (fire-and-forget — does not
     // block analysis progress or track-updated event)
     generateWaveformOverview(filePath, getFfmpegRuntimePath())
-      .then((buf) => updateTrackWaveform(trackId, buf))
+      .then((buf) => {
+        updateTrackWaveform(trackId, buf);
+        if (global.mainWindow) {
+          global.mainWindow.webContents.send('waveform-ready', { trackId });
+        }
+      })
       .catch((err) =>
         console.warn(`[waveform] overview failed for track ${trackId}:`, err.message)
       );
