@@ -718,469 +718,481 @@ export default function FileExplorerView({ style }) {
     : null;
 
   return (
-    <div className="explorer-view" style={style}>
-      {/* ── Toolbar ───────────────────────────────────────────────────────── */}
-      <div className="explorer-toolbar">
-        <button
-          className="explorer-btn"
-          title="Root /"
-          onClick={() => fsRoot && navigateTo(fsRoot)}
-        >
-          /
-        </button>
-        <button
-          className="explorer-btn"
-          title="Home"
-          onClick={() => homeDir && navigateTo(homeDir)}
-        >
-          🏠
-        </button>
-        <div className="explorer-breadcrumbs">
-          {breadcrumbs.map((crumb, i) => (
-            <span key={crumb.path}>
-              {i > 0 && <span className="explorer-sep">/</span>}
-              <button className="explorer-crumb" onClick={() => navigateTo(crumb.path)}>
-                {crumb.label}
-              </button>
+    <div
+      className={`explorer-view${detailsTrack ? ' explorer-view--with-panel' : ''}`}
+      style={style}
+    >
+      <div className="explorer-view__main">
+        {/* ── Toolbar ───────────────────────────────────────────────────────── */}
+        <div className="explorer-toolbar">
+          <button
+            className="explorer-btn"
+            title="Root /"
+            onClick={() => fsRoot && navigateTo(fsRoot)}
+          >
+            /
+          </button>
+          <button
+            className="explorer-btn"
+            title="Home"
+            onClick={() => homeDir && navigateTo(homeDir)}
+          >
+            🏠
+          </button>
+          <div className="explorer-breadcrumbs">
+            {breadcrumbs.map((crumb, i) => (
+              <span key={crumb.path}>
+                {i > 0 && <span className="explorer-sep">/</span>}
+                <button className="explorer-crumb" onClick={() => navigateTo(crumb.path)}>
+                  {crumb.label}
+                </button>
+              </span>
+            ))}
+          </div>
+          <button
+            className={`explorer-btn${recursiveFiles !== null ? ' active' : ''}`}
+            title={
+              recursiveScanning
+                ? 'Cancel scan'
+                : recursiveFiles !== null
+                  ? 'Exit recursive view'
+                  : 'Scan folder recursively'
+            }
+            onClick={() => {
+              if (recursiveScanning) {
+                window.api.explorerCancelRecursive();
+                setRecursiveScanning(false);
+                return;
+              }
+              if (recursiveFiles !== null) {
+                setRecursiveFiles(null);
+                return;
+              }
+              const folderName = basename(currentPath) || currentPath;
+              setConfirmDialog({
+                title: '🌲 Recursive scan',
+                body: `Scan "${folderName}" and all its subdirectories for audio files?\n\nOn large directories or slow drives this can take a long time and list thousands of files.`,
+                confirmLabel: 'Scan',
+                onConfirm: () => {
+                  setConfirmDialog(null);
+                  setRecursiveFiles([]);
+                  setRecursiveScanning(true);
+                  window.api.explorerStartRecursive(currentPath);
+                },
+              });
+            }}
+          >
+            {recursiveScanning ? '⏳' : '🌲'}
+          </button>
+          <button
+            className={`explorer-btn${analyzingPath === currentPath ? ' active' : ''}`}
+            title={
+              analyzingPath === currentPath
+                ? 'Analysis in progress — click to cancel'
+                : 'Analyze all audio files in current folder'
+            }
+            onClick={() => {
+              if (analyzingPath === currentPath) {
+                cancelAnalyzeFolder();
+                return;
+              }
+              const folderName = basename(currentPath) || currentPath;
+              const fileCount = displayItems.filter((x) => x.type === 'file').length;
+              setConfirmDialog({
+                title: '⚡ Analyze folder',
+                body: `Run BPM, key, and loudness analysis on ${fileCount} audio file(s) in "${folderName}"?\n\nAnalysis workers run in the background and may use significant CPU — especially on large folders.`,
+                confirmLabel: 'Analyze',
+                onConfirm: () => {
+                  setConfirmDialog(null);
+                  analyzeFolder(false);
+                },
+              });
+            }}
+          >
+            {analyzingPath === currentPath ? '⏹ Cancel' : '⚡ Analyze'}
+          </button>
+          {brokenTracks.length > 0 && (
+            <span
+              className="explorer-broken-badge"
+              title={`${brokenTracks.length} broken link(s) detected`}
+            >
+              ⚠️ {brokenTracks.length}
             </span>
+          )}
+          <button
+            className="explorer-btn accent"
+            title={
+              selectedFileItems.length > 0
+                ? `Add ${selectedFileItems.length} selected file(s) to library`
+                : 'Add folder to library'
+            }
+            onClick={() => {
+              const folderName = currentPath ? basename(currentPath) : 'Folder';
+              const paths =
+                selectedFileItems.length > 0 ? selectedFileItems.map((f) => f.path) : null;
+              const folderFileCount = displayItems.filter((x) => x.type === 'file').length;
+              const description = paths
+                ? `${paths.length} selected file(s) from "${folderName}"`
+                : `${folderFileCount} audio file(s) in "${folderName}"`;
+              setLinkDialog({ defaultName: folderName, paths, description });
+            }}
+          >
+            {selectedFileItems.length > 0 ? `+ Library (${selectedFileItems.length})` : '+ Library'}
+          </button>
+        </div>
+
+        {recursiveFiles !== null && (
+          <div className="explorer-recursive-banner">
+            Recursive view of <strong>{currentPath}</strong>
+            {recursiveScanning ? ' — scanning…' : ` — ${recursiveFiles.length} file(s)`}
+          </div>
+        )}
+
+        {/* ── Header row ────────────────────────────────────────────────────── */}
+        <div className="header" style={{ gridTemplateColumns: GRID, minWidth: MIN_WIDTH }}>
+          {COLUMNS.map((col) => (
+            <div key={col.key} className="header-cell">
+              {col.label}
+            </div>
           ))}
         </div>
-        <button
-          className={`explorer-btn${recursiveFiles !== null ? ' active' : ''}`}
-          title={
-            recursiveScanning
-              ? 'Cancel scan'
-              : recursiveFiles !== null
-                ? 'Exit recursive view'
-                : 'Scan folder recursively'
-          }
-          onClick={() => {
-            if (recursiveScanning) {
-              window.api.explorerCancelRecursive();
-              setRecursiveScanning(false);
-              return;
-            }
-            if (recursiveFiles !== null) {
-              setRecursiveFiles(null);
-              return;
-            }
-            const folderName = basename(currentPath) || currentPath;
-            setConfirmDialog({
-              title: '🌲 Recursive scan',
-              body: `Scan "${folderName}" and all its subdirectories for audio files?\n\nOn large directories or slow drives this can take a long time and list thousands of files.`,
-              confirmLabel: 'Scan',
-              onConfirm: () => {
-                setConfirmDialog(null);
-                setRecursiveFiles([]);
-                setRecursiveScanning(true);
-                window.api.explorerStartRecursive(currentPath);
-              },
-            });
-          }}
-        >
-          {recursiveScanning ? '⏳' : '🌲'}
-        </button>
-        <button
-          className={`explorer-btn${analyzingPath === currentPath ? ' active' : ''}`}
-          title={
-            analyzingPath === currentPath
-              ? 'Analysis in progress — click to cancel'
-              : 'Analyze all audio files in current folder'
-          }
-          onClick={() => {
-            if (analyzingPath === currentPath) {
-              cancelAnalyzeFolder();
-              return;
-            }
-            const folderName = basename(currentPath) || currentPath;
-            const fileCount = displayItems.filter((x) => x.type === 'file').length;
-            setConfirmDialog({
-              title: '⚡ Analyze folder',
-              body: `Run BPM, key, and loudness analysis on ${fileCount} audio file(s) in "${folderName}"?\n\nAnalysis workers run in the background and may use significant CPU — especially on large folders.`,
-              confirmLabel: 'Analyze',
-              onConfirm: () => {
-                setConfirmDialog(null);
-                analyzeFolder(false);
-              },
-            });
-          }}
-        >
-          {analyzingPath === currentPath ? '⏹ Cancel' : '⚡ Analyze'}
-        </button>
-        {brokenTracks.length > 0 && (
-          <span
-            className="explorer-broken-badge"
-            title={`${brokenTracks.length} broken link(s) detected`}
-          >
-            ⚠️ {brokenTracks.length}
-          </span>
-        )}
-        <button
-          className="explorer-btn accent"
-          title={
-            selectedFileItems.length > 0
-              ? `Add ${selectedFileItems.length} selected file(s) to library`
-              : 'Add folder to library'
-          }
-          onClick={() => {
-            const folderName = currentPath ? basename(currentPath) : 'Folder';
-            const paths =
-              selectedFileItems.length > 0 ? selectedFileItems.map((f) => f.path) : null;
-            const folderFileCount = displayItems.filter((x) => x.type === 'file').length;
-            const description = paths
-              ? `${paths.length} selected file(s) from "${folderName}"`
-              : `${folderFileCount} audio file(s) in "${folderName}"`;
-            setLinkDialog({ defaultName: folderName, paths, description });
-          }}
-        >
-          {selectedFileItems.length > 0 ? `+ Library (${selectedFileItems.length})` : '+ Library'}
-        </button>
-      </div>
 
-      {recursiveFiles !== null && (
-        <div className="explorer-recursive-banner">
-          Recursive view of <strong>{currentPath}</strong>
-          {recursiveScanning ? ' — scanning…' : ` — ${recursiveFiles.length} file(s)`}
+        {/* ── File list ─────────────────────────────────────────────────────── */}
+        <div className="explorer-list-container" ref={containerRef}>
+          {loading && <div className="explorer-empty">Loading…</div>}
+          {!loading && displayItems.length === 0 && (
+            <div className="explorer-empty">No audio files here</div>
+          )}
+          {!loading && displayItems.length > 0 && (
+            <List
+              listRef={listRef}
+              defaultHeight={listHeight}
+              rowCount={displayItems.length}
+              rowHeight={ROW_HEIGHT}
+              width="100%"
+              overscanCount={8}
+              rowComponent={ExplorerRow}
+              rowProps={rowProps}
+            />
+          )}
         </div>
-      )}
 
-      {/* ── Header row ────────────────────────────────────────────────────── */}
-      <div className="header" style={{ gridTemplateColumns: GRID, minWidth: MIN_WIDTH }}>
-        {COLUMNS.map((col) => (
-          <div key={col.key} className="header-cell">
-            {col.label}
-          </div>
-        ))}
-      </div>
+        {/* ── Context menu ──────────────────────────────────────────────────── */}
+        {contextMenu && (
+          <>
+            <div className="context-backdrop-invisible" onClick={closeMenu} />
+            <div
+              className={`context-menu${contextMenu.flipLeft ? ' context-menu--flip-left' : ''}${contextMenu.flipUp ? ' context-menu--flip-up' : ''}`}
+              style={{ top: contextMenu.y, left: contextMenu.x }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              {menuIsDir ? (
+                <>
+                  <div
+                    className="context-menu-item"
+                    onClick={() => {
+                      closeMenu();
+                      linkDir(menuItem.path, false);
+                    }}
+                  >
+                    📁 Import folder (flat)
+                  </div>
+                  <div
+                    className="context-menu-item"
+                    onClick={() => {
+                      closeMenu();
+                      linkDir(menuItem.path, true);
+                    }}
+                  >
+                    📁 Import folder (recursive)
+                  </div>
+                  <div className="context-menu-separator" />
+                  <div
+                    className="context-menu-item"
+                    onClick={async () => {
+                      closeMenu();
+                      const pl = await window.api.createPlaylist(menuItem.name);
+                      linkDir(menuItem.path, false, pl.id);
+                    }}
+                  >
+                    ➕ Create playlist (flat)
+                  </div>
+                  <div
+                    className="context-menu-item"
+                    onClick={async () => {
+                      closeMenu();
+                      const pl = await window.api.createPlaylist(menuItem.name);
+                      linkDir(menuItem.path, true, pl.id);
+                    }}
+                  >
+                    ➕ Create playlist (recursive)
+                  </div>
+                  {brokenTracks.some((b) => b.file_path.startsWith(menuItem.path)) && (
+                    <>
+                      <div className="context-menu-separator" />
+                      <div
+                        className="context-menu-item"
+                        onClick={async () => {
+                          closeMenu();
+                          const r = await window.api.remapFolder(menuItem.path);
+                          showToast(r.ok ? `Remapped ${r.count} track(s)` : 'Remap failed', r.ok);
+                        }}
+                      >
+                        🔗 Remap broken folder…
+                      </div>
+                    </>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* Add to library — unlinked files only */}
+                  {!menuIsLinked && (
+                    <>
+                      <div
+                        className="context-menu-item"
+                        onClick={() => {
+                          closeMenu();
+                          linkFiles([menuItem.path]);
+                        }}
+                      >
+                        ➕ Add to library
+                      </div>
+                      <div className="context-menu-separator" />
+                    </>
+                  )}
 
-      {/* ── File list ─────────────────────────────────────────────────────── */}
-      <div className="explorer-list-container" ref={containerRef}>
-        {loading && <div className="explorer-empty">Loading…</div>}
-        {!loading && displayItems.length === 0 && (
-          <div className="explorer-empty">No audio files here</div>
+                  {/* Add to playlist submenu */}
+                  <div className="context-menu-item context-menu-item--has-submenu">
+                    ➕ Add to playlist
+                    <div className="context-submenu context-submenu--scrollable">
+                      <div
+                        className="context-menu-item"
+                        onClick={async () => {
+                          closeMenu();
+                          const pl = await window.api.createPlaylist(menuFilename);
+                          await linkFiles([menuItem.path], pl.id);
+                        }}
+                      >
+                        ✚ New playlist…
+                      </div>
+                      {playlists.length > 0 && <div className="context-menu-separator" />}
+                      {playlists.map((pl) => (
+                        <div
+                          key={pl.id}
+                          className="context-menu-item"
+                          onClick={async () => {
+                            closeMenu();
+                            let trackId = menuTrack?.id;
+                            if (!menuIsLinked || typeof trackId === 'string') {
+                              const results = await linkFiles([menuItem.path]);
+                              trackId = results[0]?.id ?? null;
+                            }
+                            if (trackId && typeof trackId === 'number')
+                              await window.api.addTracksToPlaylist(pl.id, [trackId]);
+                            showToast(`Added to "${pl.name}"`);
+                          }}
+                        >
+                          {pl.color && <span style={{ color: pl.color }}>● </span>}
+                          {pl.name}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="context-menu-separator" />
+
+                  {/* Play */}
+                  <div
+                    className="context-menu-item"
+                    onClick={() => {
+                      closeMenu();
+                      handleDoubleClick(menuItem);
+                    }}
+                  >
+                    ▶ Play
+                  </div>
+
+                  {/* Edit / Analysis — linked tracks only */}
+                  {menuIsLinked && menuTrack && (
+                    <>
+                      <div className="context-menu-separator" />
+                      <div
+                        className="context-menu-item"
+                        onClick={() => {
+                          closeMenu();
+                          setDetailsTrack(menuTrack);
+                        }}
+                      >
+                        ✏️ Edit Details
+                      </div>
+                      <div className="context-menu-item context-menu-item--has-submenu">
+                        🔬 Analysis
+                        <div className="context-submenu">
+                          <div
+                            className="context-menu-item"
+                            onClick={() => {
+                              closeMenu();
+                              window.api.reanalyzeTrack(menuTrack.id);
+                              showToast('Re-analysis started');
+                            }}
+                          >
+                            🔄 Re-analyze
+                          </div>
+                          <div className="context-menu-separator" />
+                          <div
+                            className="context-menu-item"
+                            onClick={() => {
+                              closeMenu();
+                              window.api.normalizeTracksAudio({ trackIds: [menuTrack.id] });
+                              showToast('Normalization started');
+                            }}
+                          >
+                            🔊 Normalize
+                          </div>
+                          <div className="context-menu-separator" />
+                          <div
+                            className="context-menu-item"
+                            onClick={() => {
+                              closeMenu();
+                              setBeatGridTrack(menuTrack);
+                            }}
+                          >
+                            🥁 Beat Grid…
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Remap — only when broken link detected */}
+                  {(menuBrokenMatch || menuLinkedBroken) && (
+                    <>
+                      <div className="context-menu-separator" />
+                      {menuBrokenMatch && (
+                        <div
+                          className="context-menu-item"
+                          title={`Remap broken track: ${menuBrokenMatch.title}`}
+                          onClick={async () => {
+                            closeMenu();
+                            const r = await window.api.remapTrack(
+                              menuBrokenMatch.id,
+                              menuItem.path
+                            );
+                            if (r.ok) {
+                              setBrokenTracks((p) => p.filter((b) => b.id !== menuBrokenMatch.id));
+                              showToast(`Remapped: ${menuBrokenMatch.title}`);
+                            } else showToast('Remap failed', false);
+                          }}
+                        >
+                          🔗 Remap &ldquo;{menuBrokenMatch.title}&rdquo; to this file
+                        </div>
+                      )}
+                      {menuLinkedBroken && (
+                        <div
+                          className="context-menu-item context-menu-item--disabled"
+                          title="This track's file is missing from disk"
+                        >
+                          ⚠️ Broken link — file missing
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* Remove */}
+                  {menuIsLinked && (
+                    <>
+                      <div className="context-menu-separator" />
+                      <div
+                        className="context-menu-item context-menu-item--danger"
+                        onClick={async () => {
+                          closeMenu();
+                          await window.api.removeTrack(menuTrack.id);
+                          setTracksMap((prev) => {
+                            const next = new Map(prev);
+                            next.delete(menuItem.path);
+                            return next;
+                          });
+                          showToast('Removed from library');
+                        }}
+                      >
+                        🗑️ Unlink file
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          </>
         )}
-        {!loading && displayItems.length > 0 && (
-          <List
-            listRef={listRef}
-            defaultHeight={listHeight}
-            rowCount={displayItems.length}
-            rowHeight={ROW_HEIGHT}
-            width="100%"
-            overscanCount={8}
-            rowComponent={ExplorerRow}
-            rowProps={rowProps}
+
+        {/* ── Confirm dialog (recursive scan / analyze) ─────────────────────── */}
+        {confirmDialog && (
+          <ConfirmDialog
+            title={confirmDialog.title}
+            body={confirmDialog.body}
+            confirmLabel={confirmDialog.confirmLabel}
+            onConfirm={confirmDialog.onConfirm}
+            onCancel={() => setConfirmDialog(null)}
           />
         )}
-      </div>
 
-      {/* ── Context menu ──────────────────────────────────────────────────── */}
-      {contextMenu && (
-        <>
-          <div className="context-backdrop-invisible" onClick={closeMenu} />
-          <div
-            className={`context-menu${contextMenu.flipLeft ? ' context-menu--flip-left' : ''}${contextMenu.flipUp ? ' context-menu--flip-up' : ''}`}
-            style={{ top: contextMenu.y, left: contextMenu.x }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            {menuIsDir ? (
-              <>
-                <div
-                  className="context-menu-item"
-                  onClick={() => {
-                    closeMenu();
-                    linkDir(menuItem.path, false);
-                  }}
-                >
-                  📁 Import folder (flat)
-                </div>
-                <div
-                  className="context-menu-item"
-                  onClick={() => {
-                    closeMenu();
-                    linkDir(menuItem.path, true);
-                  }}
-                >
-                  📁 Import folder (recursive)
-                </div>
-                <div className="context-menu-separator" />
-                <div
-                  className="context-menu-item"
-                  onClick={async () => {
-                    closeMenu();
-                    const pl = await window.api.createPlaylist(menuItem.name);
-                    linkDir(menuItem.path, false, pl.id);
-                  }}
-                >
-                  ➕ Create playlist (flat)
-                </div>
-                <div
-                  className="context-menu-item"
-                  onClick={async () => {
-                    closeMenu();
-                    const pl = await window.api.createPlaylist(menuItem.name);
-                    linkDir(menuItem.path, true, pl.id);
-                  }}
-                >
-                  ➕ Create playlist (recursive)
-                </div>
-                {brokenTracks.some((b) => b.file_path.startsWith(menuItem.path)) && (
-                  <>
-                    <div className="context-menu-separator" />
-                    <div
-                      className="context-menu-item"
-                      onClick={async () => {
-                        closeMenu();
-                        const r = await window.api.remapFolder(menuItem.path);
-                        showToast(r.ok ? `Remapped ${r.count} track(s)` : 'Remap failed', r.ok);
-                      }}
-                    >
-                      🔗 Remap broken folder…
-                    </div>
-                  </>
-                )}
-              </>
-            ) : (
-              <>
-                {/* Add to library — unlinked files only */}
-                {!menuIsLinked && (
-                  <>
-                    <div
-                      className="context-menu-item"
-                      onClick={() => {
-                        closeMenu();
-                        linkFiles([menuItem.path]);
-                      }}
-                    >
-                      ➕ Add to library
-                    </div>
-                    <div className="context-menu-separator" />
-                  </>
-                )}
+        {/* ── Link-to-library dialog ────────────────────────────────────────── */}
+        {linkDialog && (
+          <LinkFolderDialog
+            description={linkDialog.description}
+            defaultName={linkDialog.defaultName}
+            playlists={playlists}
+            onCancel={() => setLinkDialog(null)}
+            onConfirm={async ({ mode, newName, existingId }) => {
+              const { paths } = linkDialog;
+              setLinkDialog(null);
+              let playlistId = null;
+              if (mode === 'new') {
+                const pl = await window.api.createPlaylist(newName || linkDialog.defaultName);
+                playlistId = pl.id;
+              } else if (mode === 'existing') {
+                playlistId = existingId;
+              }
+              if (paths) {
+                await linkFiles(paths, playlistId);
+              } else {
+                const res = await window.api.linkDirectory(currentPath, false, playlistId);
+                showToast(`Linked ${res.linked}/${res.total} tracks`);
+                await refreshVisibleTracks(displayItems);
+              }
+            }}
+          />
+        )}
 
-                {/* Add to playlist submenu */}
-                <div className="context-menu-item context-menu-item--has-submenu">
-                  ➕ Add to playlist
-                  <div className="context-submenu context-submenu--scrollable">
-                    <div
-                      className="context-menu-item"
-                      onClick={async () => {
-                        closeMenu();
-                        const pl = await window.api.createPlaylist(menuFilename);
-                        await linkFiles([menuItem.path], pl.id);
-                      }}
-                    >
-                      ✚ New playlist…
-                    </div>
-                    {playlists.length > 0 && <div className="context-menu-separator" />}
-                    {playlists.map((pl) => (
-                      <div
-                        key={pl.id}
-                        className="context-menu-item"
-                        onClick={async () => {
-                          closeMenu();
-                          let trackId = menuTrack?.id;
-                          if (!menuIsLinked || typeof trackId === 'string') {
-                            const results = await linkFiles([menuItem.path]);
-                            trackId = results[0]?.id ?? null;
-                          }
-                          if (trackId && typeof trackId === 'number')
-                            await window.api.addTracksToPlaylist(pl.id, [trackId]);
-                          showToast(`Added to "${pl.name}"`);
-                        }}
-                      >
-                        {pl.color && <span style={{ color: pl.color }}>● </span>}
-                        {pl.name}
-                      </div>
-                    ))}
-                  </div>
-                </div>
+        {/* ── Beat Grid Editor (fixed overlay — kept inside main so it stays
+           within the stacking context of the main panel) ──────────────── */}
+        {beatGridTrack && (
+          <BeatGridEditor
+            track={beatGridTrack}
+            onClose={() => setBeatGridTrack(null)}
+            onApply={async (data) => {
+              await window.api.adjustBpm({ trackId: beatGridTrack.id, ...data });
+              setBeatGridTrack(null);
+            }}
+          />
+        )}
 
-                <div className="context-menu-separator" />
-
-                {/* Play */}
-                <div
-                  className="context-menu-item"
-                  onClick={() => {
-                    closeMenu();
-                    handleDoubleClick(menuItem);
-                  }}
-                >
-                  ▶ Play
-                </div>
-
-                {/* Edit / Analysis — linked tracks only */}
-                {menuIsLinked && menuTrack && (
-                  <>
-                    <div className="context-menu-separator" />
-                    <div
-                      className="context-menu-item"
-                      onClick={() => {
-                        closeMenu();
-                        setDetailsTrack(menuTrack);
-                      }}
-                    >
-                      ✏️ Edit Details
-                    </div>
-                    <div className="context-menu-item context-menu-item--has-submenu">
-                      🔬 Analysis
-                      <div className="context-submenu">
-                        <div
-                          className="context-menu-item"
-                          onClick={() => {
-                            closeMenu();
-                            window.api.reanalyzeTrack(menuTrack.id);
-                            showToast('Re-analysis started');
-                          }}
-                        >
-                          🔄 Re-analyze
-                        </div>
-                        <div className="context-menu-separator" />
-                        <div
-                          className="context-menu-item"
-                          onClick={() => {
-                            closeMenu();
-                            window.api.normalizeTracksAudio({ trackIds: [menuTrack.id] });
-                            showToast('Normalization started');
-                          }}
-                        >
-                          🔊 Normalize
-                        </div>
-                        <div className="context-menu-separator" />
-                        <div
-                          className="context-menu-item"
-                          onClick={() => {
-                            closeMenu();
-                            setBeatGridTrack(menuTrack);
-                          }}
-                        >
-                          🥁 Beat Grid…
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {/* Remap — only when broken link detected */}
-                {(menuBrokenMatch || menuLinkedBroken) && (
-                  <>
-                    <div className="context-menu-separator" />
-                    {menuBrokenMatch && (
-                      <div
-                        className="context-menu-item"
-                        title={`Remap broken track: ${menuBrokenMatch.title}`}
-                        onClick={async () => {
-                          closeMenu();
-                          const r = await window.api.remapTrack(menuBrokenMatch.id, menuItem.path);
-                          if (r.ok) {
-                            setBrokenTracks((p) => p.filter((b) => b.id !== menuBrokenMatch.id));
-                            showToast(`Remapped: ${menuBrokenMatch.title}`);
-                          } else showToast('Remap failed', false);
-                        }}
-                      >
-                        🔗 Remap &ldquo;{menuBrokenMatch.title}&rdquo; to this file
-                      </div>
-                    )}
-                    {menuLinkedBroken && (
-                      <div
-                        className="context-menu-item context-menu-item--disabled"
-                        title="This track's file is missing from disk"
-                      >
-                        ⚠️ Broken link — file missing
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {/* Remove */}
-                {menuIsLinked && (
-                  <>
-                    <div className="context-menu-separator" />
-                    <div
-                      className="context-menu-item context-menu-item--danger"
-                      onClick={async () => {
-                        closeMenu();
-                        await window.api.removeTrack(menuTrack.id);
-                        setTracksMap((prev) => {
-                          const next = new Map(prev);
-                          next.delete(menuItem.path);
-                          return next;
-                        });
-                        showToast('Removed from library');
-                      }}
-                    >
-                      🗑️ Remove from library
-                    </div>
-                  </>
-                )}
-              </>
-            )}
+        {/* ── Toast ─────────────────────────────────────────────────────────── */}
+        {toast && (
+          <div className={`music-library-toast${toast.ok ? '' : ' music-library-toast--warn'}`}>
+            {toast.msg}
           </div>
-        </>
-      )}
+        )}
+      </div>
+      {/* end .explorer-view__main */}
 
-      {/* ── Confirm dialog (recursive scan / analyze) ─────────────────────── */}
-      {confirmDialog && (
-        <ConfirmDialog
-          title={confirmDialog.title}
-          body={confirmDialog.body}
-          confirmLabel={confirmDialog.confirmLabel}
-          onConfirm={confirmDialog.onConfirm}
-          onCancel={() => setConfirmDialog(null)}
-        />
-      )}
-
-      {/* ── Link-to-library dialog ────────────────────────────────────────── */}
-      {linkDialog && (
-        <LinkFolderDialog
-          description={linkDialog.description}
-          defaultName={linkDialog.defaultName}
-          playlists={playlists}
-          onCancel={() => setLinkDialog(null)}
-          onConfirm={async ({ mode, newName, existingId }) => {
-            const { paths } = linkDialog;
-            setLinkDialog(null);
-            let playlistId = null;
-            if (mode === 'new') {
-              const pl = await window.api.createPlaylist(newName || linkDialog.defaultName);
-              playlistId = pl.id;
-            } else if (mode === 'existing') {
-              playlistId = existingId;
-            }
-            if (paths) {
-              await linkFiles(paths, playlistId);
-            } else {
-              const res = await window.api.linkDirectory(currentPath, false, playlistId);
-              showToast(`Linked ${res.linked}/${res.total} tracks`);
-              await refreshVisibleTracks(displayItems);
-            }
-          }}
-        />
-      )}
-
-      {/* ── Modals ────────────────────────────────────────────────────────── */}
+      {/* ── Details side panel (sibling to main, same row) ────────────────── */}
       {detailsTrack && (
         <TrackDetails
           track={detailsTrack}
           onSave={handleDetailsSave}
           onCancel={() => setDetailsTrack(null)}
         />
-      )}
-      {beatGridTrack && (
-        <BeatGridEditor
-          track={beatGridTrack}
-          onClose={() => setBeatGridTrack(null)}
-          onApply={async (data) => {
-            await window.api.adjustBpm({ trackId: beatGridTrack.id, ...data });
-            setBeatGridTrack(null);
-          }}
-        />
-      )}
-
-      {/* ── Toast ─────────────────────────────────────────────────────────── */}
-      {toast && (
-        <div className={`music-library-toast${toast.ok ? '' : ' music-library-toast--warn'}`}>
-          {toast.msg}
-        </div>
       )}
     </div>
   );
