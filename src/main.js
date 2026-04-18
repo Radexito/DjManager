@@ -61,6 +61,10 @@ import {
   clearTracks,
   getTrackIdsNeedingNormalization,
   getNormalizedTrackCount,
+  getLegacyNormalizedTracks,
+  clearLegacyNormalizedPaths,
+  normalizeLibrary,
+  normalizeTracksByIds,
   getExistingSourceUrls,
   getPlaylistSourceUrls,
   getTrackWaveform,
@@ -73,8 +77,8 @@ import {
   spawnAnalysis,
   cancelAnalysis,
   getLibraryBase,
-  normalizeAudioFile,
 } from './audio/importManager.js';
+import { convertAudio } from './audio/ffmpeg.js';
 
 import {
   searchMusicBrainz,
@@ -262,11 +266,35 @@ async function autoGenerateMissingWaveforms() {
   console.log(`[waveform] done — generated ${completed} overviews`);
 }
 
+function cleanupLegacyNormalizedFiles() {
+  const tracks = getLegacyNormalizedTracks();
+  if (tracks.length === 0) return;
+  let deleted = 0;
+  for (const t of tracks) {
+    try {
+      if (fs.existsSync(t.normalized_file_path)) {
+        fs.unlinkSync(t.normalized_file_path);
+        deleted++;
+      }
+    } catch (err) {
+      console.warn(
+        `[cleanup] could not delete legacy normalized file ${t.normalized_file_path}:`,
+        err.message
+      );
+    }
+  }
+  clearLegacyNormalizedPaths();
+  console.log(
+    `[cleanup] removed ${deleted} legacy normalized file(s), cleared ${tracks.length} DB entries`
+  );
+}
+
 async function initApp() {
   initLogger();
   if (process.platform === 'win32') logDiagnostics();
   console.log('Initializing database...');
   initDB();
+  cleanupLegacyNormalizedFiles();
   // Pre-allow all directories of existing linked tracks so the media server
   // can serve them without requiring the user to re-open the Explorer.
   for (const dir of getLinkedTrackDirs()) {
@@ -369,123 +397,67 @@ ipcMain.handle('move-library', async (event, newDir) => {
   return { moved, total };
 });
 
-ipcMain.handle('normalize-library', async () => {
+ipcMain.handle('normalize-library', () => {
   const targetLufs = Number(getSetting('normalize_target_lufs', '-9'));
+  const normalized = normalizeLibrary(targetLufs);
   const trackIds = getTrackIdsNeedingNormalization();
-  const total = trackIds.length;
-  let completed = 0;
-  let normalized = 0;
-  let skipped = 0;
-
-  const sendProgress = (done = false) => {
-    if (global.mainWindow) {
-      global.mainWindow.webContents.send('normalize-progress', { completed, total, done });
+  // Push updated replay_gain to renderer for every affected track
+  if (global.mainWindow) {
+    for (const trackId of trackIds) {
+      const track = getTrackById(trackId);
+      if (track?.replay_gain != null) {
+        global.mainWindow.webContents.send('track-updated', {
+          trackId,
+          analysis: { replay_gain: track.replay_gain },
+        });
+      }
     }
-  };
-
-  const notifyTrack = (trackId, extra = {}) => {
-    if (global.mainWindow) {
-      global.mainWindow.webContents.send('track-updated', { trackId, analysis: extra });
-    }
-  };
-
-  sendProgress();
-
-  for (const trackId of trackIds) {
-    const track = getTrackById(trackId);
-    if (!track || track.loudness == null) {
-      skipped++;
-      completed++;
-      sendProgress();
-      continue;
-    }
-    try {
-      const normalizedPath = await normalizeAudioFile(track, targetLufs);
-      console.log(`[normalize-library] created: ${normalizedPath}`);
-      const dbUpdate = { normalized_file_path: normalizedPath };
-      if (track.source_loudness == null) dbUpdate.source_loudness = track.loudness;
-      updateTrack(trackId, dbUpdate);
-      notifyTrack(trackId, { normalized_file_path: normalizedPath, analyzed: 0 });
-      spawnAnalysis(trackId, normalizedPath);
-      normalized++;
-    } catch (err) {
-      console.error(`normalize-library failed for track ${trackId}:`, err.message);
-      skipped++;
-    }
-    completed++;
-    sendProgress();
+    global.mainWindow.webContents.send('normalize-progress', {
+      completed: normalized,
+      total: normalized,
+      done: true,
+    });
   }
-
-  sendProgress(true);
-  return { normalized, skipped, total };
+  return { normalized, skipped: 0, total: normalized };
 });
 
 ipcMain.handle('reset-normalization', (_, { trackIds } = {}) => {
   const ids = trackIds?.length ? trackIds : null;
   const updated = resetNormalization(ids);
-
-  // Re-analyze affected tracks on their original files to restore loudness data
-  if (ids) {
-    for (const id of ids) {
-      const track = getTrackById(id);
-      if (track?.file_path) spawnAnalysis(id, track.file_path);
+  // Notify renderer so replay_gain is cleared in the track list
+  if (global.mainWindow) {
+    const affectedIds = ids ?? getTrackIdsNeedingNormalization();
+    for (const id of affectedIds) {
+      global.mainWindow.webContents.send('track-updated', {
+        trackId: id,
+        analysis: { replay_gain: null },
+      });
     }
   }
-
   return { updated };
 });
 
 ipcMain.handle('get-normalized-count', () => getNormalizedTrackCount());
 
-ipcMain.handle('normalize-tracks-audio', async (_, { trackIds }) => {
+ipcMain.handle('normalize-tracks-audio', (_, { trackIds }) => {
   const targetLufs = Number(getSetting('normalize_target_lufs', '-9'));
-  const total = trackIds.length;
-  let completed = 0;
-  let normalized = 0;
-  let skipped = 0;
-
-  const sendProgress = (done = false) => {
-    if (global.mainWindow) {
-      global.mainWindow.webContents.send('normalize-progress', { completed, total, done });
+  const gains = normalizeTracksByIds(trackIds, targetLufs);
+  const normalized = Object.keys(gains).length;
+  const skipped = trackIds.length - normalized;
+  // Push updated replay_gain to renderer
+  if (global.mainWindow) {
+    for (const [id, replay_gain] of Object.entries(gains)) {
+      global.mainWindow.webContents.send('track-updated', {
+        trackId: Number(id),
+        analysis: { replay_gain },
+      });
     }
-  };
-
-  const notifyTrack = (trackId, extra = {}) => {
-    if (global.mainWindow) {
-      global.mainWindow.webContents.send('track-updated', { trackId, analysis: extra });
-    }
-  };
-
-  sendProgress();
-
-  for (const trackId of trackIds) {
-    const track = getTrackById(trackId);
-    if (!track || (track.source_loudness == null && track.loudness == null)) {
-      skipped++;
-      completed++;
-      sendProgress();
-      continue;
-    }
-    try {
-      const normalizedPath = await normalizeAudioFile(track, targetLufs);
-      console.log(`[normalize] created normalized file: ${normalizedPath}`);
-      // Persist source_loudness once so re-normalization always uses the original baseline
-      const dbUpdate = { normalized_file_path: normalizedPath };
-      if (track.source_loudness == null) dbUpdate.source_loudness = track.loudness;
-      updateTrack(trackId, dbUpdate);
-      // Immediately tell renderer about the normalized file and mark as re-analyzing
-      notifyTrack(trackId, { normalized_file_path: normalizedPath, analyzed: 0 });
-      spawnAnalysis(trackId, normalizedPath);
-      normalized++;
-    } catch (err) {
-      console.error(`Audio normalization failed for track ${trackId}:`, err.message);
-      skipped++;
-    }
-    completed++;
-    sendProgress();
+    global.mainWindow.webContents.send('normalize-progress', {
+      completed: trackIds.length,
+      total: trackIds.length,
+      done: true,
+    });
   }
-
-  sendProgress(true);
   return { normalized, skipped };
 });
 
@@ -1774,11 +1746,13 @@ ipcMain.handle('format-usb', async (_, { device, mountPoint }) => {
 });
 
 /** Copies a track's audio file to {usbRoot}/music/, returns the USB path or null on error. */
-function copyTrackToUsb(track, usbRoot, usedNames, useNormalized = false) {
-  const srcPath =
-    useNormalized && track.normalized_file_path && fs.existsSync(track.normalized_file_path)
-      ? track.normalized_file_path
-      : track.file_path;
+async function copyTrackToUsb(
+  track,
+  usbRoot,
+  usedNames,
+  { useNormalized = false, targetLufs = null } = {}
+) {
+  const srcPath = track.file_path;
   const ext = path.extname(srcPath || '');
   const filename = trackToFilename(track, ext);
   // Deduplicate filename
@@ -1794,7 +1768,13 @@ function copyTrackToUsb(track, usbRoot, usedNames, useNormalized = false) {
   const destPath = path.join(destDir, finalName);
 
   if (!fs.existsSync(destPath) && fs.existsSync(srcPath)) {
-    fs.copyFileSync(srcPath, destPath);
+    const sourceLoudness = track.loudness;
+    if (useNormalized && targetLufs != null && sourceLoudness != null) {
+      const gainDb = targetLufs - sourceLoudness;
+      await convertAudio(srcPath, destPath, { gainDb });
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
   }
 
   return `/music/${finalName}`;
@@ -1848,6 +1828,7 @@ ipcMain.handle(
   'export-rekordbox',
   async (_, { usbRoot, playlistIds, playlistId, useNormalized = false }) => {
     try {
+      const targetLufs = useNormalized ? Number(getSetting('normalize_target_lufs', '-9')) : null;
       const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
       const allPlaylists = ids?.length
         ? ids.map((id) => getPlaylist(id)).filter(Boolean)
@@ -1884,7 +1865,7 @@ ipcMain.handle(
       const usbPaths = new Map(); // trackId → USB path
       for (let i = 0; i < tracks.length; i++) {
         const t = tracks[i];
-        const usbPath = copyTrackToUsb(t, usbRoot, usedNames, useNormalized);
+        const usbPath = await copyTrackToUsb(t, usbRoot, usedNames, { useNormalized, targetLufs });
         usbPaths.set(t.id, usbPath);
         send('export-rekordbox-progress', {
           msg: `Copying files… ${i + 1}/${total}`,
@@ -1901,10 +1882,7 @@ ipcMain.handle(
         if (!usbFilePath) continue;
         const anlzFolder = getAnlzFolder(usbFilePath).replace(/\\/g, '/');
         anlzPaths.set(t.id, `/${anlzFolder}/ANLZ0000.DAT`);
-        const sourceFilePath =
-          useNormalized && t.normalized_file_path && fs.existsSync(t.normalized_file_path)
-            ? t.normalized_file_path
-            : t.file_path || null;
+        const sourceFilePath = t.file_path || null;
         try {
           await writeAnlz({
             usbFilePath,
@@ -1983,6 +1961,7 @@ ipcMain.handle(
   'export-all',
   async (_, { usbRoot, playlistIds, playlistId, useNormalized = false }) => {
     try {
+      const targetLufs = useNormalized ? Number(getSetting('normalize_target_lufs', '-9')) : null;
       const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
       const allPlaylists = ids?.length
         ? ids.map((id) => getPlaylist(id)).filter(Boolean)
@@ -2020,7 +1999,10 @@ ipcMain.handle(
       const usbPaths = new Map();
       for (let i = 0; i < allTracks.length; i++) {
         const t = allTracks[i];
-        usbPaths.set(t.id, copyTrackToUsb(t, usbRoot, usedNames, useNormalized));
+        usbPaths.set(
+          t.id,
+          await copyTrackToUsb(t, usbRoot, usedNames, { useNormalized, targetLufs })
+        );
         send('export-all-progress', {
           msg: `Copying files… ${i + 1}/${total}`,
           pct: Math.round(((i + 1) / total) * 35),
@@ -2056,14 +2038,10 @@ ipcMain.handle(
         const t = allTracks[i];
         const usbFilePath = usbPaths.get(t.id);
         if (!usbFilePath) continue;
-        const sourceFilePath =
-          useNormalized && t.normalized_file_path && fs.existsSync(t.normalized_file_path)
-            ? t.normalized_file_path
-            : t.file_path || null;
         try {
           await writeAnlz({
             usbFilePath,
-            sourceFilePath,
+            sourceFilePath: t.file_path || null,
             beatgrid: t.beatgrid ?? null,
             bpm: t.bpm_override ?? t.bpm ?? 0,
             beatgridOffset: t.beatgrid_offset ?? 0,

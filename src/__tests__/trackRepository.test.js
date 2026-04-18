@@ -372,7 +372,7 @@ describe('source_link field', () => {
 });
 
 describe('getTrackIdsNeedingNormalization', () => {
-  it('returns ids of tracks that have loudness but no normalized_file_path', () => {
+  it('returns ids of all analyzed tracks with loudness data', () => {
     const id1 = addTrack({ ...SAMPLE, file_hash: 'nin1', file_path: '/tmp/nin1.mp3' });
     const id2 = addTrack({ ...SAMPLE, file_hash: 'nin2', file_path: '/tmp/nin2.mp3' });
     updateTrack(id1, { loudness: -14 });
@@ -382,13 +382,11 @@ describe('getTrackIdsNeedingNormalization', () => {
     expect(ids).toContain(id2);
   });
 
-  it('excludes tracks that already have a normalized_file_path', () => {
+  it('includes tracks regardless of normalized_file_path (legacy column)', () => {
     const id = addTrack({ ...SAMPLE, file_hash: 'nin3', file_path: '/tmp/nin3.mp3' });
-    updateTrack(id, { loudness: -14 });
-    // Manually set normalized_file_path via raw update to simulate already-normalized
-    updateTrack(id, { normalized_file_path: '/tmp/nin3_norm.mp3' });
+    updateTrack(id, { loudness: -14, normalized_file_path: '/tmp/nin3_norm.mp3' });
     const ids = getTrackIdsNeedingNormalization();
-    expect(ids).not.toContain(id);
+    expect(ids).toContain(id);
   });
 
   it('excludes tracks with no loudness data', () => {

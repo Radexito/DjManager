@@ -109,8 +109,7 @@ export function PlayerProvider({ children }) {
         console.error('[player] media server not ready yet');
         return;
       }
-      // Prefer the normalized file for playback if available
-      const filePath = track.normalized_file_path || track.file_path;
+      const filePath = track.file_path;
       // Normalize to forward slashes (Windows paths use backslashes), then encode each segment
       const posixPath = filePath.replace(/\\/g, '/');
       const encodedPath = posixPath
