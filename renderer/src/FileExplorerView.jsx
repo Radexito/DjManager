@@ -182,9 +182,30 @@ function getBreadcrumbs(p) {
   return crumbs;
 }
 
+// ── Generic confirm dialog ────────────────────────────────────────────────────
+
+function ConfirmDialog({ title, body, confirmLabel = 'Confirm', onConfirm, onCancel }) {
+  return (
+    <div className="explorer-dialog-backdrop" onMouseDown={onCancel}>
+      <div className="explorer-dialog" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="explorer-dialog__title">{title}</div>
+        <p className="explorer-dialog__body">{body}</p>
+        <div className="explorer-dialog__actions">
+          <button className="explorer-btn" onClick={onCancel}>
+            Cancel
+          </button>
+          <button className="explorer-btn accent" onClick={onConfirm}>
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Link-to-library dialog ────────────────────────────────────────────────────
 
-function LinkFolderDialog({ defaultName, playlists, onConfirm, onCancel }) {
+function LinkFolderDialog({ description, defaultName, playlists, onConfirm, onCancel }) {
   const [mode, setMode] = useState('music');
   const [newName, setNewName] = useState(defaultName);
   const [existingId, setExistingId] = useState(playlists[0]?.id ?? '');
@@ -193,6 +214,11 @@ function LinkFolderDialog({ defaultName, playlists, onConfirm, onCancel }) {
     <div className="explorer-dialog-backdrop" onMouseDown={onCancel}>
       <div className="explorer-dialog" onMouseDown={(e) => e.stopPropagation()}>
         <div className="explorer-dialog__title">Add to Library</div>
+        {description && <p className="explorer-dialog__body">{description}</p>}
+        <p className="explorer-dialog__warn">
+          Metadata and analysis will run for every new file — on large folders this can take a
+          while.
+        </p>
 
         <label className="explorer-dialog__option">
           <input
@@ -285,7 +311,8 @@ export default function FileExplorerView({ style }) {
   const [detailsTrack, setDetailsTrack] = useState(null);
   const [beatGridTrack, setBeatGridTrack] = useState(null);
   const [toast, setToast] = useState(null);
-  const [linkDialog, setLinkDialog] = useState(null); // { defaultName, paths|null }
+  const [linkDialog, setLinkDialog] = useState(null); // { defaultName, paths|null, description }
+  const [confirmDialog, setConfirmDialog] = useState(null); // { title, body, confirmLabel, onConfirm }
 
   // Broken links — populated by slow background scan
   const [brokenTracks, setBrokenTracks] = useState([]);
@@ -724,8 +751,8 @@ export default function FileExplorerView({ style }) {
             recursiveScanning
               ? 'Cancel scan'
               : recursiveFiles !== null
-                ? 'Exit recursive'
-                : 'Scan recursively'
+                ? 'Exit recursive view'
+                : 'Scan folder recursively'
           }
           onClick={() => {
             if (recursiveScanning) {
@@ -737,9 +764,18 @@ export default function FileExplorerView({ style }) {
               setRecursiveFiles(null);
               return;
             }
-            setRecursiveFiles([]);
-            setRecursiveScanning(true);
-            window.api.explorerStartRecursive(currentPath);
+            const folderName = basename(currentPath) || currentPath;
+            setConfirmDialog({
+              title: '🌲 Recursive scan',
+              body: `Scan "${folderName}" and all its subdirectories for audio files?\n\nOn large directories or slow drives this can take a long time and list thousands of files.`,
+              confirmLabel: 'Scan',
+              onConfirm: () => {
+                setConfirmDialog(null);
+                setRecursiveFiles([]);
+                setRecursiveScanning(true);
+                window.api.explorerStartRecursive(currentPath);
+              },
+            });
           }}
         >
           {recursiveScanning ? '⏳' : '🌲'}
@@ -751,9 +787,23 @@ export default function FileExplorerView({ style }) {
               ? 'Analysis in progress — click to cancel'
               : 'Analyze all audio files in current folder'
           }
-          onClick={() =>
-            analyzingPath === currentPath ? cancelAnalyzeFolder() : analyzeFolder(false)
-          }
+          onClick={() => {
+            if (analyzingPath === currentPath) {
+              cancelAnalyzeFolder();
+              return;
+            }
+            const folderName = basename(currentPath) || currentPath;
+            const fileCount = displayItems.filter((x) => x.type === 'file').length;
+            setConfirmDialog({
+              title: '⚡ Analyze folder',
+              body: `Run BPM, key, and loudness analysis on ${fileCount} audio file(s) in "${folderName}"?\n\nAnalysis workers run in the background and may use significant CPU — especially on large folders.`,
+              confirmLabel: 'Analyze',
+              onConfirm: () => {
+                setConfirmDialog(null);
+                analyzeFolder(false);
+              },
+            });
+          }}
         >
           {analyzingPath === currentPath ? '⏹ Cancel' : '⚡ Analyze'}
         </button>
@@ -774,10 +824,12 @@ export default function FileExplorerView({ style }) {
           }
           onClick={() => {
             const folderName = currentPath ? basename(currentPath) : 'Folder';
-            setLinkDialog({
-              defaultName: folderName,
-              paths: selectedFileItems.length > 0 ? selectedFileItems.map((f) => f.path) : null,
-            });
+            const paths =
+              selectedFileItems.length > 0 ? selectedFileItems.map((f) => f.path) : null;
+            const description = paths
+              ? `${paths.length} selected file(s) from "${folderName}"`
+              : `All audio files in "${folderName}"`;
+            setLinkDialog({ defaultName: folderName, paths, description });
           }}
         >
           {selectedFileItems.length > 0 ? `+ Library (${selectedFileItems.length})` : '+ Library'}
@@ -1065,9 +1117,21 @@ export default function FileExplorerView({ style }) {
         </>
       )}
 
+      {/* ── Confirm dialog (recursive scan / analyze) ─────────────────────── */}
+      {confirmDialog && (
+        <ConfirmDialog
+          title={confirmDialog.title}
+          body={confirmDialog.body}
+          confirmLabel={confirmDialog.confirmLabel}
+          onConfirm={confirmDialog.onConfirm}
+          onCancel={() => setConfirmDialog(null)}
+        />
+      )}
+
       {/* ── Link-to-library dialog ────────────────────────────────────────── */}
       {linkDialog && (
         <LinkFolderDialog
+          description={linkDialog.description}
           defaultName={linkDialog.defaultName}
           playlists={playlists}
           onCancel={() => setLinkDialog(null)}
