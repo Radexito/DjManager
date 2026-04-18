@@ -275,7 +275,9 @@ export default function FileExplorerView({ style }) {
   const [currentPath, setCurrentPath] = useState(null);
   const [dirEntries, setDirEntries] = useState({ dirs: [], files: [] });
   const [loading, setLoading] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
+  // null = idle; string = path currently being analyzed (persists across navigation)
+  const [analyzingPath, setAnalyzingPath] = useState(null);
+  const pendingAnalysisIds = useRef(new Set());
   const [tracksMap, setTracksMap] = useState(new Map());
   const [selectedPaths, setSelectedPaths] = useState(new Set());
   const [playlists, setPlaylists] = useState([]);
@@ -408,6 +410,13 @@ export default function FileExplorerView({ style }) {
         return next;
       });
       patchCurrentTrack(trackId, merged);
+      // Decrement pending set; clear analyzingPath when all workers finish
+      if (pendingAnalysisIds.current.has(trackId)) {
+        pendingAnalysisIds.current.delete(trackId);
+        if (pendingAnalysisIds.current.size === 0) {
+          setAnalyzingPath(null);
+        }
+      }
     });
     return unsub;
   }, [patchCurrentTrack]);
@@ -559,19 +568,42 @@ export default function FileExplorerView({ style }) {
 
   const analyzeFolder = useCallback(
     async (recursive = false) => {
-      if (!currentPath) return;
-      setAnalyzing(true);
+      if (!currentPath || analyzingPath === currentPath) return;
+      setAnalyzingPath(currentPath);
+      pendingAnalysisIds.current = new Set();
       try {
-        const res = await window.api.linkDirectory(currentPath, recursive, null);
-        showToast(`Analyzing ${res.total} track(s)…`);
-        // Populate tracksMap so onTrackUpdated can find newly-linked tracks
-        await refreshVisibleTracks(displayItems);
-      } finally {
-        setAnalyzing(false);
+        await window.api.linkDirectory(currentPath, recursive, null);
+        // Refresh map so onTrackUpdated can match track IDs to file paths
+        const filePaths = displayItems.filter((x) => x.type === 'file').map((x) => x.path);
+        if (!filePaths.length) {
+          setAnalyzingPath(null);
+          return;
+        }
+        const tracks = await window.api.getTracksByPaths(filePaths);
+        setTracksMap((prev) => {
+          const next = new Map(prev);
+          tracks.forEach((t) => next.set(t.file_path, t));
+          return next;
+        });
+        const unanalyzed = tracks.filter((t) => t.analyzed === 0);
+        if (unanalyzed.length === 0) {
+          setAnalyzingPath(null);
+        } else {
+          pendingAnalysisIds.current = new Set(unanalyzed.map((t) => t.id));
+          showToast(`Analyzing ${unanalyzed.length} track(s)…`);
+        }
+      } catch {
+        setAnalyzingPath(null);
+        pendingAnalysisIds.current = new Set();
       }
     },
-    [currentPath, showToast, displayItems, refreshVisibleTracks]
+    [currentPath, analyzingPath, displayItems, showToast]
   );
+
+  const cancelAnalyzeFolder = useCallback(() => {
+    pendingAnalysisIds.current = new Set();
+    setAnalyzingPath(null);
+  }, []);
 
   // ── Context menu ──────────────────────────────────────────────────────────
 
@@ -713,12 +745,17 @@ export default function FileExplorerView({ style }) {
           {recursiveScanning ? '⏳' : '🌲'}
         </button>
         <button
-          className="explorer-btn"
-          title="Analyze all audio files in current folder"
-          disabled={analyzing}
-          onClick={() => analyzeFolder(false)}
+          className={`explorer-btn${analyzingPath === currentPath ? ' active' : ''}`}
+          title={
+            analyzingPath === currentPath
+              ? 'Analysis in progress — click to cancel'
+              : 'Analyze all audio files in current folder'
+          }
+          onClick={() =>
+            analyzingPath === currentPath ? cancelAnalyzeFolder() : analyzeFolder(false)
+          }
         >
-          {analyzing ? '⏳' : '⚡'} Analyze
+          {analyzingPath === currentPath ? '⏹ Cancel' : '⚡ Analyze'}
         </button>
         {brokenTracks.length > 0 && (
           <span
