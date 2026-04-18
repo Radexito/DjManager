@@ -29,6 +29,7 @@ window.api = {
   getZoomFactor: vi.fn().mockReturnValue(1.0),
   setZoomFactor: vi.fn(),
   removeTrack: vi.fn().mockResolvedValue({ ok: true }),
+  removeLinkedFile: vi.fn().mockResolvedValue({ ok: true }),
   adjustBpm: vi.fn().mockResolvedValue([]),
   updateTrack: vi.fn().mockResolvedValue({}),
   getEditorWaveform: vi.fn().mockResolvedValue(null),

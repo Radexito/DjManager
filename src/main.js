@@ -504,6 +504,20 @@ ipcMain.handle('remove-track', (_, trackId) => {
   if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
   return { ok: true };
 });
+ipcMain.handle('remove-linked-file', async (_, trackId) => {
+  const track = getTrackById(trackId);
+  if (!track) return { ok: false, error: 'not found' };
+  const filePath = track.file_path;
+  removeTrack(trackId);
+  try {
+    fs.unlinkSync(filePath);
+  } catch {
+    /* already gone */
+  }
+  send('library-updated');
+  if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+  return { ok: true };
+});
 ipcMain.handle('update-track', (_, { id, data }) => {
   updateTrack(id, data);
   const track = getTrackById(id);
