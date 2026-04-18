@@ -313,6 +313,7 @@ export default function FileExplorerView({ style }) {
   const [toast, setToast] = useState(null);
   const [linkDialog, setLinkDialog] = useState(null); // { defaultName, paths|null, description }
   const [confirmDialog, setConfirmDialog] = useState(null); // { title, body, confirmLabel, onConfirm }
+  const [favourites, setFavourites] = useState([]); // [{ path, name }]
 
   // Broken links — populated by slow background scan
   const [brokenTracks, setBrokenTracks] = useState([]);
@@ -338,11 +339,30 @@ export default function FileExplorerView({ style }) {
     window.api.getComputerRoot().then(({ root, home }) => {
       setFsRoot(root);
       setHomeDir(home);
-      setCurrentPath(root);
+      setCurrentPath(home ?? root);
     });
     window.api.getPlaylists().then(setPlaylists);
+    window.api.getSetting('explorer_favourites', []).then((favs) => setFavourites(favs ?? []));
     const unsub = window.api.onPlaylistsUpdated(() => window.api.getPlaylists().then(setPlaylists));
     return unsub;
+  }, []);
+
+  const addFavourite = useCallback((path) => {
+    const name = basename(path) || path;
+    setFavourites((prev) => {
+      if (prev.some((f) => f.path === path)) return prev;
+      const next = [...prev, { path, name }];
+      window.api.setSetting('explorer_favourites', next);
+      return next;
+    });
+  }, []);
+
+  const removeFavourite = useCallback((path) => {
+    setFavourites((prev) => {
+      const next = prev.filter((f) => f.path !== path);
+      window.api.setSetting('explorer_favourites', next);
+      return next;
+    });
   }, []);
 
   // ── Background broken-link scan ──────────────────────────────────────────
@@ -722,16 +742,39 @@ export default function FileExplorerView({ style }) {
       className={`explorer-view${detailsTrack ? ' explorer-view--with-panel' : ''}`}
       style={style}
     >
+      {/* ── Favourites sidebar ────────────────────────────────────────────── */}
+      <div className="explorer-favourites">
+        <div className="explorer-favourites__header">Favourites</div>
+        {favourites.length === 0 ? (
+          <div className="explorer-favourites__empty">Right-click a folder to add favourites</div>
+        ) : (
+          favourites.map((fav) => (
+            <div
+              key={fav.path}
+              className={`explorer-favourites__item${currentPath === fav.path ? ' explorer-favourites__item--active' : ''}`}
+              title={fav.path}
+              onClick={() => navigateTo(fav.path)}
+            >
+              <span className="explorer-favourites__icon">📁</span>
+              <span className="explorer-favourites__name">{fav.name}</span>
+              <button
+                className="explorer-favourites__remove"
+                title="Remove from favourites"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeFavourite(fav.path);
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+
       <div className="explorer-view__main">
         {/* ── Toolbar ───────────────────────────────────────────────────────── */}
         <div className="explorer-toolbar">
-          <button
-            className="explorer-btn"
-            title="Root /"
-            onClick={() => fsRoot && navigateTo(fsRoot)}
-          >
-            /
-          </button>
           <button
             className="explorer-btn"
             title="Home"
@@ -888,6 +931,28 @@ export default function FileExplorerView({ style }) {
             >
               {menuIsDir ? (
                 <>
+                  {favourites.some((f) => f.path === menuItem.path) ? (
+                    <div
+                      className="context-menu-item"
+                      onClick={() => {
+                        closeMenu();
+                        removeFavourite(menuItem.path);
+                      }}
+                    >
+                      ★ Remove from Favourites
+                    </div>
+                  ) : (
+                    <div
+                      className="context-menu-item"
+                      onClick={() => {
+                        closeMenu();
+                        addFavourite(menuItem.path);
+                      }}
+                    >
+                      ⭐ Add to Favourites
+                    </div>
+                  )}
+                  <div className="context-menu-separator" />
                   <div
                     className="context-menu-item"
                     onClick={() => {
@@ -1012,7 +1077,7 @@ export default function FileExplorerView({ style }) {
                     ▶ Play
                   </div>
 
-                  {/* Edit / Analysis — linked tracks only */}
+                  {/* Edit / Prepare / Analysis — linked tracks only */}
                   {menuIsLinked && menuTrack && (
                     <>
                       <div className="context-menu-separator" />
@@ -1024,6 +1089,15 @@ export default function FileExplorerView({ style }) {
                         }}
                       >
                         ✏️ Edit Details
+                      </div>
+                      <div
+                        className="context-menu-item"
+                        onClick={() => {
+                          closeMenu();
+                          setBeatGridTrack(menuTrack);
+                        }}
+                      >
+                        🎛 Prepare Track…
                       </div>
                       <div className="context-menu-item context-menu-item--has-submenu">
                         🔬 Analysis
@@ -1048,16 +1122,6 @@ export default function FileExplorerView({ style }) {
                             }}
                           >
                             🔊 Normalize
-                          </div>
-                          <div className="context-menu-separator" />
-                          <div
-                            className="context-menu-item"
-                            onClick={() => {
-                              closeMenu();
-                              setBeatGridTrack(menuTrack);
-                            }}
-                          >
-                            🥁 Beat Grid…
                           </div>
                         </div>
                       </div>
@@ -1098,24 +1162,36 @@ export default function FileExplorerView({ style }) {
                     </>
                   )}
 
-                  {/* Remove */}
+                  {/* Remove file */}
                   {menuIsLinked && (
                     <>
                       <div className="context-menu-separator" />
                       <div
                         className="context-menu-item context-menu-item--danger"
-                        onClick={async () => {
+                        onClick={() => {
+                          const { path: itemPath, id: trackId } = {
+                            path: menuItem.path,
+                            id: menuTrack.id,
+                          };
                           closeMenu();
-                          await window.api.removeTrack(menuTrack.id);
-                          setTracksMap((prev) => {
-                            const next = new Map(prev);
-                            next.delete(menuItem.path);
-                            return next;
+                          setConfirmDialog({
+                            title: '🗑️ Delete file?',
+                            body: `"${basename(itemPath)}" will be permanently deleted from your disk and removed from the library.\n\nThis cannot be undone.`,
+                            confirmLabel: 'Delete file',
+                            onConfirm: async () => {
+                              setConfirmDialog(null);
+                              await window.api.removeLinkedFile(trackId);
+                              setTracksMap((prev) => {
+                                const next = new Map(prev);
+                                next.delete(itemPath);
+                                return next;
+                              });
+                              showToast(`Deleted: ${basename(itemPath)}`);
+                            },
                           });
-                          showToast('Removed from library');
                         }}
                       >
-                        🗑️ Unlink file
+                        🗑️ Remove file
                       </div>
                     </>
                   )}

@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('api', {
   reanalyzeTrack: (trackId) => ipcRenderer.invoke('reanalyze-track', trackId),
   cancelAnalysis: (trackId) => ipcRenderer.invoke('cancel-analysis', trackId),
   removeTrack: (trackId) => ipcRenderer.invoke('remove-track', trackId),
+  removeLinkedFile: (trackId) => ipcRenderer.invoke('remove-linked-file', trackId),
   updateTrack: (id, data) => ipcRenderer.invoke('update-track', { id, data }),
   getEditorWaveform: (trackId) => ipcRenderer.invoke('get-editor-waveform', trackId),
   adjustBpm: (payload) => ipcRenderer.invoke('adjust-bpm', payload),
