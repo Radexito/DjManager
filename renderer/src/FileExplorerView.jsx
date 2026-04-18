@@ -826,9 +826,10 @@ export default function FileExplorerView({ style }) {
             const folderName = currentPath ? basename(currentPath) : 'Folder';
             const paths =
               selectedFileItems.length > 0 ? selectedFileItems.map((f) => f.path) : null;
+            const folderFileCount = displayItems.filter((x) => x.type === 'file').length;
             const description = paths
               ? `${paths.length} selected file(s) from "${folderName}"`
-              : `All audio files in "${folderName}"`;
+              : `${folderFileCount} audio file(s) in "${folderName}"`;
             setLinkDialog({ defaultName: folderName, paths, description });
           }}
         >
