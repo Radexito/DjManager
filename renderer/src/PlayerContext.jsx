@@ -14,7 +14,14 @@ const HISTORY_MAX = 50;
 
 export function PlayerProvider({ children }) {
   const audioRef = useRef(null);
-  if (audioRef.current == null) audioRef.current = new Audio();
+  if (audioRef.current == null) {
+    const a = new Audio();
+    // Required for Web Audio API (createMediaElementSource) to process audio from
+    // the local media server — without this Chromium won't send an Origin header
+    // and CORS is not negotiated, causing the graph to output silence.
+    a.crossOrigin = 'anonymous';
+    audioRef.current = a;
+  }
   // eslint-disable-next-line react-hooks/refs
   const audio = audioRef.current;
 
