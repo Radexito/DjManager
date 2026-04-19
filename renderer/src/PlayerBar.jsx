@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
 import './PlayerBar.css';
+import './PlayerBarCues.css';
 
 function formatTime(s) {
   if (!s || isNaN(s)) return '0:00';
@@ -33,15 +34,29 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     setDevice,
     setVolume,
     play,
+    audioRef,
   } = usePlayer();
 
   const [devices, setDevices] = useState([]);
   const [showDevices, setShowDevices] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [cuePoints, setCuePoints] = useState([]);
+  const [showHotCues, setShowHotCues] = useState(
+    () => localStorage.getItem('cue-show-hot') !== 'false'
+  );
+  const [showMemCues, setShowMemCues] = useState(
+    () => localStorage.getItem('cue-show-mem') !== 'false'
+  );
   const seekbarRef = useRef(); // uncontrolled range input
   const seekingRef = useRef(false); // true while user drags
   const deviceWrapRef = useRef();
   const historyWrapRef = useRef();
+  const waveCanvasRef = useRef();
+  const waveDataRef = useRef(null); // Uint8Array | null
+  const seekbarBgRef = useRef(); // thin bg line behind waveform
+  const colorModeRef = useRef('rgb');
+  const introFracRef = useRef(0); // 0-1 fraction where intro ends
+  const outroFracRef = useRef(1); // 0-1 fraction where outro starts
 
   useEffect(() => {
     async function loadDevices() {
@@ -52,33 +67,182 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     loadDevices();
   }, []);
 
+  // Load cue points whenever the playing track changes
+  useEffect(() => {
+    const id = currentTrack?.id;
+    let alive = true;
+    Promise.resolve(id ? window.api.getCuePoints(id) : [])
+      .then((pts) => {
+        if (alive) setCuePoints(pts);
+      })
+      .catch(() => {
+        if (alive) setCuePoints([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [currentTrack?.id]);
+
+  // Re-sync cue markers once audio duration is known — fixes the race where the
+  // SQLite response arrives before durationchange fires, so markers were hidden
+  // (duration > 0 guard) even though cue points were already in state.
+  const hasDuration = duration > 0;
+  useEffect(() => {
+    const id = currentTrack?.id;
+    if (!id || !hasDuration) return;
+    let alive = true;
+    window.api
+      .getCuePoints(id)
+      .then((pts) => {
+        if (alive) setCuePoints(pts);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [currentTrack?.id, hasDuration]);
+
+  // Refresh cue markers when cue points are added/edited/deleted elsewhere
+  useEffect(() => {
+    const id = currentTrack?.id;
+    if (!id) return;
+    const handler = (e) => {
+      if (e.detail?.trackId === id) {
+        window.api
+          .getCuePoints(id)
+          .then(setCuePoints)
+          .catch(() => {});
+      }
+    };
+    window.addEventListener('cue-points-updated', handler);
+    return () => window.removeEventListener('cue-points-updated', handler);
+  }, [currentTrack?.id]);
+
+  // Sync visibility toggles with CuePointsEditor
+  useEffect(() => {
+    const handler = ({ detail: { key, val } }) => {
+      if (key === 'cue-show-hot') setShowHotCues(val);
+      if (key === 'cue-show-mem') setShowMemCues(val);
+    };
+    window.addEventListener('cue-visibility-changed', handler);
+    return () => window.removeEventListener('cue-visibility-changed', handler);
+  }, []);
+
   // Keep seekbar max in sync with duration
   useEffect(() => {
     if (seekbarRef.current) seekbarRef.current.max = duration || 0;
   }, [duration]);
 
-  // Paint intro/outro zones on the seekbar track as a CSS gradient
+  // ── Waveform canvas helpers (declared before the effects that call them) ─────
+
+  function drawWaveform(canvas, data, mode) {
+    const W = canvas.width;
+    const H = canvas.height;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+    if (!data || data.length < 4) return;
+
+    const numCols = data.length / 4;
+    const colW = W / numCols;
+    const midY = H / 2;
+
+    for (let i = 0; i < numCols; i++) {
+      const rms = data[i * 4] / 255;
+      const bass = data[i * 4 + 1];
+      const mid = data[i * 4 + 2];
+      const treble = data[i * 4 + 3];
+
+      const halfH = Math.max(1, Math.round(rms * midY * 1.8));
+      const x = Math.floor(i * colW);
+      const w = Math.max(1, Math.ceil(colW));
+
+      // EMA-derived band values have bass >> mid >> treble by ~10-30x, so naive
+      // normalisation always picks bass as dominant and renders everything blue.
+      // Gamma-compress each channel independently before normalisation so weaker
+      // channels (treble, mid) become visually comparable to bass.
+      const bassC = Math.pow(bass / 255, 0.55);
+      const midC = Math.pow(mid / 255, 0.3);
+      const trebleC = Math.pow(treble / 255, 0.2);
+
+      const dominant = Math.max(bassC, midC, trebleC) || 0.001;
+      const brightness = Math.min(1, rms * 2.5);
+
+      const nb = (bassC / dominant) * brightness;
+      const ng = (midC / dominant) * brightness;
+      const nr = (trebleC / dominant) * brightness;
+
+      let r, g, b;
+      if (mode === 'classic') {
+        const white = Math.min(1, nr * 2);
+        r = Math.round(white * 220);
+        g = Math.round(white * 220);
+        b = Math.round(55 + nb * 180 + white * 55);
+      } else if (mode === '3band') {
+        // Blue=bass, Orange=mid, White=treble
+        r = Math.min(255, Math.round(nb * 30 + ng * 255 + nr * 255));
+        g = Math.min(255, Math.round(nb * 30 + ng * 140 + nr * 255));
+        b = Math.min(255, Math.round(nb * 255 + ng * 0 + nr * 255));
+      } else {
+        // RGB: treble→red, mid→green, bass→blue
+        r = Math.round(nr * 255);
+        g = Math.round(ng * 255);
+        b = Math.round(nb * 255);
+      }
+
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(x, midY - halfH, w, halfH * 2);
+    }
+
+    // ── Intro / outro amber overlay drawn on the canvas ──────────────────────
+    const iF = introFracRef.current;
+    const oF = outroFracRef.current;
+    if (iF > 0.001) {
+      ctx.fillStyle = 'rgba(90, 56, 0, 0.52)';
+      ctx.fillRect(0, 0, iF * W, H);
+    }
+    if (oF < 0.999) {
+      ctx.fillStyle = 'rgba(90, 56, 0, 0.52)';
+      ctx.fillRect(oF * W, 0, (1 - oF) * W, H);
+    }
+  }
+
+  function paintWaveform() {
+    const canvas = waveCanvasRef.current;
+    if (!canvas || !waveDataRef.current) return;
+    // rAF ensures the canvas has been laid out and offsetWidth > 0
+    requestAnimationFrame(() => {
+      canvas.width = canvas.offsetWidth || canvas.clientWidth || 400;
+      canvas.height = canvas.offsetHeight || canvas.clientHeight || 40;
+      drawWaveform(canvas, waveDataRef.current, colorModeRef.current);
+    });
+  }
+
+  // Recompute intro/outro fracs and redraw waveform when track or duration changes
   useEffect(() => {
-    if (!seekbarRef.current || !duration) return;
+    if (!duration) return;
     const intro = currentTrack?.intro_secs || 0;
     const outro = currentTrack?.outro_secs || 0;
-    const introFrac = Math.min(intro / duration, 1) * 100;
-    const outroFrac = Math.min(outro / duration, 1) * 100;
+    introFracRef.current = intro > 0 ? Math.min(intro / duration, 1) : 0;
+    outroFracRef.current = outro > 0 ? Math.min(outro / duration, 1) : 1;
+    paintWaveform(); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [duration, currentTrack]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // No visible zones: intro at very start, outro at very end
-    if (introFrac <= 0 && outroFrac >= 100) {
-      seekbarRef.current.style.background = '#333';
-      return;
-    }
-    // Amber zones for cut-off intro/outro, neutral middle for the mix window
-    seekbarRef.current.style.background =
-      `linear-gradient(to right, ` +
-      `#5a3800 0%, #5a3800 ${introFrac}%, ` +
-      `#333 ${introFrac}%, #333 ${outroFrac}%, ` +
-      `#5a3800 ${outroFrac}%, #5a3800 100%)`;
-  }, [duration, currentTrack]);
+  // Advance seekbar at ~60fps via rAF so the position tracks audio smoothly
+  // instead of jumping every ~250ms from timeupdate events.
+  useEffect(() => {
+    if (!isPlaying) return;
+    let rafId;
+    const tick = () => {
+      if (!seekingRef.current && seekbarRef.current && audioRef?.current) {
+        seekbarRef.current.value = audioRef.current.currentTime;
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [isPlaying, audioRef]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Advance seekbar during playback — skip when user is dragging
+  // Sync seekbar position on pause / track change (rAF loop stopped)
   useEffect(() => {
     if (!seekingRef.current && seekbarRef.current) {
       seekbarRef.current.value = currentTime;
@@ -105,6 +269,62 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showHistory]);
+
+  // ── Waveform color mode — load once, sync live from Settings ────────────────
+  const [colorMode, setColorMode] = useState('rgb');
+
+  useEffect(() => {
+    window.api.getSetting('waveform_color_mode', 'rgb').then((m) => {
+      colorModeRef.current = m;
+      setColorMode(m);
+    });
+  }, []);
+
+  useEffect(() => {
+    colorModeRef.current = colorMode;
+  }, [colorMode]);
+
+  useEffect(() => {
+    const handler = (e) => setColorMode(e.detail);
+    window.addEventListener('waveform-color-mode-changed', handler);
+    return () => window.removeEventListener('waveform-color-mode-changed', handler);
+  }, []);
+
+  // Redraw when color mode changes (data already loaded)
+  useEffect(() => {
+    paintWaveform(); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [colorMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch waveform data when track changes, then draw
+  useEffect(() => {
+    const canvas = waveCanvasRef.current;
+    if (!currentTrack) {
+      waveDataRef.current = null;
+      if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+    window.api.getTrackWaveform(currentTrack.id).then((raw) => {
+      waveDataRef.current = raw ? new Uint8Array(raw) : null;
+      if (!waveDataRef.current && canvas) {
+        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+      } else {
+        paintWaveform();
+      }
+    });
+  }, [currentTrack?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reload waveform once the background generator finishes for the current track
+  useEffect(() => {
+    const unsub = window.api.onWaveformReady(({ trackId }) => {
+      if (!currentTrack || trackId !== currentTrack.id) return;
+      window.api.getTrackWaveform(trackId).then((raw) => {
+        if (!raw) return;
+        waveDataRef.current = new Uint8Array(raw);
+        paintWaveform();
+      });
+    });
+    return unsub;
+  }, [currentTrack?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const artSrc = artworkUrl(
     currentTrack?.has_artwork ? currentTrack?.artwork_path : null,
@@ -179,25 +399,49 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
 
         <div className="player-seek">
           <span className="player-time">{formatTime(currentTime)}</span>
-          <input
-            ref={seekbarRef}
-            type="range"
-            className="player-seekbar"
-            min={0}
-            max={duration || 0}
-            step={0.5}
-            defaultValue={0}
-            onPointerDown={(e) => {
-              console.log(`[seekbar] pointerDown value=${Number(e.target.value).toFixed(3)}`);
-              seekingRef.current = true;
-            }}
-            onPointerUp={(e) => {
-              const val = Number(e.target.value);
-              console.log(`[seekbar] pointerUp  value=${val.toFixed(3)}`);
-              seek(val);
-              seekingRef.current = false;
-            }}
-          />
+          <div className="player-seekbar-wrap">
+            <div ref={seekbarBgRef} className="player-seekbar-bg" />
+            <canvas ref={waveCanvasRef} className="player-waveform-canvas" />
+            <input
+              ref={seekbarRef}
+              type="range"
+              className="player-seekbar"
+              min={0}
+              max={duration || 0}
+              step={0.5}
+              defaultValue={0}
+              onPointerDown={(e) => {
+                console.log(`[seekbar] pointerDown value=${Number(e.target.value).toFixed(3)}`);
+                seekingRef.current = true;
+              }}
+              onPointerUp={(e) => {
+                const val = Number(e.target.value);
+                console.log(`[seekbar] pointerUp  value=${val.toFixed(3)}`);
+                seek(val);
+                seekingRef.current = false;
+              }}
+            />
+            {duration > 0 &&
+              cuePoints
+                .filter((cue) => (cue.hot_cue_index >= 0 ? showHotCues : showMemCues))
+                .map((cue) => {
+                  const pct = Math.min((cue.position_ms / 1000 / duration) * 100, 100);
+                  return (
+                    <button
+                      key={cue.id}
+                      className="player-cue-marker"
+                      style={{ left: `${pct}%`, background: cue.color }}
+                      title={
+                        cue.label ||
+                        (cue.hot_cue_index >= 0
+                          ? `Hot cue ${'ABCDEFGH'[cue.hot_cue_index]}`
+                          : 'Memory cue')
+                      }
+                      onClick={() => seek(cue.position_ms / 1000)}
+                    />
+                  );
+                })}
+          </div>
           <span className="player-time">{formatTime(duration)}</span>
         </div>
       </div>

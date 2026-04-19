@@ -158,6 +158,14 @@
   flex-shrink: 0;
 }
 
+.cell-linked-badge {
+  font-size: 11px;
+  flex-shrink: 0;
+  margin-right: 3px;
+  opacity: 0.75;
+  cursor: default;
+}
+
 .cell-title-text {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -340,6 +348,77 @@
 
 .context-menu-item--has-submenu:hover > .context-submenu {
   display: block;
+}
+
+/* ── Set BPM inline row ─────────────────────────────────────────────────── */
+.context-menu-item--set-bpm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  cursor: default;
+}
+
+.context-menu-item--set-bpm:hover {
+  background: transparent;
+}
+
+.set-bpm-label {
+  font-size: 12px;
+  color: #aaa;
+  white-space: nowrap;
+}
+
+.set-bpm-input {
+  width: 72px;
+  background: #1a1a1a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  padding: 2px 6px;
+  outline: none;
+}
+
+.set-bpm-input:focus {
+  border-color: #7eb8f7;
+}
+
+.set-bpm-apply {
+  background: #3a3a3a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #7eb8f7;
+  font-size: 12px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.set-bpm-apply:hover:not(:disabled) {
+  background: #4a4a4a;
+}
+
+.set-bpm-apply:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── BPM cell grid-shift indicator dot ──────────────────────────────────── */
+.bpm-grid-shift-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #f7c07e;
+  margin-left: 3px;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+
+.bpm--grid-shifted {
+  /* orange tint when grid has a non-zero offset */
+  color: #f7c07e;
 }
 
 /* ── Playlist header bar ───────────────────────────────────────────────── */
@@ -647,4 +726,79 @@
 .ctx-new-playlist-error {
   font-size: 11px;
   color: #e06c6c;
+}
+
+/* ── Cue column indicator ───────────────────────────────────────────────── */
+.cell.cue {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.cue-dot {
+  font-size: 12px;
+  line-height: 1;
+  user-select: none;
+}
+
+.cue-dot--has {
+  color: #ff6b35;
+}
+
+.cue-dot--empty {
+  color: #444;
+}
+
+.cell.cue:hover .cue-dot--empty {
+  color: #888;
+}
+
+/* ── Cue points panel ───────────────────────────────────────────────────── */
+.cue-panel {
+  width: 340px;
+  min-width: 260px;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e1e;
+  border-left: 1px solid #2a2a2a;
+  overflow: hidden;
+}
+
+.cue-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid #2a2a2a;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.cue-panel__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e0e0e0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.cue-panel__close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.cue-panel__close:hover {
+  color: #e0e0e0;
+  background: #2a2a2a;
 }

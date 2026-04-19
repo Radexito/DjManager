@@ -1,12 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import ImportPlaylistModal from './ImportPlaylistModal.jsx';
 import { useDownload } from './DownloadContext.jsx';
+import { useTidalDownload } from './TidalDownloadContext.jsx';
 import './Sidebar.css';
 import ImportPlaylistDialog from './ImportPlaylistDialog';
 
 const MENU_ITEMS = [
   { id: 'music', name: 'Music', icon: '🎵' },
+  { id: 'explorer', name: 'Explorer', icon: '📁' },
   { id: 'download', name: 'YT-DLP', icon: '⬇️' },
+  { id: 'tidal', name: 'TIDAL', icon: '🌊' },
 ];
 
 const PRESET_COLORS = [
@@ -29,10 +32,13 @@ function Sidebar({
   onExportNmlAll,
 }) {
   const { sidebarProgress: ytDlpSidebarProgress } = useDownload();
+  const { sidebarProgress: tidalSidebarProgress } = useTidalDownload();
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
   const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
   const [pendingImportFiles, setPendingImportFiles] = useState(null); // files waiting for playlist choice
+  const [analysisProgress, setAnalysisProgress] = useState(null); // { done, total } | null
+  const [waveformGenProgress, setWaveformGenProgress] = useState(null); // { completed, total } | null
   const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
   const [ytDlpCheckProgress, setYtDlpCheckProgress] = useState(null); // { checked, total } | null during fetch/check
   const [newPlaylistName, setNewPlaylistName] = useState('');
@@ -151,6 +157,29 @@ function Sidebar({
         setTimeout(() => setNormalizeProgress(null), 1500);
       } else {
         setNormalizeProgress({ completed: data.completed, total: data.total });
+      }
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (!window.api.onWaveformGenProgress) return;
+    const unsub = window.api.onWaveformGenProgress((data) => {
+      if (data.done) {
+        setTimeout(() => setWaveformGenProgress(null), 1500);
+      } else {
+        setWaveformGenProgress({ completed: data.completed, total: data.total });
+      }
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = window.api.onAnalysisProgress((data) => {
+      if (data.finished) {
+        setTimeout(() => setAnalysisProgress(null), 1500);
+      } else {
+        setAnalysisProgress({ done: data.done, total: data.total });
       }
     });
     return unsub;
@@ -332,6 +361,24 @@ function Sidebar({
             Importing {importProgress.completed} / {importProgress.total}…
           </div>
         )}
+        {analysisProgress && (
+          <div className="normalize-progress-wrap">
+            <div className="normalize-progress-label">
+              <span>Analyzing</span>
+              <span>
+                {analysisProgress.done} / {analysisProgress.total}
+              </span>
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill"
+                style={{
+                  width: `${analysisProgress.total > 0 ? Math.round((analysisProgress.done / analysisProgress.total) * 100) : 0}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
         {normalizeProgress && (
           <div className="normalize-progress-wrap">
             <div className="normalize-progress-label">
@@ -345,6 +392,24 @@ function Sidebar({
                 className="normalize-progress-fill"
                 style={{
                   width: `${Math.round((normalizeProgress.completed / normalizeProgress.total) * 100)}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
+        {waveformGenProgress && (
+          <div className="normalize-progress-wrap">
+            <div className="normalize-progress-label">
+              <span>Waveforms</span>
+              <span>
+                {waveformGenProgress.completed} / {waveformGenProgress.total}
+              </span>
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill"
+                style={{
+                  width: `${waveformGenProgress.total > 0 ? Math.round((waveformGenProgress.completed / waveformGenProgress.total) * 100) : 0}%`,
                 }}
               />
             </div>
@@ -404,6 +469,41 @@ function Sidebar({
                   }}
                 >
                   {ytDlpSidebarProgress.msg}
+                </span>
+              </div>
+            )}
+          </button>
+        )}
+        {tidalSidebarProgress && (
+          <button
+            className="normalize-progress-wrap ytdlp-progress-clickable"
+            onClick={() => onMenuSelect('tidal')}
+            title="Go to TIDAL"
+          >
+            <div className="normalize-progress-label">
+              <span>TIDAL Downloading</span>
+              <span>
+                {tidalSidebarProgress.current} / {tidalSidebarProgress.total}
+              </span>
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill ytdlp-progress-fill"
+                style={{ width: `${Math.round(tidalSidebarProgress.pct)}%` }}
+              />
+            </div>
+            {tidalSidebarProgress.msg && (
+              <div className="normalize-progress-label" style={{ marginTop: 4, opacity: 0.7 }}>
+                <span
+                  style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: '100%',
+                    fontSize: 11,
+                  }}
+                >
+                  {tidalSidebarProgress.msg}
                 </span>
               </div>
             )}

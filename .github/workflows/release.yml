@@ -128,60 +128,60 @@ jobs:
   # Requires secret: CHOCOLATEY_API_KEY
   # One-time setup: submit chocolatey/djmanager.nuspec to chocolatey.org for
   # initial package approval, then CI pushes all future updates automatically.
-  chocolatey:
-    if: github.ref_name == 'master'
-    needs: [setup, create-release]
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: dist-win
-          path: dist-win/
-
-      - name: Compute installer SHA256 and build download URL
-        id: installer
-        shell: pwsh
-        run: |
-          $exe = Get-ChildItem dist-win\*.exe | Select-Object -First 1
-          if (-not $exe) { throw "No .exe found in dist-win/" }
-          $sha256 = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
-          $url    = "https://github.com/${{ github.repository }}/releases/download/${{ needs.setup.outputs.tag }}/$($exe.Name)"
-          "sha256=$sha256" >> $env:GITHUB_OUTPUT
-          "url=$url"       >> $env:GITHUB_OUTPUT
-          Write-Host "Installer: $($exe.Name)"
-          Write-Host "SHA256:    $sha256"
-          Write-Host "URL:       $url"
-
-      - name: Generate chocolateyInstall.ps1 from template
-        shell: pwsh
-        run: |
-          $script = Get-Content chocolatey/tools/chocolateyInstall.ps1.template -Raw
-          $script = $script -replace '{{INSTALLER_URL}}',    '${{ steps.installer.outputs.url }}'
-          $script = $script -replace '{{INSTALLER_SHA256}}', '${{ steps.installer.outputs.sha256 }}'
-          Set-Content chocolatey/tools/chocolateyInstall.ps1 $script
-          Write-Host "Generated install script:"
-          Get-Content chocolatey/tools/chocolateyInstall.ps1
-
-      - name: Stamp version in nuspec
-        shell: pwsh
-        run: |
-          (Get-Content chocolatey/djmanager.nuspec) `
-            -replace '<version>.*</version>', '<version>${{ needs.setup.outputs.version }}</version>' |
-            Set-Content chocolatey/djmanager.nuspec
-
-      - name: Pack Chocolatey package
-        shell: pwsh
-        run: choco pack chocolatey/djmanager.nuspec --out dist-choco/
-
-      - name: Push to Chocolatey.org
-        shell: pwsh
-        run: |
-          $pkg = Get-ChildItem dist-choco\*.nupkg | Select-Object -First 1
-          if (-not $pkg) { throw "No .nupkg found in dist-choco/" }
-          Write-Host "Pushing $($pkg.Name)"
-          choco push $pkg.FullName --source https://push.chocolatey.org --api-key ${{ secrets.CHOCOLATEY_API_KEY }}
+  #chocolatey:
+  #  if: github.ref_name == 'master'
+  #  needs: [setup, create-release]
+  #  runs-on: windows-latest
+  #  steps:
+  #    - uses: actions/checkout@v6
+  #
+  #    - uses: actions/download-artifact@v8
+  #      with:
+  #        name: dist-win
+  #        path: dist-win/
+  #
+  #    - name: Compute installer SHA256 and build download URL
+  #      id: installer
+  #      shell: pwsh
+  #      run: |
+  #        $exe = Get-ChildItem dist-win\*.exe | Select-Object -First 1
+  #        if (-not $exe) { throw "No .exe found in dist-win/" }
+  #        $sha256 = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
+  #        $url    = "https://github.com/${{ github.repository }}/releases/download/${{ needs.setup.outputs.tag }}/$($exe.Name)"
+  #        "sha256=$sha256" >> $env:GITHUB_OUTPUT
+  #        "url=$url"       >> $env:GITHUB_OUTPUT
+  #        Write-Host "Installer: $($exe.Name)"
+  #        Write-Host "SHA256:    $sha256"
+  #        Write-Host "URL:       $url"
+  #
+  #    - name: Generate chocolateyInstall.ps1 from template
+  #      shell: pwsh
+  #      run: |
+  #        $script = Get-Content chocolatey/tools/chocolateyInstall.ps1.template -Raw
+  #        $script = $script -replace '{{INSTALLER_URL}}',    '${{ steps.installer.outputs.url }}'
+  #        $script = $script -replace '{{INSTALLER_SHA256}}', '${{ steps.installer.outputs.sha256 }}'
+  #        Set-Content chocolatey/tools/chocolateyInstall.ps1 $script
+  #        Write-Host "Generated install script:"
+  #        Get-Content chocolatey/tools/chocolateyInstall.ps1
+  #
+  #    - name: Stamp version in nuspec
+  #      shell: pwsh
+  #      run: |
+  #        (Get-Content chocolatey/djmanager.nuspec) `
+  #          -replace '<version>.*</version>', '<version>${{ needs.setup.outputs.version }}</version>' |
+  #          Set-Content chocolatey/djmanager.nuspec
+  #
+  #    - name: Pack Chocolatey package
+  #      shell: pwsh
+  #      run: choco pack chocolatey/djmanager.nuspec --out dist-choco/
+  #
+  #    - name: Push to Chocolatey.org
+  #      shell: pwsh
+  #      run: |
+  #        $pkg = Get-ChildItem dist-choco\*.nupkg | Select-Object -First 1
+  #        if (-not $pkg) { throw "No .nupkg found in dist-choco/" }
+  #        Write-Host "Pushing $($pkg.Name)"
+  #        choco push $pkg.FullName --source https://push.chocolatey.org --api-key ${{ secrets.CHOCOLATEY_API_KEY }}
 
   # ── Sync dev + bump version after master release ─────────────────────────────
   # Always merges master → dev first so dev has the exact released code,

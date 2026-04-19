@@ -28,6 +28,7 @@ import { artworkUrl } from './artworkUrl.js';
 import { parseQuery } from './searchParser.js';
 import TrackDetails from './TrackDetails.jsx';
 import RatingStars from './RatingStars.jsx';
+import BeatGridEditor from './BeatGridEditor.jsx';
 import './MusicLibrary.css';
 
 const PAGE_SIZE = 50;
@@ -46,6 +47,7 @@ const ALL_COLUMNS = [
   { key: 'bpm', label: 'BPM', width: '62px' },
   { key: 'key_camelot', label: 'Key', width: '52px' },
   { key: 'loudness', label: 'Loudness (LUFS)', width: '115px' },
+  { key: 'cue', label: '◆', width: '28px' },
   { key: 'album', label: 'Album', width: 'minmax(80px, 1fr)' },
   { key: 'year', label: 'Year', width: '50px' },
   { key: 'label', label: 'Label', width: '100px' },
@@ -66,6 +68,7 @@ const DEFAULT_COL_VIS = {
   bpm: true,
   key_camelot: true,
   loudness: true,
+  cue: true,
   album: false,
   year: false,
   label: false,
@@ -112,8 +115,17 @@ function renderCell(t, colKey) {
       return t.title;
     case 'artist':
       return t.artist || 'Unknown';
-    case 'bpm':
-      return bpmValue ?? '...';
+    case 'bpm': {
+      const display = bpmValue ?? '...';
+      const hasGridShift = (t.beatgrid_offset ?? 0) !== 0;
+      if (!hasGridShift) return display;
+      return (
+        <span title={`Grid shifted ${t.beatgrid_offset > 0 ? '+' : ''}${t.beatgrid_offset} ms`}>
+          {display}
+          <span className="bpm-grid-shift-dot" />
+        </span>
+      );
+    }
     case 'key_camelot':
       return t.key_camelot ?? '...';
     case 'loudness':
@@ -131,6 +143,8 @@ function renderCell(t, colKey) {
         return '—';
       }
     }
+    case 'cue':
+      return null; // rendered as icon button in LibraryRow
     case 'rating':
       return null; // rendered as interactive RatingStars in LibraryRow
     case 'user_tags':
@@ -149,7 +163,8 @@ function cellClass(colKey, t) {
     colKey
   );
   const over = colKey === 'bpm' && t.bpm_override != null;
-  return `cell ${colKey}${numeric ? ' numeric' : ''}${over ? ' bpm--overridden' : ''}`;
+  const gridShifted = colKey === 'bpm' && (t.beatgrid_offset ?? 0) !== 0;
+  return `cell ${colKey}${numeric ? ' numeric' : ''}${over ? ' bpm--overridden' : ''}${gridShifted ? ' bpm--grid-shifted' : ''}`;
 }
 
 // ── SubItem context — defined outside MusicLibrary so SubItem's type is stable across
@@ -202,6 +217,7 @@ function LibraryRow({
   onDoubleClick,
   onContextMenu,
   onRatingChange,
+  onCueClick,
   onDragStart,
   visibleColumns,
   gridTemplate,
@@ -256,6 +272,26 @@ function LibraryRow({
               ▶
             </button>
           </div>
+        ) : col.key === 'cue' ? (
+          <div
+            key="cue"
+            className="cell cue"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCueClick?.(t);
+            }}
+            title={
+              t.cue_count > 0
+                ? `${t.cue_count} cue point(s) — click to edit`
+                : 'No cue points — click to add'
+            }
+          >
+            {t.cue_count > 0 ? (
+              <span className="cue-dot cue-dot--has">◆</span>
+            ) : (
+              <span className="cue-dot cue-dot--empty">◇</span>
+            )}
+          </div>
         ) : col.key === 'rating' ? (
           <div key="rating" className="cell rating" onClick={(e) => e.stopPropagation()}>
             <RatingStars value={t.rating ?? 0} onChange={(val) => onRatingChange(t.id, val)} />
@@ -272,6 +308,11 @@ function LibraryRow({
             ) : (
               <span className="cell-artwork cell-artwork--placeholder">♪</span>
             )}
+            {t.is_linked ? (
+              <span className="cell-linked-badge" title="Explorer-linked file">
+                🔗
+              </span>
+            ) : null}
             <span className="cell-title-text">{t.title}</span>
           </div>
         ) : (
@@ -294,6 +335,7 @@ function SortableRow({
   onDoubleClick,
   onContextMenu,
   onRatingChange,
+  onCueClick,
   visibleColumns,
   gridTemplate,
   minScrollWidth,
@@ -342,6 +384,26 @@ function SortableRow({
               ▶
             </button>
           </div>
+        ) : col.key === 'cue' ? (
+          <div
+            key="cue"
+            className="cell cue"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCueClick?.(t);
+            }}
+            title={
+              t.cue_count > 0
+                ? `${t.cue_count} cue point(s) — click to edit`
+                : 'No cue points — click to add'
+            }
+          >
+            {t.cue_count > 0 ? (
+              <span className="cue-dot cue-dot--has">◆</span>
+            ) : (
+              <span className="cue-dot cue-dot--empty">◇</span>
+            )}
+          </div>
         ) : col.key === 'rating' ? (
           <div key="rating" className="cell rating" onClick={(e) => e.stopPropagation()}>
             <RatingStars value={t.rating ?? 0} onChange={(val) => onRatingChange(t.id, val)} />
@@ -358,6 +420,11 @@ function SortableRow({
             ) : (
               <span className="cell-artwork cell-artwork--placeholder">♪</span>
             )}
+            {t.is_linked ? (
+              <span className="cell-linked-badge" title="Explorer-linked file">
+                🔗
+              </span>
+            ) : null}
             <span className="cell-title-text">{t.title}</span>
           </div>
         ) : (
@@ -403,6 +470,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     mediaPort,
     patchCurrentTrack,
     reloadCurrentTrack,
+    updateQueue,
   } = usePlayer();
 
   // Only highlight a track as "playing" when the source context matches this view.
@@ -437,8 +505,10 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const [colVis, setColVis] = useState(loadColVis);
   const [colOrder, setColOrder] = useState(loadColOrder);
   const [colMenuAnchor, setColMenuAnchor] = useState(null); // { x, y } | null
+  const [beatGridEditorTrack, setBeatGridEditorTrack] = useState(null);
   const [detailsTrack, setDetailsTrack] = useState(null);
   const [detailsBulkTracks, setDetailsBulkTracks] = useState(null); // array | null
+  const [bpmEditValue, setBpmEditValue] = useState(''); // value for inline Set BPM input
 
   const offsetRef = useRef(0);
   const loadingRef = useRef(false);
@@ -460,12 +530,20 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   // Refs that stay in sync so the onLibraryUpdated closure (empty deps) can read current values
   const selectedPlaylistRef = useRef(selectedPlaylist);
   const searchRef = useRef(search);
+  const currentPlaylistIdRef = useRef(currentPlaylistId);
+  const updateQueueRef = useRef(updateQueue);
   useEffect(() => {
     selectedPlaylistRef.current = selectedPlaylist;
   }, [selectedPlaylist]);
   useEffect(() => {
     searchRef.current = search;
   }, [search]);
+  useEffect(() => {
+    currentPlaylistIdRef.current = currentPlaylistId;
+  }, [currentPlaylistId]);
+  useEffect(() => {
+    updateQueueRef.current = updateQueue;
+  }, [updateQueue]);
 
   // Track previous view identity so the reset effect knows whether the VIEW changed
   // (search/playlist switch → clear selection) vs. just a data reload (loadKey bump → keep selection)
@@ -635,24 +713,51 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     return unsub;
   }, [patchCurrentTrack, reloadCurrentTrack]);
 
+  // Patch cue_count when cue points are added/removed for any track (e.g. library-wide gen)
+  useEffect(() => {
+    const unsub = window.api.onCuePointsUpdated(({ trackId, cueCount }) => {
+      if (cueCount == null) return; // events without a count (e.g. CuePointsEditor) are handled there
+      setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, cue_count: cueCount } : t)));
+    });
+    return unsub;
+  }, []);
+
   // Refresh list when new tracks are imported
   useEffect(() => {
     const unsub = window.api.onLibraryUpdated(async () => {
       const isDefaultView = selectedPlaylistRef.current === 'music' && !searchRef.current;
       if (isDefaultView) {
-        // Soft append: fetch only the new rows at the current end of the list.
-        // This avoids resetting the list (which shrinks the scroll container and
-        // snaps the user away from their current position).
-        const currentCount = sortedTracksRef.current.length;
-        const rows = await window.api.getTracks({ limit: PAGE_SIZE, offset: currentCount });
+        // getTracks orders by created_at DESC (newest first), so using currentCount as the
+        // offset would skip the N newest tracks and return the (N+1)th oldest — which is
+        // already on screen, not the just-imported track (#204).  Fetch from offset 0 and
+        // dedup against what's already loaded instead.
+        const rows = await window.api.getTracks({ limit: PAGE_SIZE, offset: 0 });
+        // Re-check: user may have navigated to a playlist while the fetch was in flight.
+        // Without this guard the stale all-music rows would be appended on top of the
+        // playlist's tracks, showing the wrong list.
+        if (selectedPlaylistRef.current !== 'music' || searchRef.current) return;
         if (rows.length > 0) {
-          const newIds = new Set(rows.map((r) => r.id));
-          setNewTrackIds((prev) => new Set([...prev, ...newIds]));
-          setTracks((prev) => [...prev, ...rows]);
-          offsetRef.current = currentCount + rows.length;
-          if (rows.length < PAGE_SIZE) {
-            hasMoreRef.current = false;
-            setHasMore(false);
+          const existingIds = new Set(sortedTracksRef.current.map((t) => t.id));
+          const newRows = rows.filter((r) => !existingIds.has(r.id));
+          if (newRows.length > 0) {
+            setNewTrackIds((prev) => new Set([...prev, ...newRows.map((r) => r.id)]));
+            setTracks((prev) => {
+              const prevIds = new Set(prev.map((t) => t.id));
+              const deduped = newRows.filter((r) => !prevIds.has(r.id));
+              if (deduped.length === 0) return prev;
+              const merged = [...prev, ...deduped];
+              // Keep the player queue in sync when playing from the music (all-tracks) view.
+              if (currentPlaylistIdRef.current === null) {
+                updateQueueRef.current(merged);
+              }
+              return merged;
+            });
+            offsetRef.current = sortedTracksRef.current.length + newRows.length;
+            // If the batch we fetched is smaller than a full page, we've reached the end.
+            if (rows.length < PAGE_SIZE) {
+              hasMoreRef.current = false;
+              setHasMore(false);
+            }
           }
         }
       } else {
@@ -664,6 +769,22 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     });
     return unsub;
   }, []);
+
+  // Keep player queue in sync when tracks are added/removed from the current playlist (#213).
+  // The all-tracks view is handled inside onLibraryUpdated; playlist view needs its own sync
+  // because it does a full reload (setLoadKey) rather than a soft-append.
+  useEffect(() => {
+    if (
+      isPlaylistView &&
+      currentPlaylistId !== null &&
+      String(currentPlaylistId) === String(selectedPlaylist) &&
+      sortedTracksRef.current.length > 0
+    ) {
+      updateQueue(sortedTracksRef.current);
+    }
+    // Only react to track count changes — sort-order changes should not reshuffle the queue.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tracks.length, isPlaylistView, selectedPlaylist, currentPlaylistId]);
 
   // Reload playlist info (name, duration) when entering playlist view or tracks change
   useEffect(() => {
@@ -778,6 +899,12 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const handleDetailsClose = useCallback(() => {
     setDetailsTrack(null);
     setDetailsBulkTracks(null);
+  }, []);
+
+  // ── Cue column click — open Prepare Track window ──────────────────────────
+
+  const handleCueClick = useCallback((track) => {
+    setBeatGridEditorTrack(track);
   }, []);
 
   const handleDetailsSave = useCallback((result) => {
@@ -1090,6 +1217,40 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     [contextMenu]
   );
 
+  const handleSetBpm = useCallback(
+    async (rawValue) => {
+      const targetIds = contextMenu?.targetIds ?? [];
+      const parsed = parseFloat(rawValue);
+      if (!Number.isFinite(parsed) || parsed <= 0) return;
+      const bpmOverride = Math.round(parsed * 10) / 10;
+      setContextMenu(null);
+      setBpmEditValue('');
+      if (!targetIds.length) return;
+
+      // Optimistic update
+      setTracks((prev) =>
+        prev.map((t) => (targetIds.includes(t.id) ? { ...t, bpm_override: bpmOverride } : t))
+      );
+
+      // Persist each track
+      await Promise.all(
+        targetIds.map((id) => window.api.updateTrack(id, { bpm_override: bpmOverride }))
+      );
+    },
+    [contextMenu]
+  );
+
+  const handleApplyBeatGrid = useCallback(
+    async (trackId, { beatgrid_offset, bpm_override }) => {
+      const update = { beatgrid_offset };
+      if (bpm_override != null) update.bpm_override = bpm_override;
+      setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, ...update } : t)));
+      patchCurrentTrack(trackId, update);
+      await window.api.updateTrack(trackId, update);
+    },
+    [patchCurrentTrack]
+  );
+
   const handleFindSimilar = useCallback(
     (queryText) => {
       setContextMenu(null);
@@ -1317,6 +1478,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                         onDoubleClick={handleDoubleClick}
                         onContextMenu={handleContextMenu}
                         onRatingChange={handleRatingChange}
+                        onCueClick={handleCueClick}
                         onDragStart={handleTrackDragStart}
                         visibleColumns={visibleColumns}
                         gridTemplate={gridTemplate}
@@ -1363,6 +1525,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                 onDoubleClick: handleDoubleClick,
                 onContextMenu: handleContextMenu,
                 onRatingChange: handleRatingChange,
+                onCueClick: handleCueClick,
                 onDragStart: handleTrackDragStart,
                 visibleColumns,
                 gridTemplate,
@@ -1793,6 +1956,22 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                       ✏️ Edit Details{selectionLabel}
                     </div>
 
+                    {/* ── Prepare Track ── */}
+                    {contextMenu?.targetTracks?.length === 1 && (
+                      <div
+                        className="context-menu-item"
+                        onClick={() => {
+                          const track =
+                            tracks.find((tr) => tr.id === contextMenu.targetTracks[0]?.id) ??
+                            contextMenu.targetTracks[0];
+                          setContextMenu(null);
+                          if (track) setBeatGridEditorTrack(track);
+                        }}
+                      >
+                        🎛 Prepare Track…
+                      </div>
+                    )}
+
                     {/* ── Analysis submenu ── */}
                     <SubItem id="analysis" label={`🔬 Analysis${selectionLabel}`}>
                       <div className="context-menu-item" onClick={handleReanalyze}>
@@ -1806,12 +1985,44 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                         ↩ Reset normalization
                       </div>
                       <div className="context-menu-separator" />
-                      <SubItem id="bpm" label="🎵 BPM">
+                      <SubItem id="bpm" label="🥁 Beat Grid">
                         <div className="context-menu-item" onClick={() => handleBpmAdjust(2)}>
                           ✕2 Double BPM
                         </div>
                         <div className="context-menu-item" onClick={() => handleBpmAdjust(0.5)}>
                           ÷2 Halve BPM
+                        </div>
+                        <div className="context-menu-separator" />
+                        <div
+                          className="context-menu-item context-menu-item--set-bpm"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <span className="set-bpm-label">Set BPM:</span>
+                          <input
+                            className="set-bpm-input"
+                            type="number"
+                            min="20"
+                            max="400"
+                            step="0.1"
+                            placeholder="e.g. 128"
+                            value={bpmEditValue}
+                            onChange={(e) => setBpmEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSetBpm(bpmEditValue);
+                              if (e.key === 'Escape') {
+                                setBpmEditValue('');
+                                setContextMenu(null);
+                              }
+                            }}
+                            autoFocus={false}
+                          />
+                          <button
+                            className="set-bpm-apply"
+                            disabled={!bpmEditValue}
+                            onClick={() => handleSetBpm(bpmEditValue)}
+                          >
+                            ✓
+                          </button>
                         </div>
                       </SubItem>
                     </SubItem>
@@ -1875,6 +2086,13 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
           tracks={detailsBulkTracks}
           onSave={handleDetailsSave}
           onCancel={handleDetailsClose}
+        />
+      )}
+      {beatGridEditorTrack && (
+        <BeatGridEditor
+          track={beatGridEditorTrack}
+          onClose={() => setBeatGridEditorTrack(null)}
+          onApply={handleApplyBeatGrid}
         />
       )}
     </div>
