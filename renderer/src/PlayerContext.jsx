@@ -185,7 +185,9 @@ export function PlayerProvider({ children }) {
       if (audioCtxRef.current?.state === 'suspended') {
         try {
           await audioCtxRef.current.resume();
-        } catch {}
+        } catch (_e) {
+          // resume() rejects if context is closed — safe to ignore
+        }
       }
       console.log(
         '[player] ctx.state after resume =',
@@ -298,7 +300,9 @@ export function PlayerProvider({ children }) {
       if (audioCtxRef.current?.state === 'suspended') {
         try {
           await audioCtxRef.current.resume();
-        } catch {}
+        } catch (_e) {
+          // resume() rejects if context is closed — safe to ignore
+        }
       }
       audio.play().catch((err) => {
         if (err.name !== 'AbortError') console.error(err);
