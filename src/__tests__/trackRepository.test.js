@@ -11,6 +11,8 @@ import {
   clearTracks,
   getTrackIdsNeedingNormalization,
   getNormalizedTrackCount,
+  getLegacyNormalizedTracks,
+  clearLegacyNormalizedPaths,
   resetNormalization,
 } from '../db/trackRepository.js';
 
@@ -451,5 +453,45 @@ describe('resetNormalization', () => {
     expect(getTrackById(id1).source_loudness).toBeNull();
     // id2 should be untouched
     expect(getTrackById(id2).normalized_file_path).toBe('/tmp/rn5_norm.mp3');
+  });
+});
+
+describe('getLegacyNormalizedTracks / clearLegacyNormalizedPaths', () => {
+  it('getLegacyNormalizedTracks returns empty array when no legacy paths exist', () => {
+    expect(getLegacyNormalizedTracks()).toEqual([]);
+  });
+
+  it('getLegacyNormalizedTracks returns tracks that have normalized_file_path set', () => {
+    const id1 = addTrack({ ...SAMPLE, file_hash: 'leg1', file_path: '/tmp/leg1.mp3' });
+    const id2 = addTrack({ ...SAMPLE, file_hash: 'leg2', file_path: '/tmp/leg2.mp3' });
+    updateTrack(id1, { normalized_file_path: '/tmp/leg1_norm.mp3' });
+
+    const legacy = getLegacyNormalizedTracks();
+    expect(legacy).toHaveLength(1);
+    expect(legacy[0].id).toBe(id1);
+    expect(legacy[0].normalized_file_path).toBe('/tmp/leg1_norm.mp3');
+
+    // id2 has no normalized path so it should not appear
+    expect(legacy.find((r) => r.id === id2)).toBeUndefined();
+  });
+
+  it('clearLegacyNormalizedPaths nullifies normalized_file_path and source_loudness', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'leg3', file_path: '/tmp/leg3.mp3' });
+    updateTrack(id, { normalized_file_path: '/tmp/leg3_norm.mp3', source_loudness: -14 });
+
+    clearLegacyNormalizedPaths();
+
+    const track = getTrackById(id);
+    expect(track.normalized_file_path).toBeNull();
+    expect(track.source_loudness).toBeNull();
+  });
+
+  it('clearLegacyNormalizedPaths does not touch tracks without a legacy path', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'leg4', file_path: '/tmp/leg4.mp3' });
+    updateTrack(id, { loudness: -12 });
+
+    clearLegacyNormalizedPaths();
+
+    expect(getTrackById(id).loudness).toBeCloseTo(-12);
   });
 });
