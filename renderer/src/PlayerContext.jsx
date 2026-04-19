@@ -321,6 +321,8 @@ export function PlayerProvider({ children }) {
       playAtIndexRef.current(q, Math.floor(Math.random() * q.length), plId, plName);
     } else if (idx < q.length - 1) {
       playAtIndexRef.current(q, idx + 1, plId, plName);
+    } else if (repeatRef.current === 'all' && q.length > 0) {
+      playAtIndexRef.current(q, 0, plId, plName);
     }
   }, []);
 
