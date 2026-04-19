@@ -7,11 +7,50 @@ import { app } from 'electron';
 import { Worker } from 'worker_threads';
 import { ffprobe } from './ffmpeg.js';
 import { getFfmpegRuntimePath } from '../deps.js';
-import { addTrack, updateTrack, getTrackById, getTrackByHash } from '../db/trackRepository.js';
+import {
+  addTrack,
+  updateTrack,
+  getTrackById,
+  getTrackByHash,
+  getTracksByPaths,
+  updateTrackWaveform,
+} from '../db/trackRepository.js';
 import { getAnalyzerRuntimePath } from '../deps.js';
 import { getSetting } from '../db/settingsRepository.js';
+import { generateCuePoints } from './cueGen.js';
+import { getCuePoints, addCuePoint } from '../db/cuePointRepository.js';
+import { generateWaveformOverview } from './waveformGenerator.js';
 
 const execFileAsync = promisify(execFile);
+
+// ─── Analysis progress tracking ─────────────────────────────────────────────
+
+let analysisActive = 0; // workers currently running
+let analysisTotal = 0; // total spawned in the current batch
+let analysisDone = 0; // completed in the current batch
+
+function sendAnalysisProgress() {
+  if (!global.mainWindow) return;
+  global.mainWindow.webContents.send('analysis-progress', {
+    active: analysisActive,
+    total: analysisTotal,
+    done: analysisDone,
+    finished: analysisActive === 0,
+  });
+}
+
+// Map of trackId → Worker for active analysis jobs (enables cancellation)
+const activeAnalysisWorkers = new Map();
+
+export function cancelAnalysis(trackId) {
+  const worker = activeAnalysisWorkers.get(trackId);
+  if (!worker) return false;
+  worker.terminate();
+  activeAnalysisWorkers.delete(trackId);
+  return true;
+}
+
+// ─── File hashing ────────────────────────────────────────────────────────────
 
 function hashFile(filePath) {
   const hash = crypto.createHash('sha1');
@@ -108,16 +147,40 @@ export async function normalizeAudioFile(track, targetLufs) {
   return normalizedPath;
 }
 
-export function spawnAnalysis(trackId, filePath) {
+export function spawnAnalysis(trackId, filePath, { silent = false } = {}) {
+  // Cancel any existing analysis for this track before spawning a new one
+  cancelAnalysis(trackId);
+
+  // Track this worker in the batch counter; reset totals when starting fresh.
+  // Silent re-analyses (e.g. post-normalization) don't affect the progress bar.
+  if (!silent) {
+    if (analysisActive === 0) {
+      analysisTotal = 0;
+      analysisDone = 0;
+    }
+    analysisActive++;
+    analysisTotal++;
+    sendAnalysisProgress();
+  }
+
   const worker = new Worker(new URL('./analysisWorker.js', import.meta.url), {
     workerData: { filePath, trackId, analyzerPath: getAnalyzerRuntimePath() },
   });
 
+  activeAnalysisWorkers.set(trackId, worker);
+
   worker.on('error', (err) => {
+    activeAnalysisWorkers.delete(trackId);
     console.error(`Analysis worker error for track ID ${trackId}:`, err.message);
+    if (!silent) {
+      analysisActive--;
+      analysisDone++;
+      sendAnalysisProgress();
+    }
   });
 
   worker.on('exit', (code) => {
+    activeAnalysisWorkers.delete(trackId);
     if (code !== 0)
       console.warn(`Analysis worker exited with code ${code} for track ID ${trackId}`);
   });
@@ -125,6 +188,11 @@ export function spawnAnalysis(trackId, filePath) {
   worker.on('message', ({ ok, result, error }) => {
     if (!ok) {
       console.error(`Analysis failed for track ID ${trackId}:`, error);
+      if (!silent) {
+        analysisActive--;
+        analysisDone++;
+        sendAnalysisProgress();
+      }
       return;
     }
     console.log(`Analysis finished for track ID ${trackId}:`, result);
@@ -155,6 +223,19 @@ export function spawnAnalysis(trackId, filePath) {
 
     updateTrack(trackId, update);
 
+    // Generate waveform overview for in-app seek bar (fire-and-forget — does not
+    // block analysis progress or track-updated event)
+    generateWaveformOverview(filePath, getFfmpegRuntimePath())
+      .then((buf) => {
+        updateTrackWaveform(trackId, buf);
+        if (global.mainWindow) {
+          global.mainWindow.webContents.send('waveform-ready', { trackId });
+        }
+      })
+      .catch((err) =>
+        console.warn(`[waveform] overview failed for track ${trackId}:`, err.message)
+      );
+
     // Include normalized_file_path from DB so renderer knows to switch playback to the normalized file
     const trackAfterUpdate = getTrackById(trackId);
     const normalized_file_path = trackAfterUpdate?.normalized_file_path ?? null;
@@ -168,6 +249,13 @@ export function spawnAnalysis(trackId, filePath) {
         trackId,
         analysis: { ...update, normalized_file_path },
       });
+    }
+
+    // Mark this worker as done (silent re-analyses don't affect the counter)
+    if (!silent) {
+      analysisActive--;
+      analysisDone++;
+      sendAnalysisProgress();
     }
 
     // Auto-normalize on import: only when setting is enabled AND this is a fresh (non-normalized) track
@@ -186,11 +274,30 @@ export function spawnAnalysis(trackId, filePath) {
               analysis: { normalized_file_path: normalizedPath, analyzed: 0 },
             });
           }
-          spawnAnalysis(trackId, normalizedPath);
+          spawnAnalysis(trackId, normalizedPath, { silent: true });
         })
         .catch((err) => {
           console.error(`[auto-normalize] failed for track ${trackId}:`, err.message);
         });
+    }
+
+    // Auto-generate cue points: only when setting is enabled and track has no cue points yet
+    const autoCue = getSetting('auto_cue_on_import', 'false') === 'true';
+    if (autoCue) {
+      try {
+        const existing = getCuePoints(trackId);
+        if (existing.length === 0) {
+          const freshTrack = getTrackById(trackId);
+          const generated = generateCuePoints(freshTrack);
+          generated.forEach((cue) => addCuePoint({ trackId, ...cue }));
+          console.log(`[auto-cue] generated ${generated.length} cue points for track ${trackId}`);
+          if (global.mainWindow) {
+            global.mainWindow.webContents.send('cue-points-updated', { trackId });
+          }
+        }
+      } catch (err) {
+        console.error(`[auto-cue] failed for track ${trackId}:`, err.message);
+      }
     }
   });
 }
@@ -266,4 +373,70 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
 
   spawnAnalysis(trackId, dest);
   return trackId;
+}
+
+export async function linkAudioFile(filePath) {
+  const byPath = getTracksByPaths([filePath]);
+  if (byPath.length > 0) return { id: byPath[0].id, duplicate: true };
+
+  const basename = path.basename(filePath, path.extname(filePath));
+  let title = basename;
+  let artist = null;
+  let album = null;
+  let duration = 0;
+  let format = path.extname(filePath).slice(1).toLowerCase();
+  let bitrate = null;
+  let year = null;
+  let label = null;
+  let bpm = null;
+  let genre = [];
+
+  try {
+    const meta = await ffprobe(filePath);
+    const tags = meta.format?.tags ?? {};
+    title = tags.title || tags.TITLE || '';
+    artist = tags.artist || tags.ARTIST || null;
+    album = tags.album || tags.ALBUM || null;
+    duration = parseFloat(meta.format?.duration ?? 0);
+    bitrate = parseInt(meta.format?.bit_rate ?? 0, 10) || null;
+    year = parseInt(tags.date || tags.year || '', 10) || null;
+    label = tags.label || tags.publisher || null;
+    bpm = parseFloat(tags.bpm || tags.BPM || '') || null;
+    const g = tags.genre || tags.GENRE || '';
+    genre = g ? [g] : [];
+  } catch {}
+
+  // Fallback: parse "Artist - Title" from filename when tags are absent
+  if (!artist) {
+    const dashIdx = basename.indexOf(' - ');
+    if (dashIdx !== -1) {
+      artist = basename.slice(0, dashIdx).trim();
+      if (!title) title = basename.slice(dashIdx + 3).trim();
+    }
+  }
+
+  const trackId = addTrack({
+    title: title || basename,
+    artist,
+    album,
+    duration,
+    file_path: filePath,
+    file_hash: null,
+    format,
+    bitrate,
+    year,
+    label,
+    bpm,
+    genres: JSON.stringify(genre),
+    source_url: null,
+    source_platform: null,
+    source_quality: null,
+    source_link: null,
+    has_artwork: 0,
+    artwork_path: null,
+    is_linked: 1,
+  });
+
+  spawnAnalysis(trackId, filePath);
+  return { id: trackId, duplicate: false };
 }

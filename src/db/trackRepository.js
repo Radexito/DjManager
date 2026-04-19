@@ -1,4 +1,5 @@
 // src/db/trackRepository.js
+import path from 'path';
 import db from './database.js';
 
 // Whitelist of columns that may be updated via updateTrack().
@@ -197,14 +198,14 @@ export function addTrack(track) {
       file_path, file_hash, format, bitrate,
       year, label, genres, bpm,
       source_url, source_platform, source_quality, source_link,
-      user_tags, has_artwork, artwork_path,
+      user_tags, has_artwork, artwork_path, is_linked,
       created_at
     ) VALUES (
       @title, @artist, @album, @duration,
       @file_path, @file_hash, @format, @bitrate,
       @year, @label, @genres, @bpm,
       @source_url, @source_platform, @source_quality, @source_link,
-      @user_tags, @has_artwork, @artwork_path,
+      @user_tags, @has_artwork, @artwork_path, @is_linked,
       @created_at
     )
   `);
@@ -229,6 +230,7 @@ export function addTrack(track) {
     user_tags: track.user_tags ?? null,
     has_artwork: track.has_artwork ?? 0,
     artwork_path: track.artwork_path ?? null,
+    is_linked: track.is_linked ?? 0,
     created_at: Date.now(),
   });
 
@@ -441,6 +443,15 @@ export function getExistingSourceUrls(entries) {
   return results;
 }
 
+export function updateTrackWaveform(trackId, buf) {
+  db.prepare('UPDATE tracks SET waveform_overview = ? WHERE id = ?').run(buf, trackId);
+}
+
+export function getTrackWaveform(trackId) {
+  const row = db.prepare('SELECT waveform_overview FROM tracks WHERE id = ?').get(trackId);
+  return row?.waveform_overview ?? null;
+}
+
 /**
  * Returns all tracks in a playlist with their source URL fields,
  * used to determine "already in playlist" status on the selection screen.
@@ -454,4 +465,32 @@ export function getPlaylistSourceUrls(playlistId) {
        WHERE pt.playlist_id = ?`
     )
     .all(playlistId);
+}
+
+export function getTracksByPaths(filePaths) {
+  if (!filePaths || filePaths.length === 0) return [];
+  const placeholders = filePaths.map(() => '?').join(',');
+  return db.prepare(`SELECT * FROM tracks WHERE file_path IN (${placeholders})`).all(filePaths);
+}
+
+export function getLinkedTracksBasic() {
+  return db.prepare(`SELECT id, file_path, title, artist FROM tracks WHERE is_linked = 1`).all();
+}
+
+export function getLinkedTrackDirs() {
+  const rows = db.prepare(`SELECT DISTINCT file_path FROM tracks WHERE is_linked = 1`).all();
+  return [...new Set(rows.map((r) => path.dirname(r.file_path)))];
+}
+
+export function remapTracksByPrefix(oldPrefix, newPrefix) {
+  const rows = db
+    .prepare(`SELECT id, file_path FROM tracks WHERE file_path LIKE ?`)
+    .all(oldPrefix + '%');
+  let count = 0;
+  for (const row of rows) {
+    const newPath = newPrefix + row.file_path.slice(oldPrefix.length);
+    db.prepare(`UPDATE tracks SET file_path = ? WHERE id = ?`).run(newPath, row.id);
+    count++;
+  }
+  return count;
 }
