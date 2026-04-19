@@ -66,6 +66,31 @@ A DJ-focused music library manager built with Electron. Manage your tracks, anal
 - Import playlist from file — prompts which library playlist to add tracks to
 - Export playlist as **M3U**
 
+### 📁 File Explorer
+
+Browse your filesystem directly inside DJ Manager — no need to import files to include them in analysis and USB export.
+
+- **Native folder browser** — navigate your filesystem with a breadcrumb toolbar and back/forward navigation
+- **Favourites sidebar** — right-click any folder to add it to a pinned favourites list; persisted between sessions
+- **Quick-jump buttons** — home directory and native folder picker
+- **🔗 Linked files** — link audio files or entire folders to the library without copying them; originals stay in place
+  - Linked tracks shown with a 🔗 badge in the Music Library list
+  - Artist / title extracted from ID3 tags with `"Artist - Title"` filename fallback
+- **Link folder to library** — right-click a folder or use `+Library` toolbar button to link its audio files into:
+  - All Music (no playlist)
+  - A new named playlist
+  - An existing playlist
+  - Optional recursive scan (all subdirectories)
+- **Recursive tree scan** (`🌲 Tree`) — scan a folder recursively and stream results in batches; cancel mid-scan
+- **Live analysis** — `Analyze` button links + analyzes all audio files in the current folder; rows update in real-time as each track finishes analysis; button becomes `Cancel Analyzing…` and persists across navigation until all workers complete
+- **Explicit confirm dialogs** for all mass operations (recursive scan, analyze, +Library) — describes the scope before running
+- **Track details side panel** — click any row to open the same edit/metadata panel as the Music Library (non-breaking table layout)
+- **🎛 Prepare Track (BeatGrid Editor)** — edit beatgrid directly from the explorer context menu
+- **Status icons** — each row shows whether a file is linked (`🔗`), broken (`✗`), or untracked
+- **Context menu per file**: play, link, link to playlist, open track details, prepare track, remap file, remove from library
+- **Context menu per folder**: link folder, tree scan, add/remove favourite
+- **🗑️ Remove file** — removes the file from the library **and deletes it from disk** (with confirmation dialog explaining the permanent deletion)
+
 ### ⬇️ Downloads (yt-dlp)
 
 Paste any URL from **YouTube, SoundCloud, Bandcamp, Mixcloud, Vimeo, Twitch, Twitter/X, Instagram, Facebook, TikTok, Dailymotion, Deezer**, and 1000+ other yt-dlp-supported sites.
@@ -185,6 +210,22 @@ npm run dist:linux          # or :mac / :win
 | Downloads        | **yt-dlp**                                        |
 | Drag-and-drop    | **@dnd-kit**                                      |
 | Virtual list     | **react-window**                                  |
+
+---
+
+## Acknowledgements
+
+The Rekordbox USB export feature stands on the shoulders of a lot of excellent prior work in the Pioneer reverse engineering community.
+
+- **[meiremans](https://github.com/meiremans)** — [beirbox-gui](https://github.com/meiremans/beirbox-gui) gave us our starting point for understanding the overall USB layout, ANLZ file sections, and DeviceSQL PDB structure.
+
+- **[kimtore](https://github.com/kimtore)** — [rex](https://github.com/kimtore/rex), a Rekordbox USB exporter whose DeviceSQL PDB writing logic we studied closely and rewrote in JavaScript for DJ Manager.
+
+- **[Deep-Symmetry](https://github.com/Deep-Symmetry)** — [crate-digger](https://github.com/Deep-Symmetry/crate-digger) and its Kaitai Struct definitions for `.DAT` / `.EXT` file parsing were invaluable for understanding the binary layout of ANLZ sections.
+
+- **[jandk](https://github.com/jandk)** — for figuring out how Pioneer derives the USBANLZ folder path hash from the track's USB file path.
+
+- **[bartvg](https://github.com/bartvg)** (Vettige Weust) — for patiently listening to way too much bacon. 🥓
 
 ---
 
