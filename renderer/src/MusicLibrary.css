@@ -158,6 +158,14 @@
   flex-shrink: 0;
 }
 
+.cell-linked-badge {
+  font-size: 11px;
+  flex-shrink: 0;
+  margin-right: 3px;
+  opacity: 0.75;
+  cursor: default;
+}
+
 .cell-title-text {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -340,6 +348,77 @@
 
 .context-menu-item--has-submenu:hover > .context-submenu {
   display: block;
+}
+
+/* ── Set BPM inline row ─────────────────────────────────────────────────── */
+.context-menu-item--set-bpm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  cursor: default;
+}
+
+.context-menu-item--set-bpm:hover {
+  background: transparent;
+}
+
+.set-bpm-label {
+  font-size: 12px;
+  color: #aaa;
+  white-space: nowrap;
+}
+
+.set-bpm-input {
+  width: 72px;
+  background: #1a1a1a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  padding: 2px 6px;
+  outline: none;
+}
+
+.set-bpm-input:focus {
+  border-color: #7eb8f7;
+}
+
+.set-bpm-apply {
+  background: #3a3a3a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #7eb8f7;
+  font-size: 12px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.set-bpm-apply:hover:not(:disabled) {
+  background: #4a4a4a;
+}
+
+.set-bpm-apply:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── BPM cell grid-shift indicator dot ──────────────────────────────────── */
+.bpm-grid-shift-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #f7c07e;
+  margin-left: 3px;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+
+.bpm--grid-shifted {
+  /* orange tint when grid has a non-zero offset */
+  color: #f7c07e;
 }
 
 /* ── Playlist header bar ───────────────────────────────────────────────── */
