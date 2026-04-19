@@ -17,6 +17,14 @@ function SettingsModal({ onClose }) {
   const [activeSection, setActiveSection] = useState('library');
   const [targetInput, setTargetInput] = useState(String(DEFAULT_TARGET));
   const [autoNormalizeOnImport, setAutoNormalizeOnImport] = useState(false);
+  const [autoCueOnImport, setAutoCueOnImport] = useState(false);
+  const [generatingCues, setGeneratingCues] = useState(false);
+  const [cueGenProgress, setCueGenProgress] = useState(null); // { completed, total } | null
+  const [cueGenResult, setCueGenResult] = useState(null); // { generated, skipped, total } | null
+  const [confirmCueGen, setConfirmCueGen] = useState(false);
+  const [confirmDeleteAllCues, setConfirmDeleteAllCues] = useState(false);
+  const [deletingAllCues, setDeletingAllCues] = useState(false);
+  const [deleteAllCuesResult, setDeleteAllCuesResult] = useState(null);
   const [confirmClear, setConfirmClear] = useState(null); // 'library' | 'userdata'
   const [normalizing, setNormalizing] = useState(false);
   const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
@@ -30,6 +38,10 @@ function SettingsModal({ onClose }) {
   const [ytdlpUpdating, setYtdlpUpdating] = useState(false);
   const [tidalUpdating, setTidalUpdating] = useState(false);
   const [cookiesBrowser, setCookiesBrowser] = useState('');
+  const [waveformColorMode, setWaveformColorMode] = useState('rgb');
+  const [generatingWaveforms, setGeneratingWaveforms] = useState(false);
+  const [waveformGenProgress, setWaveformGenProgress] = useState(null);
+  const [waveformGenResult, setWaveformGenResult] = useState(null);
 
   // Library location
   const [libraryPath, setLibraryPath] = useState('');
@@ -56,6 +68,10 @@ function SettingsModal({ onClose }) {
     window.api
       .getSetting('auto_normalize_on_import', 'false')
       .then((v) => setAutoNormalizeOnImport(v === 'true'));
+    window.api
+      .getSetting('auto_cue_on_import', 'false')
+      .then((v) => setAutoCueOnImport(v === 'true'));
+    window.api.getSetting('waveform_color_mode', 'rgb').then((v) => setWaveformColorMode(v));
   }, []);
 
   useEffect(() => {
@@ -144,6 +160,60 @@ function SettingsModal({ onClose }) {
     window.api.setSetting('auto_normalize_on_import', String(checked));
   };
 
+  const handleGenerateCueLibrary = async (overwrite) => {
+    setConfirmCueGen(false);
+    setGeneratingCues(true);
+    setCueGenResult(null);
+    setCueGenProgress(null);
+    const unsub = window.api.onCueGenProgress(({ completed, total, done }) => {
+      setCueGenProgress(done ? null : { completed, total });
+      if (done) unsub();
+    });
+    try {
+      const result = await window.api.generateCuePointsLibrary({ overwrite });
+      setCueGenResult(result);
+    } finally {
+      unsub();
+      setGeneratingCues(false);
+      setCueGenProgress(null);
+    }
+  };
+
+  const handleDeleteAllCuePoints = async () => {
+    setConfirmDeleteAllCues(false);
+    setDeletingAllCues(true);
+    setDeleteAllCuesResult(null);
+    try {
+      const { deleted } = await window.api.deleteAllCuePointsLibrary();
+      setDeleteAllCuesResult(deleted);
+    } finally {
+      setDeletingAllCues(false);
+    }
+  };
+
+  const handleAutoCueToggle = (checked) => {
+    setAutoCueOnImport(checked);
+    window.api.setSetting('auto_cue_on_import', String(checked));
+  };
+
+  const handleGenerateWaveformsLibrary = async (overwrite) => {
+    setGeneratingWaveforms(true);
+    setWaveformGenResult(null);
+    setWaveformGenProgress(null);
+    const unsub = window.api.onWaveformGenProgress(({ completed, total, done }) => {
+      setWaveformGenProgress(done ? null : { completed, total });
+      if (done) unsub();
+    });
+    try {
+      const result = await window.api.generateWaveformsLibrary({ overwrite });
+      setWaveformGenResult(result);
+    } finally {
+      unsub();
+      setGeneratingWaveforms(false);
+      setWaveformGenProgress(null);
+    }
+  };
+
   const handleCookiesBrowserChange = (value) => {
     setCookiesBrowser(value);
     window.api.setSetting('ytdlp_cookies_browser', value);
@@ -185,6 +255,8 @@ function SettingsModal({ onClose }) {
   const sections = [
     { id: 'library', label: 'Library' },
     { id: 'normalization', label: 'Normalization' },
+    { id: 'cuepoints', label: 'Cue Points' },
+    { id: 'waveform', label: 'Waveform' },
     { id: 'downloads', label: 'Downloads' },
     { id: 'updates', label: 'Dependencies' },
     { id: 'advanced', label: 'Advanced' },
@@ -381,6 +453,231 @@ function SettingsModal({ onClose }) {
                     {normalizeResult.count === 0
                       ? 'Nothing to reset — no tracks had a normalized file.'
                       : `Reset — removed normalization from ${normalizeResult.count} track${normalizeResult.count !== 1 ? 's' : ''}.`}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {activeSection === 'cuepoints' && (
+            <>
+              <h3>Cue Points</h3>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Auto-generate on Import</div>
+                <div className="settings-row">
+                  <label htmlFor="auto-cue-toggle">Auto-generate cue points on import</label>
+                  <div className="settings-toggle-row">
+                    <input
+                      id="auto-cue-toggle"
+                      type="checkbox"
+                      checked={autoCueOnImport}
+                      onChange={(e) => handleAutoCueToggle(e.target.checked)}
+                    />
+                    <span className="settings-toggle-desc">
+                      After analysis finishes for a newly imported track (file import, yt-dlp,
+                      TIDAL), automatically run CueGen to place cue points using BPM, intro, and
+                      outro data. Only fires when the track has no existing cue points. Off by
+                      default.
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Generate for Whole Library</div>
+                <div className="settings-row settings-row-action">
+                  <div>
+                    <div className="settings-action-label">Generate Cue Points</div>
+                    <div className="settings-action-desc">
+                      Runs CueGen on every analyzed track. Tracks that already have cue points are
+                      skipped unless you choose to overwrite.
+                    </div>
+                  </div>
+                  {confirmCueGen ? (
+                    <div className="settings-confirm-row">
+                      <span>Skip tracks with existing cue points?</span>
+                      <button
+                        className="btn-primary"
+                        onClick={() => handleGenerateCueLibrary(false)}
+                        disabled={generatingCues}
+                      >
+                        Skip existing
+                      </button>
+                      <button
+                        className="btn-secondary"
+                        onClick={() => handleGenerateCueLibrary(true)}
+                        disabled={generatingCues}
+                      >
+                        Overwrite all
+                      </button>
+                      <button className="btn-secondary" onClick={() => setConfirmCueGen(false)}>
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="btn-primary"
+                      onClick={() => {
+                        setConfirmCueGen(true);
+                        setCueGenResult(null);
+                      }}
+                      disabled={generatingCues}
+                    >
+                      {generatingCues ? 'Generating…' : 'Generate Library'}
+                    </button>
+                  )}
+                </div>
+                {generatingCues && cueGenProgress && (
+                  <div className="settings-normalize-progress">
+                    <div className="settings-normalize-progress-bar">
+                      <div
+                        className="settings-normalize-progress-fill"
+                        style={{
+                          width:
+                            cueGenProgress.total > 0
+                              ? `${Math.round((cueGenProgress.completed / cueGenProgress.total) * 100)}%`
+                              : '0%',
+                        }}
+                      />
+                    </div>
+                    <span className="settings-normalize-progress-label">
+                      {cueGenProgress.completed} / {cueGenProgress.total}
+                    </span>
+                  </div>
+                )}
+                {cueGenResult && (
+                  <div className="settings-normalize-result">
+                    {cueGenResult.generated === 0
+                      ? cueGenResult.total === 0
+                        ? 'No analyzed tracks found — import and analyze tracks first.'
+                        : `Nothing generated — all ${cueGenResult.skipped} track${cueGenResult.skipped !== 1 ? 's' : ''} already had cue points.`
+                      : `Done — generated cue points for ${cueGenResult.generated} track${cueGenResult.generated !== 1 ? 's' : ''}${cueGenResult.skipped > 0 ? `, skipped ${cueGenResult.skipped}` : ''}.`}
+                  </div>
+                )}
+              </div>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Danger Zone</div>
+                <div className="settings-row settings-row-action">
+                  <div>
+                    <div className="settings-action-label">Delete All Cue Points</div>
+                    <div className="settings-action-desc">
+                      Permanently removes every cue point from every track in the library.
+                    </div>
+                  </div>
+                  {confirmDeleteAllCues ? (
+                    <div className="settings-confirm-row">
+                      <span>Delete all cue points?</span>
+                      <button
+                        className="btn-danger"
+                        onClick={handleDeleteAllCuePoints}
+                        disabled={deletingAllCues}
+                      >
+                        {deletingAllCues ? 'Deleting…' : 'Yes, delete all'}
+                      </button>
+                      <button
+                        className="btn-secondary"
+                        onClick={() => setConfirmDeleteAllCues(false)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="btn-danger"
+                      onClick={() => {
+                        setConfirmDeleteAllCues(true);
+                        setDeleteAllCuesResult(null);
+                      }}
+                      disabled={deletingAllCues || generatingCues}
+                    >
+                      Delete All Cue Points
+                    </button>
+                  )}
+                </div>
+                {deleteAllCuesResult !== null && (
+                  <div className="settings-normalize-result">
+                    {deleteAllCuesResult === 0
+                      ? 'Nothing to delete — no cue points in the library.'
+                      : `Deleted cue points from ${deleteAllCuesResult} track${deleteAllCuesResult !== 1 ? 's' : ''}.`}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {activeSection === 'waveform' && (
+            <>
+              <h3>Waveform</h3>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Seek bar color mode</div>
+                <p className="settings-desc">
+                  Choose how the waveform is colored in the seek bar. Waveforms are generated
+                  automatically after each track is analyzed.
+                </p>
+                <div className="settings-row">
+                  <label htmlFor="waveform-color-mode">Color mode</label>
+                  <select
+                    id="waveform-color-mode"
+                    className="settings-select"
+                    value={waveformColorMode}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setWaveformColorMode(v);
+                      window.api.setSetting('waveform_color_mode', v);
+                      window.dispatchEvent(
+                        new CustomEvent('waveform-color-mode-changed', { detail: v })
+                      );
+                    }}
+                  >
+                    <option value="rgb">RGB — Red=treble · Green=mid · Blue=bass</option>
+                    <option value="classic">Classic — Blue body · White peaks</option>
+                    <option value="3band">3-Band — Blue=bass · Orange=mid · White=treble</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Regenerate waveforms</div>
+                <p className="settings-desc">
+                  Missing waveforms are generated automatically on startup. Use this to
+                  force-rebuild all waveforms (e.g. after changing the color mode you want to
+                  preview).
+                </p>
+                <div className="settings-row">
+                  <button
+                    className="btn"
+                    onClick={() => handleGenerateWaveformsLibrary(true)}
+                    disabled={generatingWaveforms}
+                  >
+                    {generatingWaveforms ? 'Generating…' : 'Regenerate all waveforms'}
+                  </button>
+                </div>
+                {generatingWaveforms && waveformGenProgress && (
+                  <div className="settings-normalize-progress">
+                    <div className="settings-normalize-progress-bar">
+                      <div
+                        className="settings-normalize-progress-fill"
+                        style={{
+                          width:
+                            waveformGenProgress.total > 0
+                              ? `${Math.round((waveformGenProgress.completed / waveformGenProgress.total) * 100)}%`
+                              : '0%',
+                        }}
+                      />
+                    </div>
+                    <span className="settings-normalize-progress-label">
+                      {waveformGenProgress.completed} / {waveformGenProgress.total}
+                    </span>
+                  </div>
+                )}
+                {waveformGenResult && (
+                  <div className="settings-normalize-result">
+                    Generated {waveformGenResult.generated} waveform
+                    {waveformGenResult.generated !== 1 ? 's' : ''}, skipped{' '}
+                    {waveformGenResult.skipped}.
                   </div>
                 )}
               </div>

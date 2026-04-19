@@ -1,12 +1,27 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   // Track library
   getTracks: (params) => ipcRenderer.invoke('get-tracks', params),
   getTrackIds: (params) => ipcRenderer.invoke('get-track-ids', params),
+  getTrackWaveform: (trackId) => ipcRenderer.invoke('get-track-waveform', trackId),
+  onWaveformReady: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('waveform-ready', handler);
+    return () => ipcRenderer.removeListener('waveform-ready', handler);
+  },
+  generateWaveformsLibrary: (opts) => ipcRenderer.invoke('generate-waveforms-library', opts),
+  onWaveformGenProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('waveform-gen-progress', handler);
+    return () => ipcRenderer.removeListener('waveform-gen-progress', handler);
+  },
   reanalyzeTrack: (trackId) => ipcRenderer.invoke('reanalyze-track', trackId),
+  cancelAnalysis: (trackId) => ipcRenderer.invoke('cancel-analysis', trackId),
   removeTrack: (trackId) => ipcRenderer.invoke('remove-track', trackId),
+  removeLinkedFile: (trackId) => ipcRenderer.invoke('remove-linked-file', trackId),
   updateTrack: (id, data) => ipcRenderer.invoke('update-track', { id, data }),
+  getEditorWaveform: (trackId) => ipcRenderer.invoke('get-editor-waveform', trackId),
   adjustBpm: (payload) => ipcRenderer.invoke('adjust-bpm', payload),
 
   // Cue points
@@ -15,6 +30,8 @@ contextBridge.exposeInMainWorld('api', {
   updateCuePoint: (id, update) => ipcRenderer.invoke('update-cue-point', { id, ...update }),
   deleteCuePoint: (id) => ipcRenderer.invoke('delete-cue-point', id),
   generateCuePoints: (trackId) => ipcRenderer.invoke('generate-cue-points', trackId),
+  generateCuePointsLibrary: (opts) => ipcRenderer.invoke('generate-cue-points-library', opts),
+  deleteAllCuePointsLibrary: () => ipcRenderer.invoke('delete-all-cue-points-library'),
 
   // Import
   selectAudioFiles: () => ipcRenderer.invoke('select-audio-files'),
@@ -84,10 +101,25 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('track-updated', handler);
     return () => ipcRenderer.removeListener('track-updated', handler);
   },
+  onCuePointsUpdated: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('cue-points-updated', handler);
+    return () => ipcRenderer.removeListener('cue-points-updated', handler);
+  },
   onNormalizeProgress: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('normalize-progress', handler);
     return () => ipcRenderer.removeListener('normalize-progress', handler);
+  },
+  onAnalysisProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('analysis-progress', handler);
+    return () => ipcRenderer.removeListener('analysis-progress', handler);
+  },
+  onCueGenProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('cue-gen-progress', handler);
+    return () => ipcRenderer.removeListener('cue-gen-progress', handler);
   },
   onLibraryUpdated: (callback) => {
     const handler = () => callback();
@@ -181,6 +213,35 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('tidal-track-update', handler);
     return () => ipcRenderer.removeListener('tidal-track-update', handler);
   },
+
+  getZoomFactor: () => webFrame.getZoomFactor(),
+  setZoomFactor: (factor) => webFrame.setZoomFactor(factor),
+
+  // File Explorer
+  getComputerRoot: () => ipcRenderer.invoke('get-computer-root'),
+  browseDirectory: (dirPath) => ipcRenderer.invoke('browse-directory', dirPath),
+  selectExplorerFolder: () => ipcRenderer.invoke('select-explorer-folder'),
+  getTracksByPaths: (filePaths) => ipcRenderer.invoke('get-tracks-by-paths', filePaths),
+  explorerStartRecursive: (dirPath) => ipcRenderer.invoke('explorer-start-recursive', dirPath),
+  explorerCancelRecursive: () => ipcRenderer.invoke('explorer-cancel-recursive'),
+  onExplorerRecursiveBatch: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('explorer-recursive-batch', handler);
+    return () => ipcRenderer.removeListener('explorer-recursive-batch', handler);
+  },
+  onExplorerRecursiveDone: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on('explorer-recursive-done', handler);
+    return () => ipcRenderer.removeListener('explorer-recursive-done', handler);
+  },
+  linkAudioFiles: (filePaths, playlistId) =>
+    ipcRenderer.invoke('link-audio-files', { filePaths, playlistId }),
+  linkDirectory: (dirPath, recursive, playlistId) =>
+    ipcRenderer.invoke('link-directory', { dirPath, recursive, playlistId }),
+  remapTrack: (trackId, newPath) => ipcRenderer.invoke('remap-track', { trackId, newPath }),
+  remapFolder: (oldDir) => ipcRenderer.invoke('remap-folder', { oldDir }),
+  checkLinkedTrackStatus: (trackIds) => ipcRenderer.invoke('check-linked-track-status', trackIds),
+  getLinkedTracksBasic: () => ipcRenderer.invoke('get-linked-tracks-basic'),
 
   clearLibrary: () => ipcRenderer.invoke('clear-library'),
   clearUserData: () => ipcRenderer.invoke('clear-user-data'),

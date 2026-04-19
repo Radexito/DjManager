@@ -45,16 +45,24 @@ function writeVis(key, val) {
   }
 }
 
-export default function CuePointsEditor({ trackId, onCuePointsChange }) {
+export default function CuePointsEditor({
+  trackId,
+  onCuePointsChange,
+  deferred = false,
+  onRebase,
+}) {
   const { currentTime } = usePlayer() ?? {};
   const [cuePoints, setCuePoints] = useState([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [confirmGen, setConfirmGen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editLabel, setEditLabel] = useState('');
   const [typePickerId, setTypePickerId] = useState(null); // cue id whose type picker is open
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const addMenuRef = useRef(null);
 
   // Close type picker on outside click
   useEffect(() => {
@@ -65,6 +73,16 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [typePickerId]);
+
+  // Close add-type dropdown on outside click
+  useEffect(() => {
+    if (!showAddMenu) return;
+    const close = (e) => {
+      if (!addMenuRef.current?.contains(e.target)) setShowAddMenu(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [showAddMenu]);
 
   // Visibility toggles — persisted in localStorage, shared with PlayerBar via custom event
   const [showHot, setShowHot] = useState(() => readVis(LS_SHOW_HOT));
@@ -93,38 +111,116 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
 
   const revRef = useRef(0);
   const [rev, setRev] = useState(0);
+  const isLoadedRef = useRef(false); // true once initial DB fetch resolves
   const reload = useCallback(() => {
     revRef.current += 1;
     setRev(revRef.current);
     window.dispatchEvent(new CustomEvent('cue-points-updated', { detail: { trackId } }));
   }, [trackId]);
 
+  // In deferred mode, notify parent whenever local cue state changes —
+  // but only after the initial DB load (isLoadedRef prevents a spurious []
+  // notification before the real cues arrive).
+  useEffect(() => {
+    if (!deferred || !isLoadedRef.current) return;
+    onCuePointsChange?.(cuePoints);
+  }, [deferred, cuePoints, onCuePointsChange]);
+
+  // Listen for auto-cue IPC events from main process (e.g. auto-generate on import).
+  // Skipped in deferred mode — pending state must not be overwritten by DB reads.
+  useEffect(() => {
+    if (deferred) return;
+    const unsub = window.api.onCuePointsUpdated(({ trackId: updatedId }) => {
+      if (updatedId === trackId) reload();
+    });
+    return unsub;
+  }, [trackId, reload, deferred]);
+
   useEffect(() => {
     if (!trackId) return;
     let alive = true;
     window.api.getCuePoints(trackId).then((pts) => {
       if (!alive) return;
+      isLoadedRef.current = true;
       setCuePoints(pts);
-      onCuePointsChange?.(pts);
+      // Non-deferred: notify immediately; deferred: the cuePoints useEffect above fires.
+      if (!deferred) onCuePointsChange?.(pts);
     });
     return () => {
       alive = false;
     };
-  }, [trackId, rev, onCuePointsChange]);
+  }, [trackId, rev, onCuePointsChange, deferred]);
 
-  const handleAdd = async () => {
+  const handleAddMemoryCue = async () => {
     if (!trackId) return;
+    setShowAddMenu(false);
     const posMs = Math.round((currentTime ?? 0) * 1000);
-    setLoading(true);
-    await window.api.addCuePoint({
-      trackId,
-      positionMs: posMs,
-      label: '',
-      color: '#00b4d8',
-      hotCueIndex: -1,
-    });
-    reload();
-    setLoading(false);
+    if (deferred) {
+      setCuePoints((prev) =>
+        [
+          ...prev,
+          {
+            id: `tmp-${Date.now()}`,
+            track_id: trackId,
+            position_ms: posMs,
+            label: '',
+            color: '#00b4d8',
+            hot_cue_index: -1,
+            enabled: 1,
+          },
+        ].sort((a, b) => a.position_ms - b.position_ms)
+      );
+    } else {
+      setLoading(true);
+      await window.api.addCuePoint({
+        trackId,
+        positionMs: posMs,
+        label: '',
+        color: '#00b4d8',
+        hotCueIndex: -1,
+      });
+      reload();
+      setLoading(false);
+    }
+  };
+
+  const handleAddHotCue = async () => {
+    if (!trackId) return;
+    setShowAddMenu(false);
+    const usedIndices = new Set(
+      cuePoints.filter((c) => c.hot_cue_index >= 0).map((c) => c.hot_cue_index)
+    );
+    const nextIndex = [0, 1, 2, 3, 4, 5, 6, 7].find((i) => !usedIndices.has(i));
+    if (nextIndex === undefined) return;
+    const posMs = Math.round((currentTime ?? 0) * 1000);
+    const color = COLOR_PALETTE[nextIndex % COLOR_PALETTE.length];
+    if (deferred) {
+      setCuePoints((prev) =>
+        [
+          ...prev,
+          {
+            id: `tmp-${Date.now()}`,
+            track_id: trackId,
+            position_ms: posMs,
+            label: '',
+            color,
+            hot_cue_index: nextIndex,
+            enabled: 1,
+          },
+        ].sort((a, b) => a.position_ms - b.position_ms)
+      );
+    } else {
+      setLoading(true);
+      await window.api.addCuePoint({
+        trackId,
+        positionMs: posMs,
+        label: '',
+        color,
+        hotCueIndex: nextIndex,
+      });
+      reload();
+      setLoading(false);
+    }
   };
 
   const handleGenerateClick = () => {
@@ -141,7 +237,15 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
     if (!trackId) return;
     setGenerating(true);
     await window.api.generateCuePoints(trackId);
-    reload();
+    if (deferred) {
+      // Auto-generate writes to DB; reload into local state and rebase the
+      // initial snapshot so Cancel after auto-generate keeps the generated cues.
+      const pts = await window.api.getCuePoints(trackId);
+      setCuePoints(pts ?? []);
+      onRebase?.(pts ?? []);
+    } else {
+      reload();
+    }
     setGenerating(false);
   };
 
@@ -151,25 +255,55 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
 
   const confirmDelete = async () => {
     if (!confirmDeleteId) return;
-    await window.api.deleteCuePoint(confirmDeleteId);
-    setConfirmDeleteId(null);
-    reload();
+    if (deferred) {
+      setCuePoints((prev) => prev.filter((c) => c.id !== confirmDeleteId));
+      setConfirmDeleteId(null);
+    } else {
+      await window.api.deleteCuePoint(confirmDeleteId);
+      setConfirmDeleteId(null);
+      reload();
+    }
+  };
+
+  const handleDeleteAll = () => setConfirmDeleteAll(true);
+
+  const confirmDeleteAllCues = async () => {
+    setConfirmDeleteAll(false);
+    if (deferred) {
+      setCuePoints([]);
+    } else {
+      for (const cue of cuePoints) {
+        await window.api.deleteCuePoint(cue.id);
+      }
+      reload();
+    }
   };
 
   const handleToggleEnabled = async (id, currentEnabled) => {
-    await window.api.updateCuePoint(id, { enabled: currentEnabled === false || currentEnabled === 0 ? 1 : 0 });
+    await window.api.updateCuePoint(id, {
+      enabled: currentEnabled === false || currentEnabled === 0 ? 1 : 0,
+    });
     reload();
   };
 
   const handleColorChange = async (id, color) => {
-    await window.api.updateCuePoint(id, { color });
-    reload();
+    if (deferred) {
+      setCuePoints((prev) => prev.map((c) => (c.id === id ? { ...c, color } : c)));
+    } else {
+      await window.api.updateCuePoint(id, { color });
+      reload();
+    }
   };
 
   const handleLabelSave = async (id) => {
-    await window.api.updateCuePoint(id, { label: editLabel });
-    setEditingId(null);
-    reload();
+    if (deferred) {
+      setCuePoints((prev) => prev.map((c) => (c.id === id ? { ...c, label: editLabel } : c)));
+      setEditingId(null);
+    } else {
+      await window.api.updateCuePoint(id, { label: editLabel });
+      setEditingId(null);
+      reload();
+    }
   };
 
   const startEdit = (cue) => {
@@ -177,11 +311,27 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
     setEditLabel(cue.label ?? '');
   };
 
+  const handleToggleEnabled = async (id, currentEnabled) => {
+    const next = currentEnabled === 0 ? 1 : 0;
+    if (deferred) {
+      setCuePoints((prev) => prev.map((c) => (c.id === id ? { ...c, enabled: next } : c)));
+    } else {
+      await window.api.updateCuePoint(id, { enabled: next });
+      reload();
+    }
+  };
+
   // Change a cue's type: -1 = memory, 0-7 = hot cue A-H
   const handleTypeChange = async (id, hotCueIndex) => {
     setTypePickerId(null);
-    await window.api.updateCuePoint(id, { hotCueIndex });
-    reload();
+    if (deferred) {
+      setCuePoints((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, hot_cue_index: hotCueIndex } : c))
+      );
+    } else {
+      await window.api.updateCuePoint(id, { hotCueIndex });
+      reload();
+    }
   };
 
   const { seek } = usePlayer() ?? {};
@@ -213,14 +363,26 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
           </button>
         </div>
         <div className="cpe__actions">
-          <button
-            className="cpe__btn cpe__btn--add"
-            onClick={handleAdd}
-            disabled={loading || !trackId}
-            title="Add cue point at current position"
-          >
-            + Add
-          </button>
+          <div className="cpe__add-wrap" ref={addMenuRef}>
+            <button
+              className="cpe__btn cpe__btn--add"
+              onClick={() => setShowAddMenu((v) => !v)}
+              disabled={loading || !trackId}
+              title="Add cue point at current position"
+            >
+              + Add ▾
+            </button>
+            {showAddMenu && (
+              <div className="cpe__add-menu">
+                <button className="cpe__add-option" onClick={handleAddMemoryCue}>
+                  ● Memory Cue
+                </button>
+                <button className="cpe__add-option" onClick={handleAddHotCue}>
+                  {HOT_CUE_LABELS[0]} Hot Cue
+                </button>
+              </div>
+            )}
+          </div>
           <button
             className="cpe__btn cpe__btn--gen"
             onClick={handleGenerateClick}
@@ -229,8 +391,31 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
           >
             {generating ? '…' : '⚡ Auto'}
           </button>
+          {cuePoints.length > 0 && (
+            <button
+              className="cpe__btn cpe__btn--danger-subtle"
+              onClick={handleDeleteAll}
+              title="Delete all cue points"
+            >
+              ✕ All
+            </button>
+          )}
         </div>
       </div>
+
+      {confirmDeleteAll && (
+        <div className="cpe__confirm">
+          <span>
+            Delete all {cuePoints.length} cue point{cuePoints.length !== 1 ? 's' : ''}?
+          </span>
+          <button className="cpe__btn cpe__btn--danger" onClick={confirmDeleteAllCues}>
+            Delete all
+          </button>
+          <button className="cpe__btn" onClick={() => setConfirmDeleteAll(false)}>
+            Cancel
+          </button>
+        </div>
+      )}
 
       {confirmGen && (
         <div className="cpe__confirm">
@@ -253,7 +438,10 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
       ) : (
         <div className="cpe__list">
           {visibleCues.map((cue) => (
-            <div key={cue.id} className={`cpe__row${cue.enabled === 0 ? ' cpe__row--disabled' : ''}`}>
+            <div
+              key={cue.id}
+              className={`cpe__row${cue.enabled === 0 ? ' cpe__row--disabled' : ''}`}
+            >
               {/* Type badge — click to open type picker */}
               <div className="cpe__badge-wrap">
                 <div
@@ -340,13 +528,17 @@ export default function CuePointsEditor({ trackId, onCuePointsChange }) {
                 ))}
               </div>
 
-              {/* Enable / disable toggle */}
+              {/* Export toggle */}
               <button
-                className={`cpe__toggle${cue.enabled === 0 ? ' cpe__toggle--off' : ''}`}
+                className={`cpe__export-toggle${cue.enabled === 0 ? ' cpe__export-toggle--off' : ''}`}
                 onClick={() => handleToggleEnabled(cue.id, cue.enabled)}
-                title={cue.enabled === 0 ? 'Enable cue point' : 'Disable cue point'}
+                title={
+                  cue.enabled === 0
+                    ? 'Excluded from USB export — click to include'
+                    : 'Included in USB export — click to exclude'
+                }
               >
-                {cue.enabled === 0 ? '○' : '●'}
+                {cue.enabled === 0 ? '⊘' : '⊙'}
               </button>
 
               {/* Delete */}

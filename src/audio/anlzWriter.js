@@ -85,7 +85,7 @@ function buildPathTag(usbFilePath) {
  *
  * Pioneer beat entry: beatNumber (1-4), tempo (BPM * 100), time (ms, u32)
  */
-function computeBeats(beatgridJson, bpm) {
+function computeBeats(beatgridJson, bpm, beatgridOffset = 0) {
   let beats = [];
 
   try {
@@ -110,6 +110,11 @@ function computeBeats(beatgridJson, bpm) {
   // Fall back to mathematical generation from BPM
   if (beats.length === 0 && bpm > 0) {
     beats = generateBeatsFromBpm(bpm, 600); // 600 seconds max
+  }
+
+  // Apply beatgrid offset (ms) — shifts the entire grid left/right; clamp to ≥ 0
+  if (beatgridOffset) {
+    beats = beats.map((b) => ({ ...b, time: b.time + beatgridOffset })).filter((b) => b.time >= 0);
   }
 
   return beats;
@@ -735,13 +740,23 @@ function buildSectionWithBigHeader(fourcc, specificHeader, data) {
  * @param {object} opts
  * @param {string}  opts.usbFilePath    - USB-relative path e.g. "/music/Artist - Title.mp3"
  * @param {string}  opts.sourceFilePath - Absolute path to original audio on disk
- * @param {string|null} opts.beatgrid   - JSON string from DB (mixxx-analyzer output)
- * @param {number}  opts.bpm            - BPM value from DB
- * @param {string}  opts.usbRoot        - Absolute path to USB root on disk
- * @param {Array}   [opts.cuePoints]    - Cue point rows from cue_points table
+ * @param {string|null} opts.beatgrid       - JSON string from DB (mixxx-analyzer output)
+ * @param {number}  opts.bpm                - BPM value from DB (already bpm_override ?? bpm)
+ * @param {number}  [opts.beatgridOffset=0] - Grid shift in ms (beatgrid_offset from DB)
+ * @param {string}  opts.usbRoot            - Absolute path to USB root on disk
+ * @param {Array}   [opts.cuePoints]        - Cue point rows from cue_points table
  */
 export async function writeAnlz(opts) {
-  const { usbFilePath, sourceFilePath, beatgrid, bpm, usbRoot, ffmpegPath, cuePoints } = opts;
+  const {
+    usbFilePath,
+    sourceFilePath,
+    beatgrid,
+    bpm,
+    beatgridOffset = 0,
+    usbRoot,
+    ffmpegPath,
+    cuePoints,
+  } = opts;
 
   const folderHash = getFolderName(usbFilePath);
   const anlzDir = path.join(usbRoot, 'PIONEER', 'USBANLZ', folderHash);
@@ -758,7 +773,7 @@ export async function writeAnlz(opts) {
   }
 
   // ── Compute beat array once — shared by PQTZ (DAT) and PQT2 (EXT) ──────────
-  const beats = computeBeats(beatgrid, bpm);
+  const beats = computeBeats(beatgrid, bpm, beatgridOffset);
 
   // ── PVBR seek table ───────────────────────────────────────────────────────────
   // Native Rekordbox always includes PVBR between PPTH and PQTZ in the DAT file.
