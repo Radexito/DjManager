@@ -194,6 +194,13 @@ function createWindow() {
   } else if (!app.isPackaged) {
     mainWindow.loadURL(fs.readFileSync(path.join(__dirname, '../.dev-url'), 'utf8').trim());
     mainWindow.webContents.openDevTools();
+    // Forward renderer console to terminal so we can debug without DevTools window
+    mainWindow.webContents.on('console-message', (_e, level, msg) => {
+      const tag =
+        ['[renderer:verbose]', '[renderer:info]', '[renderer:warn]', '[renderer:error]'][level] ??
+        '[renderer]';
+      console.log(tag, msg);
+    });
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/dist/index.html'));
     mainWindow.webContents.on('before-input-event', (event, input) => {

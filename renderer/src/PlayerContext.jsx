@@ -78,6 +78,7 @@ export function PlayerProvider({ children }) {
     if (audioCtxRef.current) return; // already built
     try {
       const ctx = new AudioContext();
+      console.log('[player] AudioContext created, state =', ctx.state);
       const source = ctx.createMediaElementSource(audio);
       const gain = ctx.createGain();
       gain.gain.value = 1.0;
@@ -93,6 +94,7 @@ export function PlayerProvider({ children }) {
       audioCtxRef.current = ctx;
       gainNodeRef.current = gain;
       audio.volume = 1.0;
+      console.log('[player] Web Audio graph built OK');
     } catch (err) {
       console.warn(
         '[player] Web Audio graph unavailable, falling back to audio.volume:',
@@ -178,6 +180,10 @@ export function PlayerProvider({ children }) {
           await audioCtxRef.current.resume();
         } catch {}
       }
+      console.log(
+        '[player] ctx.state after resume =',
+        audioCtxRef.current?.state ?? 'no ctx (fallback mode)'
+      );
       // Setting src triggers an implicit load; calling audio.load() would race with play()
       audio
         .play()
