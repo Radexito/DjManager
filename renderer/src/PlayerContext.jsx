@@ -65,50 +65,41 @@ export function PlayerProvider({ children }) {
     }
   }, []);
 
-  // Build the Web Audio graph once. MediaElementSource captures the audio element's
-  // output so all routing goes through the graph; audio.volume stays at 1.0.
-  // Wrapped in try-catch: if AudioContext is unavailable the gain effect falls back
-  // to audio.volume so the app still loads and plays audio.
-  //
-  // IMPORTANT: no cleanup / no ctx.close().
-  // In Chromium, createMediaElementSource can only be called ONCE per audio element,
-  // ever. React StrictMode double-invokes effects (mount→cleanup→mount). If we close
-  // the AudioContext in cleanup, the second mount's createMediaElementSource throws and
-  // the audio element is left captured by a closed context → silence + frozen seekbar.
-  // The guard (audioCtxRef.current check) makes the second mount a no-op.
-  useEffect(() => {
-    if (audioCtxRef.current) return; // StrictMode second mount — graph already built
+  // Web Audio graph is built lazily on first play() call — see buildAudioGraph() below.
+  // Building it at mount time creates the AudioContext without a user gesture, leaving it
+  // permanently suspended on Electron/Chrome (autoplay policy), so resume() never works.
+
+  // Build the Web Audio graph on first user interaction so AudioContext is created
+  // inside a user gesture — the only reliable way to get it into 'running' state on
+  // Electron/Chrome without an explicit autoplay policy exception.
+  // createMediaElementSource can only be called ONCE per audio element in Chromium;
+  // the guard ensures StrictMode's double-invoke doesn't break it.
+  const buildAudioGraph = useCallback(() => {
+    if (audioCtxRef.current) return; // already built
     try {
       const ctx = new AudioContext();
-
       const source = ctx.createMediaElementSource(audio);
-
       const gain = ctx.createGain();
       gain.gain.value = 1.0;
-
-      // Hard limiter — catches any peaks pushed above 0 dBFS by positive gain
       const limiter = ctx.createDynamicsCompressor();
-      limiter.threshold.value = -1.0; // start limiting 1 dB before ceiling
-      limiter.knee.value = 0; // hard knee — no soft transition
-      limiter.ratio.value = 20; // near-infinite ratio
-      limiter.attack.value = 0.001; // 1 ms
-      limiter.release.value = 0.1; // 100 ms
-
+      limiter.threshold.value = -1.0;
+      limiter.knee.value = 0;
+      limiter.ratio.value = 20;
+      limiter.attack.value = 0.001;
+      limiter.release.value = 0.1;
       source.connect(gain);
       gain.connect(limiter);
       limiter.connect(ctx.destination);
-
       audioCtxRef.current = ctx;
       gainNodeRef.current = gain;
-      audio.volume = 1.0; // GainNode owns volume from here on
+      audio.volume = 1.0;
     } catch (err) {
       console.warn(
         '[player] Web Audio graph unavailable, falling back to audio.volume:',
         err.message
       );
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // audio element is stable for the provider lifetime
+  }, [audio]);
 
   // Keep mutable refs so event handlers always see latest values
   const queueRef = useRef(queue);
@@ -177,11 +168,12 @@ export function PlayerProvider({ children }) {
         });
       }
       console.log('[diag] playAtIndex src =', src);
+      // Build Web Audio graph on first play (must be inside user gesture so ctx starts running)
+      buildAudioGraph();
       audio.pause(); // cleanly stop current pipeline before swapping source
       audio.src = src;
-      // Ensure AudioContext is running before play() — must be awaited or audio is silent
-      // on first playback in Electron (AudioContext starts suspended without user gesture).
-      if (audioCtxRef.current) {
+      // Resume AudioContext — called within the same user gesture, so it works reliably
+      if (audioCtxRef.current?.state === 'suspended') {
         try {
           await audioCtxRef.current.resume();
         } catch {}
@@ -213,7 +205,7 @@ export function PlayerProvider({ children }) {
       setCurrentPlaylistId(playlistId);
       setCurrentPlaylistName(playlistName ?? null);
     },
-    [audio]
+    [audio, buildAudioGraph]
   );
   useLayoutEffect(() => {
     playAtIndexRef.current = playAtIndex;
@@ -287,13 +279,21 @@ export function PlayerProvider({ children }) {
     [playAtIndex]
   );
 
-  const togglePlay = useCallback(() => {
-    if (audio.paused)
+  const togglePlay = useCallback(async () => {
+    if (audio.paused) {
+      buildAudioGraph();
+      if (audioCtxRef.current?.state === 'suspended') {
+        try {
+          await audioCtxRef.current.resume();
+        } catch {}
+      }
       audio.play().catch((err) => {
         if (err.name !== 'AbortError') console.error(err);
       });
-    else audio.pause();
-  }, [audio]);
+    } else {
+      audio.pause();
+    }
+  }, [audio, buildAudioGraph]);
 
   const next = useCallback(() => {
     const q = queueRef.current;
