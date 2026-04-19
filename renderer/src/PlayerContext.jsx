@@ -69,10 +69,17 @@ export function PlayerProvider({ children }) {
   // output so all routing goes through the graph; audio.volume stays at 1.0.
   // Wrapped in try-catch: if AudioContext is unavailable the gain effect falls back
   // to audio.volume so the app still loads and plays audio.
+  //
+  // IMPORTANT: no cleanup / no ctx.close().
+  // In Chromium, createMediaElementSource can only be called ONCE per audio element,
+  // ever. React StrictMode double-invokes effects (mount→cleanup→mount). If we close
+  // the AudioContext in cleanup, the second mount's createMediaElementSource throws and
+  // the audio element is left captured by a closed context → silence + frozen seekbar.
+  // The guard (audioCtxRef.current check) makes the second mount a no-op.
   useEffect(() => {
-    let ctx;
+    if (audioCtxRef.current) return; // StrictMode second mount — graph already built
     try {
-      ctx = new AudioContext();
+      const ctx = new AudioContext();
 
       const source = ctx.createMediaElementSource(audio);
 
@@ -100,12 +107,6 @@ export function PlayerProvider({ children }) {
         err.message
       );
     }
-
-    return () => {
-      ctx?.close();
-      audioCtxRef.current = null;
-      gainNodeRef.current = null;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // audio element is stable for the provider lifetime
 
@@ -149,7 +150,7 @@ export function PlayerProvider({ children }) {
   // Stable play-at-index — exposed via ref so handleEnded can call it without stale closure
   const playAtIndexRef = useRef(null);
   const playAtIndex = useCallback(
-    (newQueue, index, playlistId = null, playlistName = null) => {
+    async (newQueue, index, playlistId = null, playlistName = null) => {
       const track = newQueue[index];
       if (!track) return;
       const gen = ++playGenRef.current;
@@ -178,8 +179,13 @@ export function PlayerProvider({ children }) {
       console.log('[diag] playAtIndex src =', src);
       audio.pause(); // cleanly stop current pipeline before swapping source
       audio.src = src;
-      // Ensure AudioContext is running (may start suspended on some Electron builds)
-      audioCtxRef.current?.resume();
+      // Ensure AudioContext is running before play() — must be awaited or audio is silent
+      // on first playback in Electron (AudioContext starts suspended without user gesture).
+      if (audioCtxRef.current) {
+        try {
+          await audioCtxRef.current.resume();
+        } catch {}
+      }
       // Setting src triggers an implicit load; calling audio.load() would race with play()
       audio
         .play()
