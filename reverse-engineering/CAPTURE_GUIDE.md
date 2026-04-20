@@ -102,7 +102,7 @@ xxd captures/21-gain-plus6db/export.pdb > /tmp/b.hex
 diff /tmp/a.hex /tmp/b.hex
 
 # Find a known section tag in an ANLZ file
-xxd captures/10-beatgrid-constant-120/PIONEER/USBANLZ/.../ANLZ0000.EXT \
+xxd captures/10-beatgrid-constant-160/PIONEER/USBANLZ/.../ANLZ0000.EXT \
   | grep -A 4 "5051 5432"   # PQT2 in hex
 
 # ImHex (recommended for large files)
