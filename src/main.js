@@ -1932,6 +1932,7 @@ ipcMain.handle(
         bitrate: t.bitrate || 0,
         comments: t.comments || '',
         rating: t.rating || 0,
+        replay_gain: t.replay_gain ?? null,
         analyzePath: anlzPaths.get(t.id) || '',
       }));
 
@@ -2087,6 +2088,7 @@ ipcMain.handle(
         bitrate: t.bitrate || 0,
         comments: t.comments || '',
         rating: t.rating || 0,
+        replay_gain: t.replay_gain ?? null,
         analyzePath: (() => {
           const usbFP = usbPaths.get(t.id);
           if (!usbFP) return '';
