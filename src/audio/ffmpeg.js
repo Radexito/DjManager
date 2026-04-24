@@ -34,7 +34,7 @@ export function ffprobe(filePath) {
  * Copy srcPath to destPath via ffmpeg, optionally applying a gain adjustment.
  * destPath is always overwritten (-y). Parent directory must already exist.
  */
-export function convertAudio(srcPath, destPath, { gainDb = 0 } = {}) {
+export function convertAudio(srcPath, destPath, { gainDb = 0, sourceBitrateKbps = null } = {}) {
   const ffmpegPath = getFfmpegRuntimePath();
   if (!fs.existsSync(ffmpegPath))
     throw new Error(`ffmpeg not found at ${ffmpegPath} — still downloading?`);
@@ -52,8 +52,13 @@ export function convertAudio(srcPath, destPath, { gainDb = 0 } = {}) {
     args.push('-filter:a', filter);
   }
   // Copy video/artwork stream unchanged; re-encode audio only when gain is applied
-  if (gainDb === 0) args.push('-c', 'copy');
-  else args.push('-c:v', 'copy');
+  if (gainDb === 0) {
+    args.push('-c', 'copy');
+  } else {
+    args.push('-c:v', 'copy');
+    // Preserve source bitrate to avoid silent quality downgrade (ffmpeg default is 128 kbps)
+    if (sourceBitrateKbps) args.push('-b:a', `${Math.round(sourceBitrateKbps)}k`);
+  }
   args.push(destPath);
 
   return new Promise((resolve, reject) => {

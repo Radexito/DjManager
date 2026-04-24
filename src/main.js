@@ -1781,7 +1781,8 @@ async function copyTrackToUsb(
     const sourceLoudness = track.loudness;
     if (useNormalized && targetLufs != null && sourceLoudness != null) {
       const gainDb = targetLufs - sourceLoudness;
-      await convertAudio(srcPath, destPath, { gainDb });
+      const sourceBitrateKbps = track.bitrate ? track.bitrate / 1000 : null;
+      await convertAudio(srcPath, destPath, { gainDb, sourceBitrateKbps });
     } else {
       fs.copyFileSync(srcPath, destPath);
     }
