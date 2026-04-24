@@ -643,8 +643,7 @@ export async function ensureDeps(onProgress) {
 
   // Tidal is optional and non-fatal — exclude from required step count so upgrades
   // that already have FFmpeg/analyzer/yt-dlp don't show a misleading [1/1].
-  const totalSteps =
-    (!ffmpegReady ? 1 : 0) + (!analyzerReady ? 1 : 0) + (!ytDlpReady ? 1 : 0);
+  const totalSteps = (!ffmpegReady ? 1 : 0) + (!analyzerReady ? 1 : 0) + (!ytDlpReady ? 1 : 0);
   let step = 0;
   const stepCb = (msg, pct) =>
     onProgress?.(totalSteps > 0 ? `[${step}/${totalSteps}] ${msg}` : msg, pct);
