@@ -282,10 +282,21 @@ describe('buildTrackRow', () => {
     expect(buf.readUInt32LE(16)).toBe(5000000);
   });
 
-  it('Unnamed7=0x758a and Unnamed8=0x57a2 at offsets 24/26', () => {
+  it('auto_gain defaults (0x4A68 / 0x78F7) written at offsets 24/26 when no replayGain', () => {
     const buf = buildTrackRow(minimal);
-    expect(buf.readUInt16LE(24)).toBe(0x758a);
-    expect(buf.readUInt16LE(26)).toBe(0x57a2);
+    expect(buf.readUInt16LE(24)).toBe(0x4a68); // 19048 — CDJ unanalyzed reference
+    expect(buf.readUInt16LE(26)).toBe(0x78f7); // 30967 — secondary unanalyzed reference
+  });
+
+  it('auto_gain computed from replayGain at offsets 24/26', () => {
+    const buf = buildTrackRow({ ...minimal, replayGain: 0 });
+    expect(buf.readUInt16LE(24)).toBe(19048);
+    expect(buf.readUInt16LE(26)).toBe(30967);
+
+    const bufMinus6 = buildTrackRow({ ...minimal, replayGain: -6 });
+    // 10^(-6/20) * 19048 ≈ 9546
+    expect(bufMinus6.readUInt16LE(24)).toBe(Math.round(10 ** (-6 / 20) * 19048));
+    expect(bufMinus6.readUInt16LE(26)).toBe(Math.round(10 ** (-6 / 20) * 30967));
   });
 
   it('ArtistId at offset 68', () => {
