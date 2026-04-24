@@ -678,8 +678,7 @@ export async function ensureDeps(onProgress) {
     fs.existsSync(getFfmpegRuntimePath()) && fs.existsSync(getFfprobeRuntimePath());
   const analyzerReady = fs.existsSync(getAnalyzerRuntimePath());
   const ytDlpReady = fs.existsSync(getYtDlpRuntimePath());
-  const tidalReady = fs.existsSync(getTidalBinPath());
-  if (ffmpegReady && analyzerReady && ytDlpReady && tidalReady) return;
+  if (ffmpegReady && analyzerReady && ytDlpReady) return;
 
   const binDir = getBinDir();
   await fs.promises.mkdir(binDir, { recursive: true });
@@ -705,19 +704,6 @@ export async function ensureDeps(onProgress) {
     if (!ytDlpReady) {
       step++;
       await downloadYtDlp(tmp, stepCb);
-    }
-    if (!tidalReady) {
-      onProgress?.('[optional] Installing tidal-dl-ng…', 0);
-      try {
-        await installTidalDlNgDep((msg) => onProgress?.(`[optional] ${msg}`, -1));
-        onProgress?.('[optional] tidal-dl-ng installed.', 100);
-      } catch (err) {
-        console.warn('[deps] tidal-dl-ng install failed (non-fatal):', err.message);
-        onProgress?.(
-          '[optional] tidal-dl-ng unavailable — install Python 3.12+ to enable TIDAL downloads.',
-          -1
-        );
-      }
     }
     onProgress?.(totalSteps > 0 ? 'Setup complete.' : 'Dependencies up to date.', 100);
   } finally {
