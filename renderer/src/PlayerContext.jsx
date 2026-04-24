@@ -185,7 +185,7 @@ export function PlayerProvider({ children }) {
       if (audioCtxRef.current?.state === 'suspended') {
         try {
           await audioCtxRef.current.resume();
-        } catch (_e) {
+        } catch {
           // resume() rejects if context is closed — safe to ignore
         }
       }
@@ -300,7 +300,7 @@ export function PlayerProvider({ children }) {
       if (audioCtxRef.current?.state === 'suspended') {
         try {
           await audioCtxRef.current.resume();
-        } catch (_e) {
+        } catch {
           // resume() rejects if context is closed — safe to ignore
         }
       }
