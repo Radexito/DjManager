@@ -471,6 +471,18 @@ describe('buildPcobSections', () => {
     expect(pcob2.readUInt16BE(18)).toBe(1); // num_cues = 1
   });
 
+  it('PCOB2 mem_count = 0x00000000 when entries present (verified capture 42)', () => {
+    // Native Rekordbox writes 0x00000000 here for memory-cue slots with entries.
+    // Writing 0xFFFFFFFF causes Rekordbox to reject the entire DAT file.
+    const [, pcob2] = buildPcobSections([memoryCue]);
+    expect(pcob2.readUInt32BE(20)).toBe(0x00000000);
+  });
+
+  it('PCOB1 mem_count = 0xFFFFFFFF for hot-cue slot', () => {
+    const [pcob1] = buildPcobSections([hotCue]);
+    expect(pcob1.readUInt32BE(20)).toBe(0xffffffff);
+  });
+
   it('PCOB2 PCPT entry for memory cue has hot_cue_num = 0', () => {
     const [, pcob2] = buildPcobSections([memoryCue]);
     const pcptStart = 24;

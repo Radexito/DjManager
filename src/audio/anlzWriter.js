@@ -441,7 +441,9 @@ function buildPcobSlot(slotType, cues) {
   buf.writeUInt32BE(slotType, 12); // type: 1=hot_cues, 0=memory_cues
   // [16-17]: padding = 0
   buf.writeUInt16BE(cues.length, 18); // num_cues (u16BE)
-  buf.writeUInt32BE(0xffffffff, 20); // memory_count sentinel
+  // mem_count: 0x00000000 for memory-cue slots with entries, 0xFFFFFFFF otherwise
+  // (verified from native capture 42 — Rekordbox rejects the file if this is wrong)
+  buf.writeUInt32BE(slotType === 0 ? 0x00000000 : 0xffffffff, 20);
   cues.forEach((cue, i) => {
     // DB hot_cue_index: <0 = memory cue, >=0 = hot cue (0=A, 1=B, …)
     // Pioneer format: 0=memory, 1=A, 2=B, …
