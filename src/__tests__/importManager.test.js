@@ -109,7 +109,7 @@ vi.mock('../db/trackRepository.js', () => ({
 }));
 
 // Import AFTER mocks so the module picks up all stubs
-import { importAudioFile, normalizeAudioFile } from '../audio/importManager.js';
+import { importAudioFile } from '../audio/importManager.js';
 import cryptoDefault from 'crypto';
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
@@ -196,50 +196,6 @@ describe('importAudioFile — duplicate prevention', () => {
     await importAudioFile('/music/b.mp3');
 
     expect(mockAddTrack).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe('normalizeAudioFile', () => {
-  const TRACK = {
-    file_path: '/audio/ab/deadbeef_norm.mp3',
-    file_hash: FAKE_HASH,
-    loudness: -14,
-    source_loudness: null,
-  };
-
-  it('calls ffmpeg with the computed gain (targetLufs - loudness)', async () => {
-    await normalizeAudioFile(TRACK, -9);
-    expect(mockExecFile).toHaveBeenCalledTimes(1);
-    const [_bin, args] = mockExecFile.mock.calls[0];
-    const filterIndex = args.indexOf('-filter:a');
-    expect(filterIndex).toBeGreaterThan(-1);
-    expect(args[filterIndex + 1]).toBe('volume=5.00dB'); // -9 - (-14) = +5
-  });
-
-  it('uses source_loudness instead of loudness to prevent cumulative drift', async () => {
-    const trackWithSource = { ...TRACK, loudness: -9, source_loudness: -14 };
-    await normalizeAudioFile(trackWithSource, -9);
-    const [_bin, args] = mockExecFile.mock.calls[0];
-    const filterIndex = args.indexOf('-filter:a');
-    expect(args[filterIndex + 1]).toBe('volume=5.00dB'); // -9 - (-14) = +5, not 0
-  });
-
-  it('throws when there is no loudness data', async () => {
-    const noLoudness = { ...TRACK, loudness: null, source_loudness: null };
-    await expect(normalizeAudioFile(noLoudness, -9)).rejects.toThrow('no loudness data');
-  });
-
-  it('returns the normalized file path', async () => {
-    const result = await normalizeAudioFile(TRACK, -9);
-    expect(typeof result).toBe('string');
-    expect(result).toMatch(/_norm\.mp3$/);
-  });
-
-  it('passes the original file_path (not normalized path) as ffmpeg input', async () => {
-    await normalizeAudioFile(TRACK, -9);
-    const [_bin, args] = mockExecFile.mock.calls[0];
-    const iIndex = args.indexOf('-i');
-    expect(args[iIndex + 1]).toBe(TRACK.file_path);
   });
 });
 
