@@ -53,26 +53,59 @@ function versionFile(name) {
   return path.join(getBinDir(), `${name}.version`);
 }
 
-function readVersion(name) {
-  try {
-    return JSON.parse(fs.readFileSync(versionFile(name), 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
 function writeVersion(name, data) {
   fs.mkdirSync(getBinDir(), { recursive: true });
   fs.writeFileSync(versionFile(name), JSON.stringify(data, null, 2));
 }
 
-export function getInstalledVersions() {
-  return {
-    ffmpeg: readVersion('ffmpeg'),
-    analyzer: readVersion('analyzer'),
-    ytDlp: readVersion('yt-dlp'),
-    tidalDlNg: readVersion('tidal-dl-ng'),
-  };
+export async function getInstalledVersions() {
+  const [ffmpeg, analyzer, ytDlp, tidalDlNg] = await Promise.all([
+    probeFfmpegVersion(),
+    probeAnalyzerVersion(),
+    probeYtDlpVersion(),
+    probeTidalVersion(),
+  ]);
+  return { ffmpeg, analyzer, ytDlp, tidalDlNg };
+}
+
+async function probeFfmpegVersion() {
+  const binPath = getFfmpegRuntimePath();
+  if (!fs.existsSync(binPath)) return null;
+  try {
+    const { stdout } = await execAsync(`"${binPath}" -version`);
+    const match = stdout.match(/ffmpeg version (\S+)/);
+    return { version: match ? match[1] : 'installed' };
+  } catch {
+    return { version: 'installed' };
+  }
+}
+
+async function probeAnalyzerVersion() {
+  const binPath = getAnalyzerRuntimePath();
+  if (!fs.existsSync(binPath)) return null;
+  try {
+    const { stdout } = await execAsync(`"${binPath}" --version`);
+    return { version: stdout.trim() || 'installed' };
+  } catch {
+    return { version: 'installed' };
+  }
+}
+
+async function probeYtDlpVersion() {
+  const binPath = getYtDlpRuntimePath();
+  if (!fs.existsSync(binPath)) return null;
+  try {
+    const { stdout } = await execAsync(`"${binPath}" --version`);
+    return { version: stdout.trim() || 'installed' };
+  } catch {
+    return { version: 'installed' };
+  }
+}
+
+async function probeTidalVersion() {
+  const binPath = findTidalDlPath();
+  if (!binPath) return null;
+  return { version: await getTidalDlNgVersion() };
 }
 
 async function getTidalDlNgVersion() {
@@ -681,7 +714,7 @@ export async function ensureDeps(onProgress) {
 }
 
 export async function checkForUpdates() {
-  const installed = getInstalledVersions();
+  const installed = await getInstalledVersions();
   const result = { analyzer: null, ytDlp: null };
 
   try {
