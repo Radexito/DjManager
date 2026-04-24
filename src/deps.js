@@ -10,7 +10,6 @@ import { createWriteStream } from 'fs';
 import { app } from 'electron';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
-import { findTidalDlPath } from './audio/tidalDlManager.js';
 const execAsync = promisify(exec);
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
@@ -47,6 +46,20 @@ export function getYtDlpRuntimePath() {
 
 export function getUvRuntimePath() {
   return path.join(getBinDir(), process.platform === 'win32' ? 'uv.exe' : 'uv');
+}
+
+export function getTidalBinPath() {
+  return path.join(getBinDir(), process.platform === 'win32' ? 'tdn.exe' : 'tdn');
+}
+
+// env vars that pin uv tool install/list to DjManager's own bin dir
+function uvToolEnv() {
+  const binDir = getBinDir();
+  return {
+    ...process.env,
+    UV_TOOL_DIR: path.join(binDir, 'uv-tools'),
+    UV_TOOL_BIN_DIR: binDir,
+  };
 }
 
 function versionFile(name) {
@@ -103,8 +116,7 @@ async function probeYtDlpVersion() {
 }
 
 async function probeTidalVersion() {
-  const binPath = findTidalDlPath();
-  if (!binPath) return null;
+  if (!fs.existsSync(getTidalBinPath())) return null;
   return { version: await getTidalDlNgVersion() };
 }
 
@@ -112,7 +124,7 @@ async function getTidalDlNgVersion() {
   const uvPath = getUvRuntimePath();
   if (fs.existsSync(uvPath)) {
     try {
-      const { stdout } = await execAsync(`"${uvPath}" tool list`);
+      const { stdout } = await execAsync(`"${uvPath}" tool list`, { env: uvToolEnv() });
       const match = stdout.match(/tidal-dl-ng(?:-for-dj)?\s+v?([\d.]+)/i);
       if (match) return match[1];
     } catch {
@@ -193,7 +205,7 @@ async function installTidalDlNgDep(onProgress) {
       uvPath,
       ['tool', 'install', '--reinstall', 'git+https://github.com/Radexito/tidal-dl-ng-For-DJ.git'],
       {
-        env: { ...process.env },
+        env: uvToolEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
       }
     );
@@ -234,7 +246,7 @@ async function upgradeTidalDlNgDep(onProgress) {
           'git+https://github.com/Radexito/tidal-dl-ng-For-DJ.git',
         ],
         {
-          env: { ...process.env },
+          env: uvToolEnv(),
           stdio: ['ignore', 'pipe', 'pipe'],
         }
       );
@@ -666,7 +678,7 @@ export async function ensureDeps(onProgress) {
     fs.existsSync(getFfmpegRuntimePath()) && fs.existsSync(getFfprobeRuntimePath());
   const analyzerReady = fs.existsSync(getAnalyzerRuntimePath());
   const ytDlpReady = fs.existsSync(getYtDlpRuntimePath());
-  const tidalReady = Boolean(findTidalDlPath());
+  const tidalReady = fs.existsSync(getTidalBinPath());
   if (ffmpegReady && analyzerReady && ytDlpReady && tidalReady) return;
 
   const binDir = getBinDir();
