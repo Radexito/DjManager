@@ -12,6 +12,7 @@ import TopBar from './TopBar.jsx';
 import { PlayerProvider } from './PlayerContext.jsx';
 import { DownloadProvider } from './DownloadContext.jsx';
 import { TidalDownloadProvider } from './TidalDownloadContext.jsx';
+import { DepsOverlay } from './DepsOverlay.jsx';
 import './App.css';
 
 function App() {
@@ -179,19 +180,7 @@ function App() {
               <span key={zoomKey} className="zoom-indicator-bar" />
             </button>
           )}
-          {depsProgress && (
-            <div className="deps-overlay">
-              <div className="deps-box">
-                <div className="deps-title">First-time setup</div>
-                <div className="deps-msg">{depsProgress.msg}</div>
-                {depsProgress.pct >= 0 && depsProgress.pct < 100 && (
-                  <div className="deps-bar-track">
-                    <div className="deps-bar-fill" style={{ width: `${depsProgress.pct}%` }} />
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+          <DepsOverlay progress={depsProgress} onRetry={() => window.api.retryDeps?.()} />
         </TidalDownloadProvider>
       </DownloadProvider>
     </PlayerProvider>

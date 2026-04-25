@@ -1,0 +1,117 @@
+.deps-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.deps-box {
+  background: #1e1e2e;
+  border: 1px solid #3a3a5c;
+  border-radius: 10px;
+  padding: 28px 36px;
+  min-width: 360px;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.deps-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #cdd6f4;
+}
+
+.deps-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.deps-step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  color: #585b70;
+  transition: color 0.2s;
+}
+
+.deps-step.active {
+  color: #cdd6f4;
+}
+
+.deps-step.done {
+  color: #a6e3a1;
+}
+
+.deps-step-icon {
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+.deps-step-label {
+  flex-shrink: 0;
+}
+
+.deps-step-meta {
+  font-size: 11px;
+  color: #6c7086;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.deps-msg {
+  font-size: 12px;
+  color: #6c7086;
+}
+
+.deps-bar-track {
+  height: 6px;
+  background: #313244;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.deps-bar-fill {
+  height: 100%;
+  background: #89b4fa;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.deps-overall {
+  font-size: 11px;
+  color: #585b70;
+  text-align: right;
+}
+
+.deps-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: #f38ba8;
+}
+
+.deps-retry-btn {
+  background: #313244;
+  border: 1px solid #45475a;
+  border-radius: 6px;
+  color: #cdd6f4;
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.deps-retry-btn:hover {
+  background: #45475a;
+}
