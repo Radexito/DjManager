@@ -125,24 +125,24 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.58.2",
-    "@vitest/coverage-v8": "^4.1.2",
+    "@vitest/coverage-v8": "^4.1.5",
     "concurrently": "^9.2.1",
-    "electron": "^40.8.0",
+    "electron": "^41.3.0",
     "electron-builder": "^26.8.1",
     "electron-rebuild": "^3.2.9",
-    "eslint": "^10.0.3",
+    "eslint": "^10.2.1",
     "globals": "^17.4.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
-    "prettier": "^3.8.1",
-    "vitest": "^4.1.2",
+    "prettier": "^3.8.3",
+    "vitest": "^4.1.5",
     "wait-on": "^9.0.4"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
-    "better-sqlite3": "^12.8.0",
+    "better-sqlite3": "^12.9.0",
     "react-virtualized": "^9.22.6",
     "react-window": "^2.2.7"
   }

@@ -27,11 +27,9 @@ function SettingsModal({ onClose }) {
   const [deleteAllCuesResult, setDeleteAllCuesResult] = useState(null);
   const [confirmClear, setConfirmClear] = useState(null); // 'library' | 'userdata'
   const [normalizing, setNormalizing] = useState(false);
-  const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
   const [normalizeResult, setNormalizeResult] = useState(null);
   const [confirmNormalize, setConfirmNormalize] = useState(false);
   const [resettingNorm, setResettingNorm] = useState(false);
-  const [normalizedCount, setNormalizedCount] = useState(null); // number of already-normalized tracks
   const [depVersions, setDepVersions] = useState(null);
   const [updatingAll, setUpdatingAll] = useState(false);
   const [ytdlpVersionInput, setYtdlpVersionInput] = useState('');
@@ -77,9 +75,6 @@ function SettingsModal({ onClose }) {
   useEffect(() => {
     if (activeSection === 'library') {
       window.api.getLibraryPath().then(setLibraryPath);
-    }
-    if (activeSection === 'normalization') {
-      window.api.getNormalizedCount().then(setNormalizedCount);
     }
     if (activeSection === 'updates') {
       window.api.getDepVersions().then(setDepVersions);
@@ -127,19 +122,11 @@ function SettingsModal({ onClose }) {
     setConfirmNormalize(false);
     setNormalizing(true);
     setNormalizeResult(null);
-    setNormalizeProgress(null);
-    const unsub = window.api.onNormalizeProgress(({ completed, total, done }) => {
-      setNormalizeProgress(done ? null : { completed, total });
-      if (done) unsub();
-    });
     try {
-      const { normalized, skipped, total } = await window.api.normalizeLibrary();
-      setNormalizeResult({ type: 'normalize', normalized, skipped, total });
-      window.api.getNormalizedCount().then(setNormalizedCount);
+      const { normalized } = await window.api.normalizeLibrary();
+      setNormalizeResult({ type: 'normalize', normalized });
     } finally {
-      unsub();
       setNormalizing(false);
-      setNormalizeProgress(null);
     }
   };
 
@@ -149,7 +136,6 @@ function SettingsModal({ onClose }) {
     try {
       const { updated } = await window.api.resetNormalization({});
       setNormalizeResult({ type: 'reset', count: updated });
-      setNormalizedCount(0);
     } finally {
       setResettingNorm(false);
     }
@@ -332,9 +318,10 @@ function SettingsModal({ onClose }) {
               <h3>Normalization</h3>
               <div className="settings-group">
                 <p className="settings-group-desc">
-                  Creates a gain-adjusted copy of each track&apos;s audio file at the target
-                  loudness. Original files are preserved — you can revert at any time.
-                  Already-normalized tracks are skipped automatically.
+                  Stores a gain value per track so playback volume is automatically matched to the
+                  target loudness. No extra files are written — gain is applied in real time during
+                  playback and to the exported copy on USB. Changing the target takes effect
+                  immediately.
                 </p>
                 <div className="settings-row">
                   <label>Target loudness</label>
@@ -360,8 +347,8 @@ function SettingsModal({ onClose }) {
                       onChange={(e) => handleAutoNormalizeToggle(e.target.checked)}
                     />
                     <span className="settings-toggle-desc">
-                      Automatically normalize every imported track (MP3 import, YT-DLP, TIDAL) after
-                      its analysis finishes. Off by default.
+                      Automatically compute and store the gain value for every imported track after
+                      analysis finishes. Off by default.
                     </span>
                   </div>
                 </div>
@@ -369,8 +356,8 @@ function SettingsModal({ onClose }) {
                   <div>
                     <div className="settings-action-label">Normalize Whole Library</div>
                     <div className="settings-action-desc">
-                      Processes every un-normalized analyzed track with ffmpeg. This may take a
-                      while for large libraries.
+                      Computes and stores a gain value for every analyzed track in the library. This
+                      is a fast database operation — no files are written.
                     </div>
                   </div>
                   {confirmNormalize ? (
@@ -400,50 +387,25 @@ function SettingsModal({ onClose }) {
                     </button>
                   )}
                 </div>
-                {normalizing && normalizeProgress && (
-                  <div className="settings-normalize-progress">
-                    <div className="settings-normalize-progress-bar">
-                      <div
-                        className="settings-normalize-progress-fill"
-                        style={{
-                          width:
-                            normalizeProgress.total > 0
-                              ? `${Math.round((normalizeProgress.completed / normalizeProgress.total) * 100)}%`
-                              : '0%',
-                        }}
-                      />
-                    </div>
-                    <span className="settings-normalize-progress-label">
-                      {normalizeProgress.completed} / {normalizeProgress.total}
-                    </span>
-                  </div>
-                )}
                 {normalizeResult?.type === 'normalize' && (
                   <div className="settings-normalize-result">
                     {normalizeResult.normalized === 0
-                      ? normalizeResult.total === 0
-                        ? 'All tracks are already normalized — nothing to do.'
-                        : 'No tracks could be normalized. Make sure tracks are analyzed first.'
-                      : `Done — normalized ${normalizeResult.normalized} track${normalizeResult.normalized !== 1 ? 's' : ''}${normalizeResult.skipped > 0 ? `, skipped ${normalizeResult.skipped}` : ''}.`}
+                      ? 'No analyzed tracks found — analyze tracks first.'
+                      : `Done — gain stored for ${normalizeResult.normalized} track${normalizeResult.normalized !== 1 ? 's' : ''}.`}
                   </div>
                 )}
                 <div className="settings-row settings-row-action">
                   <div>
                     <div className="settings-action-label">Reset All Normalization</div>
                     <div className="settings-action-desc">
-                      Removes normalized files from every track — playback returns to originals.
-                      {normalizedCount !== null && normalizedCount > 0 && (
-                        <span className="settings-action-count">
-                          {' '}
-                          ({normalizedCount} track{normalizedCount !== 1 ? 's' : ''} normalized)
-                        </span>
-                      )}
+                      Clears stored gain values from every track — playback returns to unmodified
+                      levels.
                     </div>
                   </div>
                   <button
                     className="btn-secondary"
                     onClick={handleResetAllNormalization}
-                    disabled={resettingNorm || normalizing || normalizedCount === 0}
+                    disabled={resettingNorm || normalizing}
                   >
                     {resettingNorm ? 'Resetting…' : 'Reset All'}
                   </button>

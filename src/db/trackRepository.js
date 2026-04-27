@@ -343,10 +343,10 @@ export function getTrackById(id) {
   return db.prepare('SELECT * FROM tracks WHERE id = ?').get(id);
 }
 
-/** Returns IDs of tracks that have loudness data but no normalized file yet. */
+/** Returns IDs of all analyzed tracks that can have gain computed. */
 export function getTrackIdsNeedingNormalization() {
   return db
-    .prepare(`SELECT id FROM tracks WHERE loudness IS NOT NULL AND normalized_file_path IS NULL`)
+    .prepare(`SELECT id FROM tracks WHERE loudness IS NOT NULL`)
     .all()
     .map((r) => r.id);
 }
@@ -355,6 +355,20 @@ export function getNormalizedTrackCount() {
   return db
     .prepare(`SELECT COUNT(*) as cnt FROM tracks WHERE normalized_file_path IS NOT NULL`)
     .get().cnt;
+}
+
+/** Returns tracks that still have a legacy normalized_file_path set (pre-#260 exports). */
+export function getLegacyNormalizedTracks() {
+  return db
+    .prepare(`SELECT id, normalized_file_path FROM tracks WHERE normalized_file_path IS NOT NULL`)
+    .all();
+}
+
+/** Clears normalized_file_path and source_loudness for all tracks (legacy cleanup). */
+export function clearLegacyNormalizedPaths() {
+  db.prepare(
+    `UPDATE tracks SET normalized_file_path = NULL, source_loudness = NULL WHERE normalized_file_path IS NOT NULL`
+  ).run();
 }
 
 export function removeTrack(id) {

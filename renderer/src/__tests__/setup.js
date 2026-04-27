@@ -113,3 +113,24 @@ window.api = {
   onExportAllProgress: vi.fn().mockImplementation(noop),
   onFormatUsbProgress: vi.fn().mockImplementation(noop),
 };
+
+// jsdom does not implement Web Audio API — stub the minimum PlayerContext needs
+class MockAudioContext {
+  constructor() {
+    this.destination = {};
+    this.createMediaElementSource = vi.fn().mockReturnValue({ connect: vi.fn() });
+    this.createGain = vi.fn().mockReturnValue({ gain: { value: 1 }, connect: vi.fn() });
+    this.createDynamicsCompressor = vi.fn().mockReturnValue({
+      threshold: { value: 0 },
+      knee: { value: 0 },
+      ratio: { value: 1 },
+      attack: { value: 0 },
+      release: { value: 0 },
+      connect: vi.fn(),
+    });
+    this.setSinkId = vi.fn().mockResolvedValue(undefined);
+    this.resume = vi.fn().mockResolvedValue(undefined);
+    this.close = vi.fn().mockResolvedValue(undefined);
+  }
+}
+window.AudioContext = MockAudioContext;
