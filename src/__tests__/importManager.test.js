@@ -24,15 +24,28 @@ vi.mock('electron', () => ({
 vi.mock('worker_threads', () => ({
   Worker: vi.fn(function () {
     this.on = vi.fn();
+    this.terminate = vi.fn();
   }),
 }));
 
 vi.mock('../deps.js', () => ({
   getAnalyzerRuntimePath: vi.fn().mockReturnValue('/fake/analyzer'),
+  getFfmpegRuntimePath: vi.fn().mockReturnValue('/fake/ffmpeg'),
+}));
+
+// child_process mock — execFile calls succeed by default
+const mockExecFile = vi.fn((bin, args, cb) => cb(null, '', ''));
+vi.mock('child_process', () => ({
+  execFile: (...args) => mockExecFile(...args),
 }));
 
 vi.mock('../db/settingsRepository.js', () => ({
   getSetting: vi.fn().mockReturnValue(null),
+}));
+
+vi.mock('../db/cuePointRepository.js', () => ({
+  getCuePoints: vi.fn().mockReturnValue([]),
+  addCuePoint: vi.fn().mockReturnValue(1),
 }));
 
 const FAKE_HASH = 'deadbeef1234567890abcdef1234567890abcdef';
@@ -105,6 +118,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockAddTrack.mockReturnValue(99);
   mockGetTrackByHash.mockReturnValue(undefined);
+  mockExecFile.mockImplementation((bin, args, cb) => cb(null, '', ''));
   // Restore default hash implementation after clearAllMocks
   cryptoDefault.createHash.mockImplementation(() => ({
     update() {
@@ -182,5 +196,128 @@ describe('importAudioFile — duplicate prevention', () => {
     await importAudioFile('/music/b.mp3');
 
     expect(mockAddTrack).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── Artist detection from filename ────────────────────────────────────────────
+
+import { ffprobe } from '../audio/ffmpeg.js';
+
+describe('importAudioFile — artist detection from filename', () => {
+  it('uses ID3 artist tag when present, ignoring filename', async () => {
+    ffprobe.mockResolvedValueOnce({
+      format: {
+        format_name: 'mp3',
+        duration: '180.0',
+        bit_rate: '320000',
+        tags: { title: 'My Song', artist: 'Tag Artist' },
+      },
+      streams: [],
+    });
+
+    await importAudioFile('/music/Someone Else - My Song.mp3');
+
+    expect(mockAddTrack.mock.calls[0][0].artist).toBe('Tag Artist');
+  });
+
+  it('parses artist from "Artist - Title" filename when artist tag is missing', async () => {
+    ffprobe.mockResolvedValueOnce({
+      format: {
+        format_name: 'mp3',
+        duration: '180.0',
+        bit_rate: '320000',
+        tags: { title: '', artist: '' },
+      },
+      streams: [],
+    });
+
+    await importAudioFile('/music/Deadmau5 - Some Chords.mp3');
+
+    expect(mockAddTrack.mock.calls[0][0].artist).toBe('Deadmau5');
+    expect(mockAddTrack.mock.calls[0][0].title).toBe('Some Chords');
+  });
+
+  it('leaves artist empty when no tag and no dash in filename', async () => {
+    ffprobe.mockResolvedValueOnce({
+      format: {
+        format_name: 'mp3',
+        duration: '180.0',
+        bit_rate: '320000',
+        tags: { title: '', artist: '' },
+      },
+      streams: [],
+    });
+
+    await importAudioFile('/music/untitled_track.mp3');
+
+    expect(mockAddTrack.mock.calls[0][0].artist).toBe('');
+    expect(mockAddTrack.mock.calls[0][0].title).toBe('untitled_track');
+  });
+
+  it('uses channel name as artist when no tag, no dash in filename, and channel provided', async () => {
+    ffprobe.mockResolvedValueOnce({
+      format: {
+        format_name: 'mp3',
+        duration: '180.0',
+        bit_rate: '320000',
+        tags: { title: 'Midnight Dreams', artist: '' },
+      },
+      streams: [],
+    });
+
+    await importAudioFile('/music/Midnight Dreams [abc123].mp3', { channel: 'DJ Koze' });
+
+    expect(mockAddTrack.mock.calls[0][0].artist).toBe('DJ Koze');
+    expect(mockAddTrack.mock.calls[0][0].title).toBe('Midnight Dreams');
+  });
+
+  it('does not overwrite ID3 artist with channel name', async () => {
+    ffprobe.mockResolvedValueOnce({
+      format: {
+        format_name: 'mp3',
+        duration: '180.0',
+        bit_rate: '320000',
+        tags: { title: 'Some Track', artist: 'Real Artist' },
+      },
+      streams: [],
+    });
+
+    await importAudioFile('/music/Some Track [abc123].mp3', { channel: 'Channel Name' });
+
+    expect(mockAddTrack.mock.calls[0][0].artist).toBe('Real Artist');
+  });
+
+  it('does not overwrite filename-parsed artist with channel name', async () => {
+    ffprobe.mockResolvedValueOnce({
+      format: {
+        format_name: 'mp3',
+        duration: '180.0',
+        bit_rate: '320000',
+        tags: { title: '', artist: '' },
+      },
+      streams: [],
+    });
+
+    await importAudioFile('/music/Deadmau5 - Some Track [abc123].mp3', { channel: 'Channel Name' });
+
+    expect(mockAddTrack.mock.calls[0][0].artist).toBe('Deadmau5');
+  });
+
+  it('keeps ID3 title when artist is missing but filename has dash', async () => {
+    ffprobe.mockResolvedValueOnce({
+      format: {
+        format_name: 'mp3',
+        duration: '180.0',
+        bit_rate: '320000',
+        tags: { title: 'ID3 Title', artist: '' },
+      },
+      streams: [],
+    });
+
+    await importAudioFile('/music/Filename Artist - Other Title.mp3');
+
+    expect(mockAddTrack.mock.calls[0][0].artist).toBe('Filename Artist');
+    // ID3 title wins over filename-derived title
+    expect(mockAddTrack.mock.calls[0][0].title).toBe('ID3 Title');
   });
 });

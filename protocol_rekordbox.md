@@ -146,10 +146,61 @@ Followed by `beat_count × 8` bytes, one entry per beat:
 
 Same structure as PWAV but 100 bytes of data. Byte format: `height & 0x0F`.
 
-### PCOB × 2 — Cue Object Stubs (required, empty)
+### PCOB × 2 — Cue Points (DAT file)
 
-Two empty 24-byte stubs. First has `flag = 1`, second has `flag = 0`.
-Both have `value = 0xFFFFFFFF`.
+Two PCOB sections (slot 1 = hot cues, slot 2 = memory cues).
+
+**Slot 1 (hot cues, type = 1)** — contains PCPT sub-tags for hot cue slots A–C (indices 0–2).
+Hot cue slots D–H (indices 3–7) go in EXT PCOB slot 1 (see EXT section below).
+
+**Slot 2 (memory cues, type = 0)** — always the empty 24-byte stub.
+Memory cue format in PCOB2 is unconfirmed (non-empty PCOB2 causes Rekordbox to reject the
+entire file). Memory cues are stored in EXT PCO2 slot 2 instead.
+
+#### PCOB header (24 bytes)
+
+| Offset | Size | Value                                      |
+| ------ | ---- | ------------------------------------------ |
+| 0      | 4    | `PCOB`                                     |
+| 4      | 4    | `24` (len_header)                          |
+| 8      | 4    | `len_tag` = 24 + N × 56 (0 for empty stub) |
+| 12     | 4    | `type`: 1 = hot_cues, 0 = memory_cues      |
+| 16     | 2    | `0x0000` (padding)                         |
+| 18     | 2    | `num_cues` (u16BE)                         |
+| 20     | 4    | `0xFFFFFFFF` (memory_count sentinel)       |
+
+#### PCPT sub-tag (56 bytes fixed, one per cue)
+
+| Offset | Size | Value                                             |
+| ------ | ---- | ------------------------------------------------- |
+| 0      | 4    | `PCPT`                                            |
+| 4      | 4    | `28` (len_header)                                 |
+| 8      | 4    | `56` (len_tag)                                    |
+| 12     | 4    | `hot_cue`: 0 = memory, 1 = A, 2 = B, … 8 = H      |
+| 16     | 4    | `0x00000000` (status — native Rekordbox writes 0) |
+| 20     | 4    | `0x00010000` (constant)                           |
+| 24     | 2    | `0xFFFF` (order_first)                            |
+| 26     | 2    | `0xFFFF` (order_last)                             |
+| 28     | 1    | `type`: 1 = cue_point, 2 = loop                   |
+| 29     | 1    | `0x00`                                            |
+| 30     | 2    | `0x03E8` (constant)                               |
+| 32     | 4    | `time_ms` (u32BE)                                 |
+| 36     | 4    | `0xFFFFFFFF` (loop_time: none for cue points)     |
+| 40     | 1    | `color_code` (Pioneer palette 1–8; 0 = no color)  |
+| 41     | 15   | zeros                                             |
+
+**Pioneer palette codes** (codes 3 and 6 confirmed by native Rekordbox hex-diff):
+
+| Code | Color      | Hex       |
+| ---- | ---------- | --------- |
+| 1    | orange-red | `#ff6b35` |
+| 2    | red        | `#ff0000` |
+| 3 ✓  | orange     | `#ff9900` |
+| 4    | yellow     | `#ffff00` |
+| 5    | green      | `#00ff00` |
+| 6 ✓  | cyan       | `#00b4d8` |
+| 7    | blue       | `#0080ff` |
+| 8    | violet     | `#cc00ff` |
 
 ---
 
@@ -175,9 +226,60 @@ Subheader (12 bytes at offset 12):
 
 Body: `num_entries` bytes, each `(whiteness[0–7] << 5) | height[0–31]`.
 
-### PCO2 × 2 — Extended Cue Stubs (required, empty)
+### PCOB × 2 — Cue Object Stubs (EXT file — always empty)
 
-Two empty 20-byte stubs. First has `flag = 1`, second has `flag = 0`.
+Both EXT PCOB sections are always the empty 24-byte stub (same header format as DAT PCOB).
+Populated cue data is **not** placed in EXT PCOB; use EXT PCO2 instead.
+
+### PCO2 × 2 — Extended Cue Points (EXT file)
+
+**Slot 1 (hot cues, type = 1)** — populated with PCP2 sub-tags for **all** hot cue slots A–H
+(hot_cue indices 0–7). This is the source of truth for cue labels and colors in Rekordbox PC.
+
+**Slot 2 (memory cues, type = 0)** — populated with PCP2 sub-tags for memory cues.
+
+#### PCO2 header (20 bytes)
+
+| Offset | Size | Value                                        |
+| ------ | ---- | -------------------------------------------- |
+| 0      | 4    | `PCO2`                                       |
+| 4      | 4    | `20` (len_header)                            |
+| 8      | 4    | `len_tag` = 20 + sum of all PCP2 entry sizes |
+| 12     | 4    | `type`: 1 = hot_cues, 0 = memory_cues        |
+| 16     | 2    | `num_cues` (u16BE)                           |
+| 18     | 2    | `0x0000` (padding)                           |
+
+#### PCP2 sub-tag (variable size)
+
+`len_tag = 16 + bodySize`
+
+- No label: `bodySize = 72`, `len_tag = 88`
+- With label ≤ 7 chars: `bodySize = 88`, `len_tag = 104` (native Rekordbox always pads to 104)
+- With label > 7 chars: `bodySize = 28 + labelByteLen + 44`, `len_tag = 16 + bodySize`
+
+where `labelByteLen = (label.length + 1) × 2` (UTF-16BE + null terminator).
+
+| Offset          | Size         | Value                                              |
+| --------------- | ------------ | -------------------------------------------------- |
+| 0               | 4            | `PCP2`                                             |
+| 4               | 4            | `16` (len_header)                                  |
+| 8               | 4            | `len_tag`                                          |
+| 12              | 4            | `hot_cue`: 0 = memory, 1 = A, 2 = B, … 8 = H       |
+| 16              | 1            | `type`: 1 = cue_point, 2 = loop                    |
+| 17              | 1            | `0x00`                                             |
+| 18              | 2            | `0x03E8` (constant)                                |
+| 20              | 4            | `time_ms` (u32BE)                                  |
+| 24              | 4            | `0xFFFFFFFF` (loop_time: none for cue points)      |
+| 28              | 1            | `0x00` (color_id — unused)                         |
+| 29              | 1            | `0x01` (constant)                                  |
+| 30              | 10           | zeros                                              |
+| 40              | 4            | `len_comment` (byte count incl. null terminator)   |
+| 44              | labelByteLen | UTF-16BE label, null-terminated (0 bytes if empty) |
+| 44+labelByteLen | 1            | `color_code` (Pioneer palette 1–8; 0 = no color)   |
+| 45+labelByteLen | 1            | `color_red`                                        |
+| 46+labelByteLen | 1            | `color_green`                                      |
+| 47+labelByteLen | 1            | `color_blue`                                       |
+| 48+labelByteLen | 40           | zeros                                              |
 
 ### PQT2 — Extended Beat Grid (Rekordbox 6+)
 
@@ -236,7 +338,10 @@ Subheader (12 bytes at offset 12):
 | 16     | 4    | `num_entries` (1200 fixed) |
 | 20     | 4    | `0x00000000`               |
 
-Body: 1200 × 6 bytes. Per column: `[whiteness, whiteness, overall_rms, bass, mid, treble]`.
+Body: 1200 × 6 bytes. Per column: `[peak_byte, 255 - peak_byte, overall_rms, bass, mid, treble]`.
+
+- `peak_byte` = `min(255, round(peak * 255))` — peak amplitude, confirmed from hex-diff of native files (avg b0+b1 ≈ 255).
+- `overall_rms`, `bass`, `mid`, `treble` each scaled by 510, capped at 255.
 
 ---
 

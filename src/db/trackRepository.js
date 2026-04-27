@@ -1,4 +1,5 @@
 // src/db/trackRepository.js
+import path from 'path';
 import db from './database.js';
 
 // ─── Camelot helpers (mirrors renderer/src/searchParser.js) ─────────────────
@@ -160,14 +161,14 @@ export function addTrack(track) {
       file_path, file_hash, format, bitrate,
       year, label, genres, bpm,
       source_url, source_platform, source_quality, source_link,
-      user_tags, has_artwork, artwork_path,
+      user_tags, has_artwork, artwork_path, is_linked,
       created_at
     ) VALUES (
       @title, @artist, @album, @duration,
       @file_path, @file_hash, @format, @bitrate,
       @year, @label, @genres, @bpm,
       @source_url, @source_platform, @source_quality, @source_link,
-      @user_tags, @has_artwork, @artwork_path,
+      @user_tags, @has_artwork, @artwork_path, @is_linked,
       @created_at
     )
   `);
@@ -192,6 +193,7 @@ export function addTrack(track) {
     user_tags: track.user_tags ?? null,
     has_artwork: track.has_artwork ?? 0,
     artwork_path: track.artwork_path ?? null,
+    is_linked: track.is_linked ?? 0,
     created_at: Date.now(),
   });
 
@@ -228,9 +230,11 @@ export function getTracks({ limit = 50, offset = 0, search = '', filters = [], p
     return db
       .prepare(
         `
-        SELECT t.*
+        SELECT t.*, COALESCE(cp.cnt, 0) AS cue_count
         FROM playlist_tracks pt
         JOIN tracks t ON t.id = pt.track_id
+        LEFT JOIN (SELECT track_id, COUNT(*) AS cnt FROM cue_points GROUP BY track_id) cp
+          ON cp.track_id = t.id
         WHERE pt.playlist_id = @playlistId ${extra}
         ORDER BY pt.position ASC
         LIMIT @limit OFFSET @offset
@@ -243,9 +247,12 @@ export function getTracks({ limit = 50, offset = 0, search = '', filters = [], p
   return db
     .prepare(
       `
-      SELECT * FROM tracks
+      SELECT t.*, COALESCE(cp.cnt, 0) AS cue_count
+      FROM tracks t
+      LEFT JOIN (SELECT track_id, COUNT(*) AS cnt FROM cue_points GROUP BY track_id) cp
+        ON cp.track_id = t.id
       ${where}
-      ORDER BY created_at DESC
+      ORDER BY t.created_at DESC
       LIMIT @limit OFFSET @offset
     `
     )
@@ -292,6 +299,34 @@ export function getTrackById(id) {
   return db.prepare('SELECT * FROM tracks WHERE id = ?').get(id);
 }
 
+/** Returns IDs of all analyzed tracks that can have gain computed. */
+export function getTrackIdsNeedingNormalization() {
+  return db
+    .prepare(`SELECT id FROM tracks WHERE loudness IS NOT NULL`)
+    .all()
+    .map((r) => r.id);
+}
+
+export function getNormalizedTrackCount() {
+  return db
+    .prepare(`SELECT COUNT(*) as cnt FROM tracks WHERE normalized_file_path IS NOT NULL`)
+    .get().cnt;
+}
+
+/** Returns tracks that still have a legacy normalized_file_path set (pre-#260 exports). */
+export function getLegacyNormalizedTracks() {
+  return db
+    .prepare(`SELECT id, normalized_file_path FROM tracks WHERE normalized_file_path IS NOT NULL`)
+    .all();
+}
+
+/** Clears normalized_file_path and source_loudness for all tracks (legacy cleanup). */
+export function clearLegacyNormalizedPaths() {
+  db.prepare(
+    `UPDATE tracks SET normalized_file_path = NULL, source_loudness = NULL WHERE normalized_file_path IS NOT NULL`
+  ).run();
+}
+
 export function removeTrack(id) {
   db.prepare('DELETE FROM tracks WHERE id = ?').run(id);
 }
@@ -309,8 +344,123 @@ export function normalizeLibrary(targetLufs) {
   return info.changes ?? 0;
 }
 
+export function normalizeTracksByIds(trackIds, targetLufs) {
+  const update = db.prepare(
+    `UPDATE tracks SET replay_gain = ROUND((? - loudness) * 10) / 10 WHERE id = ? AND loudness IS NOT NULL`
+  );
+  const read = db.prepare(`SELECT replay_gain FROM tracks WHERE id = ?`);
+  const gains = {};
+  db.transaction(() => {
+    for (const id of trackIds) {
+      const info = update.run(targetLufs, id);
+      if (info.changes) {
+        const row = read.get(id);
+        if (row) gains[id] = row.replay_gain;
+      }
+    }
+  })();
+  return gains;
+}
+
+export function resetNormalization(trackIds = null) {
+  if (trackIds && trackIds.length > 0) {
+    const stmt = db.prepare(
+      `UPDATE tracks SET replay_gain = NULL, normalized_file_path = NULL, source_loudness = NULL WHERE id = ?`
+    );
+    db.transaction(() => {
+      for (const id of trackIds) stmt.run(id);
+    })();
+    return trackIds.length;
+  }
+  const info = db
+    .prepare(
+      `UPDATE tracks SET replay_gain = NULL, normalized_file_path = NULL, source_loudness = NULL`
+    )
+    .run();
+  return info.changes ?? 0;
+}
+
 export function clearTracks() {
   console.log('Clearing all tracks from database');
   db.prepare(`DELETE FROM tracks`).run();
   db.prepare(`VACUUM`).run();
+}
+
+/**
+ * Given an array of { url, id } entry objects, returns a Set of URLs whose
+ * video ID already exists in the library.
+ * Checks source_link, source_url, AND title (yt-dlp stores the video ID in
+ * brackets at the end of the title when source_link is not captured).
+ */
+/**
+ * For each entry check whether a track already exists in the library.
+ * Returns an array of { url, trackId } for every entry that matches.
+ */
+export function getExistingSourceUrls(entries) {
+  if (!entries || entries.length === 0) return [];
+  const results = [];
+  const stmt = db.prepare(
+    `SELECT id FROM tracks
+     WHERE source_link LIKE ? OR source_url LIKE ? OR title LIKE ?
+     LIMIT 1`
+  );
+  for (const { url, id } of entries) {
+    if (!id && !url) continue;
+    const pattern = `%${id || url}%`;
+    const row = stmt.get(pattern, pattern, pattern);
+    if (row) results.push({ url, trackId: row.id });
+  }
+  return results;
+}
+
+export function updateTrackWaveform(trackId, buf) {
+  db.prepare('UPDATE tracks SET waveform_overview = ? WHERE id = ?').run(buf, trackId);
+}
+
+export function getTrackWaveform(trackId) {
+  const row = db.prepare('SELECT waveform_overview FROM tracks WHERE id = ?').get(trackId);
+  return row?.waveform_overview ?? null;
+}
+
+/**
+ * Returns all tracks in a playlist with their source URL fields,
+ * used to determine "already in playlist" status on the selection screen.
+ */
+export function getPlaylistSourceUrls(playlistId) {
+  return db
+    .prepare(
+      `SELECT t.id AS trackId, t.source_url, t.source_link
+       FROM playlist_tracks pt
+       JOIN tracks t ON t.id = pt.track_id
+       WHERE pt.playlist_id = ?`
+    )
+    .all(playlistId);
+}
+
+export function getTracksByPaths(filePaths) {
+  if (!filePaths || filePaths.length === 0) return [];
+  const placeholders = filePaths.map(() => '?').join(',');
+  return db.prepare(`SELECT * FROM tracks WHERE file_path IN (${placeholders})`).all(filePaths);
+}
+
+export function getLinkedTracksBasic() {
+  return db.prepare(`SELECT id, file_path, title, artist FROM tracks WHERE is_linked = 1`).all();
+}
+
+export function getLinkedTrackDirs() {
+  const rows = db.prepare(`SELECT DISTINCT file_path FROM tracks WHERE is_linked = 1`).all();
+  return [...new Set(rows.map((r) => path.dirname(r.file_path)))];
+}
+
+export function remapTracksByPrefix(oldPrefix, newPrefix) {
+  const rows = db
+    .prepare(`SELECT id, file_path FROM tracks WHERE file_path LIKE ?`)
+    .all(oldPrefix + '%');
+  let count = 0;
+  for (const row of rows) {
+    const newPath = newPrefix + row.file_path.slice(oldPrefix.length);
+    db.prepare(`UPDATE tracks SET file_path = ? WHERE id = ?`).run(newPath, row.id);
+    count++;
+  }
+  return count;
 }

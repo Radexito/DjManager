@@ -21,9 +21,10 @@ const IMAGE_MIME = {
 /**
  * Build the HTTP request handler that serves audio files from `audioBase`
  * and optionally artwork files from `artworkBase`.
+ * `allowedBases` is a mutable array; entries added at runtime are respected immediately.
  * Exported separately so it can be unit-tested without spinning up a server.
  */
-export function createMediaRequestHandler(audioBase, artworkBase = null) {
+export function createMediaRequestHandler(audioBase, artworkBase = null, allowedBases = []) {
   return (req, res) => {
     try {
       let urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
@@ -32,10 +33,11 @@ export function createMediaRequestHandler(audioBase, artworkBase = null) {
         urlPath = urlPath.slice(1).replace(/\//g, '\\');
       }
 
-      // Security: only serve files inside the managed audio or artwork directories.
+      // Security: only serve files inside the managed audio, artwork, or explorer-linked directories.
       const inAudio = urlPath.startsWith(audioBase);
       const inArtwork = artworkBase && urlPath.startsWith(artworkBase);
-      if (!inAudio && !inArtwork) {
+      const inAllowed = allowedBases.some((base) => urlPath.startsWith(base));
+      if (!inAudio && !inArtwork && !inAllowed) {
         res.writeHead(403);
         res.end();
         return;
@@ -47,11 +49,24 @@ export function createMediaRequestHandler(audioBase, artworkBase = null) {
       const mime = IMAGE_MIME[ext] || AUDIO_MIME[ext] || (inArtwork ? 'image/jpeg' : 'audio/mpeg');
       const rangeHeader = req.headers['range'];
 
+      // Allow Web Audio API (createMediaElementSource) to process audio from any
+      // renderer origin. In dev mode the renderer runs at localhost:517x while the
+      // server is 127.0.0.1:PORT — different origins — so without this header
+      // Chromium outputs zeroes and the user hears silence.
+      const corsHeaders = { 'Access-Control-Allow-Origin': '*' };
+
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, corsHeaders);
+        res.end();
+        return;
+      }
+
       if (rangeHeader) {
         const [, s, e] = rangeHeader.match(/bytes=(\d+)-(\d*)/) || [];
         const start = parseInt(s, 10);
         const end = e ? Math.min(parseInt(e, 10), total - 1) : total - 1;
         res.writeHead(206, {
+          ...corsHeaders,
           'Content-Type': mime,
           'Content-Range': `bytes ${start}-${end}/${total}`,
           'Accept-Ranges': 'bytes',
@@ -60,6 +75,7 @@ export function createMediaRequestHandler(audioBase, artworkBase = null) {
         fs.createReadStream(urlPath, { start, end }).pipe(res);
       } else {
         res.writeHead(200, {
+          ...corsHeaders,
           'Content-Type': mime,
           'Accept-Ranges': 'bytes',
           'Content-Length': String(total),
@@ -78,11 +94,14 @@ export function createMediaRequestHandler(audioBase, artworkBase = null) {
  * Start the local HTTP media server.
  * @param {string} audioBase    Absolute path to the audio directory.
  * @param {string|null} artworkBase  Optional absolute path to the artwork directory.
+ * @param {string[]} allowedBases  Mutable array of extra allowed base paths (explorer-linked dirs).
  * @returns {Promise<{server: http.Server, port: number}>}
  */
-export function startMediaServer(audioBase, artworkBase = null) {
+export function startMediaServer(audioBase, artworkBase = null, allowedBases = []) {
   return new Promise((resolve, reject) => {
-    const server = http.createServer(createMediaRequestHandler(audioBase, artworkBase));
+    const server = http.createServer(
+      createMediaRequestHandler(audioBase, artworkBase, allowedBases)
+    );
     server.listen(0, '127.0.0.1', () => {
       const port = server.address().port;
       console.log(`[media-server] listening on http://127.0.0.1:${port}`);
