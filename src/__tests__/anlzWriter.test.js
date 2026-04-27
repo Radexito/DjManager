@@ -460,16 +460,38 @@ describe('buildPcobSections', () => {
     expect(pcob1.readUInt32BE(12)).toBe(1);
   });
 
-  it('PCOB2 is always empty stub (memory cues go to PCO2 until PCOB2 format is confirmed)', () => {
-    // Non-empty PCOB2 causes Rekordbox to reject the file — see issue #208
+  it('PCOB2 type field = 0 (memory cues slot)', () => {
     const [, pcob2] = buildPcobSections([memoryCue]);
-    expect(pcob2.readUInt32BE(8)).toBe(24); // len_tag = 24 = header only
-    expect(pcob2.readUInt16BE(18)).toBe(0); // num_cues = 0
+    expect(pcob2.readUInt32BE(12)).toBe(0); // slotType = 0
   });
 
-  it('PCOB2 stays empty even when there are memory cues', () => {
-    const [, pcob2] = buildPcobSections([hotCue, memoryCue]);
-    expect(pcob2.readUInt32BE(8)).toBe(24);
+  it('PCOB2 contains memory cue entries (#232)', () => {
+    const [, pcob2] = buildPcobSections([memoryCue]);
+    expect(pcob2.readUInt32BE(8)).toBe(24 + 56); // len_tag = header + 1 PCPT
+    expect(pcob2.readUInt16BE(18)).toBe(1); // num_cues = 1
+  });
+
+  it('PCOB2 mem_count = 0x00000000 when entries present (verified capture 42)', () => {
+    // Native Rekordbox writes 0x00000000 here for memory-cue slots with entries.
+    // Writing 0xFFFFFFFF causes Rekordbox to reject the entire DAT file.
+    const [, pcob2] = buildPcobSections([memoryCue]);
+    expect(pcob2.readUInt32BE(20)).toBe(0x00000000);
+  });
+
+  it('PCOB1 mem_count = 0xFFFFFFFF for hot-cue slot', () => {
+    const [pcob1] = buildPcobSections([hotCue]);
+    expect(pcob1.readUInt32BE(20)).toBe(0xffffffff);
+  });
+
+  it('PCOB2 PCPT entry for memory cue has hot_cue_num = 0', () => {
+    const [, pcob2] = buildPcobSections([memoryCue]);
+    const pcptStart = 24;
+    expect(pcob2.readUInt32BE(pcptStart + 12)).toBe(0); // hot_cue_num = 0 = memory
+  });
+
+  it('PCOB2 is empty when no memory cues', () => {
+    const [, pcob2] = buildPcobSections([hotCue]);
+    expect(pcob2.readUInt32BE(8)).toBe(24); // header only = empty
   });
 
   it('PCPT entry for hot cue has status = 0 (native Rekordbox value)', () => {
@@ -556,7 +578,15 @@ describe('buildExtPcobSections', () => {
     expect(ext1.readUInt32BE(8)).toBe(24); // empty — no D-H cues
   });
 
-  it('EXT PCOB2 is always empty stub', () => {
+  it('EXT PCOB2 contains memory cues (#232)', () => {
+    const memoryCue = { position_ms: 5000, color: '#00ff00', hot_cue_index: -1 };
+    const [, ext2] = buildExtPcobSections([memoryCue]);
+    expect(ext2.readUInt32BE(8)).toBe(24 + 56); // len_tag = header + 1 entry
+    expect(ext2.readUInt16BE(18)).toBe(1);
+    expect(ext2.readUInt32BE(24 + 12)).toBe(0); // hot_cue_num = 0 = memory
+  });
+
+  it('EXT PCOB2 is empty when no memory cues', () => {
     const cues = [{ position_ms: 1000, color: '#ff9900', hot_cue_index: 3 }];
     const [, ext2] = buildExtPcobSections(cues);
     expect(ext2.readUInt32BE(8)).toBe(24);
