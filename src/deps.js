@@ -10,7 +10,6 @@ import { createWriteStream } from 'fs';
 import { app } from 'electron';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
-import { findTidalDlPath } from './audio/tidalDlManager.js';
 const execAsync = promisify(exec);
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
@@ -49,16 +48,22 @@ export function getUvRuntimePath() {
   return path.join(getBinDir(), process.platform === 'win32' ? 'uv.exe' : 'uv');
 }
 
-function versionFile(name) {
-  return path.join(getBinDir(), `${name}.version`);
+export function getTidalBinPath() {
+  return path.join(getBinDir(), process.platform === 'win32' ? 'tdn.exe' : 'tdn');
 }
 
-function readVersion(name) {
-  try {
-    return JSON.parse(fs.readFileSync(versionFile(name), 'utf8'));
-  } catch {
-    return null;
-  }
+// env vars that pin uv tool install/list to DjManager's own bin dir
+function uvToolEnv() {
+  const binDir = getBinDir();
+  return {
+    ...process.env,
+    UV_TOOL_DIR: path.join(binDir, 'uv-tools'),
+    UV_TOOL_BIN_DIR: binDir,
+  };
+}
+
+function versionFile(name) {
+  return path.join(getBinDir(), `${name}.version`);
 }
 
 function writeVersion(name, data) {
@@ -66,20 +71,60 @@ function writeVersion(name, data) {
   fs.writeFileSync(versionFile(name), JSON.stringify(data, null, 2));
 }
 
-export function getInstalledVersions() {
-  return {
-    ffmpeg: readVersion('ffmpeg'),
-    analyzer: readVersion('analyzer'),
-    ytDlp: readVersion('yt-dlp'),
-    tidalDlNg: readVersion('tidal-dl-ng'),
-  };
+export async function getInstalledVersions() {
+  const [ffmpeg, analyzer, ytDlp, tidalDlNg] = await Promise.all([
+    probeFfmpegVersion(),
+    probeAnalyzerVersion(),
+    probeYtDlpVersion(),
+    probeTidalVersion(),
+  ]);
+  return { ffmpeg, analyzer, ytDlp, tidalDlNg };
+}
+
+async function probeFfmpegVersion() {
+  const binPath = getFfmpegRuntimePath();
+  if (!fs.existsSync(binPath)) return null;
+  try {
+    const { stdout } = await execAsync(`"${binPath}" -version`);
+    const match = stdout.match(/ffmpeg version (\S+)/);
+    return { version: match ? match[1] : 'installed' };
+  } catch {
+    return { version: 'installed' };
+  }
+}
+
+async function probeAnalyzerVersion() {
+  const binPath = getAnalyzerRuntimePath();
+  if (!fs.existsSync(binPath)) return null;
+  try {
+    const { stdout } = await execAsync(`"${binPath}" --version`);
+    return { version: stdout.trim() || 'installed' };
+  } catch {
+    return { version: 'installed' };
+  }
+}
+
+async function probeYtDlpVersion() {
+  const binPath = getYtDlpRuntimePath();
+  if (!fs.existsSync(binPath)) return null;
+  try {
+    const { stdout } = await execAsync(`"${binPath}" --version`);
+    return { version: stdout.trim() || 'installed' };
+  } catch {
+    return { version: 'installed' };
+  }
+}
+
+async function probeTidalVersion() {
+  if (!fs.existsSync(getTidalBinPath())) return null;
+  return { version: await getTidalDlNgVersion() };
 }
 
 async function getTidalDlNgVersion() {
   const uvPath = getUvRuntimePath();
   if (fs.existsSync(uvPath)) {
     try {
-      const { stdout } = await execAsync(`"${uvPath}" tool list`);
+      const { stdout } = await execAsync(`"${uvPath}" tool list`, { env: uvToolEnv() });
       const match = stdout.match(/tidal-dl-ng(?:-for-dj)?\s+v?([\d.]+)/i);
       if (match) return match[1];
     } catch {
@@ -160,7 +205,7 @@ async function installTidalDlNgDep(onProgress) {
       uvPath,
       ['tool', 'install', '--reinstall', 'git+https://github.com/Radexito/tidal-dl-ng-For-DJ.git'],
       {
-        env: { ...process.env },
+        env: uvToolEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
       }
     );
@@ -201,7 +246,7 @@ async function upgradeTidalDlNgDep(onProgress) {
           'git+https://github.com/Radexito/tidal-dl-ng-For-DJ.git',
         ],
         {
-          env: { ...process.env },
+          env: uvToolEnv(),
           stdio: ['ignore', 'pipe', 'pipe'],
         }
       );
@@ -633,21 +678,19 @@ export async function ensureDeps(onProgress) {
     fs.existsSync(getFfmpegRuntimePath()) && fs.existsSync(getFfprobeRuntimePath());
   const analyzerReady = fs.existsSync(getAnalyzerRuntimePath());
   const ytDlpReady = fs.existsSync(getYtDlpRuntimePath());
-  const tidalReady = Boolean(findTidalDlPath());
-  if (ffmpegReady && analyzerReady && ytDlpReady && tidalReady) return;
+  if (ffmpegReady && analyzerReady && ytDlpReady) return;
 
   const binDir = getBinDir();
   await fs.promises.mkdir(binDir, { recursive: true });
   const tmp = path.join(app.getPath('temp'), 'djman-deps');
   await fs.promises.mkdir(tmp, { recursive: true });
 
-  const totalSteps =
-    (!ffmpegReady ? 1 : 0) +
-    (!analyzerReady ? 1 : 0) +
-    (!ytDlpReady ? 1 : 0) +
-    (!tidalReady ? 1 : 0);
+  // Tidal is optional and non-fatal — exclude from required step count so upgrades
+  // that already have FFmpeg/analyzer/yt-dlp don't show a misleading [1/1].
+  const totalSteps = (!ffmpegReady ? 1 : 0) + (!analyzerReady ? 1 : 0) + (!ytDlpReady ? 1 : 0);
   let step = 0;
-  const stepCb = (msg, pct) => onProgress?.(`[${step}/${totalSteps}] ${msg}`, pct);
+  const stepCb = (msg, pct) =>
+    onProgress?.(totalSteps > 0 ? `[${step}/${totalSteps}] ${msg}` : msg, pct);
 
   try {
     if (!ffmpegReady) {
@@ -662,25 +705,14 @@ export async function ensureDeps(onProgress) {
       step++;
       await downloadYtDlp(tmp, stepCb);
     }
-    if (!tidalReady) {
-      step++;
-      stepCb('Installing tidal-dl-ng…', 0);
-      try {
-        await installTidalDlNgDep((msg) => stepCb(msg, -1));
-        stepCb('tidal-dl-ng installed.', 100);
-      } catch (err) {
-        console.warn('[deps] tidal-dl-ng install failed (non-fatal):', err.message);
-        stepCb('tidal-dl-ng install failed — Python 3.12+ may not be available.', -1);
-      }
-    }
-    onProgress?.('Setup complete.', 100);
+    onProgress?.(totalSteps > 0 ? 'Setup complete.' : 'Dependencies up to date.', 100);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
 
 export async function checkForUpdates() {
-  const installed = getInstalledVersions();
+  const installed = await getInstalledVersions();
   const result = { analyzer: null, ytDlp: null };
 
   try {
