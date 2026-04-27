@@ -117,36 +117,6 @@ function parseTags(ffprobeData) {
   };
 }
 
-function getNormalizedStoragePath(hash, ext) {
-  const base = getLibraryBase();
-  const shard = hash.slice(0, 2);
-  fs.mkdirSync(path.join(base, shard), { recursive: true });
-  return path.join(base, shard, `${hash}_norm${ext}`);
-}
-
-export async function normalizeAudioFile(track, targetLufs) {
-  // Always compute gain from the ORIGINAL loudness, not the normalized file's loudness.
-  // source_loudness is set once (first normalization) and never overwritten.
-  const sourceLoudness = track.source_loudness ?? track.loudness;
-  if (sourceLoudness == null) throw new Error('Track has no loudness data');
-  const gain = targetLufs - sourceLoudness;
-  const ext = path.extname(track.file_path);
-  const normalizedPath = getNormalizedStoragePath(track.file_hash, ext);
-
-  await execFileAsync(getFfmpegRuntimePath(), [
-    '-y',
-    '-i',
-    track.file_path,
-    '-filter:a',
-    `volume=${gain.toFixed(2)}dB`,
-    '-c:v',
-    'copy',
-    normalizedPath,
-  ]);
-
-  return normalizedPath;
-}
-
 export function spawnAnalysis(trackId, filePath, { silent = false } = {}) {
   // Cancel any existing analysis for this track before spawning a new one
   cancelAnalysis(trackId);
@@ -236,19 +206,9 @@ export function spawnAnalysis(trackId, filePath, { silent = false } = {}) {
         console.warn(`[waveform] overview failed for track ${trackId}:`, err.message)
       );
 
-    // Include normalized_file_path from DB so renderer knows to switch playback to the normalized file
-    const trackAfterUpdate = getTrackById(trackId);
-    const normalized_file_path = trackAfterUpdate?.normalized_file_path ?? null;
-    console.log(
-      `[importManager] track-updated for ${trackId}: normalized_file_path=${normalized_file_path}`
-    );
-
     // Notify renderer
     if (global.mainWindow) {
-      global.mainWindow.webContents.send('track-updated', {
-        trackId,
-        analysis: { ...update, normalized_file_path },
-      });
+      global.mainWindow.webContents.send('track-updated', { trackId, analysis: update });
     }
 
     // Mark this worker as done (silent re-analyses don't affect the counter)
@@ -256,29 +216,6 @@ export function spawnAnalysis(trackId, filePath, { silent = false } = {}) {
       analysisActive--;
       analysisDone++;
       sendAnalysisProgress();
-    }
-
-    // Auto-normalize on import: only when setting is enabled AND this is a fresh (non-normalized) track
-    const autoNormalize = getSetting('auto_normalize_on_import', 'false') === 'true';
-    const alreadyNormalized = trackAfterUpdate?.normalized_file_path != null;
-    if (autoNormalize && !alreadyNormalized && update.loudness != null) {
-      const targetLufs = Number(getSetting('normalize_target_lufs', '-9'));
-      normalizeAudioFile(trackAfterUpdate, targetLufs)
-        .then((normalizedPath) => {
-          const dbUpdate = { normalized_file_path: normalizedPath };
-          if (trackAfterUpdate.source_loudness == null) dbUpdate.source_loudness = update.loudness;
-          updateTrack(trackId, dbUpdate);
-          if (global.mainWindow) {
-            global.mainWindow.webContents.send('track-updated', {
-              trackId,
-              analysis: { normalized_file_path: normalizedPath, analyzed: 0 },
-            });
-          }
-          spawnAnalysis(trackId, normalizedPath, { silent: true });
-        })
-        .catch((err) => {
-          console.error(`[auto-normalize] failed for track ${trackId}:`, err.message);
-        });
     }
 
     // Auto-generate cue points: only when setting is enabled and track has no cue points yet

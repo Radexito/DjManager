@@ -141,7 +141,7 @@ function ExportModal({ onClose, playlistId, initialMode }) {
                 checked={useNormalized}
                 onChange={(e) => setUseNormalized(e.target.checked)}
               />
-              <span>Export normalized files when available</span>
+              <span>Apply loudness normalization to exported files</span>
             </label>
             <div className="export-options">
               <button className="export-option-btn" onClick={() => pickFolder('rekordbox')}>
@@ -179,7 +179,7 @@ function ExportModal({ onClose, playlistId, initialMode }) {
                 checked={useNormalized}
                 onChange={(e) => setUseNormalized(e.target.checked)}
               />
-              <span>Export normalized files when available</span>
+              <span>Apply loudness normalization to exported files</span>
             </label>
             <div className="export-confirm-actions">
               <button className="export-option-btn" onClick={() => pickFolder(mode)}>
