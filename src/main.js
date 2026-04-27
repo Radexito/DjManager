@@ -296,6 +296,15 @@ function cleanupLegacyNormalizedFiles() {
   );
 }
 
+let _lastDepLog = '';
+function sendDepsProgress(data) {
+  if (data && (data.pct === 0 || data.pct === 100) && data.msg !== _lastDepLog) {
+    _lastDepLog = data.msg;
+    console.log('[deps]', data.msg);
+  }
+  if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', data);
+}
+
 async function initApp() {
   initLogger();
   if (process.platform === 'win32') logDiagnostics();
@@ -319,26 +328,15 @@ async function initApp() {
   if (process.env.E2E_TEST === '1') return;
 
   // Download deps if not already present
-  let _lastDepLog = '';
-  ensureDeps((msg, pct) => {
-    if ((pct === 0 || pct === 100 || pct === undefined) && msg !== _lastDepLog) {
-      _lastDepLog = msg;
-      console.log('[deps]', msg);
-    }
-    if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', { msg, pct });
-  })
+  ensureDeps(sendDepsProgress)
     .then(() => {
-      if (global.mainWindow) global.mainWindow.webContents.send('deps-progress', null);
+      sendDepsProgress(null);
       // Auto-generate waveforms for any analyzed tracks missing overview data
       autoGenerateMissingWaveforms();
     })
     .catch((err) => {
       console.error('[deps] Failed to download FFmpeg:', err.message);
-      if (global.mainWindow)
-        global.mainWindow.webContents.send('deps-progress', {
-          msg: `Error: ${err.message}`,
-          pct: -1,
-        });
+      sendDepsProgress({ msg: `Error: ${err.message}`, pct: -1, error: err.message });
     });
 
   Menu.setApplicationMenu(null);
@@ -350,6 +348,14 @@ async function initApp() {
 
 // IPC Handlers
 ipcMain.handle('get-media-port', () => mediaServerPort);
+
+ipcMain.handle('retry-deps', () => {
+  ensureDeps(sendDepsProgress)
+    .then(() => sendDepsProgress(null))
+    .catch((err) =>
+      sendDepsProgress({ msg: `Error: ${err.message}`, pct: -1, error: err.message })
+    );
+});
 ipcMain.handle('get-tracks', (_, params) => getTracks(params));
 ipcMain.handle('get-track-ids', (_, params) => getTrackIds(params));
 ipcMain.handle('get-track-waveform', (_, trackId) => {

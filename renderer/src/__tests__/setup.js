@@ -45,6 +45,7 @@ window.api = {
   getDepVersions: vi.fn().mockResolvedValue({}),
   checkDepUpdates: vi.fn().mockResolvedValue({}),
   updateAllDeps: vi.fn().mockResolvedValue(undefined),
+  retryDeps: vi.fn().mockResolvedValue(undefined),
   updateTidalDlNg: vi.fn().mockResolvedValue({ ok: true }),
   clearLibrary: vi.fn().mockResolvedValue(undefined),
   clearUserData: vi.fn().mockResolvedValue(undefined),
