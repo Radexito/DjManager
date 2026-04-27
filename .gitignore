@@ -141,6 +141,10 @@ vite.config.ts.timestamp-*
 .vite/
 ffmpeg/
 
+# System shared libraries (bundled at runtime, not tracked)
+*.so
+*.so.*
+
 library.db
 # Never commit audio/video files
 *.mp3

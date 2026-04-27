@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import ImportPlaylistModal from './ImportPlaylistModal.jsx';
 import { useDownload } from './DownloadContext.jsx';
 import { useTidalDownload } from './TidalDownloadContext.jsx';
 import './Sidebar.css';
@@ -27,12 +28,15 @@ function Sidebar({
   onMenuSelect,
   onExportPlaylistRekordboxUsb,
   onExportPlaylistAll,
+  onExportPlaylistNml,
+  onExportNmlAll,
 }) {
   const { sidebarProgress: ytDlpSidebarProgress } = useDownload();
   const { sidebarProgress: tidalSidebarProgress } = useTidalDownload();
   const [playlists, setPlaylists] = useState([]);
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
   const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
+  const [pendingImportFiles, setPendingImportFiles] = useState(null); // files waiting for playlist choice
   const [analysisProgress, setAnalysisProgress] = useState(null); // { done, total } | null
   const [waveformGenProgress, setWaveformGenProgress] = useState(null); // { completed, total } | null
   const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
@@ -207,6 +211,16 @@ function Sidebar({
   const handleExportPlaylistAll = (id) => {
     setPlaylistMenu(null);
     onExportPlaylistAll(id);
+  };
+
+  const handleExportPlaylistNml = (id) => {
+    setPlaylistMenu(null);
+    onExportPlaylistNml?.(id);
+  };
+
+  const handleExportNmlAll = (id) => {
+    setPlaylistMenu(null);
+    onExportNmlAll?.(id);
   };
 
   const handleDeletePlaylist = async (id) => {
@@ -557,6 +571,15 @@ function Sidebar({
             onClick={() => handleExportPlaylistAll(playlistMenu.id)}
           >
             📦 Export All to USB…
+          </div>
+          <div
+            className="context-menu-item"
+            onClick={() => handleExportPlaylistNml(playlistMenu.id)}
+          >
+            📄 Export Traktor NML…
+          </div>
+          <div className="context-menu-item" onClick={() => handleExportNmlAll(playlistMenu.id)}>
+            📦 Export All as NML…
           </div>
           <div className="context-menu-separator" />
           <div

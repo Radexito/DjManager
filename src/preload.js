@@ -257,4 +257,13 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('deps-progress', handler);
     return () => ipcRenderer.removeListener('deps-progress', handler);
   },
+
+  // Traktor NML export
+  exportNml: (opts) => ipcRenderer.invoke('export-nml', opts),
+  exportNmlAll: (opts) => ipcRenderer.invoke('export-nml-all', opts),
+  onExportNmlProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('export-nml-progress', handler);
+    return () => ipcRenderer.removeListener('export-nml-progress', handler);
+  },
 });

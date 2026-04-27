@@ -6,6 +6,7 @@ import DownloadView from './DownloadView.jsx';
 import TidalDownloadView from './TidalDownloadView.jsx';
 import FileExplorerView from './FileExplorerView.jsx';
 import SettingsModal from './SettingsModal.jsx';
+import NmlExportModal from './NmlExportModal.jsx';
 import ExportModal from './ExportModal.jsx';
 import PlayerBar from './PlayerBar.jsx';
 import TopBar from './TopBar.jsx';
@@ -18,6 +19,7 @@ function App() {
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('music');
   const [showSettings, setShowSettings] = useState(false);
   const [exportState, setExportState] = useState(null); // { playlistId, mode } | null
+  const [nmlModal, setNmlModal] = useState(null); // { playlistId, mode } | null
   const [depsProgress, setDepsProgress] = useState(null); // { msg, pct } or null
   const [zoomLevel, setZoomLevel] = useState(null); // shown when != 1.0, null = hidden
   const [zoomKey, setZoomKey] = useState(0); // incremented on each zoom change to restart bar animation
@@ -121,6 +123,8 @@ function App() {
                   setExportState({ playlistId: id, mode: 'rekordbox' })
                 }
                 onExportPlaylistAll={(id) => setExportState({ playlistId: id, mode: 'all' })}
+                onExportPlaylistNml={(id) => setNmlModal({ playlistId: id, mode: 'playlist' })}
+                onExportNmlAll={() => setNmlModal({ playlistId: null, mode: 'all' })}
               />
               {/* Always mounted so state persists when switching tabs */}
               <DownloadView
@@ -157,6 +161,13 @@ function App() {
               playlistId={exportState.playlistId}
               initialMode={exportState.mode}
               onClose={() => setExportState(null)}
+            />
+          )}
+          {nmlModal && (
+            <NmlExportModal
+              playlistId={nmlModal.playlistId}
+              initialMode={nmlModal.mode}
+              onClose={() => setNmlModal(null)}
             />
           )}
           {zoomLevel !== null && zoomLevel !== 1.0 && (
