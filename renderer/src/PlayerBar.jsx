@@ -423,7 +423,9 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
             />
             {duration > 0 &&
               cuePoints
-                .filter((cue) => (cue.hot_cue_index >= 0 ? showHotCues : showMemCues))
+                .filter(
+                  (cue) => cue.enabled !== 0 && (cue.hot_cue_index >= 0 ? showHotCues : showMemCues)
+                )
                 .map((cue) => {
                   const pct = Math.min((cue.position_ms / 1000 / duration) * 100, 100);
                   return (
