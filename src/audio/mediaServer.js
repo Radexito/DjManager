@@ -49,11 +49,24 @@ export function createMediaRequestHandler(audioBase, artworkBase = null, allowed
       const mime = IMAGE_MIME[ext] || AUDIO_MIME[ext] || (inArtwork ? 'image/jpeg' : 'audio/mpeg');
       const rangeHeader = req.headers['range'];
 
+      // Allow Web Audio API (createMediaElementSource) to process audio from any
+      // renderer origin. In dev mode the renderer runs at localhost:517x while the
+      // server is 127.0.0.1:PORT — different origins — so without this header
+      // Chromium outputs zeroes and the user hears silence.
+      const corsHeaders = { 'Access-Control-Allow-Origin': '*' };
+
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, corsHeaders);
+        res.end();
+        return;
+      }
+
       if (rangeHeader) {
         const [, s, e] = rangeHeader.match(/bytes=(\d+)-(\d*)/) || [];
         const start = parseInt(s, 10);
         const end = e ? Math.min(parseInt(e, 10), total - 1) : total - 1;
         res.writeHead(206, {
+          ...corsHeaders,
           'Content-Type': mime,
           'Content-Range': `bytes ${start}-${end}/${total}`,
           'Accept-Ranges': 'bytes',
@@ -62,6 +75,7 @@ export function createMediaRequestHandler(audioBase, artworkBase = null, allowed
         fs.createReadStream(urlPath, { start, end }).pipe(res);
       } else {
         res.writeHead(200, {
+          ...corsHeaders,
           'Content-Type': mime,
           'Accept-Ranges': 'bytes',
           'Content-Length': String(total),

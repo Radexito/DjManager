@@ -11,6 +11,8 @@ import {
   clearTracks,
   getTrackIdsNeedingNormalization,
   getNormalizedTrackCount,
+  getLegacyNormalizedTracks,
+  clearLegacyNormalizedPaths,
   resetNormalization,
 } from '../db/trackRepository.js';
 
@@ -372,7 +374,7 @@ describe('source_link field', () => {
 });
 
 describe('getTrackIdsNeedingNormalization', () => {
-  it('returns ids of tracks that have loudness but no normalized_file_path', () => {
+  it('returns ids of all analyzed tracks with loudness data', () => {
     const id1 = addTrack({ ...SAMPLE, file_hash: 'nin1', file_path: '/tmp/nin1.mp3' });
     const id2 = addTrack({ ...SAMPLE, file_hash: 'nin2', file_path: '/tmp/nin2.mp3' });
     updateTrack(id1, { loudness: -14 });
@@ -382,13 +384,11 @@ describe('getTrackIdsNeedingNormalization', () => {
     expect(ids).toContain(id2);
   });
 
-  it('excludes tracks that already have a normalized_file_path', () => {
+  it('includes tracks regardless of normalized_file_path (legacy column)', () => {
     const id = addTrack({ ...SAMPLE, file_hash: 'nin3', file_path: '/tmp/nin3.mp3' });
-    updateTrack(id, { loudness: -14 });
-    // Manually set normalized_file_path via raw update to simulate already-normalized
-    updateTrack(id, { normalized_file_path: '/tmp/nin3_norm.mp3' });
+    updateTrack(id, { loudness: -14, normalized_file_path: '/tmp/nin3_norm.mp3' });
     const ids = getTrackIdsNeedingNormalization();
-    expect(ids).not.toContain(id);
+    expect(ids).toContain(id);
   });
 
   it('excludes tracks with no loudness data', () => {
@@ -453,5 +453,45 @@ describe('resetNormalization', () => {
     expect(getTrackById(id1).source_loudness).toBeNull();
     // id2 should be untouched
     expect(getTrackById(id2).normalized_file_path).toBe('/tmp/rn5_norm.mp3');
+  });
+});
+
+describe('getLegacyNormalizedTracks / clearLegacyNormalizedPaths', () => {
+  it('getLegacyNormalizedTracks returns empty array when no legacy paths exist', () => {
+    expect(getLegacyNormalizedTracks()).toEqual([]);
+  });
+
+  it('getLegacyNormalizedTracks returns tracks that have normalized_file_path set', () => {
+    const id1 = addTrack({ ...SAMPLE, file_hash: 'leg1', file_path: '/tmp/leg1.mp3' });
+    const id2 = addTrack({ ...SAMPLE, file_hash: 'leg2', file_path: '/tmp/leg2.mp3' });
+    updateTrack(id1, { normalized_file_path: '/tmp/leg1_norm.mp3' });
+
+    const legacy = getLegacyNormalizedTracks();
+    expect(legacy).toHaveLength(1);
+    expect(legacy[0].id).toBe(id1);
+    expect(legacy[0].normalized_file_path).toBe('/tmp/leg1_norm.mp3');
+
+    // id2 has no normalized path so it should not appear
+    expect(legacy.find((r) => r.id === id2)).toBeUndefined();
+  });
+
+  it('clearLegacyNormalizedPaths nullifies normalized_file_path and source_loudness', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'leg3', file_path: '/tmp/leg3.mp3' });
+    updateTrack(id, { normalized_file_path: '/tmp/leg3_norm.mp3', source_loudness: -14 });
+
+    clearLegacyNormalizedPaths();
+
+    const track = getTrackById(id);
+    expect(track.normalized_file_path).toBeNull();
+    expect(track.source_loudness).toBeNull();
+  });
+
+  it('clearLegacyNormalizedPaths does not touch tracks without a legacy path', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'leg4', file_path: '/tmp/leg4.mp3' });
+    updateTrack(id, { loudness: -12 });
+
+    clearLegacyNormalizedPaths();
+
+    expect(getTrackById(id).loudness).toBeCloseTo(-12);
   });
 });

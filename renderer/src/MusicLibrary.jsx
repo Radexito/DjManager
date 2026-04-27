@@ -464,8 +464,6 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     play,
     stop,
     currentTrack,
-    isPlaying,
-    togglePlay,
     currentPlaylistId,
     mediaPort,
     patchCurrentTrack,
@@ -521,8 +519,6 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const headerRef = useRef(null);
   const headerScrollRef = useRef(null); // syncs header horizontal scroll to content scroll
   const dndScrollRef = useRef(null); // ref to playlist DnD scroll container
-  // Tracks whether we should resume playback after normalization finishes re-analyzing
-  const normalizeResumeRef = useRef(null); // { id, shouldResume } | null
   // When set to true, the next loadTracks call will animate truly-new incoming rows
   const animateNextLoadRef = useRef(false);
   // Snapshot of IDs already in the list before a reload — used to diff truly-new rows
@@ -685,30 +681,6 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
 
       // Keep PlayerContext's currentTrack in sync
       patchCurrentTrack(trackId, merged);
-
-      // If this completes the full analysis of a track being normalized that was playing,
-      // reload the audio element to use the new normalized file, then optionally resume
-      if (isAnalyzed) {
-        console.log(
-          '[normalize] track-updated (full analysis) trackId=',
-          trackId,
-          'normalized_file_path=',
-          analysis.normalized_file_path,
-          'resume ref=',
-          normalizeResumeRef.current
-        );
-        if (analysis.normalized_file_path && normalizeResumeRef.current?.id === trackId) {
-          const { shouldResume } = normalizeResumeRef.current;
-          normalizeResumeRef.current = null;
-          console.log(
-            '[normalize] calling reloadCurrentTrack path=',
-            analysis.normalized_file_path,
-            'shouldResume=',
-            shouldResume
-          );
-          reloadCurrentTrack(analysis.normalized_file_path, shouldResume);
-        }
-      }
     });
     return unsub;
   }, [patchCurrentTrack, reloadCurrentTrack]);
@@ -1071,53 +1043,27 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     const targetIds = contextMenu?.targetIds ?? [];
     setContextMenu(null);
 
-    // Pause if the currently-playing track is among those being normalized
-    const playingTarget = currentTrack && targetIds.includes(currentTrack.id);
-    if (playingTarget) {
-      normalizeResumeRef.current = { id: currentTrack.id, shouldResume: isPlaying };
-      if (isPlaying) togglePlay(); // pause
-    }
-
-    // Gray out tracks immediately so there's instant visual feedback
-    setTracks((prev) => prev.map((t) => (targetIds.includes(t.id) ? { ...t, analyzed: 0 } : t)));
     const { normalized, skipped } = await window.api.normalizeTracksAudio({ trackIds: targetIds });
     if (normalized === 0) {
-      // Un-gray if nothing was normalized
-      setTracks((prev) => prev.map((t) => (targetIds.includes(t.id) ? { ...t, analyzed: 1 } : t)));
-      const wasPlaying = normalizeResumeRef.current?.shouldResume ?? false;
-      normalizeResumeRef.current = null;
-      // Resume if we paused for nothing
-      if (playingTarget && wasPlaying) togglePlay();
       showToast(
         skipped > 0
           ? 'No analyzed tracks — analyze tracks first to get loudness data.'
           : 'Nothing to normalize.',
         false
       );
+    } else {
+      showToast(`Gain applied to ${normalized} track${normalized !== 1 ? 's' : ''}.`);
     }
-    // On success: track-updated IPC events (from normalization + re-analysis) update each row
-    // and reloadCurrentTrack resumes playback once re-analysis is done
-  }, [contextMenu, currentTrack, isPlaying, togglePlay, showToast]);
+    // track-updated IPC events carry updated replay_gain values into the track list
+  }, [contextMenu, showToast]);
 
   const handleResetNormalization = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
     setContextMenu(null);
     await window.api.resetNormalization({ trackIds: targetIds });
-    // Clear gain + normalized path, mark as re-analyzing (analysis runs in background)
-    setTracks((prev) =>
-      prev.map((t) =>
-        targetIds.includes(t.id)
-          ? { ...t, replay_gain: null, normalized_file_path: null, analyzed: 0 }
-          : t
-      )
-    );
-    for (const id of targetIds) {
-      patchCurrentTrack(id, { replay_gain: null, normalized_file_path: null });
-    }
-    showToast(
-      `Reset ${targetIds.length} track${targetIds.length !== 1 ? 's' : ''} — re-analyzing…`
-    );
-  }, [contextMenu, patchCurrentTrack, showToast]);
+    // track-updated IPC events carry replay_gain: null back to the track list
+    showToast(`Gain reset for ${targetIds.length} track${targetIds.length !== 1 ? 's' : ''}.`);
+  }, [contextMenu, showToast]);
 
   const handleRemove = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
