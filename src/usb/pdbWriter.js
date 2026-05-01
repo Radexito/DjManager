@@ -350,14 +350,16 @@ export function buildTrackRow(params) {
   } = params;
 
   // Converts replay_gain dB to the linear amplitude scale factor CDJs use for Auto Gain.
-  // Reference point 19048 (0x4A68) and 30967 (0x78F7) are the "unanalyzed" defaults
-  // written by native Rekordbox when no loudness analysis has run.
+  // Reference constants back-calculated from native Rekordbox capture 20 (+2.6 dB loudness):
+  //   Unnamed7 = 0x4975 = 18805 → ref7 = round(18805 / 10^(2.6/20)) = 13940
+  //   Unnamed8 = 0x5DC9 = 24009 → ref8 = round(24009 / 10^(2.6/20)) = 17802
+  // Falls back to the reference value (0 dB) when no loudness analysis has run.
   const gainToAutoGain = (ref) =>
     replayGain == null
       ? ref
       : Math.max(0, Math.min(0xffff, Math.round(10 ** (replayGain / 20) * ref)));
-  const autoGain7 = gainToAutoGain(19048); // offset 24 — CDJ-NXS2 auto-gain field
-  const autoGain8 = gainToAutoGain(30967); // offset 26 — second gain reference
+  const autoGain7 = gainToAutoGain(13940); // offset 24 — CDJ auto-gain field
+  const autoGain8 = gainToAutoGain(17802); // offset 26 — second gain reference
 
   // String encoding order matches rex track.go StringOffsets struct and MarshalBinary
   const strBufs = [
