@@ -153,9 +153,10 @@ Two PCOB sections (slot 1 = hot cues, slot 2 = memory cues).
 **Slot 1 (hot cues, type = 1)** — contains PCPT sub-tags for hot cue slots A–C (indices 0–2).
 Hot cue slots D–H (indices 3–7) go in EXT PCOB slot 1 (see EXT section below).
 
-**Slot 2 (memory cues, type = 0)** — always the empty 24-byte stub.
-Memory cue format in PCOB2 is unconfirmed (non-empty PCOB2 causes Rekordbox to reject the
-entire file). Memory cues are stored in EXT PCO2 slot 2 instead.
+**Slot 2 (memory cues, type = 0)** — populated with PCPT sub-tags for memory cues when present.
+Confirmed from native capture 42: `mem_count` field (bytes 20–23) must be `0x00000000` when
+entries are present (not the `0xFFFFFFFF` sentinel used by hot-cue slots); writing the wrong
+value causes Rekordbox to reject the entire DAT file.
 
 #### PCOB header (24 bytes)
 

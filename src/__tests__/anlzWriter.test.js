@@ -578,12 +578,12 @@ describe('buildExtPcobSections', () => {
     expect(ext1.readUInt32BE(8)).toBe(24); // empty — no D-H cues
   });
 
-  it('EXT PCOB2 contains memory cues (#232)', () => {
+  it('EXT PCOB2 is always the empty stub, even when memory cues are present', () => {
+    // Native captures confirm EXT PCOB2 is never populated — memory cues go into PCO2 slot 2.
     const memoryCue = { position_ms: 5000, color: '#00ff00', hot_cue_index: -1 };
     const [, ext2] = buildExtPcobSections([memoryCue]);
-    expect(ext2.readUInt32BE(8)).toBe(24 + 56); // len_tag = header + 1 entry
-    expect(ext2.readUInt16BE(18)).toBe(1);
-    expect(ext2.readUInt32BE(24 + 12)).toBe(0); // hot_cue_num = 0 = memory
+    expect(ext2.readUInt32BE(8)).toBe(24); // always 24-byte empty stub
+    expect(ext2.readUInt16BE(18)).toBe(0); // num_cues = 0
   });
 
   it('EXT PCOB2 is empty when no memory cues', () => {
