@@ -466,6 +466,196 @@ Strings are length-prefixed. The first byte determines encoding:
 
 ---
 
+## exportLibrary.db — SQLCipher Track Index (Rekordbox PC + CDJ browse menus)
+
+Located at `{usbRoot}/PIONEER/rekordbox/exportLibrary.db`. Used by Rekordbox PC and CDJ/XDJ hardware for browse menus, playlist navigation, cue recall, and track metadata display. CDJs do **not** use it for audio playback — that relies on `export.pdb` and ANLZ files.
+
+### Encryption
+
+SQLCipher-encrypted SQLite. Key and cipher parameters were extracted by hooking `sqlite3_key` in Rekordbox's bundled `sqlite3.dll` via Frida (script: `reverse-engineering/capture_key.py`).
+
+**Key** (64 ASCII bytes, passed verbatim to `sqlite3_key`):
+
+```
+r8gddnr4k847830ar6cqzbkk0el6qytmb3trbbx805jm74vez64i5o8fnrqryqls
+```
+
+Standard SQLCipher parameter combinations (v3 SHA1/64k, v4 SHA512/256k) do **not** work — Rekordbox uses non-default cipher parameters. The only reliable way to create or open this file is to load Rekordbox's own `sqlite3.dll` via `ffi-napi` or ctypes. DLL path: `C:/Program Files/rekordbox/rekordbox 7.x.x/sqlite3.dll`.
+
+### Schema
+
+#### `property` — one row, USB-level metadata
+
+```sql
+CREATE TABLE property(
+  deviceName varchar,
+  dbVersion varchar,           -- '10000'
+  numberOfContents integer,    -- 0 (unused)
+  createdDate varchar,         -- 'YYYY-MM-DD'
+  backGroundColorType integer, -- 0
+  myTagMasterDBID integer
+)
+```
+
+#### `content` — one row per exported track
+
+```sql
+CREATE TABLE content(
+  content_id integer primary key,
+  title varchar,
+  titleForSearch varchar,
+  subtitle varchar,
+  bpmx100 integer,                  -- BPM × 100 (e.g. 12800 = 128.00 BPM)
+  length integer,                   -- duration in seconds
+  trackNo integer,
+  discNo integer,
+  artist_id_artist integer,         -- FK → artist
+  artist_id_remixer integer,
+  artist_id_originalArtist integer,
+  artist_id_composer integer,
+  artist_id_lyricist integer,
+  album_id integer,                 -- FK → album
+  genre_id integer,                 -- FK → genre
+  label_id integer,                 -- FK → label
+  key_id integer,                   -- FK → key
+  color_id integer,                 -- FK → color (0 = none)
+  image_id integer,                 -- FK → image (0 = none)
+  djComment varchar,
+  rating integer,                   -- 0–5 stars
+  releaseYear integer,
+  releaseDate varchar,
+  dateCreated varchar,              -- 'YYYY-MM-DD'
+  dateAdded varchar,                -- 'YYYY-MM-DD'
+  path varchar,                     -- USB-relative path, e.g. '/music/filename.mp3'
+  fileName varchar,
+  fileSize integer,                 -- bytes
+  fileType integer,                 -- 1=MP3, 11=WAV
+  bitrate integer,                  -- bits/sec
+  bitDepth integer,                 -- 16 or 24
+  samplingRate integer,             -- 44100, 48000
+  isrc varchar,
+  djPlayCount integer,
+  isHotCueAutoLoadOn integer,       -- 1 = auto-load hot cues on track load
+  isKuvoDeliverStatusOn integer,
+  kuvoDeliveryComment varchar,
+  masterDbId integer,               -- track id in master.db (PC library link)
+  masterContentId integer,          -- 0 for user tracks
+  analysisDataFilePath varchar,     -- '/PIONEER/USBANLZ/XX/XXXXXXXX/ANLZ0000.DAT'
+  analysedBits integer,             -- bitmask: 41 (0b101001) = fully analysed
+  contentLink integer,              -- 0x000C0700 for all observed tracks (meaning TBD)
+  hasModified integer,              -- 0
+  cueUpdateCount integer,
+  analysisDataUpdateCount integer,
+  informationUpdateCount integer
+)
+```
+
+#### Lookup / normalisation tables
+
+```sql
+CREATE TABLE artist(artist_id integer primary key, name varchar, nameForSearch varchar)
+CREATE TABLE album(album_id integer primary key, name varchar, artist_id integer, image_id integer, isComplation integer, nameForSearch varchar)
+CREATE TABLE genre(genre_id integer primary key, name varchar)
+CREATE TABLE label(label_id integer primary key, name varchar)
+CREATE TABLE key(key_id integer primary key, name varchar)
+-- key.name examples: 'D', 'Am', 'F#m', 'Abm'
+CREATE TABLE color(color_id integer primary key, name varchar)
+-- 1=Pink 2=Red 3=Orange 4=Yellow 5=Green 6=Aqua 7=Blue 8=Purple (same palette as export.pdb)
+CREATE TABLE image(image_id integer primary key, path varchar)
+-- image.path is USB-relative, e.g. '/PIONEER/rekordbox/artwork/xxx.jpg'
+```
+
+#### Playlist tables
+
+```sql
+CREATE TABLE playlist(
+  playlist_id integer primary key,
+  sequenceNo integer,
+  name varchar,
+  image_id integer,
+  attribute integer,           -- 0=playlist, 1=folder
+  playlist_id_parent integer   -- 0 = root
+)
+CREATE TABLE playlist_content(playlist_id integer, content_id integer, sequenceNo integer)
+```
+
+#### `cue` — hot cues and memory cues (mirrors ANLZ cue data)
+
+```sql
+CREATE TABLE cue(
+  cue_id integer primary key,
+  content_id integer,
+  kind integer,                         -- cue type: hot cue, memory cue, loop (exact values TBD)
+  colorTableIndex integer,
+  cueComment varchar,
+  isActiveLoop integer,
+  beatLoopNumerator integer,
+  beatLoopDenominator integer,
+  inUsec integer,                       -- start position in microseconds
+  outUsec integer,                      -- end position; -1 for non-loops
+  in150FramePerSec integer,             -- inUsec × 150 / 1000000
+  out150FramePerSec integer,
+  inMpegFrameNumber integer,
+  outMpegFrameNumber integer,
+  inMpegAbs integer,
+  outMpegAbs integer,
+  inDecodingStartFramePosition integer,
+  outDecodingStartFramePosition integer,
+  inFileOffsetInBlock integer,
+  OutFileOffsetInBlock integer,
+  inNumberOfSampleInBlock integer,
+  outNumberOfSampleInBlock integer
+)
+```
+
+#### History (written by CDJ hardware, read-only for us)
+
+```sql
+CREATE TABLE history(history_id integer primary key, sequenceNo integer, name varchar, attribute integer, history_id_parent integer)
+CREATE TABLE history_content(history_id integer, content_id integer, sequenceNo integer)
+```
+
+#### Hot cue banks
+
+```sql
+CREATE TABLE hotCueBankList(hotCueBankList_id integer primary key, sequenceNo integer, name varchar, image_id integer, attribute integer, hotCueBankList_id_parent integer)
+CREATE TABLE hotCueBankList_cue(hotCueBankList_id integer, cue_id integer, sequenceNo integer)
+```
+
+#### Static UI tables (populate once from native Rekordbox values)
+
+```sql
+CREATE TABLE menuItem(menuItem_id integer primary key, kind integer, name varchar)
+-- kind values: GENRE=128, ARTIST=129, ALBUM=130, TRACK=131, BPM=133, RATING=134,
+--   YEAR=135, REMIXER=136, LABEL=137, ORIGINAL ARTIST=138, KEY=139, CUE=140,
+--   COLOR=141, TIME=146, BITRATE=147, FILE NAME=148, PLAYLIST=145, HISTORY=149,
+--   SEARCH=148, DATE ADDED=150, DJ PLAY COUNT=151, FOLDER=152, DEFAULT=161,
+--   ALPHABET=162, MATCHING=171, HOT CUE BANK=152
+CREATE TABLE category(category_id integer primary key, menuItem_id integer, sequenceNo integer, isVisible integer)
+CREATE TABLE sort(sort_id integer primary key, menuItem_id integer, sequenceNo integer, isVisible integer, isSelectedAsSubColumn integer)
+CREATE TABLE myTag(myTag_id integer primary key, sequenceNo integer, name varchar, attribute integer, myTag_id_parent integer)
+-- Default top-level myTag folders: Genre, Components, Situation, Untitled Column
+CREATE TABLE myTag_content(myTag_id integer, content_id integer)
+CREATE TABLE recommendedLike(content_id_1 integer, content_id_2 integer, rating integer, createdDate integer)
+```
+
+### What is NOT in this database
+
+- **Per-track manual gain slider** — stored only in `master.db` on the PC, never exported to USB. CDJ auto-gain normalisation comes entirely from `Unnamed7`/`Unnamed8` in `export.pdb`.
+- **Waveform / beatgrid / key analysis** — stored in ANLZ files. `content.analysisDataFilePath` points to `ANLZ0000.DAT` on USB.
+- **Audio files** — stored under `{usbRoot}/music/`.
+
+### Implementation notes
+
+- Load Rekordbox's own `sqlite3.dll` via `ffi-napi` to create/open the file (standard SQLCipher builds will not decrypt it).
+- On export: full rebuild, same approach as `export.pdb`.
+- `content.masterDbId` = DjManager track `id` from the local SQLite library.
+- `content.contentLink = 0x000C0700` — use this constant for all tracks until meaning is confirmed.
+- `content.analysedBits = 41` for fully-analysed tracks (BPM + waveform + key complete).
+- `content.analysisDataFilePath` must match the ANLZ path written by `writeAnlz()`.
+- Populate `cue` rows in parallel with ANLZ cue writing — same source data, different encoding.
+- See issue #300 for discovery method and issue #299 for gain field research.
+
 ## SETTING.DAT Files
 
 Three files written to `PIONEER/`:
