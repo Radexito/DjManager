@@ -678,16 +678,21 @@ export async function ensureDeps(onProgress) {
     fs.existsSync(getFfmpegRuntimePath()) && fs.existsSync(getFfprobeRuntimePath());
   const analyzerReady = fs.existsSync(getAnalyzerRuntimePath());
   const ytDlpReady = fs.existsSync(getYtDlpRuntimePath());
-  if (ffmpegReady && analyzerReady && ytDlpReady) return;
+  const tidalReady = fs.existsSync(getTidalBinPath());
+
+  // Tidal is optional — exclude from required step count so it doesn't show a misleading [1/1].
+  const totalSteps = (!ffmpegReady ? 1 : 0) + (!analyzerReady ? 1 : 0) + (!ytDlpReady ? 1 : 0);
+
+  if (totalSteps === 0 && tidalReady) {
+    onProgress?.('Dependencies up to date.', 100);
+    return;
+  }
 
   const binDir = getBinDir();
   await fs.promises.mkdir(binDir, { recursive: true });
   const tmp = path.join(app.getPath('temp'), 'djman-deps');
   await fs.promises.mkdir(tmp, { recursive: true });
 
-  // Tidal is optional and non-fatal — exclude from required step count so upgrades
-  // that already have FFmpeg/analyzer/yt-dlp don't show a misleading [1/1].
-  const totalSteps = (!ffmpegReady ? 1 : 0) + (!analyzerReady ? 1 : 0) + (!ytDlpReady ? 1 : 0);
   let step = 0;
   const stepCb = (msg, pct) =>
     onProgress?.(totalSteps > 0 ? `[${step}/${totalSteps}] ${msg}` : msg, pct);
@@ -704,6 +709,19 @@ export async function ensureDeps(onProgress) {
     if (!ytDlpReady) {
       step++;
       await downloadYtDlp(tmp, stepCb);
+    }
+    if (!tidalReady) {
+      onProgress?.('[optional] Installing tidal-dl-ng…', 0);
+      try {
+        await installTidalDlNgDep((msg) => onProgress?.(`[optional] ${msg}`, -1));
+        onProgress?.('[optional] tidal-dl-ng installed.', 100);
+      } catch (err) {
+        console.warn('[deps] tidal-dl-ng install failed (non-fatal):', err.message);
+        onProgress?.(
+          '[optional] tidal-dl-ng install failed — Python 3.12+ may not be available.',
+          -1
+        );
+      }
     }
     onProgress?.(totalSteps > 0 ? 'Setup complete.' : 'Dependencies up to date.', 100);
   } finally {
