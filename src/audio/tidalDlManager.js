@@ -7,6 +7,7 @@ import { spawn, execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import { app } from 'electron';
 
 const AUDIO_EXTS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.wav', '.ogg', '.opus']);
 
@@ -112,8 +113,21 @@ function stripAnsi(str) {
  * Find the `tdn` binary in common locations.
  * @returns {string|null}
  */
+function getDjManagerTidalBinPath() {
+  try {
+    const ext = process.platform === 'win32' ? '.exe' : '';
+    return path.join(app.getPath('userData'), 'bin', `tdn${ext}`);
+  } catch {
+    return null;
+  }
+}
+
 export function findTidalDlPath() {
+  const managed = getDjManagerTidalBinPath();
   const candidates = [
+    // DjManager-managed install takes priority
+    ...(managed ? [managed] : []),
+    // Legacy system locations (pre-existing installs)
     path.join(os.homedir(), '.local', 'bin', 'tdn'),
     path.join(os.homedir(), '.local', 'bin', 'tidal-dl-ng'),
     '/usr/local/bin/tdn',
