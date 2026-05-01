@@ -252,6 +252,7 @@ contextBridge.exposeInMainWorld('api', {
   checkDepUpdates: () => ipcRenderer.invoke('check-dep-updates'),
   updateAnalyzer: () => ipcRenderer.invoke('update-analyzer'),
   updateAllDeps: () => ipcRenderer.invoke('update-all-deps'),
+  retryDeps: () => ipcRenderer.invoke('retry-deps'),
   onDepsProgress: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('deps-progress', handler);

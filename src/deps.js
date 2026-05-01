@@ -414,7 +414,10 @@ async function downloadFFmpeg(tmp, onProgress) {
       archive,
       (r, t) =>
         t > 0 &&
-        onProgress?.(`Downloading FFmpeg… ${Math.round((r / t) * 100)}%`, Math.round((r / t) * 100))
+        onProgress?.(`Downloading FFmpeg…`, Math.round((r / t) * 100), {
+          bytesReceived: r,
+          bytesTotal: t,
+        })
     );
     onProgress?.('Extracting FFmpeg…', 99);
     const dir = path.join(tmp, 'ffmpeg-extracted');
@@ -437,7 +440,10 @@ async function downloadFFmpeg(tmp, onProgress) {
       archive,
       (r, t) =>
         t > 0 &&
-        onProgress?.(`Downloading FFmpeg… ${Math.round((r / t) * 100)}%`, Math.round((r / t) * 100))
+        onProgress?.(`Downloading FFmpeg…`, Math.round((r / t) * 100), {
+          bytesReceived: r,
+          bytesTotal: t,
+        })
     );
     onProgress?.('Extracting FFmpeg…', 99);
     const dir = path.join(tmp, 'ffmpeg-win-extracted');
@@ -467,17 +473,20 @@ async function downloadFFmpeg(tmp, onProgress) {
       ffmpegZip,
       (r, t) =>
         t > 0 &&
-        onProgress?.(`Downloading FFmpeg… ${Math.round((r / t) * 50)}%`, Math.round((r / t) * 50))
+        onProgress?.(`Downloading FFmpeg…`, Math.round((r / t) * 50), {
+          bytesReceived: r,
+          bytesTotal: t,
+        })
     );
     await downloadFile(
       'https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip',
       ffprobeZip,
       (r, t) =>
         t > 0 &&
-        onProgress?.(
-          `Downloading FFprobe… ${50 + Math.round((r / t) * 49)}%`,
-          50 + Math.round((r / t) * 49)
-        )
+        onProgress?.(`Downloading FFprobe…`, 50 + Math.round((r / t) * 49), {
+          bytesReceived: r,
+          bytesTotal: t,
+        })
     );
     onProgress?.('Extracting FFmpeg…', 99);
     await extractZip(ffmpegZip, path.join(tmp, 'ffmpeg-mac'));
@@ -527,10 +536,10 @@ async function downloadAnalyzer(tmp, onProgress) {
     archive,
     (r, t) =>
       t > 0 &&
-      onProgress?.(
-        `Downloading mixxx-analyzer… ${Math.round((r / t) * 100)}%`,
-        Math.round((r / t) * 100)
-      )
+      onProgress?.(`Downloading mixxx-analyzer…`, Math.round((r / t) * 100), {
+        bytesReceived: r,
+        bytesTotal: t,
+      })
   );
 
   onProgress?.('Extracting mixxx-analyzer…', 99);
@@ -614,7 +623,10 @@ async function downloadYtDlp(tmp, onProgress, tag = null) {
     dest,
     (r, t) =>
       t > 0 &&
-      onProgress?.(`Downloading yt-dlp… ${Math.round((r / t) * 100)}%`, Math.round((r / t) * 100))
+      onProgress?.(`Downloading yt-dlp…`, Math.round((r / t) * 100), {
+        bytesReceived: r,
+        bytesTotal: t,
+      })
   );
 
   if (platform !== 'win32') fs.chmodSync(dest, 0o755);
@@ -641,29 +653,83 @@ export async function ensureDeps(onProgress) {
   const tmp = path.join(app.getPath('temp'), 'djman-deps');
   await fs.promises.mkdir(tmp, { recursive: true });
 
-  const totalSteps =
-    (!ffmpegReady ? 1 : 0) +
-    (!analyzerReady ? 1 : 0) +
-    (!ytDlpReady ? 1 : 0) +
-    (!tidalReady ? 1 : 0);
-  let step = 0;
-  const stepCb = (msg, pct) => onProgress?.(`[${step}/${totalSteps}] ${msg}`, pct);
+  const STEP_DEFS = [
+    !ffmpegReady && { id: 'ffmpeg', label: 'FFmpeg' },
+    !analyzerReady && { id: 'analyzer', label: 'mixxx-analyzer' },
+    !ytDlpReady && { id: 'ytdlp', label: 'yt-dlp' },
+    !tidalReady && { id: 'tidal', label: 'tidal-dl-ng' },
+  ].filter(Boolean);
+  const totalSteps = STEP_DEFS.length;
+  let stepIndex = 0;
+  let currentStep = null;
+
+  // Per-step speed/ETA tracker — reset when step changes
+  let _lastBytes = 0,
+    _lastBytesTime = Date.now(),
+    _speedSamples = [];
+  const resetTracker = () => {
+    _lastBytes = 0;
+    _lastBytesTime = Date.now();
+    _speedSamples = [];
+  };
+
+  const stepCb = (msg, pct, meta = {}) => {
+    let bytesPerSec = 0,
+      etaSec = -1;
+    const { bytesReceived, bytesTotal } = meta;
+    if (bytesReceived != null && bytesTotal > 0) {
+      const now = Date.now();
+      const dt = (now - _lastBytesTime) / 1000;
+      if (dt > 0.25) {
+        const speed = (bytesReceived - _lastBytes) / dt;
+        _speedSamples = [..._speedSamples.slice(-4), speed];
+        _lastBytesTime = now;
+        _lastBytes = bytesReceived;
+      }
+      const avg = _speedSamples.length
+        ? _speedSamples.reduce((a, b) => a + b) / _speedSamples.length
+        : 0;
+      bytesPerSec = avg;
+      etaSec = avg > 0 ? (bytesTotal - bytesReceived) / avg : -1;
+    }
+    onProgress?.({
+      msg,
+      pct,
+      stepId: currentStep?.id ?? null,
+      stepLabel: currentStep?.label ?? null,
+      stepIndex,
+      stepTotal: totalSteps,
+      stepPct: pct,
+      bytesDownloaded: bytesReceived ?? 0,
+      bytesTotal: bytesTotal ?? -1,
+      bytesPerSec,
+      etaSec,
+    });
+  };
 
   try {
     if (!ffmpegReady) {
-      step++;
+      currentStep = STEP_DEFS.find((s) => s.id === 'ffmpeg');
+      stepIndex++;
+      resetTracker();
       await downloadFFmpeg(tmp, stepCb);
     }
     if (!analyzerReady) {
-      step++;
+      currentStep = STEP_DEFS.find((s) => s.id === 'analyzer');
+      stepIndex++;
+      resetTracker();
       await downloadAnalyzer(tmp, stepCb);
     }
     if (!ytDlpReady) {
-      step++;
+      currentStep = STEP_DEFS.find((s) => s.id === 'ytdlp');
+      stepIndex++;
+      resetTracker();
       await downloadYtDlp(tmp, stepCb);
     }
     if (!tidalReady) {
-      step++;
+      currentStep = STEP_DEFS.find((s) => s.id === 'tidal');
+      stepIndex++;
+      resetTracker();
       stepCb('Installing tidal-dl-ng…', 0);
       try {
         await installTidalDlNgDep((msg) => stepCb(msg, -1));
@@ -673,7 +739,12 @@ export async function ensureDeps(onProgress) {
         stepCb('tidal-dl-ng install failed — Python 3.12+ may not be available.', -1);
       }
     }
-    onProgress?.('Setup complete.', 100);
+    onProgress?.({
+      msg: 'Setup complete.',
+      pct: 100,
+      stepIndex: totalSteps,
+      stepTotal: totalSteps,
+    });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
