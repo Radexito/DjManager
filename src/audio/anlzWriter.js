@@ -476,7 +476,8 @@ export function buildPcobSections(cuePoints) {
 /**
  * Build PCOB buffers for the EXT file [slot1, slot2].
  * Verified split: hot_cue numbers 4-8 (D-H, hot_cue_index 3-7) go in EXT PCOB1.
- * Memory cues (hot_cue_num=0) go in PCOB2 (slotType=0) in both DAT and EXT (#232).
+ * EXT PCOB2 is always the empty stub — native captures confirm EXT PCOB is never populated.
+ * Memory cues in the EXT file go into PCO2 slot 2 (handled by buildPco2Sections).
  *
  * @param {Array<{position_ms, color, hot_cue_index}>} cuePoints
  * @returns {[Buffer, Buffer]}
@@ -485,8 +486,7 @@ export function buildExtPcobSections(cuePoints) {
   if (!cuePoints || cuePoints.length === 0) return [EMPTY_PCOB_1, EMPTY_PCOB_2];
   // hot_cue_index 3-7 → hot_cue numbers 4-8 (D-H) — EXT only
   const extHotCues = cuePoints.filter((c) => c.hot_cue_index >= 3 && c.hot_cue_index <= 7);
-  const memoryCues = cuePoints.filter((c) => c.hot_cue_index < 0);
-  return [buildPcobSlot(1, extHotCues), buildPcobSlot(0, memoryCues)];
+  return [buildPcobSlot(1, extHotCues), EMPTY_PCOB_2];
 }
 
 /**
