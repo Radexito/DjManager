@@ -1000,12 +1000,22 @@ function buildPdbBuffer(input) {
       }
     }
 
-    // Flush final page
+    // Flush final page — its NextPage points to the pre-allocated empty page
     const finalNextPage = nextUnusedPage;
     const pageBuf = currentPage.toBuffer(currentPageIndex, finalNextPage, sequence);
     writtenPages.set(currentPageIndex, pageBuf);
     st.lastPage = currentPageIndex;
     st.emptyCandidate = finalNextPage;
+    nextUnusedPage++;
+    sequence++;
+
+    // Write a proper empty DataPage at the emptyCandidate.
+    // The last data page's NextPage chain leads here; Rekordbox reads this page
+    // and expects a valid DataPage header (flags=0x34). A zero-filled page has
+    // flags=0x00 and causes an "Unexpected application error" crash on USB load.
+    const emptyDataPage = new DataPage(type);
+    const emptyDataBuf = emptyDataPage.toBuffer(finalNextPage, EMPTY_TABLE_SENTINEL, sequence);
+    writtenPages.set(finalNextPage, emptyDataBuf);
     nextUnusedPage++;
     sequence++;
 

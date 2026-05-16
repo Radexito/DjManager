@@ -203,6 +203,36 @@ curl -s -X POST "https://api.github.com/repos/Radexito/DjManager/issues" \
   -d '{"title":"...", "body":"..."}'
 ```
 
+## USB Export CLI (`scripts/export-usb.mjs`)
+
+Bypasses the Electron UI for faster iteration when testing Rekordbox compatibility.
+Requires a prior full export from DjManager to have ANLZ files and audio on the USB.
+
+```bash
+# Fast mode — re-generate only the PDB from the manifest already on the USB.
+# Use this when iterating on pdbWriter.js changes.
+node scripts/export-usb.mjs U:\ --regen-pdb
+
+# Regenerate PDB from the live database (uses existing ANLZ/audio already on USB).
+node scripts/export-usb.mjs U:\
+
+# Single playlist only
+node scripts/export-usb.mjs U:\ --playlist "My Playlist"
+```
+
+The `--regen-pdb` flag reads `U:\PIONEER\rekordbox\export-manifest.json` directly
+and calls `writePdb()` + `writeSettingFiles()`. No audio copying, no ANLZ writing —
+runs in under a second. Use this for the fix → export → test Rekordbox loop.
+
+The full mode (no flag) opens `library.db` directly with `better-sqlite3`,
+queries all playlists and their tracks, reuses USB paths from the existing
+manifest where possible, and writes PDB + settings + an updated manifest.
+
+**Rekordbox cleanup before testing**: if Rekordbox previously crashed while
+the USB was connected it leaves behind `exportLibrary.db`, `exportLibrary.db-wal`,
+and `exportExt.pdb` in `U:\PIONEER\rekordbox\`. Delete these before re-testing
+or Rekordbox will crash again immediately on the next USB load.
+
 ## Known Issues
 
 - **yt-dlp ffmpeg path**: yt-dlp spawned as subprocess can't find bundled ffmpeg. Pass `--ffmpeg-location <bundled ffmpeg dir>` to the yt-dlp spawn call using `getFfmpegRuntimePath()` from `deps.js`.
