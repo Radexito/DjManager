@@ -279,6 +279,13 @@ export default function CuePointsEditor({
     }
   };
 
+  const handleToggleEnabled = async (id, currentEnabled) => {
+    await window.api.updateCuePoint(id, {
+      enabled: currentEnabled === false || currentEnabled === 0 ? 1 : 0,
+    });
+    reload();
+  };
+
   const handleColorChange = async (id, color) => {
     if (deferred) {
       setCuePoints((prev) => prev.map((c) => (c.id === id ? { ...c, color } : c)));
