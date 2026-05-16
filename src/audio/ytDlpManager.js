@@ -136,7 +136,14 @@ function isFormatUnavailableError(err) {
 
 export async function fetchPlaylistInfo(url, options = {}) {
   try {
-    return await _fetchPlaylistInfoOnce(url, options);
+    const info = await _fetchPlaylistInfoOnce(url, options);
+    // For YouTube playlists, do a fast parallel oEmbed availability check so
+    // unavailable/private/deleted videos are flagged before the selection screen.
+    if (detectPlatform(url) === 'youtube' && info.type === 'playlist') {
+      options.onBeforeCheck?.(info.entries);
+      await checkYouTubeAvailability(info.entries, options.onCheckProgress, options.onEntryChecked);
+    }
+    return info;
   } catch (err) {
     if (isFormatUnavailableError(err) && options.cookiesBrowser) {
       console.warn(
@@ -146,6 +153,125 @@ export async function fetchPlaylistInfo(url, options = {}) {
     }
     throw err;
   }
+}
+
+const YTDLP_CHECK_CONCURRENCY = 16;
+const YTDLP_CHECK_TIMEOUT_MS = 15000;
+// Availability values from yt-dlp that mean the video cannot be downloaded
+const UNAVAILABLE_STATUSES = new Set(['private', 'premium_only', 'subscriber_only', 'needs_auth']);
+
+/**
+ * Batch-check YouTube video availability by running yt-dlp --print availability
+ * for each entry. This is the most reliable approach since it uses the exact same
+ * mechanism as the actual download. Mutates entries in-place.
+ */
+async function checkYouTubeAvailability(entries, onProgress, onEntryChecked) {
+  const toCheck = entries.filter((e) => !e.unavailable && e.id);
+  if (toCheck.length === 0) return;
+
+  const ytDlp = getYtDlpRuntimePath();
+  if (!fs.existsSync(ytDlp)) return; // binary not ready yet — skip check
+
+  console.log(`[ytdlp] availability check for ${toCheck.length} entries via yt-dlp…`);
+
+  async function checkOne(entry) {
+    return new Promise((resolve) => {
+      const args = [
+        '--no-playlist',
+        '--print',
+        'availability',
+        '--no-warnings',
+        '--extractor-args',
+        'youtube:player_client=web',
+        `https://www.youtube.com/watch?v=${entry.id}`,
+      ];
+      const proc = spawn(ytDlp, args);
+      let stdout = '';
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        proc.kill();
+        resolve(); // timeout → assume available
+      }, YTDLP_CHECK_TIMEOUT_MS);
+
+      proc.stdout.on('data', (d) => (stdout += d.toString()));
+      proc.on('close', (code) => {
+        clearTimeout(timer);
+        if (timedOut) return;
+        const availability = stdout.trim().toLowerCase();
+        console.log(`[ytdlp] ${entry.id} availability=${availability || '(exit ' + code + ')'}`);
+        if (
+          code !== 0 ||
+          UNAVAILABLE_STATUSES.has(availability) ||
+          availability === 'unavailable'
+        ) {
+          entry.unavailable = true;
+          entry.unavailableReason =
+            availability === 'private'
+              ? 'Private video'
+              : availability === 'premium_only'
+                ? 'YouTube Premium only'
+                : 'Video unavailable';
+        }
+        resolve();
+      });
+      proc.on('error', () => {
+        clearTimeout(timer);
+        resolve(); // spawn error → assume available
+      });
+    });
+  }
+
+  let checked = 0;
+  const total = toCheck.length;
+  const queue = [...toCheck];
+
+  async function worker() {
+    while (queue.length > 0) {
+      const entry = queue.shift();
+      await checkOne(entry);
+      checked++;
+      onProgress?.({ checked, total });
+      onEntryChecked?.({
+        id: entry.id,
+        index: entry.index,
+        unavailable: entry.unavailable ?? false,
+      });
+    }
+  }
+
+  await Promise.allSettled(Array.from({ length: YTDLP_CHECK_CONCURRENCY }, worker));
+  const unavailCount = entries.filter((e) => e.unavailable).length;
+  console.log(`[ytdlp] availability check done — ${unavailCount}/${entries.length} unavailable`);
+}
+
+const UNAVAILABLE_TITLE_RE = /^\[(Private|Deleted|Unavailable|Removed)\s*(video|track)?\]$/i;
+
+const UNAVAILABLE_AVAILABILITY = new Set([
+  'private',
+  'premium_only',
+  'subscriber_only',
+  'needs_auth',
+  'exclusive_content',
+]);
+
+function isEntryUnavailable(entry) {
+  if (UNAVAILABLE_AVAILABILITY.has(entry.availability)) return true;
+  if (entry.title && UNAVAILABLE_TITLE_RE.test(entry.title.trim())) return true;
+  return false;
+}
+
+function describeUnavailability(entry) {
+  if (entry.availability === 'private') return 'Private video';
+  if (entry.availability === 'premium_only') return 'YouTube Premium only';
+  if (entry.availability === 'subscriber_only') return 'Channel members only';
+  if (entry.availability === 'needs_auth') return 'Sign-in required';
+  if (entry.availability === 'exclusive_content') return 'Exclusive content';
+  if (entry.title && UNAVAILABLE_TITLE_RE.test(entry.title.trim())) {
+    const m = entry.title.match(UNAVAILABLE_TITLE_RE);
+    return `${m[1]} video`;
+  }
+  return 'Unavailable';
 }
 
 function _fetchPlaylistInfoOnce(url, options = {}) {
@@ -193,13 +319,18 @@ function _fetchPlaylistInfoOnce(url, options = {}) {
           resolve({
             type: 'playlist',
             title: data.title || data.playlist_title || null,
-            entries: entries.map((e, i) => ({
-              index: i,
-              id: e.id || String(i),
-              title: e.title || `Track ${i + 1}`,
-              url: e.url || e.webpage_url || url,
-              duration: e.duration ?? null,
-            })),
+            entries: entries.map((e, i) => {
+              const unavailable = isEntryUnavailable(e);
+              return {
+                index: i,
+                id: e.id || String(i),
+                title: e.title || `Track ${i + 1}`,
+                url: e.url || e.webpage_url || url,
+                duration: e.duration ?? null,
+                unavailable,
+                unavailableReason: unavailable ? describeUnavailability(e) : null,
+              };
+            }),
           });
         } else {
           resolve({
@@ -232,7 +363,7 @@ function _fetchPlaylistInfoOnce(url, options = {}) {
  * @param {(data: object) => void} [onProgress] - Progress callback, receives { msg, pct, trackPct, overallCurrent, overallTotal }
  * @param {{
  *   cookiesBrowser?: string|null,
- *   onFileReady?: (file: { filePath, originalUrl, trackUrl, platform, quality, title, index }) => void,
+ *   onFileReady?: (file: { filePath, originalUrl, trackUrl, platform, quality, title, channel, index }) => void,
  *   onPlaylistDetected?: (info: { name: string|null, total: number }) => void,
  *   onTrackMeta?: (info: { index: number, title: string }) => void,
  * }} [options]
@@ -267,6 +398,8 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
 
   // Unique marker so we can reliably identify --print output lines among other stdout noise
   const FILE_MARKER = '__YTDLP_FILE__:';
+  const TRACK_MARKER = '__YTDLP_TRACK__:';
+  const CHANNEL_MARKER = '__YTDLP_CHANNEL__:';
 
   const args = [
     '-f',
@@ -280,8 +413,14 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
     '0',
     '--no-warnings',
     '--newline',
-    '--progress-template',
-    'download:[download] %(progress._percent_str)s of %(progress._total_bytes_str)s at %(progress._speed_str)s',
+    '--no-colors',
+    '--ignore-errors', // skip unavailable/deleted/restricted videos instead of aborting
+    // Reliable per-track progress: fires before each download starts, goes to stdout
+    '--print',
+    `before_dl:${TRACK_MARKER}%(n_entries|1)s:%(title)s`,
+    // Channel/uploader for artist fallback when video title has no "Artist - Title" delimiter
+    '--print',
+    `before_dl:${CHANNEL_MARKER}%(channel|uploader|NA)s`,
     // --print after_move gives us the definitive final filepath after all post-processors
     // (audio extraction, remux, etc.) have run. This is our primary file detection mechanism.
     '--print',
@@ -305,17 +444,19 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
   args.push(url);
 
   return new Promise((resolve, reject) => {
-    const proc = spawn(ytDlp, args);
+    const proc = spawn(ytDlp, args, { env: { ...process.env, PYTHONUNBUFFERED: '1' } });
     const startTime = Date.now();
 
     let currentQuality = 'unknown';
     let playlistTotal = null;
     let playlistCurrent = 0;
+    let trackStartCount = 0; // own sequential counter, unaffected by original playlist positions
     let playlistName = null;
     let currentTrackUrl = null;
     let currentTrackPct = 0;
     let playlistDetectedFired = false;
     let currentTrackTitle = null;
+    let currentTrackChannel = null;
     let stderr = '';
 
     const destinationFiles = [];
@@ -331,16 +472,27 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
         platform,
         quality: currentQuality,
         title,
+        channel: currentTrackChannel || null,
         index: destinationFiles.length - 1,
       });
       // Reset per-track state for the next item
       currentTrackTitle = null;
+      currentTrackChannel = null;
       currentTrackUrl = null;
     };
 
     /**
      * Process a single output line from yt-dlp (stdout or stderr).
      */
+    let lastProgressSent = 0;
+    const throttledProgress = (data) => {
+      const now = Date.now();
+      if (now - lastProgressSent >= 100) {
+        lastProgressSent = now;
+        onProgress?.(data);
+      }
+    };
+
     const processLine = (trimmed) => {
       if (!trimmed) return;
 
@@ -351,7 +503,50 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
         return;
       }
 
-      // Download progress: [download] 42.5% of 5.20MiB at 1.20MiB/s
+      // Channel/uploader for artist fallback: --print before_dl emits CHANNEL_MARKER:<name>
+      if (trimmed.startsWith(CHANNEL_MARKER)) {
+        const name = trimmed.slice(CHANNEL_MARKER.length).trim();
+        currentTrackChannel = name && name !== 'NA' ? name : null;
+        return;
+      }
+
+      // Reliable track-start marker: --print before_dl emits TRACK_MARKER:<total>:<title>
+      // We use our own sequential counter (trackStartCount) so the index is always 1,2,3,4
+      // regardless of the original playlist positions (%(playlist_index)s would give 70 for
+      // a track at position 70 in a 70-item playlist, even if only 4 tracks are selected).
+      if (trimmed.startsWith(TRACK_MARKER)) {
+        const rest = trimmed.slice(TRACK_MARKER.length);
+        const colonIdx = rest.indexOf(':');
+        if (colonIdx !== -1) {
+          const total = parseInt(rest.slice(0, colonIdx), 10);
+          const title = rest.slice(colonIdx + 1).trim();
+          if (!isNaN(total)) {
+            trackStartCount++;
+            const idx = trackStartCount;
+            playlistCurrent = idx;
+            playlistTotal = total;
+            currentTrackPct = 0;
+            currentTrackTitle = title || null;
+            if (!playlistDetectedFired && total > 1) {
+              playlistDetectedFired = true;
+              options.onPlaylistDetected?.({ name: playlistName, total });
+            }
+            if (title) {
+              options.onTrackMeta?.({ index: idx - 1, title });
+            }
+            onProgress?.({
+              msg: title || `Track ${idx} / ${total}`,
+              pct: Math.round(((idx - 1) / total) * 100),
+              trackPct: 0,
+              overallCurrent: idx,
+              overallTotal: total,
+            });
+          }
+        }
+        return;
+      }
+
+      // Download progress with known size: [download]  42.5% of   5.20MiB at  1.20MiB/s ETA 00:03
       const pctMatch = trimmed.match(/\[download\]\s+([\d.]+)%/);
       if (pctMatch) {
         currentTrackPct = Math.round(parseFloat(pctMatch[1]));
@@ -359,13 +554,27 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
         const current = playlistCurrent || 1;
         const overallPct =
           total > 1 ? Math.round(((current - 1) * 100 + currentTrackPct) / total) : currentTrackPct;
-        onProgress?.({
-          msg: trimmed
-            .replace(/^download:/, '')
-            .replace('[download] ', '')
-            .trim(),
+        throttledProgress({
+          msg: trimmed.replace(/^\[download\]\s+/, '').trim(),
           pct: overallPct,
           trackPct: currentTrackPct,
+          overallCurrent: current,
+          overallTotal: total,
+        });
+        return;
+      }
+
+      // Download progress with unknown size: [download] 5.20MiB at 1.20MiB/s
+      const unknownSizeMatch = trimmed.match(
+        /\[download\]\s+([\d.]+\s*\w+iB)\s+at\s+([\d.]+\s*\w+iB\/s)/
+      );
+      if (unknownSizeMatch) {
+        const total = playlistTotal ?? 1;
+        const current = playlistCurrent || 1;
+        throttledProgress({
+          msg: `${unknownSizeMatch[1]} at ${unknownSizeMatch[2]}`,
+          pct: total > 1 ? Math.round(((current - 1) / total) * 100) : 50,
+          trackPct: 50,
           overallCurrent: current,
           overallTotal: total,
         });
@@ -426,18 +635,54 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
     };
 
     proc.stdout.on('data', (chunk) => {
-      for (const line of chunk.toString().split('\n')) processLine(line.trim());
+      for (const line of chunk.toString().split(/[\r\n]+/)) processLine(line.trim());
     });
 
     proc.stderr.on('data', (chunk) => {
       const text = chunk.toString();
       stderr += text;
       // Also scan stderr — some yt-dlp builds emit info lines there
-      for (const line of text.split('\n')) processLine(line.trim());
+      for (const line of text.split(/[\r\n]+/)) processLine(line.trim());
     });
 
+    let unavailableCount = 0;
+
     proc.on('close', async (code) => {
-      if (code !== 0) {
+      // Parse unavailable/error videos from stderr and fire callbacks.
+      // With --ignore-errors, yt-dlp may emit these as WARNING: lines instead of ERROR:.
+      const unavailablePattern = /(?:ERROR|WARNING): \[[\w:]+\] ([^:\s][^:]*): (.+)/g;
+      let match;
+      while ((match = unavailablePattern.exec(stderr)) !== null) {
+        const videoId = match[1].trim();
+        const reason = match[2].trim();
+        // Only fire for actual unavailability reasons, not generic yt-dlp messages
+        if (
+          reason.toLowerCase().includes('unavailable') ||
+          reason.toLowerCase().includes('private') ||
+          reason.toLowerCase().includes('deleted') ||
+          reason.toLowerCase().includes('removed') ||
+          reason.toLowerCase().includes('not available')
+        ) {
+          console.warn(`[ytdlp] unavailable: ${videoId} — ${reason}`);
+          options.onTrackUnavailable?.({ videoId, reason });
+          unavailableCount++;
+        }
+      }
+
+      // Secondary heuristic: if stderr mentions unavailability but regex found nothing,
+      // treat it as an all-unavailable run so we don't show a raw error.
+      const stderrHasUnavailable =
+        unavailableCount === 0 &&
+        (stderr.includes('Video unavailable') ||
+          stderr.includes('Private video') ||
+          stderr.includes('Deleted video') ||
+          stderr.includes('This video is not available'));
+      if (stderrHasUnavailable) unavailableCount = 1; // sentinel — at least one unavailable
+
+      // Exit code 1 with --ignore-errors means some videos failed. If ALL failures were
+      // unavailability errors (already reported via onTrackUnavailable), resolve gracefully
+      // so the UI can show per-track ✗ marks rather than a raw error string.
+      if (code !== 0 && destinationFiles.length === 0 && unavailableCount === 0) {
         reject(new Error(`yt-dlp exited with code ${code}:\n${stderr}`));
         return;
       }
@@ -479,7 +724,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
         }
       }
 
-      if (destinationFiles.length === 0) {
+      if (destinationFiles.length === 0 && unavailableCount === 0) {
         reject(new Error('yt-dlp finished but no output file found'));
         return;
       }
@@ -497,6 +742,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
             index: i,
           })),
         playlistName: playlistName || null,
+        unavailableCount,
       });
     });
 

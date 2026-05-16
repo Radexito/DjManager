@@ -246,6 +246,14 @@
   margin-top: 4px;
 }
 
+/* Needs-format buttons are plain text — override the icon-grid layout */
+.export-needs-format-actions .export-option-btn {
+  display: block;
+  white-space: nowrap;
+  text-align: center;
+  padding: 12px 16px;
+}
+
 .export-option-btn--danger {
   border-color: #6b1f1f;
   color: #e07070;
@@ -287,4 +295,29 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+.export-normalized-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: #aaa;
+  cursor: pointer;
+  user-select: none;
+}
+
+.export-normalized-option input[type='checkbox'] {
+  accent-color: #1db954;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.export-confirm-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
 }

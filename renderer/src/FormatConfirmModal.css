@@ -70,6 +70,7 @@
   font-weight: 600;
   cursor: pointer;
   border: none;
+  white-space: nowrap;
 }
 
 .format-confirm-btn--cancel {

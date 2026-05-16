@@ -1,3 +1,4 @@
+import fs from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -32,8 +33,28 @@ async function detectFilesystemWindows(mountPath) {
   const { stdout } = await execAsync(`fsutil fsinfo volumeinfo ${drive}: 2>&1`, {
     windowsHide: true,
   });
+  console.log(`[diag] fsutil volumeinfo ${drive}: stdout:\n${stdout.trim()}`);
   const fsMatch = stdout.match(/File System Name\s*:\s*(\S+)/i);
   const fsName = fsMatch ? fsMatch[1].toLowerCase() : 'unknown';
+
+  // Log drive size so we can tell if FAT32 format will be rejected (> 32 GB limit)
+  try {
+    const { stdout: freeOut } = await execAsync(`fsutil volume diskfree ${drive}: 2>&1`, {
+      windowsHide: true,
+    });
+    const totalMatch = freeOut.match(/Total \S+ bytes\s*:\s*([\d,]+)/i);
+    if (totalMatch) {
+      const totalBytes = parseInt(totalMatch[1].replace(/,/g, ''), 10);
+      const totalGB = (totalBytes / 1024 ** 3).toFixed(1);
+      const over32 = totalBytes > 32 * 1024 ** 3;
+      console.log(
+        `[diag] drive ${drive}: total=${totalGB} GB  over32GB=${over32}${over32 ? ' ⚠ Windows format /FS:FAT32 will likely fail' : ''}`
+      );
+    }
+  } catch (e) {
+    console.log(`[diag] drive size check failed: ${e.message}`);
+  }
+
   return {
     fs: fsName,
     device: `${drive}:`,
@@ -129,8 +150,35 @@ async function formatWindows(device, onProgress) {
   onProgress(`Formatting ${drive}: as FAT32…`);
   // Use format command (requires admin). /Q = quick format, /Y = suppress confirmation
   const cmd = `format ${drive}: /FS:FAT32 /Q /V:REKORDBOX /Y`;
-  const { stderr } = await execAsync(cmd, { windowsHide: true, timeout: 120000 });
+  console.log(`[diag] format cmd: ${cmd}`);
+  const { stdout, stderr } = await execAsync(cmd, { windowsHide: true, timeout: 120000 });
+  console.log(`[diag] format stdout: ${stdout?.trim()}`);
+  if (stderr) console.log(`[diag] format stderr: ${stderr?.trim()}`);
   if (stderr) throw new Error(stderr.trim());
+
+  // After format, Windows unmounts and remounts the volume. The drive root is
+  // briefly inaccessible — wait until it's ready before returning, otherwise the
+  // export starts immediately and gets ENOENT trying to mkdir on the drive root.
+  onProgress(`Waiting for ${drive}: to remount…`);
+  await waitForDriveReady(drive);
+  console.log(`[diag] drive ${drive}: is ready after format`);
+}
+
+async function waitForDriveReady(drive, timeoutMs = 15000) {
+  const root = `${drive}:\\`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      fs.readdirSync(root);
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  throw new Error(
+    `Drive ${drive}: was not accessible within ${timeoutMs / 1000}s after format. ` +
+      `Try ejecting and re-inserting the drive, then export again.`
+  );
 }
 
 async function formatMac(device, onProgress) {

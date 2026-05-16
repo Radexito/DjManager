@@ -8,6 +8,7 @@ beforeAll(() => {
 
 afterEach(() => {
   // Clear all data between tests for isolation
+  db.prepare('DELETE FROM cue_points').run();
   db.prepare('DELETE FROM playlist_tracks').run();
   db.prepare('DELETE FROM playlists').run();
   db.prepare('DELETE FROM tracks').run();

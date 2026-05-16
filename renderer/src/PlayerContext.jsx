@@ -14,9 +14,21 @@ const HISTORY_MAX = 50;
 
 export function PlayerProvider({ children }) {
   const audioRef = useRef(null);
-  if (audioRef.current == null) audioRef.current = new Audio();
+  if (audioRef.current == null) {
+    const a = new Audio();
+    // Required for Web Audio API (createMediaElementSource) to process audio from
+    // the local media server — without this Chromium won't send an Origin header
+    // and CORS is not negotiated, causing the graph to output silence.
+    a.crossOrigin = 'anonymous';
+    audioRef.current = a;
+  }
   // eslint-disable-next-line react-hooks/refs
   const audio = audioRef.current;
+
+  // Web Audio graph: MediaElementSource → GainNode → DynamicsCompressor (limiter) → destination
+  // GainNode has no 1.0 ceiling so positive replay_gain boosts work without clipping.
+  const audioCtxRef = useRef(null);
+  const gainNodeRef = useRef(null);
 
   const [currentTrack, setCurrentTrack] = useState(null);
   const [currentPlaylistId, setCurrentPlaylistId] = useState(null);
@@ -39,8 +51,64 @@ export function PlayerProvider({ children }) {
     window.api.getMediaPort().then((port) => {
       mediaPortRef.current = port;
       setMediaPort(port);
+      console.log('[diag] media server port =', port);
+      // Probe reachability — a 404/403/500 still means the server is up; a network error means blocked
+      fetch(`http://127.0.0.1:${port}/__diag_probe__`)
+        .then((r) => console.log('[diag] media server reachable, probe status =', r.status))
+        .catch((e) => console.warn('[diag] media server UNREACHABLE:', e.message));
     });
+
+    // Log available audio output devices
+    if (navigator.mediaDevices?.enumerateDevices) {
+      navigator.mediaDevices.enumerateDevices().then((devices) => {
+        const outputs = devices.filter((d) => d.kind === 'audiooutput');
+        console.log(`[diag] audio output devices (${outputs.length}):`);
+        outputs.forEach((d) =>
+          console.log(
+            `[diag]   id=${d.deviceId.slice(0, 16)}… label=${d.label || '(no label — needs permission)'}`
+          )
+        );
+      });
+    }
   }, []);
+
+  // Web Audio graph is built lazily on first play() call — see buildAudioGraph() below.
+  // Building it at mount time creates the AudioContext without a user gesture, leaving it
+  // permanently suspended on Electron/Chrome (autoplay policy), so resume() never works.
+
+  // Build the Web Audio graph on first user interaction so AudioContext is created
+  // inside a user gesture — the only reliable way to get it into 'running' state on
+  // Electron/Chrome without an explicit autoplay policy exception.
+  // createMediaElementSource can only be called ONCE per audio element in Chromium;
+  // the guard ensures StrictMode's double-invoke doesn't break it.
+  const buildAudioGraph = useCallback(() => {
+    if (audioCtxRef.current) return; // already built
+    try {
+      const ctx = new AudioContext();
+      console.log('[player] AudioContext created, state =', ctx.state);
+      const source = ctx.createMediaElementSource(audio);
+      const gain = ctx.createGain();
+      gain.gain.value = 1.0;
+      const limiter = ctx.createDynamicsCompressor();
+      limiter.threshold.value = -1.0;
+      limiter.knee.value = 0;
+      limiter.ratio.value = 20;
+      limiter.attack.value = 0.001;
+      limiter.release.value = 0.1;
+      source.connect(gain);
+      gain.connect(limiter);
+      limiter.connect(ctx.destination);
+      audioCtxRef.current = ctx;
+      gainNodeRef.current = gain;
+      audio.volume = 1.0;
+      console.log('[player] Web Audio graph built OK');
+    } catch (err) {
+      console.warn(
+        '[player] Web Audio graph unavailable, falling back to audio.volume:',
+        err.message
+      );
+    }
+  }, [audio]);
 
   // Keep mutable refs so event handlers always see latest values
   const queueRef = useRef(queue);
@@ -82,7 +150,7 @@ export function PlayerProvider({ children }) {
   // Stable play-at-index — exposed via ref so handleEnded can call it without stale closure
   const playAtIndexRef = useRef(null);
   const playAtIndex = useCallback(
-    (newQueue, index, playlistId = null, playlistName = null) => {
+    async (newQueue, index, playlistId = null, playlistName = null) => {
       const track = newQueue[index];
       if (!track) return;
       const gen = ++playGenRef.current;
@@ -91,8 +159,9 @@ export function PlayerProvider({ children }) {
         console.error('[player] media server not ready yet');
         return;
       }
+      const filePath = track.file_path;
       // Normalize to forward slashes (Windows paths use backslashes), then encode each segment
-      const posixPath = track.file_path.replace(/\\/g, '/');
+      const posixPath = filePath.replace(/\\/g, '/');
       const encodedPath = posixPath
         .split('/')
         .map((seg) => encodeURIComponent(seg))
@@ -107,21 +176,51 @@ export function PlayerProvider({ children }) {
           return next.length > HISTORY_MAX ? next.slice(0, HISTORY_MAX) : next;
         });
       }
+      console.log('[diag] playAtIndex src =', src);
+      // Build Web Audio graph on first play (must be inside user gesture so ctx starts running)
+      buildAudioGraph();
       audio.pause(); // cleanly stop current pipeline before swapping source
       audio.src = src;
+      // Resume AudioContext — called within the same user gesture, so it works reliably
+      if (audioCtxRef.current?.state === 'suspended') {
+        try {
+          await audioCtxRef.current.resume();
+        } catch {
+          // resume() rejects if context is closed — safe to ignore
+        }
+      }
+      console.log(
+        '[player] ctx.state after resume =',
+        audioCtxRef.current?.state ?? 'no ctx (fallback mode)'
+      );
       // Setting src triggers an implicit load; calling audio.load() would race with play()
-      audio.play().catch((err) => {
-        // AbortError is expected when we switch tracks before play() resolves
-        if (gen === playGenRef.current && err.name !== 'AbortError')
-          console.error('[player] play error:', err.name, err.message);
-      });
+      audio
+        .play()
+        .then(() => {
+          console.log('[diag] play() resolved OK  readyState=', audio.readyState);
+        })
+        .catch((err) => {
+          // AbortError is expected when we switch tracks before play() resolves
+          if (gen === playGenRef.current && err.name !== 'AbortError')
+            console.error(
+              '[diag] play() FAILED:',
+              err.name,
+              err.message,
+              'readyState=',
+              audio.readyState,
+              'networkState=',
+              audio.networkState,
+              'src=',
+              audio.src
+            );
+        });
       setCurrentTrack(track);
       setQueue(newQueue);
       setQueueIndex(index);
       setCurrentPlaylistId(playlistId);
       setCurrentPlaylistName(playlistName ?? null);
     },
-    [audio]
+    [audio, buildAudioGraph]
   );
   useLayoutEffect(() => {
     playAtIndexRef.current = playAtIndex;
@@ -142,7 +241,9 @@ export function PlayerProvider({ children }) {
       const plName = currentPlaylistNameRef.current;
       if (rep === 'one') {
         audio.currentTime = 0;
-        audio.play().catch(console.error);
+        audio.play().catch((err) => {
+          if (err.name !== 'AbortError') console.error(err);
+        });
         return;
       }
       if (shuf) {
@@ -193,10 +294,23 @@ export function PlayerProvider({ children }) {
     [playAtIndex]
   );
 
-  const togglePlay = useCallback(() => {
-    if (audio.paused) audio.play().catch(console.error);
-    else audio.pause();
-  }, [audio]);
+  const togglePlay = useCallback(async () => {
+    if (audio.paused) {
+      buildAudioGraph();
+      if (audioCtxRef.current?.state === 'suspended') {
+        try {
+          await audioCtxRef.current.resume();
+        } catch {
+          // resume() rejects if context is closed — safe to ignore
+        }
+      }
+      audio.play().catch((err) => {
+        if (err.name !== 'AbortError') console.error(err);
+      });
+    } else {
+      audio.pause();
+    }
+  }, [audio, buildAudioGraph]);
 
   const next = useCallback(() => {
     const q = queueRef.current;
@@ -207,6 +321,8 @@ export function PlayerProvider({ children }) {
       playAtIndexRef.current(q, Math.floor(Math.random() * q.length), plId, plName);
     } else if (idx < q.length - 1) {
       playAtIndexRef.current(q, idx + 1, plId, plName);
+    } else if (repeatRef.current === 'all' && q.length > 0) {
+      playAtIndexRef.current(q, 0, plId, plName);
     }
   }, []);
 
@@ -250,11 +366,18 @@ export function PlayerProvider({ children }) {
     setVolumeState(clamped);
   }, []);
 
-  // Apply user volume combined with per-track replay_gain
+  // Apply user volume combined with per-track replay_gain through the GainNode.
+  // GainNode has no 1.0 ceiling so positive gain (boosting quiet tracks) works correctly.
   useEffect(() => {
     const rg = currentTrack?.replay_gain ?? 0;
     const gainLinear = Math.pow(10, rg / 20);
-    audio.volume = Math.min(1.0, volume * gainLinear);
+    const gain = gainNodeRef.current;
+    if (gain) {
+      gain.gain.value = gainLinear * volume;
+    } else {
+      // Fallback before the Web Audio graph is initialised
+      audio.volume = Math.min(1.0, gainLinear * volume);
+    }
   }, [volume, currentTrack, audio]);
 
   const cycleRepeat = useCallback(
@@ -265,8 +388,22 @@ export function PlayerProvider({ children }) {
   const setDevice = useCallback(
     async (deviceId) => {
       setOutputDeviceId(deviceId);
-      if (typeof audio.setSinkId === 'function') {
-        await audio.setSinkId(deviceId).catch(console.error);
+      const ctx = audioCtxRef.current;
+      // When the Web Audio graph is active, audio routes through AudioContext — use
+      // ctx.setSinkId() to redirect output. Fall back to audio.setSinkId() if the
+      // graph is not yet initialised (should be rare).
+      if (ctx && typeof ctx.setSinkId === 'function') {
+        console.log('[diag] ctx.setSinkId →', deviceId || '(default)');
+        await ctx.setSinkId(deviceId || '').catch((err) => {
+          console.error('[diag] ctx.setSinkId FAILED:', err.name, err.message);
+        });
+      } else if (typeof audio.setSinkId === 'function') {
+        console.log('[diag] setSinkId (fallback) →', deviceId || '(default)');
+        await audio.setSinkId(deviceId).catch((err) => {
+          console.error('[diag] setSinkId FAILED:', err.name, err.message);
+        });
+      } else {
+        console.warn('[diag] setSinkId not available');
       }
     },
     [audio]
@@ -276,7 +413,10 @@ export function PlayerProvider({ children }) {
   useEffect(() => {
     if (!navigator.mediaSession) return;
     navigator.mediaSession.setActionHandler('play', () => {
-      if (audio.src) audio.play().catch(console.error);
+      if (audio.src)
+        audio.play().catch((err) => {
+          if (err.name !== 'AbortError') console.error(err);
+        });
     });
     navigator.mediaSession.setActionHandler('pause', () => audio.pause());
     navigator.mediaSession.setActionHandler('nexttrack', () => next());
@@ -307,12 +447,76 @@ export function PlayerProvider({ children }) {
       const tag = document.activeElement?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       e.preventDefault();
-      if (audio.paused) audio.play().catch(console.error);
+      if (audio.paused)
+        audio.play().catch((err) => {
+          if (err.name !== 'AbortError') console.error(err);
+        });
       else audio.pause();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [audio]);
+
+  const patchCurrentTrack = useCallback(
+    (id, fields) => setCurrentTrack((prev) => (prev?.id === id ? { ...prev, ...fields } : prev)),
+    []
+  );
+
+  // Reload audio src for the current track (e.g. after normalization produces a new file).
+  // Pass the new file path explicitly so we don't race with pending React state updates.
+  // Seeks back to the position the player was at before the reload.
+  const reloadCurrentTrack = useCallback(
+    (newFilePath, shouldPlay = false) => {
+      const port = mediaPortRef.current;
+      console.log(
+        '[reloadCurrentTrack] called with path=',
+        newFilePath,
+        'shouldPlay=',
+        shouldPlay,
+        'port=',
+        port
+      );
+      if (!port || !newFilePath) return;
+      const posixPath = newFilePath.replace(/\\/g, '/');
+      const encodedPath = posixPath
+        .split('/')
+        .map((seg) => encodeURIComponent(seg))
+        .join('/');
+      const gen = ++playGenRef.current;
+      const savedTime = audio.currentTime;
+      const src = `http://127.0.0.1:${port}/${encodedPath.replace(/^\//, '')}?t=${gen}`;
+      console.log('[reloadCurrentTrack] setting audio.src =', src, 'savedTime=', savedTime);
+      audio.pause();
+      audio.src = src;
+      audio.addEventListener(
+        'canplay',
+        () => {
+          console.log(
+            '[reloadCurrentTrack] canplay fired, seeking to',
+            savedTime,
+            'shouldPlay=',
+            shouldPlay
+          );
+          audio.currentTime = savedTime;
+          if (shouldPlay) {
+            audio.play().catch((err) => {
+              if (gen === playGenRef.current && err.name !== 'AbortError')
+                console.error('[player] reloadCurrentTrack play error:', err);
+            });
+          }
+        },
+        { once: true }
+      );
+    },
+    [audio]
+  );
+
+  // Update the queue in-place without changing the current track or index.
+  // Called by MusicLibrary when tracks are added to the currently-playing source
+  // so shuffle picks from the full up-to-date list.
+  const updateQueue = useCallback((newQueue) => {
+    setQueue(newQueue);
+  }, []);
 
   return (
     <PlayerContext.Provider
@@ -341,6 +545,10 @@ export function PlayerProvider({ children }) {
         cycleRepeat,
         setDevice,
         setVolume,
+        patchCurrentTrack,
+        reloadCurrentTrack,
+        updateQueue,
+        audioRef,
       }}
     >
       {children}

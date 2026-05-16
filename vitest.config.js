@@ -24,6 +24,7 @@ export default defineConfig({
           include: [
             'src/__tests__/trackRepository.test.js',
             'src/__tests__/playlistRepository.test.js',
+            'src/__tests__/cuePointRepository.test.js',
           ],
           setupFiles: ['./src/__tests__/setup.js'],
         },
@@ -39,6 +40,7 @@ export default defineConfig({
             'src/__tests__/mediaServer.test.js',
             'src/__tests__/anlzWriter.test.js',
             'src/__tests__/waveformGenerator.test.js',
+            'src/__tests__/resetCleanup.test.js',
             'src/__tests__/usbUtils.test.js',
             'src/__tests__/settingWriter.test.js',
             'src/__tests__/pdbWriter.test.js',

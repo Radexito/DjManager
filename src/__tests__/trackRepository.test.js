@@ -9,6 +9,11 @@ import {
   getTrackIds,
   normalizeLibrary,
   clearTracks,
+  getTrackIdsNeedingNormalization,
+  getNormalizedTrackCount,
+  getLegacyNormalizedTracks,
+  clearLegacyNormalizedPaths,
+  resetNormalization,
 } from '../db/trackRepository.js';
 
 const SAMPLE = {
@@ -365,5 +370,128 @@ describe('source_link field', () => {
     const id = addTrack({ ...SAMPLE, file_hash: 'sl2', file_path: '/tmp/sl2.mp3' });
     const track = getTrackById(id);
     expect(track.source_link).toBeNull();
+  });
+});
+
+describe('getTrackIdsNeedingNormalization', () => {
+  it('returns ids of all analyzed tracks with loudness data', () => {
+    const id1 = addTrack({ ...SAMPLE, file_hash: 'nin1', file_path: '/tmp/nin1.mp3' });
+    const id2 = addTrack({ ...SAMPLE, file_hash: 'nin2', file_path: '/tmp/nin2.mp3' });
+    updateTrack(id1, { loudness: -14 });
+    updateTrack(id2, { loudness: -12 });
+    const ids = getTrackIdsNeedingNormalization();
+    expect(ids).toContain(id1);
+    expect(ids).toContain(id2);
+  });
+
+  it('includes tracks regardless of normalized_file_path (legacy column)', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'nin3', file_path: '/tmp/nin3.mp3' });
+    updateTrack(id, { loudness: -14, normalized_file_path: '/tmp/nin3_norm.mp3' });
+    const ids = getTrackIdsNeedingNormalization();
+    expect(ids).toContain(id);
+  });
+
+  it('excludes tracks with no loudness data', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'nin4', file_path: '/tmp/nin4.mp3' });
+    // no loudness set
+    const ids = getTrackIdsNeedingNormalization();
+    expect(ids).not.toContain(id);
+  });
+});
+
+describe('getNormalizedTrackCount', () => {
+  it('returns 0 when no tracks have a normalized_file_path', () => {
+    addTrack({ ...SAMPLE, file_hash: 'gnt1', file_path: '/tmp/gnt1.mp3' });
+    expect(getNormalizedTrackCount()).toBe(0);
+  });
+
+  it('returns correct count when some tracks are normalized', () => {
+    const id1 = addTrack({ ...SAMPLE, file_hash: 'gnt2', file_path: '/tmp/gnt2.mp3' });
+    const id2 = addTrack({ ...SAMPLE, file_hash: 'gnt3', file_path: '/tmp/gnt3.mp3' });
+    updateTrack(id1, { normalized_file_path: '/tmp/gnt2_norm.mp3' });
+    updateTrack(id2, { normalized_file_path: '/tmp/gnt3_norm.mp3' });
+    expect(getNormalizedTrackCount()).toBe(2);
+  });
+});
+
+describe('resetNormalization', () => {
+  it('clears normalized_file_path and source_loudness for all tracks when called with no args', () => {
+    const id1 = addTrack({ ...SAMPLE, file_hash: 'rn1', file_path: '/tmp/rn1.mp3' });
+    const id2 = addTrack({ ...SAMPLE, file_hash: 'rn2', file_path: '/tmp/rn2.mp3' });
+    updateTrack(id1, {
+      loudness: -14,
+      normalized_file_path: '/tmp/rn1_norm.mp3',
+      source_loudness: -14,
+    });
+    updateTrack(id2, {
+      loudness: -12,
+      normalized_file_path: '/tmp/rn2_norm.mp3',
+      source_loudness: -12,
+    });
+
+    const count = resetNormalization();
+    expect(count).toBe(2);
+    expect(getTrackById(id1).normalized_file_path).toBeNull();
+    expect(getTrackById(id1).source_loudness).toBeNull();
+    expect(getTrackById(id2).normalized_file_path).toBeNull();
+  });
+
+  it('returns 0 when the table is empty', () => {
+    // Don't add any tracks — table is already cleared by beforeEach
+    const count = resetNormalization();
+    expect(count).toBe(0);
+  });
+
+  it('clears only specified track ids when called with an array', () => {
+    const id1 = addTrack({ ...SAMPLE, file_hash: 'rn4', file_path: '/tmp/rn4.mp3' });
+    const id2 = addTrack({ ...SAMPLE, file_hash: 'rn5', file_path: '/tmp/rn5.mp3' });
+    updateTrack(id1, { normalized_file_path: '/tmp/rn4_norm.mp3', source_loudness: -14 });
+    updateTrack(id2, { normalized_file_path: '/tmp/rn5_norm.mp3', source_loudness: -12 });
+
+    resetNormalization([id1]);
+    expect(getTrackById(id1).normalized_file_path).toBeNull();
+    expect(getTrackById(id1).source_loudness).toBeNull();
+    // id2 should be untouched
+    expect(getTrackById(id2).normalized_file_path).toBe('/tmp/rn5_norm.mp3');
+  });
+});
+
+describe('getLegacyNormalizedTracks / clearLegacyNormalizedPaths', () => {
+  it('getLegacyNormalizedTracks returns empty array when no legacy paths exist', () => {
+    expect(getLegacyNormalizedTracks()).toEqual([]);
+  });
+
+  it('getLegacyNormalizedTracks returns tracks that have normalized_file_path set', () => {
+    const id1 = addTrack({ ...SAMPLE, file_hash: 'leg1', file_path: '/tmp/leg1.mp3' });
+    const id2 = addTrack({ ...SAMPLE, file_hash: 'leg2', file_path: '/tmp/leg2.mp3' });
+    updateTrack(id1, { normalized_file_path: '/tmp/leg1_norm.mp3' });
+
+    const legacy = getLegacyNormalizedTracks();
+    expect(legacy).toHaveLength(1);
+    expect(legacy[0].id).toBe(id1);
+    expect(legacy[0].normalized_file_path).toBe('/tmp/leg1_norm.mp3');
+
+    // id2 has no normalized path so it should not appear
+    expect(legacy.find((r) => r.id === id2)).toBeUndefined();
+  });
+
+  it('clearLegacyNormalizedPaths nullifies normalized_file_path and source_loudness', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'leg3', file_path: '/tmp/leg3.mp3' });
+    updateTrack(id, { normalized_file_path: '/tmp/leg3_norm.mp3', source_loudness: -14 });
+
+    clearLegacyNormalizedPaths();
+
+    const track = getTrackById(id);
+    expect(track.normalized_file_path).toBeNull();
+    expect(track.source_loudness).toBeNull();
+  });
+
+  it('clearLegacyNormalizedPaths does not touch tracks without a legacy path', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'leg4', file_path: '/tmp/leg4.mp3' });
+    updateTrack(id, { loudness: -12 });
+
+    clearLegacyNormalizedPaths();
+
+    expect(getTrackById(id).loudness).toBeCloseTo(-12);
   });
 });

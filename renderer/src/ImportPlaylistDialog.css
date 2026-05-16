@@ -1,0 +1,139 @@
+.ipd-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ipd-modal {
+  background: #1e1e2e;
+  border: 1px solid #383856;
+  border-radius: 10px;
+  padding: 24px 28px;
+  min-width: 320px;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ipd-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #e2e2f0;
+}
+
+.ipd-desc {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #888;
+}
+
+.ipd-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.ipd-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  color: #ccc;
+  font-size: 0.875rem;
+}
+
+.ipd-option:hover {
+  background: #2a2a3e;
+}
+
+.ipd-option--active {
+  background: #2a2a3e;
+  color: #e2e2f0;
+}
+
+.ipd-option input[type='radio'] {
+  accent-color: #7eb8f7;
+  flex-shrink: 0;
+}
+
+.ipd-color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ipd-option-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ipd-create-input {
+  background: #12121f;
+  border: 1px solid #383856;
+  border-radius: 6px;
+  color: #e2e2f0;
+  font-size: 0.875rem;
+  padding: 8px 10px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.ipd-create-input:focus {
+  border-color: #7eb8f7;
+}
+
+.ipd-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ipd-btn {
+  padding: 7px 18px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+
+.ipd-btn--secondary {
+  background: #2a2a3e;
+  color: #aaa;
+}
+
+.ipd-btn--secondary:hover {
+  background: #383856;
+}
+
+.ipd-btn--primary {
+  background: #4f7cce;
+  color: #fff;
+}
+
+.ipd-btn--primary:hover:not(:disabled) {
+  background: #5d8de0;
+}
+
+.ipd-btn--primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

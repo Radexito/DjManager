@@ -30,4 +30,10 @@ const db = new Database(dbPath);
 db.pragma('journal_mode = WAL'); // Write-Ahead Logging
 db.pragma('foreign_keys = ON'); // Enforce foreign keys
 
+export function closeDB() {
+  try {
+    db.close();
+  } catch {}
+}
+
 export default db;

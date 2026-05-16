@@ -346,7 +346,18 @@ export function buildTrackRow(params) {
     unknownStr6 = '',
     unknownStr7 = '',
     unknownStr8 = '',
+    replayGain = null,
   } = params;
+
+  // Converts replay_gain dB to the linear amplitude scale factor CDJs use for Auto Gain.
+  // Reference point 19048 (0x4A68) and 30967 (0x78F7) are the "unanalyzed" defaults
+  // written by native Rekordbox when no loudness analysis has run.
+  const gainToAutoGain = (ref) =>
+    replayGain == null
+      ? ref
+      : Math.max(0, Math.min(0xffff, Math.round(10 ** (replayGain / 20) * ref)));
+  const autoGain7 = gainToAutoGain(19048); // offset 24 — CDJ-NXS2 auto-gain field
+  const autoGain8 = gainToAutoGain(30967); // offset 26 — second gain reference
 
   // String encoding order matches rex track.go StringOffsets struct and MarshalBinary
   const strBufs = [
@@ -404,10 +415,10 @@ export function buildTrackRow(params) {
   pos += 4; // FileSize
   result.writeUInt32LE(checksum, pos);
   pos += 4; // Checksum
-  result.writeUInt16LE(0x758a, pos);
-  pos += 2; // Unnamed7
-  result.writeUInt16LE(0x57a2, pos);
-  pos += 2; // Unnamed8
+  result.writeUInt16LE(autoGain7, pos);
+  pos += 2; // Unnamed7 — auto_gain (CDJ-NXS2 trim)
+  result.writeUInt16LE(autoGain8, pos);
+  pos += 2; // Unnamed8 — auto_gain secondary reference
   result.writeUInt32LE(artworkId, pos);
   pos += 4; // ArtworkId
   result.writeUInt32LE(keyId, pos);
@@ -861,6 +872,7 @@ function buildPdbBuffer(input) {
         analyzeDate: now,
         sampleRate: 44100,
         sampleDepth: 16,
+        replayGain: t.replay_gain ?? null,
       })
     );
   }
