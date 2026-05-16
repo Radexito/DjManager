@@ -949,13 +949,20 @@ function buildPdbBuffer(input) {
   let nextUnusedPage = 1;
   let sequence = 2;
 
-  // Create all 20 tables: write index pages, reserve emptyCandidate slots
+  // Create all 20 tables: write index pages + pre-allocated empty DataPages
   for (const type of TABLE_ORDER) {
     const indexPageIndex = nextUnusedPage;
     const emptyCandidate = indexPageIndex + 1;
 
     const indexBuf = buildIndexPage(type, indexPageIndex, EMPTY_TABLE_SENTINEL, 1);
     writtenPages.set(indexPageIndex, indexBuf);
+
+    // Pre-write a proper empty DataPage at the emptyCandidate slot.
+    // For tables that end up with no data: Rekordbox reads this page via the
+    // emptyCandidate pointer in the file header and requires valid flags (0x34).
+    // For tables with data: this page gets overwritten with actual row data when flushed.
+    const emptyPage = new DataPage(type);
+    writtenPages.set(emptyCandidate, emptyPage.toBuffer(emptyCandidate, EMPTY_TABLE_SENTINEL, 1));
 
     tableStates.set(type, {
       indexPageIndex,
