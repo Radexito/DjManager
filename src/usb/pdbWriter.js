@@ -223,12 +223,22 @@ export function encodeDeviceSQLString(str) {
       buf.write(str, 1, 'ascii');
       return buf;
     } else {
-      // Long ASCII
-      const buf = Buffer.allocUnsafe(4 + str.length);
-      buf[0] = 0x40;
-      buf.writeUInt16LE(str.length + 4, 1);
+      // Long ASCII — kind 0x40, 1-byte length = (str.length + 1), then ASCII bytes.
+      // Length byte counts itself: readers do (length - 1) bytes of content.
+      // Strings > 254 chars fall back to long UTF-16LE (0x90) to avoid u8 overflow.
+      if (str.length <= 254) {
+        const buf = Buffer.allocUnsafe(2 + str.length);
+        buf[0] = 0x40;
+        buf[1] = str.length + 1;
+        buf.write(str, 2, 'ascii');
+        return buf;
+      }
+      const encoded = Buffer.from(str, 'utf16le');
+      const buf = Buffer.allocUnsafe(4 + encoded.length);
+      buf[0] = 0x90;
+      buf.writeUInt16LE(encoded.length + 4, 1);
       buf[3] = 0x00;
-      buf.write(str, 4, 'ascii');
+      encoded.copy(buf, 4);
       return buf;
     }
   } else {
