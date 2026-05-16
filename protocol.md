@@ -474,6 +474,20 @@ Without a valid `export.pdb` the CDJ cannot search or browse by metadata and wil
 
 ## 10. Known Quirks and Compatibility Notes
 
+### 10.1 PDB DeviceSQL Short String — LATIN-1, Not UTF-16LE (Potential Security Issue)
+
+**Observed:** 2026-05-16, hardware test on Pioneer CDJ/XDJ.
+
+Encoding PDB short strings (odd kind byte) as **UTF-16LE** (2 bytes/char) causes **Rekordbox to force-close immediately** when importing the USB drive. The crash is deterministic and reproducible.
+
+**Root cause investigated:** The DeviceSQL short-string format uses **LATIN-1 / 1-byte-per-char** content, not UTF-16LE. The kind byte `(char_count * 2) + 1` encodes the number of LATIN-1 characters. When the payload is doubled (UTF-16LE), Rekordbox reads beyond its expected buffer boundary for that string, likely causing a heap or stack overflow in its PDB parser.
+
+**Potential security implication:** A crafted `export.pdb` with short strings encoded as oversized payloads may be exploitable as a **memory corruption / arbitrary crash** vector in Rekordbox. Since Rekordbox auto-imports USB drives plugged into a PC, no user interaction beyond inserting a USB is required to trigger the crash. **This should be evaluated for responsible disclosure to Pioneer/AlphaTheta.** To be investigated separately from the fix.
+
+**Status:** Reverted UTF-16LE encoding. Short strings now use correct LATIN-1 encoding with fixed kind byte (see fix below). Crash issue filed for future investigation.
+
+---
+
 - **len_tag vs len_header**: `len_tag` is the _total_ section size (including the 12-byte standard header). `len_header` is the byte offset where the body/payload begins. These are frequently confused — using `len_header` where `len_tag` is expected shifts all subsequent section reads by a fixed offset.
 - **PWV3/PWV4/PWV5 header size**: These sections have a 24-byte header (12 standard + 12 section-specific). `len_tag = 24 + data_size`, not `36 + data_size`.
 - **PVBR required for VBR MP3**: Without this section, CDJs cannot accurately seek into variable-bitrate MP3 files. Constant bitrate MP3 and lossless formats do not need it.

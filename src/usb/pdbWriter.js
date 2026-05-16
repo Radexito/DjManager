@@ -190,24 +190,49 @@ export function detectFileType(filePath) {
 
 // ── DeviceSQL string encoding ─────────────────────────────────────────────────
 
+function isASCII(str) {
+  for (let i = 0; i < str.length; i++) {
+    if (str.charCodeAt(i) > 0x7f) return false;
+  }
+  return true;
+}
+
 /**
  * Encode a string as a DeviceSQL string (DeviceSQLString).
  *
- * Short (len < 128): odd kind byte = (char_count * 2) + 1, then UTF-16LE bytes.
- * Long  (len >= 128): [0x90, u16LE(byte_len+4), 0x00, UTF-16LE bytes].
+ * Short ASCII (len < 127): [odd kind byte = (len << 1) | 1, LATIN-1 bytes].
+ *   Kind byte encodes exact char count: char_count = (kind - 1) / 2.
+ *   Previous bug: used (len + 1) instead of len — off-by-one caused hardware
+ *   to read one extra byte, producing garbage titles and artist names.
  *
- * Pioneer's odd kind byte always means UTF-16LE — there is no short ASCII format.
+ * Long ASCII (len >= 127): [0x40, u16LE(len+4), 0x00, ASCII bytes].
+ *
+ * Non-ASCII / Unicode: [0x90, u16LE(byte_len+4), 0x00, UTF-16LE bytes].
+ *
+ * WARNING: Do NOT encode short strings as UTF-16LE (2 bytes/char). The
+ * short format (odd kind byte) uses LATIN-1 (1 byte/char). Encoding as
+ * UTF-16LE doubles the payload size relative to what Pioneer expects and
+ * causes Rekordbox to crash on import (confirmed 2026-05-16, issue #TBD).
  */
 export function encodeDeviceSQLString(str) {
-  if (str.length < 128) {
-    // Short UTF-16LE
-    const encoded = Buffer.from(str, 'utf16le');
-    const buf = Buffer.allocUnsafe(1 + encoded.length);
-    buf[0] = (str.length << 1) | 1;
-    encoded.copy(buf, 1);
-    return buf;
+  if (isASCII(str)) {
+    if (str.length < 127) {
+      // Short LATIN-1 — kind byte encodes exact char count
+      const buf = Buffer.allocUnsafe(1 + str.length);
+      buf[0] = (str.length << 1) | 1;
+      buf.write(str, 1, 'ascii');
+      return buf;
+    } else {
+      // Long ASCII
+      const buf = Buffer.allocUnsafe(4 + str.length);
+      buf[0] = 0x40;
+      buf.writeUInt16LE(str.length + 4, 1);
+      buf[3] = 0x00;
+      buf.write(str, 4, 'ascii');
+      return buf;
+    }
   } else {
-    // Long UTF-16LE
+    // Non-ASCII — long UTF-16LE
     const encoded = Buffer.from(str, 'utf16le');
     const buf = Buffer.allocUnsafe(4 + encoded.length);
     buf[0] = 0x90;
