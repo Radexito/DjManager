@@ -1019,8 +1019,9 @@ function buildPdbBuffer(input) {
   }
 
   // ── Step 4: Build file buffer ──
-  const maxPage = Math.max(...writtenPages.keys());
-  const totalPages = maxPage + 1;
+  // totalPages must match nextUnusedPage so every emptyCandidate page index
+  // referenced in the header actually exists in the file (zero-filled = empty).
+  const totalPages = nextUnusedPage;
   const fileBuf = Buffer.alloc(totalPages * PAGE_SIZE);
 
   // Write file header at page 0
