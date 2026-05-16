@@ -190,39 +190,24 @@ export function detectFileType(filePath) {
 
 // ── DeviceSQL string encoding ─────────────────────────────────────────────────
 
-function isASCII(str) {
-  for (let i = 0; i < str.length; i++) {
-    if (str.charCodeAt(i) > 0x7f) return false;
-  }
-  return true;
-}
-
 /**
  * Encode a string as a DeviceSQL string (DeviceSQLString).
  *
- * Short ASCII (len < 127): 1 header byte = ((len+1)<<1)|1, then ASCII bytes.
- * Long ASCII (len >= 127): [0x40, u16LE(len+4), 0x00, ASCII bytes].
- * Unicode: [0x90, u16LE(byte_len+4), 0x00, UTF-16LE bytes].
+ * Short (len < 128): odd kind byte = (char_count * 2) + 1, then UTF-16LE bytes.
+ * Long  (len >= 128): [0x90, u16LE(byte_len+4), 0x00, UTF-16LE bytes].
+ *
+ * Pioneer's odd kind byte always means UTF-16LE — there is no short ASCII format.
  */
 export function encodeDeviceSQLString(str) {
-  if (isASCII(str)) {
-    if (str.length < 127) {
-      // Short ASCII
-      const buf = Buffer.allocUnsafe(1 + str.length);
-      buf[0] = ((str.length + 1) << 1) | 1;
-      buf.write(str, 1, 'ascii');
-      return buf;
-    } else {
-      // Long ASCII
-      const buf = Buffer.allocUnsafe(4 + str.length);
-      buf[0] = 0x40;
-      buf.writeUInt16LE(str.length + 4, 1);
-      buf[3] = 0x00;
-      buf.write(str, 4, 'ascii');
-      return buf;
-    }
+  if (str.length < 128) {
+    // Short UTF-16LE
+    const encoded = Buffer.from(str, 'utf16le');
+    const buf = Buffer.allocUnsafe(1 + encoded.length);
+    buf[0] = (str.length << 1) | 1;
+    encoded.copy(buf, 1);
+    return buf;
   } else {
-    // Unicode UTF-16 LE
+    // Long UTF-16LE
     const encoded = Buffer.from(str, 'utf16le');
     const buf = Buffer.allocUnsafe(4 + encoded.length);
     buf[0] = 0x90;
