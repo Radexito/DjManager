@@ -2,6 +2,43 @@
 import path from 'path';
 import db from './database.js';
 
+// Whitelist of columns that may be updated via updateTrack().
+// Prevents SQL injection via dynamic column-name interpolation if arbitrary
+// keys were ever passed through the update-track IPC channel.
+const ALLOWED_TRACK_COLUMNS = new Set([
+  'title',
+  'artist',
+  'album',
+  'year',
+  'label',
+  'genres',
+  'bpm',
+  'bpm_override',
+  'key_raw',
+  'key_camelot',
+  'loudness',
+  'replay_gain',
+  'intro_secs',
+  'outro_secs',
+  'beatgrid',
+  'rating',
+  'comments',
+  'user_tags',
+  'has_artwork',
+  'artwork_path',
+  'normalized_file_path',
+  'source_loudness',
+  'file_path',
+  'file_hash',
+  'format',
+  'bitrate',
+  'duration',
+  'source_url',
+  'source_platform',
+  'source_quality',
+  'source_link',
+]);
+
 // ─── Camelot helpers (mirrors renderer/src/searchParser.js) ─────────────────
 
 function parseCamelot(key) {
@@ -202,17 +239,24 @@ export function addTrack(track) {
 
 export function updateTrack(id, data) {
   console.log(`Updating track ${id} with data:`, data);
-  const fields = Object.keys(data);
+  const fields = Object.keys(data).filter((f) => {
+    if (!ALLOWED_TRACK_COLUMNS.has(f)) {
+      console.warn(`[updateTrack] Ignoring unknown column: ${f}`);
+      return false;
+    }
+    return true;
+  });
   if (!fields.length) return;
 
   const set = fields.map((f) => `${f} = @${f}`).join(', ');
+  const safeData = Object.fromEntries(fields.map((f) => [f, data[f]]));
   db.prepare(
     `
     UPDATE tracks
     SET ${set}, analyzed = 1
     WHERE id = @id
   `
-  ).run({ id, ...data });
+  ).run({ id, ...safeData });
 }
 
 export function getTracks({ limit = 50, offset = 0, search = '', filters = [], playlistId } = {}) {
