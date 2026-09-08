@@ -133,6 +133,7 @@ import {
 } from './deps.js';
 import { initLogger, getLogDir, initRendererLogger, logRendererMessage } from './logger.js';
 import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
+import { detectWindowsDrives } from './explorer/drives.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
@@ -1820,12 +1821,17 @@ ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlis
 ipcMain.handle('get-computer-root', () => {
   const home = os.homedir();
   let root;
+  let drives = [];
   if (process.platform === 'win32') {
     root = path.parse(home).root || 'C:\\';
+    // #473: enumerate ALL present drives so the Explorer can switch from C:
+    // to any other volume (D:, E:, ...).
+    drives = detectWindowsDrives();
+    if (!drives.includes(root)) drives.unshift(root);
   } else {
     root = '/';
   }
-  return { root, home };
+  return { root, home, drives };
 });
 
 ipcMain.handle('get-tracks-by-paths', (_, filePaths) => {

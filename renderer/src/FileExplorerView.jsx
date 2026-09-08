@@ -297,6 +297,7 @@ export default function FileExplorerView({ style }) {
   const { play, currentTrack, mediaPort, patchCurrentTrack } = usePlayer();
 
   const [fsRoot, setFsRoot] = useState(null);
+  const [drives, setDrives] = useState([]); // Windows drive roots (C:\, D:\ ...)
   const [homeDir, setHomeDir] = useState(null);
   const [currentPath, setCurrentPath] = useState(null);
   const [dirEntries, setDirEntries] = useState({ dirs: [], files: [] });
@@ -340,9 +341,10 @@ export default function FileExplorerView({ style }) {
   // ── Init ──────────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    window.api.getComputerRoot().then(({ root, home }) => {
+    window.api.getComputerRoot().then(({ root, home, drives }) => {
       setFsRoot(root);
       setHomeDir(home);
+      setDrives(drives ?? []);
       setCurrentPath(home ?? root);
     });
     window.api.getPlaylists().then(setPlaylists);
@@ -801,6 +803,26 @@ export default function FileExplorerView({ style }) {
     >
       {/* ── Favourites sidebar ────────────────────────────────────────────── */}
       <div className="explorer-favourites">
+        {drives.length > 1 && (
+          <>
+            <div className="explorer-favourites__header">Drives</div>
+            {drives.map((d) => (
+              <div
+                key={d}
+                className={`explorer-favourites__item${
+                  currentPath === d || currentPath.startsWith(d)
+                    ? ' explorer-favourites__item--active'
+                    : ''
+                }`}
+                title={d}
+                onClick={() => navigateTo(d)}
+              >
+                <span className="explorer-favourites__icon">💽</span>
+                <span className="explorer-favourites__name">{d}</span>
+              </div>
+            ))}
+          </>
+        )}
         <div className="explorer-favourites__header">Favourites</div>
         {favourites.length === 0 ? (
           <div className="explorer-favourites__empty">Right-click a folder to add favourites</div>
