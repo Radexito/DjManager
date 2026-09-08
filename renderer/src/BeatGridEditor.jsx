@@ -444,12 +444,12 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
       const vms = viewMsRef.current;
 
       // Auto-scroll: keep the playhead centred — no Min clamp so it works from t=0
+      const dur = trackDurationMsRef.current;
       if (isThisTrackRef.current && isPlayingRef.current && !userScrollingRef.current) {
         viewCenterRef.current = snapToDetailGrid(playheadMs, waveformDetailRef.current, dur);
       }
 
       const vc = viewCenterRef.current;
-      const dur = trackDurationMsRef.current;
       const ph = isThisTrackRef.current ? playheadMs : null;
       const cues = cuePointsRef.current;
 
@@ -597,6 +597,18 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
       });
     }
   }, []);
+
+  // React attaches onWheel as a PASSIVE listener at the root, so preventDefault()
+  // in the synthetic handler is ignored and logs "Unable to preventDefault inside
+  // passive event listener invocation" on every wheel tick. Attach natively with
+  // { passive: false } so zoom actually blocks page scroll and the console stays clean.
+  const bgeWrapRef = useRef(null);
+  useEffect(() => {
+    const el = bgeWrapRef.current;
+    if (!el) return;
+    el.addEventListener('wheel', onDetailWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onDetailWheel);
+  }, [onDetailWheel]);
 
   // ── Overview click-to-jump ────────────────────────────────────────────────
   const onOverviewClick = useCallback(
@@ -808,7 +820,7 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
         </div>
 
         {/* Detail waveform */}
-        <div className="bge-canvas-wrap" onWheel={onDetailWheel}>
+        <div className="bge-canvas-wrap" ref={bgeWrapRef}>
           {waveformLoading && <div className="bge-loading">Loading waveform…</div>}
           <button
             className={`bge-play-overlay${isThisTrack && isPlaying ? ' bge-play-overlay--playing' : ''}`}
