@@ -75,6 +75,7 @@ import {
   getPlaylistSourceUrls,
   getTrackWaveform,
   updateTrackWaveform,
+  updateTrackDetailHires,
 } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import {
@@ -119,9 +120,8 @@ import {
   fetchTidalInfo,
   searchTidal,
 } from './audio/tidalDlManager.js';
-import { generateWaveformOverview } from './audio/waveformGenerator.js';
+import { generateWaveformOverview, generateEditorWaveform } from './audio/waveformGenerator.js';
 import { ensureDeps, getFfmpegRuntimePath } from './deps.js';
-import { generateEditorWaveform } from './audio/waveformGenerator.js';
 import {
   getInstalledVersions,
   checkForUpdates,
@@ -726,12 +726,50 @@ ipcMain.handle('update-track', (_, { id, data }) => {
   }
   return { ok: true };
 });
+// #262: fire-and-forget background regeneration of just the hires (600 cols/sec)
+// detail buffer for a track that was analyzed before this feature shipped.
+// Persists the result to `waveform_detail_hires` and notifies the renderer via
+// the existing `waveform-ready` event (same event used for overview waveform
+// completion) so the Beat Grid Editor can pick up the sharper buffer in place.
+function regenerateHiresWaveform(trackId, filePath) {
+  generateEditorWaveform(filePath, getFfmpegRuntimePath())
+    .then(({ detailHires }) => {
+      updateTrackDetailHires(trackId, detailHires);
+      if (global.mainWindow) {
+        global.mainWindow.webContents.send('waveform-ready', { trackId });
+      }
+    })
+    .catch((err) =>
+      console.warn(`[waveform] hires detail regen failed for track ${trackId}:`, err.message)
+    );
+}
+
 ipcMain.handle('get-editor-waveform', async (_, trackId) => {
   const track = getTrackById(trackId);
   if (!track?.file_path) return null;
+
+  // Fast path: hires (600 cols/sec) buffer already generated and cached —
+  // no ffmpeg decode needed on every editor open.
+  if (track.waveform_detail_hires != null) {
+    return {
+      detail: track.waveform_detail_hires,
+      overview: track.waveform_overview ?? null,
+      numCols: Math.floor(track.waveform_detail_hires.length / 3),
+    };
+  }
+
+  // Legacy track (analyzed before #262): no hires buffer stored yet. Return
+  // the 150 cols/sec buffer synchronously so the editor still renders
+  // something immediately, and kick off background regeneration of the
+  // hires buffer for next time — do NOT block this response on it.
   try {
     const result = await generateEditorWaveform(track.file_path, getFfmpegRuntimePath());
-    return result;
+    regenerateHiresWaveform(trackId, track.file_path);
+    return {
+      detail: result.detail,
+      overview: result.overview,
+      numCols: result.numCols,
+    };
   } catch (e) {
     console.error('[get-editor-waveform]', e.message);
     return null;

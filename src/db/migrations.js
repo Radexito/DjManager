@@ -70,6 +70,7 @@ export function initDB() {
     'ALTER TABLE tracks ADD COLUMN beatgrid_offset INTEGER DEFAULT 0',
     'ALTER TABLE tracks ADD COLUMN waveform_overview BLOB',
     'ALTER TABLE tracks ADD COLUMN is_linked INTEGER DEFAULT 0',
+    'ALTER TABLE tracks ADD COLUMN waveform_detail_hires BLOB',
   ]) {
     try {
       db.prepare(col).run();
