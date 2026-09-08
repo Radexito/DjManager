@@ -1414,7 +1414,8 @@ ipcMain.handle('cloud-search', async (_event, { source, query, types, limit }) =
   if (!query?.trim()) return { ok: false, error: 'Empty query' };
   try {
     if (source === 'youtube') {
-      const results = await searchYouTube(query, { limit });
+      const cookiesBrowser = getSetting('ytdlp_cookies_browser', '') || null;
+      const results = await searchYouTube(query, { limit, cookiesBrowser });
       return { ok: true, results };
     }
     if (source === 'tidal') {
