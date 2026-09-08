@@ -460,15 +460,19 @@ describe('buildPcobSections', () => {
     expect(pcob1.readUInt32BE(12)).toBe(1);
   });
 
-  it('PCOB2 is always empty stub (memory cues go to PCO2 until PCOB2 format is confirmed)', () => {
-    // Non-empty PCOB2 causes Rekordbox to reject the file — see issue #208
+  it('PCOB2 stays empty even when memory cues are passed (export disabled, see Known Issues)', () => {
+    // Byte layout for memory cues in PCOB2 was verified against native Rekordbox
+    // (issue #208), but real-world testing showed memory cues are unreliable in
+    // practice, so writing them is disabled for now. PCOB2 must always be the
+    // empty stub regardless of what's in cuePoints.
     const [, pcob2] = buildPcobSections([memoryCue]);
-    expect(pcob2.readUInt32BE(8)).toBe(24); // len_tag = 24 = header only
+    expect(pcob2.readUInt32BE(8)).toBe(24); // len_tag = header only, no entries
+    expect(pcob2.readUInt32BE(12)).toBe(0); // type = 0 (memory_cues slot)
     expect(pcob2.readUInt16BE(18)).toBe(0); // num_cues = 0
   });
 
-  it('PCOB2 stays empty even when there are memory cues', () => {
-    const [, pcob2] = buildPcobSections([hotCue, memoryCue]);
+  it('PCOB2 stays empty when there are no memory cues', () => {
+    const [, pcob2] = buildPcobSections([hotCue]);
     expect(pcob2.readUInt32BE(8)).toBe(24);
   });
 
@@ -556,6 +560,23 @@ describe('buildExtPcobSections', () => {
     expect(ext1.readUInt32BE(8)).toBe(24); // empty — no D-H cues
   });
 
+  it('places "page 2" hot_cue_index 8-15 (hot_cue numbers 9-16) in EXT PCOB1 too', () => {
+    // Confirmed against a native Rekordbox export with 16 hot cues: page 2 cues
+    // are stored in the same flat PCOB1 list as page 1, hot_cue numbers just
+    // keep counting up (9, 10, 11, …) — there is no separate page section.
+    const cues = [
+      { position_ms: 1000, color: '#ff9900', hot_cue_index: 3 }, // D (page 1)
+      { position_ms: 2000, color: '#00b4d8', hot_cue_index: 8 }, // 9th hot cue (page 2)
+      { position_ms: 3000, color: '#00b4d8', hot_cue_index: 15 }, // 16th hot cue (page 2)
+    ];
+    const [ext1] = buildExtPcobSections(cues);
+    expect(ext1.readUInt16BE(18)).toBe(3); // num_cues
+    const pcptStart = 24;
+    expect(ext1.readUInt32BE(pcptStart + 12)).toBe(4); // hot_cue_index 3 → hot_cue 4
+    expect(ext1.readUInt32BE(pcptStart + 56 + 12)).toBe(9); // hot_cue_index 8 → hot_cue 9
+    expect(ext1.readUInt32BE(pcptStart + 112 + 12)).toBe(16); // hot_cue_index 15 → hot_cue 16
+  });
+
   it('EXT PCOB2 is always empty stub', () => {
     const cues = [{ position_ms: 1000, color: '#ff9900', hot_cue_index: 3 }];
     const [, ext2] = buildExtPcobSections(cues);
@@ -585,10 +606,23 @@ describe('buildPco2Sections', () => {
     expect(pco2mem.readUInt32BE(12)).toBe(0);
   });
 
-  it('memory cues go to slot 2, not slot 1', () => {
+  it('slot 2 stays empty even when memory cues are passed (export disabled, see Known Issues)', () => {
     const [pco2hot, pco2mem] = buildPco2Sections([memoryCue]);
     expect(pco2hot.readUInt16BE(16)).toBe(0); // slot 1: 0 cues
-    expect(pco2mem.readUInt16BE(16)).toBe(1); // slot 2: 1 cue
+    expect(pco2mem.readUInt16BE(16)).toBe(0); // slot 2: always 0 cues (disabled)
+  });
+
+  it('slot 1 carries all 16 hot cues in one flat list, including "page 2" (9-16)', () => {
+    // Confirmed against a native Rekordbox export with 16 hot cues: PCO2 slot 1
+    // held all 16 entries (hot_cue 1-16) with no page marker in the format.
+    const cues = Array.from({ length: 16 }, (_, i) => ({
+      position_ms: 1000 * (i + 1),
+      color: '#00b4d8',
+      label: '',
+      hot_cue_index: i,
+    }));
+    const [pco2hot] = buildPco2Sections(cues);
+    expect(pco2hot.readUInt16BE(16)).toBe(16); // num_cues = 16
   });
 
   it('PCP2 color_code for orange (#ff9900) = 0x23 (extended wheel code 35)', () => {

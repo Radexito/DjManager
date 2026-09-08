@@ -78,7 +78,7 @@ export function camelotMatches(key) {
  * Returns null when the clause is empty or doesn't start with a known field.
  * Returns { field: '_text', ... } for unstructured text.
  */
-function parseClause(clause) {
+export function parseClause(clause) {
   const c = clause.trim();
   if (!c) return null;
 
@@ -112,6 +112,28 @@ function parseClause(clause) {
 
   // No structured match — free-text fallback
   return { field: '_text', op: 'contains', value: c };
+}
+
+/**
+ * Whether `raw` is already an unambiguous, complete filter clause (a full
+ * number, range, or Camelot key). Used to auto-commit a clause into a chip
+ * as soon as it's finished, without waiting for " AND ". Text-field values
+ * are deliberately excluded since they can legitimately contain spaces
+ * mid-typing (e.g. "GENRE is Deep House").
+ */
+export function isCompleteClause(raw) {
+  const filter = parseClause(raw);
+  if (!filter || filter.field === '_text') return false;
+  const fieldDef = FIELDS[filter.field];
+  if (!fieldDef || fieldDef.type === 'text') return false;
+
+  if (fieldDef.type === 'key') {
+    return CAMELOT_KEYS.includes(String(filter.value).trim().toLowerCase());
+  }
+
+  // number field
+  if (filter.op === 'range') return true; // parseClause already validated the full pattern
+  return /^-?\d+\.?\d*$/.test(String(filter.value).trim());
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -254,6 +276,9 @@ function getValueHints(fieldKey, op, base, partialValue = '') {
     // Don't flood with all 24 keys — wait until the user starts typing
     if (!partialValue) return [];
     const partial = partialValue.toLowerCase();
+    // Already a complete, valid key — nothing left to suggest, and offering
+    // one would let Enter/Tab silently overwrite what was just typed.
+    if (CAMELOT_KEYS.includes(partial)) return [];
     const desc = {
       is: 'exact — e.g. 8A',
       adjacent: 'energy shift — e.g. 8A',
@@ -266,6 +291,18 @@ function getValueHints(fieldKey, op, base, partialValue = '') {
       insertText: base + k.toUpperCase(),
       description: desc[op],
     }));
+  }
+
+  // Once the user has typed a syntactically complete value, stop suggesting
+  // the generic example — accepting it via Enter/Tab would silently replace
+  // what they actually typed with the placeholder hint.
+  if (partialValue) {
+    const trimmed = partialValue.trim();
+    const isComplete =
+      op === 'in range'
+        ? /^-?\d+\.?\d*\s*[-–]\s*-?\d+\.?\d*$/.test(trimmed)
+        : /^-?\d+\.?\d*$/.test(trimmed);
+    if (isComplete) return [];
   }
 
   const hints = {

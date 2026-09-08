@@ -254,3 +254,51 @@
 .track-details__btn--save:hover:not(:disabled) {
   background: #7d75ff;
 }
+
+.track-details__location-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.track-details__location-row + .track-details__location-row {
+  margin-top: 6px;
+}
+
+.track-details__location-row .track-details__label {
+  flex-shrink: 0;
+}
+
+.track-details__path-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  padding: 4px 6px;
+  color: #aaa;
+  text-overflow: ellipsis;
+}
+
+.track-details__select {
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  color: #eee;
+  font-size: 11px;
+  padding: 4px 6px;
+  font-family: inherit;
+}
+
+.track-details__btn--small {
+  background: #2a2a2a;
+  color: #aaa;
+  padding: 4px 8px;
+  font-size: 11px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.track-details__btn--small:hover:not(:disabled) {
+  background: #3a3a3a;
+  color: #eee;
+}

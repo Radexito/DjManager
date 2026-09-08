@@ -104,6 +104,99 @@ except Exception as e:
     sys.exit(1)
 `;
 
+// Embedded Python script for searching TIDAL via tidalapi's session search.
+// Same approach as FETCH_INFO_SCRIPT above — no upstream `tdn` CLI changes
+// needed since tidalapi is already a direct dependency of this fork.
+const SEARCH_SCRIPT = `
+import sys, json
+try:
+    import tidalapi
+except ImportError:
+    print(json.dumps({'ok': False, 'error': 'tidalapi not installed'}))
+    sys.exit(1)
+
+if len(sys.argv) < 3:
+    print(json.dumps({'ok': False, 'error': 'Usage: script.py <query> <token_path> [types] [limit]'}))
+    sys.exit(1)
+
+query = sys.argv[1]
+token_path = sys.argv[2]
+types_arg = sys.argv[3] if len(sys.argv) > 3 else 'track'
+limit = int(sys.argv[4]) if len(sys.argv) > 4 else 20
+
+try:
+    with open(token_path) as f:
+        token = json.load(f)
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': f'Token error: {str(e)}'}))
+    sys.exit(1)
+
+try:
+    session = tidalapi.Session()
+    session.load_oauth_session(
+        token.get('token_type', 'Bearer'),
+        token['access_token'],
+        token.get('refresh_token')
+    )
+    if not session.check_login():
+        print(json.dumps({'ok': False, 'error': 'Not logged in to TIDAL'}))
+        sys.exit(1)
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': f'Session error: {str(e)}'}))
+    sys.exit(1)
+
+type_map = {
+    'track': tidalapi.media.Track,
+    'album': tidalapi.album.Album,
+    'playlist': tidalapi.playlist.Playlist,
+}
+requested_types = [t.strip() for t in types_arg.split(',') if t.strip() in type_map]
+models = [type_map[t] for t in requested_types] if requested_types else None
+
+try:
+    results = session.search(query, models=models, limit=limit)
+    out = []
+    for t in (results.get('tracks') or []):
+        out.append({
+            'type': 'track',
+            'id': str(t.id),
+            'title': t.name,
+            'artist': t.artist.name if t.artist else '',
+            'album': t.album.name if t.album else '',
+            'duration': t.duration,
+            'quality': getattr(t, 'audio_quality', None) or '',
+            'url': f'https://tidal.com/browse/track/{t.id}',
+        })
+    for a in (results.get('albums') or []):
+        out.append({
+            'type': 'album',
+            'id': str(a.id),
+            'title': a.name,
+            'artist': a.artist.name if a.artist else '',
+            'album': a.name,
+            'duration': getattr(a, 'duration', None),
+            'numTracks': getattr(a, 'num_tracks', None),
+            'quality': getattr(a, 'audio_quality', None) or '',
+            'url': f'https://tidal.com/browse/album/{a.id}',
+        })
+    for p in (results.get('playlists') or []):
+        out.append({
+            'type': 'playlist',
+            'id': str(p.id),
+            'title': p.name,
+            'artist': '',
+            'album': '',
+            'duration': getattr(p, 'duration', None),
+            'numTracks': getattr(p, 'num_tracks', None),
+            'quality': '',
+            'url': f'https://tidal.com/browse/playlist/{p.id}',
+        })
+    print(json.dumps({'ok': True, 'results': out}))
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': str(e)}))
+    sys.exit(1)
+`;
+
 // Strip ANSI escape codes from terminal output
 function stripAnsi(str) {
   return str.replace(/\x1B\[[0-9;]*[mGKHFABCDST]/g, '');
@@ -247,6 +340,63 @@ export async function fetchTidalInfo(url) {
       try {
         const result = JSON.parse(stdout.trim());
         resolve(result);
+      } catch {
+        resolve({ ok: false, error: stderr.trim() || stdout.trim() || 'Failed to parse response' });
+      }
+    });
+
+    proc.on('error', (err) => {
+      resolve({ ok: false, error: err.message });
+    });
+  });
+}
+
+/**
+ * Search TIDAL by keyword using tidalapi's session search.
+ * @param {string} query
+ * @param {{ types?: string[], limit?: number }} [opts]
+ * @returns {Promise<{ ok: boolean, results?: Array, error?: string }>}
+ */
+export async function searchTidal(query, opts = {}) {
+  const pythonPath = findTidalPython();
+  if (!pythonPath) {
+    return { ok: false, error: 'Python interpreter not found. Ensure tidal-dl-ng is installed.' };
+  }
+
+  const tokenPath = getTokenPath();
+  if (!fs.existsSync(tokenPath)) {
+    return { ok: false, error: 'Not logged in to TIDAL. Please connect your account first.' };
+  }
+
+  const scriptPath = path.join(os.tmpdir(), 'dj_manager_tidal_search.py');
+  try {
+    fs.writeFileSync(scriptPath, SEARCH_SCRIPT.trimStart());
+  } catch (e) {
+    return { ok: false, error: `Failed to write search script: ${e.message}` };
+  }
+
+  const types = opts.types?.length ? opts.types.join(',') : 'track';
+  const limit = opts.limit ?? 20;
+
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+
+    const proc = spawn(pythonPath, [scriptPath, query, tokenPath, types, String(limit)], {
+      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    proc.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    proc.on('close', () => {
+      try {
+        resolve(JSON.parse(stdout.trim()));
       } catch {
         resolve({ ok: false, error: stderr.trim() || stdout.trim() || 'Failed to parse response' });
       }

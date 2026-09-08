@@ -44,18 +44,29 @@ jobs:
     name: Build (${{ matrix.platform }})
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
 
       - name: Install root dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Install renderer dependencies
         run: cd renderer && npm ci --legacy-peer-deps
+
+      - name: Cache electron-builder tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron-builder
+            ~/Library/Caches/electron-builder
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-builder-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-builder-${{ runner.os }}-
 
       - name: Build renderer
         run: npm run build-renderer
@@ -133,7 +144,7 @@ jobs:
   #  needs: [setup, create-release]
   #  runs-on: windows-latest
   #  steps:
-  #    - uses: actions/checkout@v6
+  #    - uses: actions/checkout@v7
   #
   #    - uses: actions/download-artifact@v8
   #      with:
@@ -193,7 +204,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: dev
           fetch-depth: 0

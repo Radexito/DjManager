@@ -1,0 +1,220 @@
+.cloud-search-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 24px;
+  overflow-y: auto;
+  background: var(--bg-primary, #111);
+  color: var(--text-primary, #e0e0e0);
+}
+
+.cloud-search-header h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.cloud-search-subtitle {
+  margin: 0 0 16px;
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+}
+
+.cloud-search-source-toggle {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.cloud-search-source-btn {
+  background: var(--bg-secondary, #1e1e1e);
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: var(--text-secondary, #aaa);
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cloud-search-source-btn.active {
+  background: var(--accent, #7c5cfc);
+  color: #fff;
+  border-color: var(--accent, #7c5cfc);
+}
+
+.cloud-search-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.cloud-search-input {
+  flex: 1;
+  background: var(--bg-secondary, #1e1e1e);
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: var(--text-primary, #e0e0e0);
+  padding: 8px 12px;
+  font-size: 13px;
+  outline: none;
+}
+
+.cloud-search-input:focus {
+  border-color: var(--accent, #7c5cfc);
+}
+
+.cloud-search-type-select {
+  background: var(--bg-secondary, #1e1e1e);
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: var(--text-primary, #e0e0e0);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.cloud-search-submit-btn {
+  background: var(--accent, #7c5cfc);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  padding: 8px 18px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cloud-search-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cloud-search-notice {
+  background: var(--bg-secondary, #1e1e1e);
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  margin-bottom: 12px;
+  color: var(--text-secondary, #ccc);
+}
+
+.cloud-search-link-btn {
+  background: none;
+  border: none;
+  color: var(--accent, #89b4fa);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.cloud-search-error {
+  color: #ff6b6b;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.cloud-search-empty {
+  color: var(--text-secondary, #666);
+  font-size: 13px;
+  padding: 24px 0;
+  text-align: center;
+}
+
+.cloud-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.cloud-search-results-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.cloud-search-select-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary, #aaa);
+  cursor: pointer;
+}
+
+.cloud-search-download-btn {
+  background: var(--accent, #7c5cfc);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cloud-search-download-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cloud-search-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.cloud-search-row {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid #222;
+  cursor: pointer;
+}
+
+.cloud-search-row:last-child {
+  border-bottom: none;
+}
+
+.cloud-search-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.cloud-search-row--head {
+  cursor: default;
+  color: var(--text-secondary, #888);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  background: var(--bg-secondary, #1a1a1a);
+}
+
+.cloud-search-row--head:hover {
+  background: var(--bg-secondary, #1a1a1a);
+}
+
+.cloud-search-row--selected {
+  background: rgba(124, 92, 252, 0.12);
+}
+
+.cloud-search-title,
+.cloud-search-cell--ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-search-status--done {
+  color: #6bd68b;
+}
+
+.cloud-search-status--failed {
+  color: #ff6b6b;
+}
+
+.cloud-search-status--downloading,
+.cloud-search-status--pending {
+  color: var(--text-secondary, #888);
+}

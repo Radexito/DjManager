@@ -2,6 +2,12 @@
 
 A DJ-focused music library manager built with Electron. Manage your tracks, analyze BPM and key, export to Pioneer CDJ USB drives, and download from streaming platforms — all in one offline-first desktop app.
 
+[![CI](https://github.com/Radexito/DjManager/actions/workflows/ci.yml/badge.svg)](https://github.com/Radexito/DjManager/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/Radexito/DjManager?include_prereleases)](https://github.com/Radexito/DjManager/releases)
+[![Open issues](https://img.shields.io/github/issues/Radexito/DjManager)](https://github.com/Radexito/DjManager/issues)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#download)
+
 ![DJ Manager screenshot](screenshot.png)
 
 ---
@@ -199,6 +205,12 @@ npm run dist:linux          # or :mac / :win
 ---
 
 ## Tech Stack
+
+![Electron](https://img.shields.io/badge/Electron-191970?style=for-the-badge&logo=electron&logoColor=white)
+![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-07405E?style=for-the-badge&logo=sqlite&logoColor=white)
+![FFmpeg](https://img.shields.io/badge/FFmpeg-007808?style=for-the-badge&logo=ffmpeg&logoColor=white)
 
 | Layer            | Technology                                        |
 | ---------------- | ------------------------------------------------- |

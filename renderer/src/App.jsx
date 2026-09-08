@@ -4,6 +4,7 @@ import Sidebar from './Sidebar.jsx';
 import MusicLibrary from './MusicLibrary.jsx';
 import DownloadView from './DownloadView.jsx';
 import TidalDownloadView from './TidalDownloadView.jsx';
+import CloudSearchView from './CloudSearchView.jsx';
 import FileExplorerView from './FileExplorerView.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import ExportModal from './ExportModal.jsx';
@@ -25,10 +26,27 @@ function App() {
   const zoomHideTimer = useRef(null);
   const ZOOM_HIDE_DELAY = 3000;
   const [search, setSearch] = useState('');
+  const [openDetailsRequest, setOpenDetailsRequest] = useState(null);
 
   const handleArtistSearch = (artist) => {
     setSelectedPlaylistId('music');
     setSearch(`ARTIST is ${artist}`);
+  };
+
+  const handleLogoClick = () => {
+    setSelectedPlaylistId('music');
+    setSearch('');
+  };
+
+  const handlePlayerOpenDetails = (trackId, playlistId) => {
+    if (!trackId) return;
+    setSelectedPlaylistId(playlistId != null ? String(playlistId) : 'music');
+    setOpenDetailsRequest({ trackId, nonce: Date.now() });
+  };
+
+  const handleMenuSelect = (id) => {
+    if (id === selectedPlaylistId) setSearch('');
+    setSelectedPlaylistId(id);
   };
 
   useEffect(() => {
@@ -108,15 +126,11 @@ function App() {
       <DownloadProvider>
         <TidalDownloadProvider>
           <div className="app-body">
-            <TopBar
-              search={search}
-              onSearchChange={setSearch}
-              onOpenSettings={() => setShowSettings(true)}
-            />
+            <TopBar onOpenSettings={() => setShowSettings(true)} onLogoClick={handleLogoClick} />
             <div className="app-main">
               <Sidebar
                 selectedMenuItemId={selectedPlaylistId}
-                onMenuSelect={setSelectedPlaylistId}
+                onMenuSelect={handleMenuSelect}
                 activePlaylistId={selectedPlaylistId}
                 onExportPlaylistRekordboxUsb={(id) =>
                   setExportState({ playlistId: id, mode: 'rekordbox' })
@@ -134,16 +148,23 @@ function App() {
                 onGoToLibrary={() => setSelectedPlaylistId('music')}
                 onGoToPlaylist={(id) => setSelectedPlaylistId(id)}
               />
+              <CloudSearchView
+                style={{ display: selectedPlaylistId === 'cloud-search' ? '' : 'none' }}
+                onGoToLibrary={() => setSelectedPlaylistId('music')}
+                onGoToTidalSetup={() => setSelectedPlaylistId('tidal')}
+              />
               <FileExplorerView
                 style={{ display: selectedPlaylistId === 'explorer' ? '' : 'none' }}
               />
               {selectedPlaylistId !== 'download' &&
                 selectedPlaylistId !== 'tidal' &&
+                selectedPlaylistId !== 'cloud-search' &&
                 selectedPlaylistId !== 'explorer' && (
                   <MusicLibrary
                     selectedPlaylist={selectedPlaylistId}
                     search={search}
                     onSearchChange={setSearch}
+                    openDetailsRequest={openDetailsRequest}
                   />
                 )}
             </div>
@@ -151,6 +172,7 @@ function App() {
           <PlayerBar
             onNavigateToPlaylist={setSelectedPlaylistId}
             onArtistSearch={handleArtistSearch}
+            onOpenTrackDetails={handlePlayerOpenDetails}
           />
           {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
           {exportState != null && (

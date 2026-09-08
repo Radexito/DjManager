@@ -3,7 +3,8 @@ import fs from 'fs';
 import http from 'http';
 import os from 'os';
 import path from 'path';
-import { startMediaServer, AUDIO_MIME } from '../audio/mediaServer.js';
+import { EventEmitter } from 'events';
+import { startMediaServer, streamFile, AUDIO_MIME } from '../audio/mediaServer.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -156,6 +157,16 @@ describe('Security — path restriction', () => {
     const res = await httpGet(`http://127.0.0.1:${port}/${encoded}`);
     expect(res.status).toBe(403);
   });
+
+  // Regression for #401: the renderer's reachability probe (PlayerContext.jsx)
+  // deliberately hits a path outside any allowed base and expects a *resolved*
+  // response (any status) rather than a browser-level CORS network error. That
+  // only holds if error responses carry the same CORS header successful ones do.
+  it('includes Access-Control-Allow-Origin on a 403 response', async () => {
+    const outsidePath = path.join(tmpDir, '..', 'etc', 'passwd');
+    const res = await httpGet(`http://127.0.0.1:${port}${toUrlPath(outsidePath)}`);
+    expect(res.headers['access-control-allow-origin']).toBe('*');
+  });
 });
 
 // ── Not found ─────────────────────────────────────────────────────────────────
@@ -165,5 +176,32 @@ describe('GET — missing file', () => {
     const missing = path.join(audioBase, 'nope.mp3');
     const res = await httpGet(`http://127.0.0.1:${port}${toUrlPath(missing)}`);
     expect(res.status).toBe(404);
+  });
+
+  it('includes Access-Control-Allow-Origin on a 404 response', async () => {
+    const missing = path.join(audioBase, 'nope.mp3');
+    const res = await httpGet(`http://127.0.0.1:${port}${toUrlPath(missing)}`);
+    expect(res.headers['access-control-allow-origin']).toBe('*');
+  });
+});
+
+// ── File disappears mid-stream (e.g. USB unplugged while playing) ──────────────
+// A real fs race (delete-during-read) is too timing-sensitive to reproduce
+// reliably in CI, so this exercises streamFile() directly with a fake stream
+// that errors after piping has started — the exact shape of the real failure.
+
+describe('streamFile — read stream errors mid-transfer', () => {
+  it('destroys the response instead of throwing an uncaught error', () => {
+    const fakeStream = new EventEmitter();
+    fakeStream.pipe = () => {}; // stub — we only care about error handling here
+    let destroyed = false;
+    const fakeRes = { destroy: () => (destroyed = true) };
+
+    expect(() => {
+      streamFile(fakeStream, fakeRes);
+      fakeStream.emit('error', Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    }).not.toThrow();
+
+    expect(destroyed).toBe(true);
   });
 });

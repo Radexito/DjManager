@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, within, fireEvent, waitFor, act } from '@testing-library/react';
 import Sidebar from '../Sidebar.jsx';
 import { DownloadProvider } from '../DownloadContext.jsx';
 import { TidalDownloadProvider } from '../TidalDownloadContext.jsx';
@@ -57,6 +57,11 @@ describe('Sidebar', () => {
     renderSidebar({ ...defaultProps, onMenuSelect });
     fireEvent.click(screen.getByText('Music'));
     expect(onMenuSelect).toHaveBeenCalledWith('music');
+  });
+
+  it('gives the Import button a title, like the Link button', () => {
+    renderSidebar({ ...defaultProps });
+    expect(screen.getByText('Import')).toHaveAttribute('title');
   });
 
   it('calls onMenuSelect with playlist id when playlist is clicked', async () => {
@@ -139,6 +144,49 @@ describe('Sidebar', () => {
     renderSidebar({ ...defaultProps });
     expect(screen.queryByText(/Export USB/)).toBeNull();
   });
+
+  it('does not flip the Color submenu when opened in the top-left of the screen', async () => {
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 1, name: 'Techno Set', color: null, track_count: 0, total_duration: 0 },
+    ]);
+
+    const { container } = renderSidebar({ ...defaultProps });
+    await waitFor(() => screen.getByText('Techno Set'));
+    fireEvent.contextMenu(screen.getByText('Techno Set'), { clientX: 50, clientY: 50 });
+
+    const menu = container.querySelector('.context-menu');
+    expect(menu).not.toHaveClass('context-menu--flip-left');
+    expect(menu).not.toHaveClass('context-menu--flip-up');
+  });
+
+  it('flips the Color submenu left and up when opened near the bottom-right of the screen', async () => {
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 1, name: 'Techno Set', color: null, track_count: 0, total_duration: 0 },
+    ]);
+
+    const { container } = renderSidebar({ ...defaultProps });
+    await waitFor(() => screen.getByText('Techno Set'));
+    fireEvent.contextMenu(screen.getByText('Techno Set'), {
+      clientX: window.innerWidth - 10,
+      clientY: window.innerHeight - 10,
+    });
+
+    const menu = container.querySelector('.context-menu');
+    expect(menu).toHaveClass('context-menu--flip-left');
+    expect(menu).toHaveClass('context-menu--flip-up');
+  });
+
+  it('uses the dedicated color submenu grid so swatches stay inside the menu panel', async () => {
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 1, name: 'Techno Set', color: null, track_count: 0, total_duration: 0 },
+    ]);
+
+    const { container } = renderSidebar({ ...defaultProps });
+    await waitFor(() => screen.getByText('Techno Set'));
+    fireEvent.contextMenu(screen.getByText('Techno Set'), { clientX: 50, clientY: 50 });
+
+    expect(container.querySelector('.context-submenu--colors')).toBeInTheDocument();
+  });
 });
 
 describe('Sidebar — import dialog playlist association', () => {
@@ -156,15 +204,17 @@ describe('Sidebar — import dialog playlist association', () => {
     window.api.createPlaylist.mockResolvedValueOnce({ id: 7 });
 
     renderSidebar({ ...defaultProps });
-    fireEvent.click(screen.getByText('Import Audio Files'));
+    fireEvent.click(screen.getByText('Import'));
 
-    await waitFor(() => screen.getByText('Import to Playlist'));
+    const dialog = (await waitFor(() => screen.getByText('Import to Playlist'))).closest(
+      '.ipd-modal'
+    );
 
     fireEvent.click(screen.getByRole('radio', { name: /Create new playlist/ }));
     fireEvent.change(screen.getByPlaceholderText('New playlist name'), {
       target: { value: 'My New Set' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Import' }));
 
     await waitFor(() => {
       expect(window.api.createPlaylist).toHaveBeenCalledWith('My New Set');
@@ -182,11 +232,13 @@ describe('Sidebar — import dialog playlist association', () => {
     renderSidebar({ ...defaultProps });
     await waitFor(() => screen.getByText('Techno Set'));
 
-    fireEvent.click(screen.getByText('Import Audio Files'));
-    await waitFor(() => screen.getByText('Import to Playlist'));
+    fireEvent.click(screen.getByText('Import'));
+    const dialog = (await waitFor(() => screen.getByText('Import to Playlist'))).closest(
+      '.ipd-modal'
+    );
 
     fireEvent.click(screen.getByRole('radio', { name: /Techno Set/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Import' }));
 
     await waitFor(() => {
       expect(window.api.importAudioFiles).toHaveBeenCalledWith(['/tmp/track.mp3'], 42);
@@ -197,11 +249,13 @@ describe('Sidebar — import dialog playlist association', () => {
     window.api.selectAudioFiles.mockResolvedValueOnce(['/tmp/track.mp3']);
 
     renderSidebar({ ...defaultProps });
-    fireEvent.click(screen.getByText('Import Audio Files'));
-    await waitFor(() => screen.getByText('Import to Playlist'));
+    fireEvent.click(screen.getByText('Import'));
+    const dialog = (await waitFor(() => screen.getByText('Import to Playlist'))).closest(
+      '.ipd-modal'
+    );
 
     // "Library only" is the default — just click Import
-    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Import' }));
 
     await waitFor(() => {
       expect(window.api.importAudioFiles).toHaveBeenCalledWith(['/tmp/track.mp3'], null);

@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useState,
   useRef,
   useCallback,
@@ -29,11 +30,28 @@ import { parseQuery } from './searchParser.js';
 import TrackDetails from './TrackDetails.jsx';
 import RatingStars from './RatingStars.jsx';
 import BeatGridEditor from './BeatGridEditor.jsx';
+import SearchBar from './SearchBar.jsx';
 import './MusicLibrary.css';
 
 const PAGE_SIZE = 50;
 const ROW_HEIGHT = 50;
 const PRELOAD_TRIGGER = 3;
+// Stable fallback so tests/mocks that stub usePlayer() without this field don't crash.
+const EMPTY_SET = new Set();
+
+// MB and up — sub-megabyte sizes just round down to "0.0 MB" rather than
+// switching to bytes/KB. Mirrors SettingsModal.jsx's formatBytes.
+const SIZE_UNITS = ['MB', 'GB', 'TB'];
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB';
+  const mb = bytes / 1024 ** 2;
+  const exp = Math.max(
+    0,
+    Math.min(Math.floor(Math.log(mb) / Math.log(1024)), SIZE_UNITS.length - 1)
+  );
+  const value = mb / 1024 ** exp;
+  return `${value.toFixed(1)} ${SIZE_UNITS[exp]}`;
+}
 
 const LS_COL_KEY = 'djman_column_visibility';
 const LS_ORDER_KEY = 'djman_column_order';
@@ -225,6 +243,8 @@ function LibraryRow({
   mediaPort,
   newTrackIds,
   onAnimationEnd,
+  libraryNames,
+  unavailableLinkedIds,
 }) {
   const t = tracks[index];
   if (!t) {
@@ -240,14 +260,17 @@ function LibraryRow({
   const isSelected = selectedIds.has(t.id);
   const isPlaying = currentTrackId === t.id;
   const isNew = newTrackIds?.has(t.id);
+  const isUnavailable = t.is_linked && unavailableLinkedIds?.has(t.id);
   return (
     <div
       style={{ ...style, gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
-      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}${isNew ? ' row--new' : ''}`}
+      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}${isNew ? ' row--new' : ''}${isUnavailable ? ' row--unavailable' : ''}`}
       title={
-        t.analyzed === 0
-          ? `⏳ Analyzing / processing — "${t.title}" will be available shortly`
-          : `${t.title} - ${t.artist || 'Unknown'}`
+        isUnavailable
+          ? `⚠ File not found — "${t.title}" may be on a disconnected drive`
+          : t.analyzed === 0
+            ? `⏳ Analyzing / processing — "${t.title}" will be available shortly`
+            : `${t.title} - ${t.artist || 'Unknown'}`
       }
       draggable={true}
       onDragStart={(e) => onDragStart(e, t)}
@@ -309,8 +332,23 @@ function LibraryRow({
               <span className="cell-artwork cell-artwork--placeholder">♪</span>
             )}
             {t.is_linked ? (
-              <span className="cell-linked-badge" title="Explorer-linked file">
+              <span
+                className="cell-linked-badge"
+                title={
+                  isUnavailable
+                    ? `File not found — may be on a disconnected drive\n${t.file_path}`
+                    : `Explorer-linked file\n${t.file_path}`
+                }
+              >
                 🔗
+              </span>
+            ) : null}
+            {!t.is_linked && libraryNames?.has(t.library_id) ? (
+              <span
+                className="cell-library-badge"
+                title={`Library: ${libraryNames.get(t.library_id)}`}
+              >
+                {libraryNames.get(t.library_id)}
               </span>
             ) : null}
             <span className="cell-title-text">{t.title}</span>
@@ -342,6 +380,8 @@ function SortableRow({
   mediaPort,
   isNew,
   onAnimationEnd,
+  libraryNames,
+  isUnavailable,
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: t.id,
@@ -357,11 +397,13 @@ function SortableRow({
     <div
       ref={setNodeRef}
       style={style}
-      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}${isNew ? ' row--new' : ''}`}
+      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}${isNew ? ' row--new' : ''}${isUnavailable ? ' row--unavailable' : ''}`}
       title={
-        t.analyzed === 0
-          ? `⏳ Analyzing / processing — "${t.title}" will be available shortly`
-          : `${t.title} - ${t.artist || 'Unknown'}`
+        isUnavailable
+          ? `⚠ File not found — "${t.title}" may be on a disconnected drive`
+          : t.analyzed === 0
+            ? `⏳ Analyzing / processing — "${t.title}" will be available shortly`
+            : `${t.title} - ${t.artist || 'Unknown'}`
       }
       onClick={(e) => onRowClick(e, t, index)}
       onDoubleClick={() => onDoubleClick(t, index)}
@@ -421,8 +463,23 @@ function SortableRow({
               <span className="cell-artwork cell-artwork--placeholder">♪</span>
             )}
             {t.is_linked ? (
-              <span className="cell-linked-badge" title="Explorer-linked file">
+              <span
+                className="cell-linked-badge"
+                title={
+                  isUnavailable
+                    ? `File not found — may be on a disconnected drive\n${t.file_path}`
+                    : `Explorer-linked file\n${t.file_path}`
+                }
+              >
                 🔗
+              </span>
+            ) : null}
+            {!t.is_linked && libraryNames?.has(t.library_id) ? (
+              <span
+                className="cell-library-badge"
+                title={`Library: ${libraryNames.get(t.library_id)}`}
+              >
+                {libraryNames.get(t.library_id)}
               </span>
             ) : null}
             <span className="cell-title-text">{t.title}</span>
@@ -458,7 +515,7 @@ function SortableColItem({ colKey, label, checked, onToggle }) {
   );
 }
 
-function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
+function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsRequest }) {
   const isPlaylistView = selectedPlaylist !== 'music';
   const {
     play,
@@ -469,7 +526,24 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     patchCurrentTrack,
     reloadCurrentTrack,
     updateQueue,
+    unavailableLinkedIds = EMPTY_SET,
   } = usePlayer();
+
+  // Multiple libraries are all shown together (#390) — only worth labeling
+  // tracks by library once there's more than one to distinguish.
+  const [libraryNames, setLibraryNames] = useState(new Map());
+  useEffect(() => {
+    window.api.listLibraries().then((libs) => {
+      setLibraryNames(libs.length > 1 ? new Map(libs.map((l) => [l.id, l.name])) : new Map());
+    });
+  }, []);
+
+  const [hideUnavailable, setHideUnavailable] = useState(
+    () => localStorage.getItem('djman_hide_unavailable') === 'true'
+  );
+  useEffect(() => {
+    localStorage.setItem('djman_hide_unavailable', String(hideUnavailable));
+  }, [hideUnavailable]);
 
   // Only highlight a track as "playing" when the source context matches this view.
   // Library view: only highlight when played from library (currentPlaylistId === null).
@@ -488,11 +562,19 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
 
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [contextMenu, setContextMenu] = useState(null); // { x, y, targetIds }
+  // Nudge applied after measuring the rendered menu so it never overflows the
+  // viewport bottom/right edge (#310).
+  const menuRef = useRef(null);
+  const [menuShift, setMenuShift] = useState({ x: 0, y: 0 });
   const [toast, setToast] = useState(null); // { msg, ok } | null
   const toastTimerRef = useRef(null);
   const [drillStack, setDrillStack] = useState([]); // overlay drill-down stack [{ id, label, content }]
   const [playlistSubmenu, setPlaylistSubmenu] = useState(null); // [{ id, name, color, is_member }]
+  const [librarySubmenu, setLibrarySubmenu] = useState(null); // [{ id, name, free_bytes }]
   const [newPlaylistInputActive, setNewPlaylistInputActive] = useState(false);
+  // When auto-cue generation is enabled every track has cue points, so the
+  // ◆ cue indicator column is meaningless — hide it live (#263).
+  const [autoCueOnImport, setAutoCueOnImport] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [newPlaylistError, setNewPlaylistError] = useState('');
   const newPlaylistInputRef = useRef(null);
@@ -547,8 +629,11 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const prevSearchRef = useRef(search);
 
   const visibleColumns = useMemo(
-    () => colOrder.map((k) => COL_BY_KEY[k]).filter((c) => c && colVis[c.key] !== false),
-    [colVis, colOrder]
+    () =>
+      colOrder
+        .map((k) => COL_BY_KEY[k])
+        .filter((c) => c && colVis[c.key] !== false && !(autoCueOnImport && c.key === 'cue')),
+    [colVis, colOrder, autoCueOnImport]
   );
   const gridTemplate = useMemo(
     () => visibleColumns.map((c) => c.width).join(' '),
@@ -615,7 +700,10 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   }, [search, selectedPlaylist]); // no hasMore in deps — we use hasMoreRef
 
   const sortedTracks = useMemo(() => {
-    const sorted = [...tracks].sort((a, b) => {
+    const base = hideUnavailable
+      ? tracks.filter((t) => !(t.is_linked && unavailableLinkedIds.has(t.id)))
+      : tracks;
+    const sorted = [...base].sort((a, b) => {
       if (sortBy.key === 'index') return 0;
       // For BPM, prefer the override value
       const va = sortBy.key === 'bpm' ? (a.bpm_override ?? a.bpm ?? '') : (a[sortBy.key] ?? '');
@@ -630,7 +718,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     });
     sortedTracksRef.current = sorted;
     return sorted;
-  }, [tracks, sortBy]);
+  }, [tracks, sortBy, hideUnavailable, unavailableLinkedIds]);
 
   useEffect(() => {
     // Snapshot IDs currently visible so loadTracks can diff truly-new rows
@@ -678,6 +766,10 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
       const merged = { ...analysis, analyzed: isAnalyzed ? 1 : 0 };
 
       setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, ...merged } : t)));
+
+      // Keep an already-open Edit Details panel in sync (e.g. file_path
+      // changes after a library move or storage-format conversion)
+      setDetailsTrack((prev) => (prev && prev.id === trackId ? { ...prev, ...merged } : prev));
 
       // Keep PlayerContext's currentTrack in sync
       patchCurrentTrack(trackId, merged);
@@ -773,14 +865,33 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     return unsub;
   }, []);
 
+  // Auto-cue setting: initial value + live updates from the Settings modal
+  // (main broadcasts 'settings-updated' on every set-setting call).
+  useEffect(() => {
+    const api = window.api ?? {};
+    if (typeof api.getSetting === 'function') {
+      api.getSetting('auto_cue_on_import', 'false').then((v) => setAutoCueOnImport(v === 'true'));
+    }
+    if (typeof api.onSettingsUpdated === 'function') {
+      return api.onSettingsUpdated(({ key, value }) => {
+        if (key === 'auto_cue_on_import') setAutoCueOnImport(value === 'true');
+      });
+    }
+    return undefined;
+  }, []);
+
   // DnD sensors
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   // Keyboard shortcuts
   useEffect(() => {
     const onKeyDown = async (e) => {
-      // Ctrl+A — select all tracks including unloaded ones
+      // Ctrl+A — select all tracks including unloaded ones (but let native
+      // select-all-text win when the user is typing in an input/textarea,
+      // e.g. the search box)
       if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        const target = e.target;
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
         e.preventDefault();
         const { filters, remaining } = parseQuery(search);
         const structuredFilters = filters.filter((f) => f.field !== '_text');
@@ -872,6 +983,23 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     setDetailsTrack(null);
     setDetailsBulkTracks(null);
   }, []);
+
+  useEffect(() => {
+    const trackId = openDetailsRequest?.trackId;
+    if (!trackId) return;
+
+    let alive = true;
+    window.api.getTrackById(trackId).then((track) => {
+      if (!alive || !track) return;
+      setDetailsBulkTracks(null);
+      setDetailsTrack(track);
+      setSelectedIds(new Set([track.id]));
+    });
+
+    return () => {
+      alive = false;
+    };
+  }, [openDetailsRequest]);
 
   // ── Cue column click — open Prepare Track window ──────────────────────────
 
@@ -987,6 +1115,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
       // Fetch playlist membership for single track (representative for submenu)
       const playlists = await window.api.getPlaylistsForTrack(targetIds[0]);
       setPlaylistSubmenu(playlists);
+      const libraries = await window.api.listLibrariesWithFreeSpace();
+      setLibrarySubmenu(libraries);
 
       const vw = window.innerWidth;
       const vh = window.innerHeight;
@@ -1025,6 +1155,23 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     },
     [selectedIds]
   );
+
+  // Re-measure once the menu (or its drill/submenu content) renders: shift the
+  // whole menu up/left by exactly the overflow so it stays inside the window.
+  useLayoutEffect(() => {
+    if (!contextMenu) {
+      setMenuShift({ x: 0, y: 0 });
+      return;
+    }
+    const el = menuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const shiftX = Math.max(0, rect.right - window.innerWidth + 8);
+    const shiftY = Math.max(0, rect.bottom - window.innerHeight + 8);
+    setMenuShift((prev) =>
+      prev.x === -shiftX && prev.y === -shiftY ? prev : { x: -shiftX, y: -shiftY }
+    );
+  }, [contextMenu, drillStack, playlistSubmenu]);
 
   const handleReanalyze = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
@@ -1070,12 +1217,12 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     const n = targetIds.length;
     const msg =
       n === 1
-        ? 'Remove this track from your library? This cannot be undone.'
-        : `Remove ${n} tracks from your library? This cannot be undone.`;
+        ? 'Remove this track from your library? Imported tracks also have their audio file deleted from disk. This cannot be undone.'
+        : `Remove ${n} tracks from your library? Imported tracks also have their audio files deleted from disk. This cannot be undone.`;
     if (!window.confirm(msg)) return;
     if (currentTrack && targetIds.includes(currentTrack.id)) stop();
     setContextMenu(null);
-    for (const id of targetIds) await window.api.removeTrack(id);
+    await window.api.removeTracks(targetIds);
     setTracks((prev) => prev.filter((t) => !targetIds.includes(t.id)));
     setSelectedIds(new Set());
     offsetRef.current = Math.max(0, offsetRef.current - targetIds.length);
@@ -1106,6 +1253,46 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
       console.error('addTracksToPlaylist failed:', err);
     }
   }, []);
+
+  const handleMoveToLibrary = useCallback(
+    async (targetLibraryId, targetIds) => {
+      setContextMenu(null);
+      if (!targetIds?.length) return;
+      const { moved, failed } = await window.api.moveTracksToLibrary(targetIds, targetLibraryId);
+      const patchById = new Map(
+        moved.map(({ trackId, newPath }) => [
+          trackId,
+          { library_id: targetLibraryId, is_linked: 0, ...(newPath ? { file_path: newPath } : {}) },
+        ])
+      );
+      if (patchById.size > 0) {
+        setTracks((prev) =>
+          prev.map((t) => (patchById.has(t.id) ? { ...t, ...patchById.get(t.id) } : t))
+        );
+        // Keep an already-open Edit Details panel in sync (same fix as the
+        // library-move/storage-format case above) — otherwise it keeps
+        // showing the track's old library after a move.
+        setDetailsTrack((prev) =>
+          prev && patchById.has(prev.id) ? { ...prev, ...patchById.get(prev.id) } : prev
+        );
+        setDetailsBulkTracks((prev) =>
+          prev
+            ? prev.map((t) => (patchById.has(t.id) ? { ...t, ...patchById.get(t.id) } : t))
+            : prev
+        );
+      }
+      const movedCount = moved.length;
+      const failedCount = failed.length;
+      if (failedCount === 0) {
+        showToast(`Moved ${movedCount} track${movedCount !== 1 ? 's' : ''} to library.`);
+      } else if (movedCount === 0) {
+        showToast(`Failed to move track${targetIds.length !== 1 ? 's' : ''}.`, false);
+      } else {
+        showToast(`Moved ${movedCount}, failed to move ${failedCount}.`, false);
+      }
+    },
+    [showToast]
+  );
 
   const handleAddToNewPlaylist = useCallback(
     async (e) => {
@@ -1305,6 +1492,19 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
       className={`music-library${detailsTrack || detailsBulkTracks ? ' music-library--with-panel' : ''}`}
     >
       <div className="music-library__main">
+        <div className="music-library__search">
+          <SearchBar value={search} onChange={onSearchChange} />
+        </div>
+        {unavailableLinkedIds.size > 0 && (
+          <label className="hide-unavailable-toggle">
+            <input
+              type="checkbox"
+              checked={hideUnavailable}
+              onChange={(e) => setHideUnavailable(e.target.checked)}
+            />
+            Hide unavailable tracks ({unavailableLinkedIds.size})
+          </label>
+        )}
         {/* Playlist header bar */}
         {isPlaylistView && playlistInfo && (
           <div className="playlist-header-bar">
@@ -1432,6 +1632,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                         mediaPort={mediaPort}
                         isNew={newTrackIds.has(t.id)}
                         onAnimationEnd={handleRowAnimationEnd}
+                        libraryNames={libraryNames}
+                        isUnavailable={t.is_linked && unavailableLinkedIds.has(t.id)}
                       />
                     ))}
                   </div>
@@ -1479,6 +1681,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                 mediaPort,
                 newTrackIds,
                 onAnimationEnd: handleRowAnimationEnd,
+                libraryNames,
+                unavailableLinkedIds,
               }}
             />
           )}
@@ -1506,12 +1710,13 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                 ]
                   .filter(Boolean)
                   .join(' ')}
+                ref={menuRef}
                 style={
                   contextMenu.overlayMode
                     ? undefined
                     : {
-                        top: contextMenu.y,
-                        left: contextMenu.x,
+                        top: contextMenu.y + menuShift.y,
+                        left: contextMenu.x + menuShift.x,
                         '--submenu-max-h': `${contextMenu.submenuMaxH}px`,
                       }
                 }
@@ -1642,6 +1847,36 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                           ))}
                         </SubItem>
                       ))}
+
+                    {/* ── Move to library ── */}
+                    {librarySubmenu !== null && librarySubmenu.length > 1 && (
+                      <SubItem id="move-to-library" label="📚 Move to library" wide>
+                        {librarySubmenu.map((lib) => {
+                          const targetTracks = contextMenu.targetTracks ?? [];
+                          const isCurrent =
+                            targetTracks.length > 0 &&
+                            targetTracks.every((t) => !t.is_linked && t.library_id === lib.id);
+                          return (
+                            <div
+                              key={lib.id}
+                              className={`context-menu-item context-menu-item--library${isCurrent ? ' context-menu-item--checked' : ''}`}
+                              onClick={() =>
+                                !isCurrent &&
+                                handleMoveToLibrary(lib.id, contextMenu?.targetIds ?? [])
+                              }
+                            >
+                              <span>
+                                {isCurrent ? '✓ ' : ''}
+                                {lib.name}
+                              </span>
+                              <span className="ctx-library-free">
+                                {formatBytes(lib.free_bytes)} free
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </SubItem>
+                    )}
 
                     {/* ── Find similar ── */}
                     {contextMenu.targetTracks?.length > 0 && (

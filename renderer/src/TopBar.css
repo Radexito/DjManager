@@ -1,5 +1,5 @@
 .top-bar {
-  height: 68px;
+  min-height: 68px;
   flex-shrink: 0;
   background: #111;
   border-bottom: 1px solid #2a2a2a;
@@ -17,6 +17,7 @@
   align-items: center;
   gap: 8px;
   min-width: 160px;
+  cursor: pointer;
 }
 
 .top-bar__logo-img {
@@ -25,21 +26,10 @@
   object-fit: contain;
 }
 
-/* ── Search ── */
-.top-bar__search {
+/* ── Spacer ── */
+.top-bar__spacer {
   flex: 1;
   min-width: 0;
-  display: flex;
-  align-items: center;
-}
-
-.top-bar__search .search-bar {
-  width: 100%;
-  margin: 0 !important;
-}
-
-.top-bar__search .search-bar__input-row {
-  position: relative;
 }
 
 /* ── Actions ── */

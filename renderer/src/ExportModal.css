@@ -315,6 +315,35 @@
   cursor: pointer;
 }
 
+.export-format-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.export-device-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: #aaa;
+}
+
+.export-device-option select {
+  background: #2a2a2a;
+  color: #eee;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.export-format-options .export-normalized-option {
+  margin-bottom: 0;
+}
+
 .export-confirm-actions {
   display: flex;
   flex-direction: column;

@@ -267,8 +267,11 @@ function buildPvbrSection(fileSize) {
 //   [36-39]: loop_time (u32BE, 0xffffffff=none)
 //   [40-55]: zeros
 //
-// PCOB split (verified): hot_cue numbers 1-3 (A,B,C) → DAT PCOB1
-//                         hot_cue numbers 4-8 (D-H)   → EXT PCOB1
+// PCOB split (verified against a native Rekordbox export with 16 hot cues,
+// "page 2" being hot cues 9-16 continuing the same numbering — there is no
+// separate page marker in the format, paging is purely a Rekordbox/CDJ UI concept):
+//   hot_cue numbers 1-3   (A-C)  → DAT PCOB1
+//   hot_cue numbers 4-16+ (D-P…) → EXT PCOB1
 //
 // PCO2 header (20 bytes): fourcc + len_header(20) + len_tag + type(u4) + num_cues(u2) + pad(u2)
 // PCP2 sub-tag (variable) — verified by hex-diff against native Rekordbox USB export:
@@ -457,8 +460,12 @@ function buildPcobSlot(slotType, cues) {
 /**
  * Build PCOB buffers for the DAT file [slot1, slot2].
  * Verified split from native Rekordbox: hot_cue numbers 1-3 (A,B,C) go in DAT PCOB1.
- * Cues D-H (hot_cue numbers 4-8) go in EXT PCOB1 — see buildExtPcobSections().
- * PCOB2 is always the empty stub (PCOB2 memory cue format still under investigation, #208).
+ * Cues D-P… (hot_cue numbers 4-16 and up, i.e. "page 2" of hot cues) go in EXT
+ * PCOB1 — see buildExtPcobSections().
+ * PCOB2 (memory cues): the byte layout was verified via hex-diff against native
+ * Rekordbox (issue #208), but real-world testing showed memory cues are unreliable
+ * in practice, so writing them is disabled for now — see "Known Issues" in
+ * CLAUDE.md. PCOB2 is always the empty stub until re-enabled.
  *
  * @param {Array<{position_ms, color, hot_cue_index}>} cuePoints
  * @returns {[Buffer, Buffer]}
@@ -467,20 +474,26 @@ export function buildPcobSections(cuePoints) {
   if (!cuePoints || cuePoints.length === 0) return [EMPTY_PCOB_1, EMPTY_PCOB_2];
   // hot_cue_index 0,1,2 → hot_cue numbers 1,2,3 (A,B,C) — DAT only
   const datHotCues = cuePoints.filter((c) => c.hot_cue_index >= 0 && c.hot_cue_index <= 2);
+  // Memory cue export is temporarily disabled — see "Known Issues" in CLAUDE.md.
+  // PCOB2 is always written as the empty stub until re-enabled.
   return [buildPcobSlot(1, datHotCues), EMPTY_PCOB_2];
 }
 
 /**
  * Build PCOB buffers for the EXT file [slot1, slot2].
- * Verified split: hot_cue numbers 4-8 (D-H, hot_cue_index 3-7) go in EXT PCOB1.
+ * Verified split: hot_cue numbers 4 and up (D, E, …, "page 2" hot cues 9-16+,
+ * hot_cue_index 3 and up) go in EXT PCOB1. Confirmed against a native Rekordbox
+ * export with 16 hot cues (EXT PCOB1 held hot_cue numbers 4-16 in one flat list
+ * — Rekordbox has no page marker in the format, paging is purely a UI concept).
  *
  * @param {Array<{position_ms, color, hot_cue_index}>} cuePoints
  * @returns {[Buffer, Buffer]}
  */
 export function buildExtPcobSections(cuePoints) {
   if (!cuePoints || cuePoints.length === 0) return [EMPTY_PCOB_1, EMPTY_PCOB_2];
-  // hot_cue_index 3-7 → hot_cue numbers 4-8 (D-H) — EXT only
-  const extHotCues = cuePoints.filter((c) => c.hot_cue_index >= 3 && c.hot_cue_index <= 7);
+  // hot_cue_index 3 and up → hot_cue numbers 4, 5, 6, … (D, E, F, … including
+  // "page 2" cues 9-16) — EXT only
+  const extHotCues = cuePoints.filter((c) => c.hot_cue_index >= 3);
   return [buildPcobSlot(1, extHotCues), EMPTY_PCOB_2];
 }
 
@@ -568,7 +581,11 @@ function buildPco2Slot(slotType, cues) {
 
 /**
  * Build populated PCO2 section buffers [slot1, slot2] (EXT file only).
- * Slot 1 (type=1) contains hot cues; slot 2 (type=0) contains memory cues.
+ * Slot 1 (type=1) contains ALL hot cues in one flat list, including "page 2"
+ * cues (hot_cue numbers 9-16+) — confirmed against a native Rekordbox export
+ * with 16 hot cues (PCO2 slot 1 held all 16 entries, hot_cue 1-16).
+ * Slot 2 (type=0, memory cues) is disabled for now — see "Known Issues" in
+ * CLAUDE.md — and always written as the empty stub.
  *
  * @param {Array<{position_ms, label, color, hot_cue_index}>} cuePoints
  * @returns {[Buffer, Buffer]}
@@ -576,8 +593,9 @@ function buildPco2Slot(slotType, cues) {
 export function buildPco2Sections(cuePoints) {
   if (!cuePoints || cuePoints.length === 0) return [EMPTY_PCO2_1, EMPTY_PCO2_2];
   const hotCues = cuePoints.filter((c) => c.hot_cue_index >= 0);
-  const memoryCues = cuePoints.filter((c) => c.hot_cue_index < 0);
-  return [buildPco2Slot(1, hotCues), buildPco2Slot(0, memoryCues)];
+  // Memory cue export is temporarily disabled — see "Known Issues" in CLAUDE.md.
+  // PCO2 slot 2 is always written as the empty stub until re-enabled.
+  return [buildPco2Slot(1, hotCues), EMPTY_PCO2_2];
 }
 
 // ─── PMAI file header ──────────────────────────────────────────────────────────
@@ -800,7 +818,8 @@ export async function writeAnlz(opts) {
 
   // ── ANLZ0000.EXT ─────────────────────────────────────────────────────────────
   // Section order confirmed from native Rekordbox: PPTH, PWV3, PCOB×2, PCO2×2, PQT2, PWV5, PWV4
-  // EXT PCOB1: hot cues D-H (numbers 4-8); EXT PCOB2: empty stub (#208)
+  // EXT PCOB1: hot cues D-H (numbers 4-8); EXT PCOB2: empty stub — memory
+  // cues live only in DAT's PCOB2 (see buildPcobSections), not duplicated here
   // PCO2 carries all cues with labels/colors for both DAT and EXT cues.
   const extSections = [buildPathTag(usbFilePath)];
   if (waveforms) {

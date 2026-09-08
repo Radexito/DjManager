@@ -5,13 +5,16 @@
  * using the analysis data already stored by mixxx-analyzer (intro_secs,
  * outro_secs, beatgrid, bpm) — no external .NET runtime required.
  *
- * Generated cues (all assigned as hot cues A–H, indices 0–7):
- *   Hot cue A (index 0) — intro end: first beat after the intro (mix-in point)
- *   Hot cues B–G        — every 32 bars from the intro end (section markers)
- *   Hot cue H (or last) — outro start: last strong beat before the fade/outro
+ * Generated cues (all assigned as hot cues A–P, indices 0–15):
+ *   Hot cue A (index 0)  — intro end: first beat after the intro (mix-in point)
+ *   Hot cues B–O         — every 32 bars from the intro end (section markers)
+ *   Hot cue P (or last)  — outro start: last strong beat before the fade/outro
  *
- * Memory cues (hotCueIndex = -1) are NOT used because their PCOB2 binary
- * format is not yet reverse-engineered and they are invisible in Rekordbox.
+ * Memory cues (hotCueIndex = -1) are NOT auto-generated here — this
+ * generator only produces hot cues A-P. Manually-added memory cues (e.g.
+ * via the Prepare Track dialog) are accepted by the data model, but memory
+ * cue export is currently disabled — see "Known Issues" in CLAUDE.md and
+ * anlzWriter.js's buildPcobSections()/buildPco2Sections().
  */
 
 const HOT_CUE_COLOR = '#ff0000'; // red → Pioneer palette code 4 (distinct from orange Mix Out)
@@ -139,7 +142,10 @@ export function generateCuePoints(track) {
     });
   }
 
-  // Assign hot cue slots A–H (indices 0–7). Cues beyond index 7 are dropped
-  // since memory cue format is not yet supported (see issue #208).
-  return raw.slice(0, 8).map((cue, i) => ({ ...cue, hotCueIndex: i }));
+  // Assign hot cue slots A–P (indices 0–15) — 16 hot cue slots are supported
+  // (2 "pages" of 8, matching native Rekordbox; see anlzWriter.js). Cues
+  // beyond index 15 are dropped rather than overflowing into memory cues —
+  // this generator intentionally only produces hot cues (see the module doc
+  // comment above).
+  return raw.slice(0, 16).map((cue, i) => ({ ...cue, hotCueIndex: i }));
 }

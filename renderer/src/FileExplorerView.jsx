@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { List } from 'react-window';
 import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
@@ -297,6 +297,7 @@ export default function FileExplorerView({ style }) {
   const { play, currentTrack, mediaPort, patchCurrentTrack } = usePlayer();
 
   const [fsRoot, setFsRoot] = useState(null);
+  const [drives, setDrives] = useState([]); // Windows drive roots (C:\, D:\ ...)
   const [homeDir, setHomeDir] = useState(null);
   const [currentPath, setCurrentPath] = useState(null);
   const [dirEntries, setDirEntries] = useState({ dirs: [], files: [] });
@@ -308,6 +309,10 @@ export default function FileExplorerView({ style }) {
   const [selectedPaths, setSelectedPaths] = useState(new Set());
   const [playlists, setPlaylists] = useState([]);
   const [contextMenu, setContextMenu] = useState(null);
+  // Nudge applied after measuring the rendered menu so it never overflows the
+  // viewport bottom/right edge (#310).
+  const menuRef = useRef(null);
+  const [menuShift, setMenuShift] = useState({ x: 0, y: 0 });
   const [detailsTrack, setDetailsTrack] = useState(null);
   const [beatGridTrack, setBeatGridTrack] = useState(null);
   const [toast, setToast] = useState(null);
@@ -336,14 +341,22 @@ export default function FileExplorerView({ style }) {
   // ── Init ──────────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    window.api.getComputerRoot().then(({ root, home }) => {
+    window.api.getComputerRoot().then(({ root, home, drives }) => {
       setFsRoot(root);
       setHomeDir(home);
+      setDrives(drives ?? []);
       setCurrentPath(home ?? root);
     });
     window.api.getPlaylists().then(setPlaylists);
     window.api.getSetting('explorer_favourites', []).then((favs) => {
-      const parsed = typeof favs === 'string' ? JSON.parse(favs) : favs;
+      let parsed = favs;
+      if (typeof favs === 'string') {
+        try {
+          parsed = favs ? JSON.parse(favs) : [];
+        } catch {
+          parsed = []; // corrupt/legacy stored value — reset rather than crash
+        }
+      }
       setFavourites(Array.isArray(parsed) ? parsed : []);
     });
     const unsub = window.api.onPlaylistsUpdated(() => window.api.getPlaylists().then(setPlaylists));
@@ -355,7 +368,7 @@ export default function FileExplorerView({ style }) {
     setFavourites((prev) => {
       if (prev.some((f) => f.path === path)) return prev;
       const next = [...prev, { path, name }];
-      window.api.setSetting('explorer_favourites', next);
+      window.api.setSetting('explorer_favourites', JSON.stringify(next));
       return next;
     });
   }, []);
@@ -363,7 +376,7 @@ export default function FileExplorerView({ style }) {
   const removeFavourite = useCallback((path) => {
     setFavourites((prev) => {
       const next = prev.filter((f) => f.path !== path);
-      window.api.setSetting('explorer_favourites', next);
+      window.api.setSetting('explorer_favourites', JSON.stringify(next));
       return next;
     });
   }, []);
@@ -494,6 +507,24 @@ export default function FileExplorerView({ style }) {
     ];
   }, [dirEntries, recursiveFiles]);
 
+  // ── Keyboard: Ctrl+A selects all visible rows (mirrors MusicLibrary) ─────
+  // MusicLibrary is unmounted while this tab is active, but other views stay
+  // mounted (hidden via display:none) — gate on visibility so Ctrl+A is only
+  // stolen when the Explorer is actually the active view.
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key !== 'a') return;
+      const target = e.target;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+        return;
+      if (!containerRef.current?.offsetParent) return; // view hidden
+      e.preventDefault();
+      setSelectedPaths(new Set(displayItems.map((x) => x.path)));
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [displayItems, setSelectedPaths]);
+
   const brokenByFilename = useMemo(() => {
     const m = new Map();
     for (const t of brokenTracks) {
@@ -612,6 +643,14 @@ export default function FileExplorerView({ style }) {
     async (dirPath, recursive, playlistId = null) => {
       const res = await window.api.linkDirectory(dirPath, recursive, playlistId);
       showToast(`Linked ${res.linked}/${res.total} tracks`);
+      if (res.filePaths?.length) {
+        const tracks = await window.api.getTracksByPaths(res.filePaths);
+        setTracksMap((prev) => {
+          const next = new Map(prev);
+          tracks.forEach((t) => next.set(t.file_path, t));
+          return next;
+        });
+      }
     },
     [showToast]
   );
@@ -676,6 +715,23 @@ export default function FileExplorerView({ style }) {
     },
     [selectedPaths, displayItems]
   );
+
+  // Shift the menu up/left by exactly the overflow once it renders, so it
+  // always stays inside the window bounds (#310).
+  useLayoutEffect(() => {
+    if (!contextMenu) {
+      setMenuShift({ x: 0, y: 0 });
+      return;
+    }
+    const el = menuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const shiftX = Math.max(0, rect.right - window.innerWidth + 8);
+    const shiftY = Math.max(0, rect.bottom - window.innerHeight + 8);
+    setMenuShift((prev) =>
+      prev.x === -shiftX && prev.y === -shiftY ? prev : { x: -shiftX, y: -shiftY }
+    );
+  }, [contextMenu]);
 
   const closeMenu = useCallback(() => setContextMenu(null), []);
 
@@ -747,6 +803,26 @@ export default function FileExplorerView({ style }) {
     >
       {/* ── Favourites sidebar ────────────────────────────────────────────── */}
       <div className="explorer-favourites">
+        {drives.length > 1 && (
+          <>
+            <div className="explorer-favourites__header">Drives</div>
+            {drives.map((d) => (
+              <div
+                key={d}
+                className={`explorer-favourites__item${
+                  currentPath === d || currentPath.startsWith(d)
+                    ? ' explorer-favourites__item--active'
+                    : ''
+                }`}
+                title={d}
+                onClick={() => navigateTo(d)}
+              >
+                <span className="explorer-favourites__icon">💽</span>
+                <span className="explorer-favourites__name">{d}</span>
+              </div>
+            ))}
+          </>
+        )}
         <div className="explorer-favourites__header">Favourites</div>
         {favourites.length === 0 ? (
           <div className="explorer-favourites__empty">Right-click a folder to add favourites</div>
@@ -929,7 +1005,8 @@ export default function FileExplorerView({ style }) {
             <div className="context-backdrop-invisible" onClick={closeMenu} />
             <div
               className={`context-menu${contextMenu.flipLeft ? ' context-menu--flip-left' : ''}${contextMenu.flipUp ? ' context-menu--flip-up' : ''}`}
-              style={{ top: contextMenu.y, left: contextMenu.x }}
+              ref={menuRef}
+              style={{ top: contextMenu.y + menuShift.y, left: contextMenu.x + menuShift.x }}
               onMouseDown={(e) => e.stopPropagation()}
             >
               {menuIsDir ? (

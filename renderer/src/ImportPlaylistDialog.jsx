@@ -1,7 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import './ImportPlaylistDialog.css';
 
-export default function ImportPlaylistDialog({ playlists, onConfirm, onCancel }) {
+export default function ImportPlaylistDialog({
+  playlists,
+  onConfirm,
+  onCancel,
+  title = 'Import to Playlist',
+  confirmLabel = 'Import',
+}) {
   const [selected, setSelected] = useState('library');
   const [createName, setCreateName] = useState('');
   const [showCreate, setShowCreate] = useState(false);
@@ -24,7 +30,7 @@ export default function ImportPlaylistDialog({ playlists, onConfirm, onCancel })
   return (
     <div className="ipd-backdrop" onClick={onCancel}>
       <div className="ipd-modal" onClick={(e) => e.stopPropagation()}>
-        <h3 className="ipd-title">Import to Playlist</h3>
+        <h3 className="ipd-title">{title}</h3>
         <p className="ipd-desc">Choose where to add the imported tracks:</p>
 
         <div className="ipd-list">
@@ -98,7 +104,7 @@ export default function ImportPlaylistDialog({ playlists, onConfirm, onCancel })
             onClick={handleConfirm}
             disabled={showCreate && !createName.trim()}
           >
-            Import
+            {confirmLabel}
           </button>
         </div>
       </div>

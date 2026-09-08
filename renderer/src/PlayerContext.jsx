@@ -43,6 +43,8 @@ export function PlayerProvider({ children }) {
   const [outputDeviceId, setOutputDeviceId] = useState('');
   const [volume, setVolumeState] = useState(1.0);
   const [history, setHistory] = useState([]); // ring buffer, newest first
+  const [playbackError, setPlaybackError] = useState(null); // { message } | null — surfaced by PlayerBar
+  const [unavailableLinkedIds, setUnavailableLinkedIds] = useState(() => new Set());
 
   // Port of the local HTTP media server (started in main process before window opens).
   const mediaPortRef = useRef(null);
@@ -71,6 +73,26 @@ export function PlayerProvider({ children }) {
       });
     }
   }, []);
+
+  // Track availability for linked (Explorer-referenced) files, which point at
+  // arbitrary — often removable — paths. Re-check on mount, whenever the window
+  // regains focus (e.g. the user just plugged a drive back in), and on a slow
+  // background interval so the "grayed out" state doesn't require an action.
+  const refreshAvailability = useCallback(() => {
+    window.api
+      .getUnavailableLinkedTracks()
+      .then((ids) => setUnavailableLinkedIds(new Set(ids)))
+      .catch((err) => console.warn('[player] availability check failed:', err.message));
+  }, []);
+  useEffect(() => {
+    refreshAvailability();
+    window.addEventListener('focus', refreshAvailability);
+    const interval = setInterval(refreshAvailability, 20000);
+    return () => {
+      window.removeEventListener('focus', refreshAvailability);
+      clearInterval(interval);
+    };
+  }, [refreshAvailability]);
 
   // Web Audio graph is built lazily on first play() call — see buildAudioGraph() below.
   // Building it at mount time creates the AudioContext without a user gesture, leaving it
@@ -119,6 +141,7 @@ export function PlayerProvider({ children }) {
   const currentPlaylistNameRef = useRef(currentPlaylistName);
   const currentTrackRef = useRef(currentTrack);
   const volumeRef = useRef(volume);
+  const unavailableLinkedIdsRef = useRef(unavailableLinkedIds);
   useEffect(() => {
     queueRef.current = queue;
   }, [queue]);
@@ -143,16 +166,53 @@ export function PlayerProvider({ children }) {
   useEffect(() => {
     volumeRef.current = volume;
   }, [volume]);
+  useEffect(() => {
+    unavailableLinkedIdsRef.current = unavailableLinkedIds;
+  }, [unavailableLinkedIds]);
 
   // Generation counter — incremented on every track switch so stale play() rejections are ignored
   const playGenRef = useRef(0);
 
   // Stable play-at-index — exposed via ref so handleEnded can call it without stale closure
   const playAtIndexRef = useRef(null);
+  // `next` is defined further down (after playAtIndex) but playAtIndex's own
+  // failure handler needs to call it — same ref-indirection pattern as above,
+  // since `next` isn't in scope yet at the point playAtIndex is defined.
+  const nextRef = useRef(null);
+  // Counts consecutive auto-skips caused by unavailable tracks (not resolved
+  // until a track actually starts playing — see the play().then() below).
+  // Without this, a queue where several/all tracks are unavailable makes
+  // playAtIndex → next() → playAtIndex recurse synchronously with no bound,
+  // which blows the call stack (a real crash hit in testing — see #389).
+  const skipStreakRef = useRef(0);
+  const MAX_CONSECUTIVE_SKIPS = 25;
   const playAtIndex = useCallback(
     async (newQueue, index, playlistId = null, playlistName = null) => {
       const track = newQueue[index];
       if (!track) return;
+      // Known-unavailable linked track (e.g. its USB drive isn't mounted right
+      // now) — skip the round trip to the media server and move on immediately.
+      if (track.is_linked && unavailableLinkedIdsRef.current.has(track.id)) {
+        skipStreakRef.current += 1;
+        if (skipStreakRef.current > MAX_CONSECUTIVE_SKIPS) {
+          setPlaybackError('Too many unavailable tracks in a row — stopping playback.');
+          setIsPlaying(false);
+          skipStreakRef.current = 0;
+          return;
+        }
+        setPlaybackError(`"${track.title}" is unavailable — the file could not be found.`);
+        // next() reads the CURRENT queue/index from refs (synced from this
+        // state) to compute "the one after this" — without updating them
+        // here, next() would keep recomputing from the previous track's
+        // index and retry this same unavailable track forever instead of
+        // advancing past it.
+        setQueue(newQueue);
+        setQueueIndex(index);
+        // Defer rather than call synchronously — keeps this off the call
+        // stack entirely regardless of the cap above.
+        setTimeout(() => nextRef.current?.(), 0);
+        return;
+      }
       const gen = ++playGenRef.current;
       const port = mediaPortRef.current;
       if (!port) {
@@ -198,21 +258,36 @@ export function PlayerProvider({ children }) {
         .play()
         .then(() => {
           console.log('[diag] play() resolved OK  readyState=', audio.readyState);
+          skipStreakRef.current = 0;
         })
         .catch((err) => {
           // AbortError is expected when we switch tracks before play() resolves
-          if (gen === playGenRef.current && err.name !== 'AbortError')
-            console.error(
-              '[diag] play() FAILED:',
-              err.name,
-              err.message,
-              'readyState=',
-              audio.readyState,
-              'networkState=',
-              audio.networkState,
-              'src=',
-              audio.src
-            );
+          if (gen !== playGenRef.current || err.name === 'AbortError') return;
+          console.error(
+            '[diag] play() FAILED:',
+            err.name,
+            err.message,
+            'readyState=',
+            audio.readyState,
+            'networkState=',
+            audio.networkState,
+            'src=',
+            audio.src
+          );
+          // NotSupportedError is what the browser reports when the media server
+          // 404s/403s the source (file missing, e.g. its USB drive was unplugged) —
+          // surface it and move on instead of leaving playback silently stalled.
+          if (err.name === 'NotSupportedError') {
+            skipStreakRef.current += 1;
+            if (skipStreakRef.current > MAX_CONSECUTIVE_SKIPS) {
+              setPlaybackError('Too many unavailable tracks in a row — stopping playback.');
+              setIsPlaying(false);
+              skipStreakRef.current = 0;
+              return;
+            }
+            setPlaybackError(`"${track.title}" is unavailable — the file could not be found.`);
+            setTimeout(() => nextRef.current?.(), 0);
+          }
         });
       setCurrentTrack(track);
       setQueue(newQueue);
@@ -325,6 +400,9 @@ export function PlayerProvider({ children }) {
       playAtIndexRef.current(q, 0, plId, plName);
     }
   }, []);
+  useLayoutEffect(() => {
+    nextRef.current = next;
+  });
 
   const prev = useCallback(() => {
     if (audio.currentTime > 3) {
@@ -535,6 +613,10 @@ export function PlayerProvider({ children }) {
         outputDeviceId,
         volume,
         history,
+        playbackError,
+        clearPlaybackError: () => setPlaybackError(null),
+        unavailableLinkedIds,
+        refreshAvailability,
         play,
         togglePlay,
         stop,

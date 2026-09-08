@@ -8,6 +8,7 @@ const STEPS = {
   pickFolder: 'pickFolder',
   checkingFormat: 'checkingFormat',
   needsFormat: 'needsFormat',
+  notRemovable: 'notRemovable',
   formatting: 'formatting',
   exporting: 'exporting',
   done: 'done',
@@ -22,6 +23,38 @@ function ProgressBar({ pct }) {
   );
 }
 
+// Keep in sync with DEVICE_PROFILES keys/labels in src/usb/deviceFormats.js
+const DEVICE_OPTIONS = [
+  { key: 'cdj-3000', label: 'CDJ-3000' },
+  { key: 'cdj-2000nxs2', label: 'CDJ-2000NXS2' },
+  { key: 'xdj-rx3', label: 'XDJ-RX3' },
+  { key: 'xdj-rx2', label: 'XDJ-RX2' },
+  { key: 'xdj-1000mk2', label: 'XDJ-1000MK2' },
+  { key: 'xdj-700', label: 'XDJ-700' },
+];
+
+function ExportFormatOptions({ targetDevice, setTargetDevice, forceMp3, setForceMp3 }) {
+  return (
+    <div className="export-format-options">
+      <label className="export-device-option">
+        <span>Target device</span>
+        <select value={targetDevice} onChange={(e) => setTargetDevice(e.target.value)}>
+          <option value="">None — keep source formats</option>
+          {DEVICE_OPTIONS.map((d) => (
+            <option key={d.key} value={d.key}>
+              {d.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="export-normalized-option">
+        <input type="checkbox" checked={forceMp3} onChange={(e) => setForceMp3(e.target.checked)} />
+        <span>Re-encode all tracks to MP3</span>
+      </label>
+    </div>
+  );
+}
+
 function ExportModal({ onClose, playlistId, initialMode }) {
   const [step, setStep] = useState(initialMode ? STEPS.confirm : STEPS.idle);
   const [mode, setMode] = useState(initialMode ?? null);
@@ -32,6 +65,8 @@ function ExportModal({ onClose, playlistId, initialMode }) {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [useNormalized, setUseNormalized] = useState(true);
+  const [targetDevice, setTargetDevice] = useState('');
+  const [forceMp3, setForceMp3] = useState(false);
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -64,7 +99,11 @@ function ExportModal({ onClose, playlistId, initialMode }) {
     setStep(STEPS.checkingFormat);
     const info = await window.api.checkUsbFormat(dir);
     setUsbInfo(info);
-    if (info.needsFormat) {
+    if (info.needsFormat && !info.removable) {
+      // Never offer to format a drive we couldn't positively confirm is removable —
+      // block here so the user isn't shown a "Format" button for an internal disk.
+      setStep(STEPS.notRemovable);
+    } else if (info.needsFormat) {
       setStep(STEPS.needsFormat);
     } else {
       startExport(exportMode, dir);
@@ -91,12 +130,16 @@ function ExportModal({ onClose, playlistId, initialMode }) {
         usbRoot: dir,
         playlistId: playlistId ?? null,
         useNormalized,
+        targetDevice: targetDevice || null,
+        forceMp3,
       });
     } else {
       res = await window.api.exportAll({
         usbRoot: dir,
         playlistId: playlistId ?? null,
         useNormalized,
+        targetDevice: targetDevice || null,
+        forceMp3,
       });
     }
     if (res.ok) {
@@ -143,6 +186,12 @@ function ExportModal({ onClose, playlistId, initialMode }) {
               />
               <span>Apply loudness normalization to exported files</span>
             </label>
+            <ExportFormatOptions
+              targetDevice={targetDevice}
+              setTargetDevice={setTargetDevice}
+              forceMp3={forceMp3}
+              setForceMp3={setForceMp3}
+            />
             <div className="export-options">
               <button className="export-option-btn" onClick={() => pickFolder('rekordbox')}>
                 <span className="export-option-icon">💾</span>
@@ -181,6 +230,12 @@ function ExportModal({ onClose, playlistId, initialMode }) {
               />
               <span>Apply loudness normalization to exported files</span>
             </label>
+            <ExportFormatOptions
+              targetDevice={targetDevice}
+              setTargetDevice={setTargetDevice}
+              forceMp3={forceMp3}
+              setForceMp3={setForceMp3}
+            />
             <div className="export-confirm-actions">
               <button className="export-option-btn" onClick={() => pickFolder(mode)}>
                 <span className="export-option-icon">{mode === 'rekordbox' ? '💾' : '📦'}</span>
@@ -215,6 +270,10 @@ function ExportModal({ onClose, playlistId, initialMode }) {
               You can still export to this folder (e.g. to inspect the files or copy manually), or
               reformat the drive to FAT32 first.
             </p>
+            <p className="export-needs-format-hint">
+              <strong>Note:</strong> if you export anyway, Rekordbox and CDJ/XDJ players will not be
+              able to read this drive — Pioneer hardware only recognizes FAT32 or exFAT.
+            </p>
             <div className="export-needs-format-actions">
               <button
                 className="export-option-btn export-option-btn--secondary"
@@ -227,6 +286,40 @@ function ExportModal({ onClose, playlistId, initialMode }) {
                 onClick={() => setStep('confirmFormat')}
               >
                 Format to FAT32 &amp; Export
+              </button>
+              <button className="export-cancel-btn" onClick={() => setStep(STEPS.idle)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === STEPS.notRemovable && usbInfo && (
+          <div className="export-modal-body">
+            <p className="export-needs-format-title">⚠️ Cannot format this drive</p>
+            <p className="export-needs-format-desc">
+              This drive is formatted as <strong>{usbInfo.fsLabel}</strong>, but it could not be
+              confirmed as removable media. To prevent accidentally erasing an internal disk,
+              formatting is only allowed on drives positively identified as removable/external.
+            </p>
+            <p className="export-needs-format-sub">
+              <span className="export-info-label">Device:</span> {usbInfo.device ?? 'unknown'} ·{' '}
+              <span className="export-info-label">Mount:</span> {usbRoot}
+            </p>
+            <p className="export-needs-format-hint">
+              You can still export to this folder as-is, or choose a different, removable drive to
+              format.
+            </p>
+            <p className="export-needs-format-hint">
+              <strong>Note:</strong> if you export anyway, Rekordbox and CDJ/XDJ players will not be
+              able to read this drive — Pioneer hardware only recognizes FAT32 or exFAT.
+            </p>
+            <div className="export-needs-format-actions">
+              <button
+                className="export-option-btn export-option-btn--secondary"
+                onClick={() => startExport(mode, usbRoot)}
+              >
+                Export Anyway
               </button>
               <button className="export-cancel-btn" onClick={() => setStep(STEPS.idle)}>
                 Cancel

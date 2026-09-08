@@ -6,6 +6,40 @@ const noop = () => () => {}; // returns unsubscribe fn
 window.api = {
   getTracks: vi.fn().mockResolvedValue([]),
   getTrackIds: vi.fn().mockResolvedValue([]),
+  getTrackById: vi.fn().mockResolvedValue(null),
+  listLibraries: vi.fn().mockResolvedValue([
+    {
+      id: 1,
+      name: 'Default',
+      storage_format: 'hashed',
+      root_path: null,
+      effective_root_path: '/tmp/userData/audio',
+    },
+  ]),
+  listLibrariesWithFreeSpace: vi.fn().mockResolvedValue([
+    {
+      id: 1,
+      name: 'Default',
+      storage_format: 'hashed',
+      root_path: null,
+      effective_root_path: '/tmp/userData/audio',
+      free_bytes: 1024 ** 3,
+    },
+  ]),
+  getLibrarySize: vi.fn().mockResolvedValue(0),
+  getCurrentLibraryId: vi.fn().mockResolvedValue(1),
+  setCurrentLibraryId: vi.fn().mockResolvedValue(undefined),
+  createLibrary: vi
+    .fn()
+    .mockResolvedValue({ id: 2, name: 'New Library', storage_format: 'hashed' }),
+  renameLibrary: vi.fn().mockResolvedValue({ id: 1, name: 'Renamed' }),
+  getLibraryStorageFormat: vi.fn().mockResolvedValue('hashed'),
+  convertStorageFormat: vi.fn().mockResolvedValue({ moved: 0, total: 0 }),
+  onConvertStorageFormatProgress: vi.fn().mockImplementation(noop),
+  getDbPath: vi.fn().mockResolvedValue('/tmp/library.db'),
+  getDbSize: vi.fn().mockResolvedValue(0),
+  moveDatabase: vi.fn().mockResolvedValue(undefined),
+  getUnavailableLinkedTracks: vi.fn().mockResolvedValue([]),
   getCuePoints: vi.fn().mockResolvedValue([]),
   addCuePoint: vi.fn().mockResolvedValue({ id: 1 }),
   updateCuePoint: vi.fn().mockResolvedValue({ ok: true }),
@@ -29,6 +63,8 @@ window.api = {
   getZoomFactor: vi.fn().mockReturnValue(1.0),
   setZoomFactor: vi.fn(),
   removeTrack: vi.fn().mockResolvedValue({ ok: true }),
+  removeTracks: vi.fn().mockResolvedValue({ ok: true, total: 0 }),
+  onRemoveTracksProgress: vi.fn().mockImplementation(noop),
   removeLinkedFile: vi.fn().mockResolvedValue({ ok: true }),
   adjustBpm: vi.fn().mockResolvedValue([]),
   updateTrack: vi.fn().mockResolvedValue({}),
@@ -83,6 +119,7 @@ window.api = {
   tidalFetchInfo: vi.fn().mockResolvedValue({ ok: false, error: 'not configured' }),
   tidalLogin: vi.fn().mockResolvedValue({ ok: true }),
   tidalDownloadUrl: vi.fn().mockResolvedValue({ ok: true, trackIds: [], playlistId: null }),
+  cloudSearch: vi.fn().mockResolvedValue({ ok: true, results: [] }),
   onTidalProgress: vi.fn().mockImplementation(() => () => {}),
   onTidalLoginUrl: vi.fn().mockImplementation(() => () => {}),
   onTidalInstallProgress: vi.fn().mockImplementation(() => () => {}),
@@ -100,6 +137,9 @@ window.api = {
   linkDirectory: vi.fn().mockResolvedValue({ ok: true, linked: 0, total: 0 }),
   remapTrack: vi.fn().mockResolvedValue({ ok: true }),
   remapFolder: vi.fn().mockResolvedValue({ ok: true, count: 0 }),
+  moveTrackToLibrary: vi.fn().mockResolvedValue({ ok: true, moved: true }),
+  moveTracksToLibrary: vi.fn().mockResolvedValue({ moved: [], failed: [] }),
+  onMoveTracksToLibraryProgress: vi.fn().mockImplementation(noop),
   checkLinkedTrackStatus: vi.fn().mockResolvedValue([]),
   getLinkedTracksBasic: vi.fn().mockResolvedValue([]),
   checkUsbFormat: vi
@@ -113,6 +153,8 @@ window.api = {
   onExportRekordboxProgress: vi.fn().mockImplementation(noop),
   onExportAllProgress: vi.fn().mockImplementation(noop),
   onFormatUsbProgress: vi.fn().mockImplementation(noop),
+  autoTagSearch: vi.fn().mockResolvedValue({ ok: true, results: [] }),
+  fetchArtworkUrl: vi.fn().mockResolvedValue({ ok: true, artwork_path: '/tmp/artwork.jpg' }),
 };
 
 // jsdom does not implement Web Audio API — stub the minimum PlayerContext needs

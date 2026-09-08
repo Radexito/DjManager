@@ -24,6 +24,14 @@ function formatDuration(secs) {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+function formatCoverArtDownloadError(error) {
+  const message = error?.trim?.() || '';
+  if (!message || message === 'unknown error' || message === 'fetch failed') {
+    return 'Failed to download cover art. The selected image could not be fetched.';
+  }
+  return `Failed to download cover art: ${message}`;
+}
+
 function trackToForm(track) {
   return {
     title: track.title ?? '',
@@ -69,6 +77,10 @@ export default function TrackDetails({
   const [error, setError] = useState(null);
   const [showAutoTagger, setShowAutoTagger] = useState(false);
   const [artworkPath, setArtworkPath] = useState(() => track?.artwork_path ?? null);
+  const [libraries, setLibraries] = useState([]);
+  const [moveTargetId, setMoveTargetId] = useState('');
+  const [locationBusy, setLocationBusy] = useState(false);
+  const [locationError, setLocationError] = useState(null);
 
   // Reset form when track/tracks changes
   useEffect(() => {
@@ -76,8 +88,61 @@ export default function TrackDetails({
     setArtworkPath(track?.artwork_path ?? null);
     setDirty(false);
     setError(null);
+    setMoveTargetId('');
+    setLocationError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isBulk ? tracks.map((t) => t.id).join(',') : track?.id]);
+
+  useEffect(() => {
+    if (!isBulk) window.api.listLibraries().then(setLibraries);
+  }, [isBulk]);
+
+  const handleCopyPath = useCallback(() => {
+    if (track?.file_path) navigator.clipboard.writeText(track.file_path).catch(() => {});
+  }, [track]);
+
+  const handleBrowseRelink = useCallback(async () => {
+    setLocationBusy(true);
+    setLocationError(null);
+    try {
+      const res = await window.api.remapTrack(track.id, track.file_path);
+      if (res.ok) onSave({ ...track, file_path: res.newPath });
+    } catch (e) {
+      setLocationError(e.message ?? 'Relink failed');
+    } finally {
+      setLocationBusy(false);
+    }
+  }, [track, onSave]);
+
+  const handleMoveToLibrary = useCallback(
+    async (targetLibraryId) => {
+      if (!targetLibraryId) return;
+      setLocationBusy(true);
+      setLocationError(null);
+      try {
+        const res = await window.api.moveTrackToLibrary(track.id, Number(targetLibraryId));
+        if (res.ok) {
+          onSave({
+            ...track,
+            library_id: Number(targetLibraryId),
+            is_linked: 0,
+            ...(res.newPath ? { file_path: res.newPath } : {}),
+          });
+          setMoveTargetId('');
+        }
+      } catch (e) {
+        setLocationError(e.message ?? 'Move failed');
+      } finally {
+        setLocationBusy(false);
+      }
+    },
+    [track, onSave]
+  );
+
+  const currentLibraryName = track?.is_linked
+    ? null
+    : (libraries.find((l) => l.id === track?.library_id)?.name ?? (track?.library_id ? '—' : null));
+  const otherLibraries = libraries.filter((l) => l.id !== track?.library_id);
 
   const handleChange = useCallback((key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -266,6 +331,95 @@ export default function TrackDetails({
         </div>
       )}
 
+      {!isBulk && (
+        <div className="track-details__info">
+          <div className="track-details__info-header">
+            <span className="track-details__info-title">Location</span>
+          </div>
+          <div className="track-details__location-row">
+            <input
+              className="track-details__input track-details__path-input"
+              type="text"
+              readOnly
+              value={track.file_path ?? ''}
+              title={track.file_path ?? ''}
+              onFocus={(e) => e.target.select()}
+            />
+            <button
+              className="track-details__btn track-details__btn--small"
+              onClick={handleCopyPath}
+              title="Copy path"
+            >
+              Copy
+            </button>
+            {track.is_linked && (
+              <button
+                className="track-details__btn track-details__btn--small"
+                onClick={handleBrowseRelink}
+                disabled={locationBusy}
+                title="Point this track at a different file"
+              >
+                Browse…
+              </button>
+            )}
+          </div>
+          <div className="track-details__location-row">
+            <span className="track-details__label">Library</span>
+            {!track.is_linked && <span>{currentLibraryName ?? '—'}</span>}
+            {track.is_linked ? (
+              libraries.length > 0 && (
+                <>
+                  <select
+                    className="track-details__select"
+                    value={moveTargetId || String(track.library_id ?? '')}
+                    onChange={(e) => setMoveTargetId(e.target.value)}
+                    disabled={locationBusy}
+                  >
+                    {libraries.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="track-details__btn track-details__btn--small"
+                    onClick={() => handleMoveToLibrary(moveTargetId || track.library_id)}
+                    disabled={locationBusy}
+                    title="Copy this linked file into the selected library, making it a managed track"
+                  >
+                    Import into library
+                  </button>
+                </>
+              )
+            ) : otherLibraries.length > 0 ? (
+              <>
+                <select
+                  className="track-details__select"
+                  value={moveTargetId}
+                  onChange={(e) => setMoveTargetId(e.target.value)}
+                  disabled={locationBusy}
+                >
+                  <option value="">Move to…</option>
+                  {otherLibraries.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="track-details__btn track-details__btn--small"
+                  onClick={() => handleMoveToLibrary(moveTargetId)}
+                  disabled={!moveTargetId || locationBusy}
+                >
+                  Move
+                </button>
+              </>
+            ) : null}
+          </div>
+          {locationError && <div className="track-details__error">{locationError}</div>}
+        </div>
+      )}
+
       {error && <div className="track-details__error">{error}</div>}
 
       <div className="track-details__actions">
@@ -329,11 +483,22 @@ export default function TrackDetails({
             setShowAutoTagger(false);
             // Download and save cover art if selected
             if (update.coverUrl && track?.id) {
-              const res = await window.api.fetchArtworkUrl({
-                trackId: track.id,
-                url: update.coverUrl,
-              });
-              if (res.ok) setArtworkPath(res.artwork_path);
+              try {
+                const res = await window.api.fetchArtworkUrl({
+                  trackId: track.id,
+                  url: update.coverUrl,
+                });
+                if (res.ok) {
+                  setArtworkPath(res.artwork_path);
+                  // Push the new artwork into MusicLibrary's track state so the
+                  // list thumbnail refreshes without waiting for handleSave/reload.
+                  onSave({ ...track, artwork_path: res.artwork_path, has_artwork: 1 });
+                } else {
+                  setError(formatCoverArtDownloadError(res.error));
+                }
+              } catch (err) {
+                setError(formatCoverArtDownloadError(err?.message));
+              }
             }
           }}
         />

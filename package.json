@@ -1,8 +1,9 @@
 {
   "name": "dj_manager",
-  "version": "1.0.18",
+  "version": "1.0.23",
   "description": "DJ-focused music library manager",
   "main": "src/main.js",
+  "desktopName": "dj_manager.desktop",
   "scripts": {
     "react": "cd renderer && npm run dev",
     "electron": "wait-on file:.dev-url && electron .",
@@ -53,7 +54,8 @@
       ],
       "category": "Audio",
       "extraResources": [],
-      "artifactName": "${productName}-${version}-Linux.${ext}"
+      "artifactName": "${productName}-${version}-Linux.${ext}",
+      "syncDesktopName": true
     },
     "mac": {
       "target": [
@@ -124,26 +126,26 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@playwright/test": "^1.58.2",
-    "@vitest/coverage-v8": "^4.1.5",
-    "concurrently": "^9.2.1",
-    "electron": "^41.3.0",
-    "electron-builder": "^26.8.1",
+    "@playwright/test": "^1.62.0",
+    "@vitest/coverage-v8": "^4.1.6",
+    "concurrently": "^10.0.4",
+    "electron": "^42.5.0",
+    "electron-builder": "^26.15.3",
     "electron-rebuild": "^3.2.9",
-    "eslint": "^10.2.1",
-    "globals": "^17.4.0",
+    "eslint": "^10.8.0",
+    "globals": "^17.7.0",
     "husky": "^9.1.7",
-    "lint-staged": "^16.4.0",
-    "prettier": "^3.8.3",
-    "vitest": "^4.1.5",
-    "wait-on": "^9.0.4"
+    "lint-staged": "^17.2.0",
+    "prettier": "^3.9.6",
+    "vitest": "^4.1.10",
+    "wait-on": "^9.0.10"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
-    "better-sqlite3": "^12.9.0",
+    "better-sqlite3": "^13.0.1",
     "react-virtualized": "^9.22.6",
-    "react-window": "^2.2.7"
+    "react-window": "^2.3.0"
   }
 }

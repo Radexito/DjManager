@@ -11,20 +11,82 @@ function formatTime(s) {
   return `${m}:${sec}`;
 }
 
-export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
+/**
+ * Full-text row that shows EVERYTHING: when the text fits, it sits still;
+ * when it overflows, it auto-scrolls (marquee) instead of ellipsizing.
+ * Pauses on hover. Short names (e.g. "Armin van Buuren") never scroll —
+ * only genuinely overflowing text does.
+ */
+function ScrollText({ className = '', children, ...rest }) {
+  const rootRef = useRef(null);
+  const [over, setOver] = useState(false);
+  const [dur, setDur] = useState(12);
+
+  const measure = () => {
+    const el = rootRef.current;
+    if (!el) return;
+    const sw = el.scrollWidth;
+    const cw = el.clientWidth;
+    const o = sw > cw + 2; // +2: don't scroll for a sub-pixel overflow
+    setOver((prev) => (prev === o ? prev : o));
+    if (o) {
+      // Constant-ish speed (~55px/s), bounded so very long titles don't crawl
+      setDur(Math.min(45, Math.max(7, Math.round(sw / 55))));
+    }
+  };
+
+  useEffect(() => {
+    measure();
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Re-measure after every render (children/track changes) — cheap no-op when
+  // nothing changed thanks to the setOver guard.
+  useEffect(() => {
+    const id = typeof requestAnimationFrame !== 'undefined' ? requestAnimationFrame(measure) : null;
+    return () => id !== null && cancelAnimationFrame(id);
+  });
+
+  return (
+    <div
+      ref={rootRef}
+      className={`player-scroll ${over ? 'player-scroll--on' : ''} ${className}`}
+      {...rest}
+    >
+      {over ? (
+        <div className="player-scroll-track" style={{ animationDuration: `${dur}s` }}>
+          <span className="player-scroll-text">{children}</span>
+          <span className="player-scroll-text" aria-hidden="true">
+            {children}
+          </span>
+        </div>
+      ) : (
+        <span className="player-scroll-text">{children}</span>
+      )}
+    </div>
+  );
+}
+
+export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch, onOpenTrackDetails }) {
   const {
     mediaPort,
     currentTrack,
     currentPlaylistId,
     currentPlaylistName,
     isPlaying,
-    currentTime,
-    duration,
     shuffle,
     repeat,
+    currentTime,
+    duration,
     outputDeviceId,
     volume,
     history,
+    playbackError,
+    clearPlaybackError,
     togglePlay,
     next,
     prev,
@@ -58,6 +120,151 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
   const introFracRef = useRef(0); // 0-1 fraction where intro ends
   const outroFracRef = useRef(1); // 0-1 fraction where outro starts
 
+  // ── Resizable player-bar height ────────────────────────────────────────────
+  const PB_H_KEY = 'djmanager.playerBarHeight';
+  const PB_H_DEFAULT = 124; // taller default
+  const PB_H_MIN = 84;
+  const PB_H_MAX = 260;
+  const clampPbH = (v) => Math.min(PB_H_MAX, Math.max(PB_H_MIN, Math.round(v)));
+  const [barH, setBarH] = useState(() => {
+    try {
+      const v = parseInt(localStorage.getItem(PB_H_KEY), 10);
+      return Number.isFinite(v) ? clampPbH(v) : PB_H_DEFAULT;
+    } catch {
+      return PB_H_DEFAULT;
+    }
+  });
+  const resizeDragRef = useRef(null); // { startY, startH }
+  const startBarResize = (e) => {
+    if (e.button !== 0) return;
+    resizeDragRef.current = { startY: e.clientY, startH: barH };
+    const move = (ev) => {
+      const d = resizeDragRef.current;
+      if (!d) return;
+      setBarH(clampPbH(d.startH + (d.startY - ev.clientY)));
+    };
+    const up = () => {
+      resizeDragRef.current = null;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      document.body.style.cursor = '';
+    };
+    document.body.style.cursor = 'ns-resize';
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  // Persist the height and keep the live value in a ref for the drag closure
+  const barHRef = useRef(barH);
+  useEffect(() => {
+    barHRef.current = barH;
+    try {
+      localStorage.setItem(PB_H_KEY, String(barH));
+    } catch {
+      /* ignore */
+    }
+  }, [barH]);
+
+  // ── Resizable horizontal zones ─────────────────────────────────────────────
+  // zones[0]=transport cluster (null=auto), zones[1]=album-art (null=auto square,
+  // 0=folded), zones[2]=title/artist text, zones[3]=right cluster.
+  // The waveform area flexes to absorb the rest.
+  const PZ_KEY = 'djmanager.playerBarZones.v5';
+  const PZ_LIMITS = [
+    { min: 0, max: 344 },
+    { min: 0, max: 500 },
+    { min: 180, max: 1000 },
+    { min: 0, max: 700 },
+  ];
+  const clampPz = (v, i, fallback) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    const { min, max } = PZ_LIMITS[i];
+    return Math.min(max, Math.max(min, Math.round(n)));
+  };
+  const [zones, setZones] = useState(() => {
+    // null = natural (max-content) width; a number = fixed user-set width.
+    // Transport starts PINNED at 90px → the compact 2×3 (portrait) layout;
+    // widening past the saturation width flips it to 3×2.
+    const d = [90, null, 380, null];
+    try {
+      const raw = JSON.parse(localStorage.getItem(PZ_KEY));
+      if (raw && Array.isArray(raw)) {
+        return raw.map((v, i) => (typeof v === 'number' ? clampPz(v, i, null) : null));
+      }
+    } catch {
+      /* ignore */
+    }
+    return d;
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(PZ_KEY, JSON.stringify(zones));
+    } catch {
+      /* ignore */
+    }
+  }, [zones]);
+
+  // ── Volume: click toggles mute, hover reveals a vertical slider ───────────
+  const [volPop, setVolPop] = useState(false);
+  const lastVolumeRef = useRef(1);
+  const handleVolumeClick = () => {
+    if (volume > 0) {
+      lastVolumeRef.current = volume;
+      setVolume(0);
+    } else {
+      setVolume(lastVolumeRef.current > 0 ? lastVolumeRef.current : 0.8);
+    }
+  };
+  const applyVolPointer = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.height <= 0) return;
+    const frac = 1 - (e.clientY - rect.top) / rect.height;
+    setVolume(Math.min(1, Math.max(0, frac)));
+  };
+
+  const zoneRefs = useRef([]);
+  const startZoneSplit = (idx, e) => {
+    if (e.button !== 0) return;
+    const el = zoneRefs.current[idx];
+    const startW = el ? el.offsetWidth : (zones[idx] ?? 200);
+    const startX = e.clientX;
+    const { min } = PZ_LIMITS[idx];
+    // Album-art zone maxes out at its own square (100% of the thumbnail);
+    // the square tracks the current bar height.
+    const artSquare = Math.min(barHRef.current * 0.56, 140);
+    const move = (ev) => {
+      const target = startW + (ev.clientX - startX);
+      let cap = PZ_LIMITS[idx].max;
+      if (idx === 1) {
+        cap = Math.max(1, Math.round(artSquare));
+      } else if (idx === 0) {
+        // Transport zone: while the layout is still portrait (below the
+        // saturation width) growth is free; once it flips to landscape, stop
+        // exactly when the 3×2 icons reach 100% of their height-capped
+        // natural width — stretching further would only add empty margins.
+        const bar = barHRef.current;
+        const sat = 24 + 2.7 * ((bar - 24) / 3.85);
+        if (target >= sat) {
+          cap = Math.round(36 + 4.1 * ((bar - 16) / 2.5));
+        }
+      }
+      const nw = Math.min(cap, Math.max(min, target));
+      setZones((prev) => {
+        const next = [...prev];
+        next[idx] = Math.round(nw);
+        return next;
+      });
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      document.body.style.cursor = '';
+    };
+    document.body.style.cursor = 'col-resize';
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
   useEffect(() => {
     async function loadDevices() {
       if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -66,6 +273,13 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     }
     loadDevices();
   }, []);
+
+  // Auto-dismiss the playback-error toast
+  useEffect(() => {
+    if (!playbackError) return;
+    const timer = setTimeout(() => clearPlaybackError(), 4500);
+    return () => clearTimeout(timer);
+  }, [playbackError, clearPlaybackError]);
 
   // Load cue points whenever the playing track changes
   useEffect(() => {
@@ -139,6 +353,7 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     const W = canvas.width;
     const H = canvas.height;
     const ctx = canvas.getContext('2d');
+    if (!ctx) return;
     ctx.clearRect(0, 0, W, H);
     if (!data || data.length < 4) return;
 
@@ -295,18 +510,23 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     paintWaveform(); // eslint-disable-line react-hooks/exhaustive-deps
   }, [colorMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Repaint the waveform at the new canvas size when the bar is resized
+  useEffect(() => {
+    paintWaveform(); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [barH]);
+
   // Fetch waveform data when track changes, then draw
   useEffect(() => {
     const canvas = waveCanvasRef.current;
     if (!currentTrack) {
       waveDataRef.current = null;
-      if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+      if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
       return;
     }
     window.api.getTrackWaveform(currentTrack.id).then((raw) => {
       waveDataRef.current = raw ? new Uint8Array(raw) : null;
       if (!waveDataRef.current && canvas) {
-        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+        canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
       } else {
         paintWaveform();
       }
@@ -331,28 +551,185 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
     mediaPort
   );
 
+  // Transport grid adapts to its own aspect. Switch point: when the 2×3
+  // (portrait) layout has already filled the full bar height — its icons hit
+  // the row-count cap at satWidth; stretching wider than that adds nothing but
+  // margins, so flip to the 3×2 (landscape) layout from there on.
+  const portraitSatWidth = Math.round(24 + 2.7 * ((barH - 24) / 3.85));
+  const landLayout = zones[0] == null ? true : zones[0] >= portraitSatWidth;
+
   return (
-    <div className="player-bar">
-      {/* Left: album art + current track info */}
-      <div className="player-left">
-        {artSrc ? (
-          <img className="player-art" src={artSrc} alt="Album art" draggable={false} />
-        ) : (
-          <div className="player-art player-art--placeholder">♪</div>
-        )}
+    <div className="player-bar" style={{ height: barH, '--pb-h': `${barH}px` }}>
+      <div className="player-resize-handle" onPointerDown={startBarResize} title="Drag to resize" />
+      {playbackError && (
+        <div
+          className="player-bar-toast player-bar-toast--warn"
+          onClick={clearPlaybackError}
+          title="Dismiss"
+        >
+          ⚠ {playbackError}
+        </div>
+      )}
+      {/* Horizontal zones, user-resizable via the splitters between them:
+          transport | art | track info | waveform | right controls */}
+      {/* Transport layout follows the zone's aspect: wider than tall → 3×2
+          (shuffle/play/repeat over prev/next), taller than wide → 2×3. */}
+      <div
+        className={`pz-controls${zones[0] ? ' pz-controls--fixed' : ''} ${landLayout ? 'pz-layout--land' : 'pz-layout--port'}`}
+        style={zones[0] ? { width: zones[0] } : undefined}
+        ref={(el) => {
+          zoneRefs.current[0] = el;
+        }}
+      >
+        <div className="player-controls-grid" aria-label="Playback controls">
+          <button
+            type="button"
+            className={`player-btn player-btn--shuffle player-btn--toggle${shuffle ? ' player-btn--active' : ''}`}
+            onClick={toggleShuffle}
+            title="Shuffle"
+          >
+            ⇄
+          </button>
+          <button
+            type="button"
+            className="player-btn player-btn--play"
+            onClick={togglePlay}
+            title="Play / Pause"
+          >
+            {isPlaying ? '⏸' : '▶'}
+          </button>
+          <button
+            type="button"
+            className={`player-btn player-btn--repeat player-btn--toggle${repeat !== 'none' ? ' player-btn--active' : ''}`}
+            onClick={cycleRepeat}
+            title={`Repeat: ${repeat}`}
+          >
+            <span className="rep-glyph">↺</span>
+            {repeat === 'one' && (
+              <sup className="rep-badge" aria-hidden="true">
+                1
+              </sup>
+            )}
+          </button>
+          <button type="button" className="player-btn player-btn--next" onClick={next} title="Next">
+            ⏭
+          </button>
+          <button
+            type="button"
+            className="player-btn player-btn--prev"
+            onClick={prev}
+            title="Previous"
+          >
+            ⏮
+          </button>
+          {/* Playback history — lives in the transport's last slot */}
+          <div className="player-history-wrap" ref={historyWrapRef}>
+            <button
+              className="player-btn player-btn--history"
+              onClick={() => setShowHistory((s) => !s)}
+              disabled={history.length === 0}
+              title="Playback history"
+            >
+              <svg
+                className="player-ico"
+                viewBox="0 0 24 24"
+                width="1em"
+                height="1em"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="13" r="8.5" fill="none" stroke="currentColor" strokeWidth="2" />
+                <path
+                  d="M12 9v4.2l2.8 2"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+            {showHistory && history.length > 0 && (
+              <div className="player-history-menu">
+                <div className="player-history-header">Recent tracks</div>
+                {history.map((t, i) => (
+                  <div
+                    key={`${t.id}-${i}`}
+                    className="player-history-item"
+                    title={`${t.title} — ${t.artist || 'Unknown'}`}
+                    onClick={() => {
+                      play(t, [t], 0, null, null);
+                      setShowHistory(false);
+                    }}
+                  >
+                    <span className="player-history-title">{t.title}</span>
+                    <span className="player-history-artist">{t.artist || 'Unknown'}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      <div
+        className="player-splitter"
+        onPointerDown={(e) => startZoneSplit(0, e)}
+        title="Drag to resize: transport buttons / album art"
+      />
+      <div
+        className="pz-art"
+        style={zones[1] !== null ? { width: zones[1] } : undefined}
+        ref={(el) => {
+          zoneRefs.current[1] = el;
+        }}
+      >
+        <button
+          type="button"
+          className={`player-art-btn${currentTrack ? ' player-art-btn--enabled' : ''}`}
+          onClick={() => currentTrack && onOpenTrackDetails?.(currentTrack.id, currentPlaylistId)}
+          title={currentTrack ? 'Open track details' : undefined}
+          disabled={!currentTrack}
+        >
+          {artSrc ? (
+            <img className="player-art" src={artSrc} alt="Album art" draggable={false} />
+          ) : (
+            <div className="player-art player-art--placeholder">♪</div>
+          )}
+        </button>
+      </div>
+      <div
+        className="player-splitter"
+        onPointerDown={(e) => startZoneSplit(1, e)}
+        title="Drag to resize: album art / track info"
+      />
+      <div
+        className="pz-info"
+        style={{ width: zones[2] }}
+        ref={(el) => {
+          zoneRefs.current[2] = el;
+        }}
+      >
         <div className="player-track-info">
           {currentTrack ? (
             <>
-              <div className="player-title" title={currentTrack.title}>
+              {/* Clicking the title navigates to the current playlist — the
+                  dedicated ☰ button was removed in favour of this. */}
+              <ScrollText
+                className={`player-title${currentPlaylistId ? ' player-title--clickable' : ''}`}
+                title={
+                  currentPlaylistId
+                    ? `Go to playlist: ${currentPlaylistName || currentPlaylistId}`
+                    : currentTrack.title
+                }
+                onClick={() => currentPlaylistId && onNavigateToPlaylist(String(currentPlaylistId))}
+              >
                 {currentTrack.title}
-              </div>
-              <div
+              </ScrollText>
+              <ScrollText
                 className={`player-artist${currentTrack.artist ? ' player-artist--clickable' : ''}`}
                 title={currentTrack.artist ? `Search: ARTIST is ${currentTrack.artist}` : undefined}
                 onClick={() => currentTrack.artist && onArtistSearch?.(currentTrack.artist)}
               >
                 {currentTrack.artist || 'Unknown'}
-              </div>
+              </ScrollText>
               {currentPlaylistName && (
                 <div
                   className="player-from player-from--clickable"
@@ -368,101 +745,99 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
           )}
         </div>
       </div>
+      <div
+        className="player-splitter"
+        onPointerDown={(e) => startZoneSplit(2, e)}
+        title="Drag to resize: track info / waveform"
+      />
 
-      {/* Center: transport controls + seekbar */}
-      <div className="player-center">
-        <div className="player-controls">
-          <button
-            className={`player-btn player-btn--toggle${shuffle ? ' player-btn--active' : ''}`}
-            onClick={toggleShuffle}
-            title="Shuffle"
-          >
-            ⇄
-          </button>
-          <button className="player-btn" onClick={prev} title="Previous">
-            ⏮
-          </button>
-          <button className="player-btn player-btn--play" onClick={togglePlay} title="Play / Pause">
-            {isPlaying ? '⏸' : '▶'}
-          </button>
-          <button className="player-btn" onClick={next} title="Next">
-            ⏭
-          </button>
-          <button
-            className={`player-btn player-btn--toggle${repeat !== 'none' ? ' player-btn--active' : ''}`}
-            onClick={cycleRepeat}
-            title={`Repeat: ${repeat}`}
-          >
-            {repeat === 'one' ? '↺¹' : '↺'}
-          </button>
+      {/* Center: full-width seekbar / waveform */}
+      <div className="player-seek">
+        <span className="player-time">{formatTime(currentTime)}</span>
+        <div className="player-seekbar-wrap">
+          <div ref={seekbarBgRef} className="player-seekbar-bg" />
+          <canvas ref={waveCanvasRef} className="player-waveform-canvas" />
+          <input
+            ref={seekbarRef}
+            type="range"
+            className="player-seekbar"
+            min={0}
+            max={duration || 0}
+            step={0.5}
+            defaultValue={0}
+            onPointerDown={(e) => {
+              console.log(`[seekbar] pointerDown value=${Number(e.target.value).toFixed(3)}`);
+              seekingRef.current = true;
+            }}
+            onPointerUp={(e) => {
+              const val = Number(e.target.value);
+              console.log(`[seekbar] pointerUp  value=${val.toFixed(3)}`);
+              seek(val);
+              seekingRef.current = false;
+            }}
+          />
+          {duration > 0 &&
+            cuePoints
+              .filter((cue) => (cue.hot_cue_index >= 0 ? showHotCues : showMemCues))
+              .map((cue) => {
+                const pct = Math.min((cue.position_ms / 1000 / duration) * 100, 100);
+                return (
+                  <button
+                    key={cue.id}
+                    className="player-cue-marker"
+                    style={{ left: `${pct}%`, background: cue.color }}
+                    title={
+                      cue.label ||
+                      (cue.hot_cue_index >= 0
+                        ? `Hot cue ${'ABCDEFGHIJKLMNOP'[cue.hot_cue_index]}`
+                        : 'Memory cue')
+                    }
+                    onClick={() => seek(cue.position_ms / 1000)}
+                  />
+                );
+              })}
         </div>
-
-        <div className="player-seek">
-          <span className="player-time">{formatTime(currentTime)}</span>
-          <div className="player-seekbar-wrap">
-            <div ref={seekbarBgRef} className="player-seekbar-bg" />
-            <canvas ref={waveCanvasRef} className="player-waveform-canvas" />
-            <input
-              ref={seekbarRef}
-              type="range"
-              className="player-seekbar"
-              min={0}
-              max={duration || 0}
-              step={0.5}
-              defaultValue={0}
-              onPointerDown={(e) => {
-                console.log(`[seekbar] pointerDown value=${Number(e.target.value).toFixed(3)}`);
-                seekingRef.current = true;
-              }}
-              onPointerUp={(e) => {
-                const val = Number(e.target.value);
-                console.log(`[seekbar] pointerUp  value=${val.toFixed(3)}`);
-                seek(val);
-                seekingRef.current = false;
-              }}
-            />
-            {duration > 0 &&
-              cuePoints
-                .filter((cue) => (cue.hot_cue_index >= 0 ? showHotCues : showMemCues))
-                .map((cue) => {
-                  const pct = Math.min((cue.position_ms / 1000 / duration) * 100, 100);
-                  return (
-                    <button
-                      key={cue.id}
-                      className="player-cue-marker"
-                      style={{ left: `${pct}%`, background: cue.color }}
-                      title={
-                        cue.label ||
-                        (cue.hot_cue_index >= 0
-                          ? `Hot cue ${'ABCDEFGH'[cue.hot_cue_index]}`
-                          : 'Memory cue')
-                      }
-                      onClick={() => seek(cue.position_ms / 1000)}
-                    />
-                  );
-                })}
-          </div>
-          <span className="player-time">{formatTime(duration)}</span>
-        </div>
+        <span className="player-time">{formatTime(duration)}</span>
       </div>
 
-      {/* Right: volume + device picker + history + navigate to playlist */}
+      {/* Right: volume (hover slider / click mute) + device picker */}
       <div className="player-right">
-        {/* Volume control */}
-        <div className="player-volume-wrap">
-          <span className="player-volume-icon" title="Volume">
+        {/* Volume control: hover opens a vertical slider, click mutes/unmutes */}
+        <div
+          className="player-volume-wrap"
+          onMouseEnter={() => setVolPop(true)}
+          onMouseLeave={() => setVolPop(false)}
+        >
+          <button
+            type="button"
+            className="player-btn player-volume-btn"
+            onClick={handleVolumeClick}
+            title={volume === 0 ? 'Unmute (click)' : 'Mute (click)'}
+          >
             {volume === 0 ? '🔇' : volume < 0.4 ? '🔉' : '🔊'}
-          </span>
-          <input
-            type="range"
-            className="player-volume-slider"
-            min={0}
-            max={1}
-            step={0.01}
-            value={volume}
-            onChange={(e) => setVolume(Number(e.target.value))}
-            title={`Volume: ${Math.round(volume * 100)}%`}
-          />
+          </button>
+          {volPop && (
+            <div className="player-volume-pop">
+              <div
+                className="vol-vert"
+                title={`Volume: ${Math.round(volume * 100)}%`}
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture?.(e.pointerId);
+                  applyVolPointer(e);
+                }}
+                onPointerMove={(e) => {
+                  if (e.buttons === 1) applyVolPointer(e);
+                }}
+              >
+                <div className="vol-vert-track" />
+                <div className="vol-vert-fill" style={{ height: `${Math.round(volume * 100)}%` }} />
+                <div
+                  className="vol-vert-thumb"
+                  style={{ bottom: `calc(${Math.round(volume * 100)}% - 6px)` }}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Device picker */}
@@ -494,47 +869,6 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch }) {
             </div>
           )}
         </div>
-
-        {/* Playback history */}
-        <div className="player-history-wrap" ref={historyWrapRef}>
-          <button
-            className={`player-btn${showHistory ? ' player-btn--active' : ''}`}
-            onClick={() => setShowHistory((s) => !s)}
-            title="Playback history"
-            disabled={history.length === 0}
-          >
-            🕐
-          </button>
-          {showHistory && history.length > 0 && (
-            <div className="player-history-menu">
-              <div className="player-history-header">Recent tracks</div>
-              {history.map((t, i) => (
-                <div
-                  key={`${t.id}-${i}`}
-                  className="player-history-item"
-                  title={`${t.title} — ${t.artist || 'Unknown'}`}
-                  onClick={() => {
-                    play(t, [t], 0, null, null);
-                    setShowHistory(false);
-                  }}
-                >
-                  <span className="player-history-title">{t.title}</span>
-                  <span className="player-history-artist">{t.artist || 'Unknown'}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {currentPlaylistId && (
-          <button
-            className="player-btn"
-            onClick={() => onNavigateToPlaylist(String(currentPlaylistId))}
-            title="Go to current playlist"
-          >
-            ☰
-          </button>
-        )}
       </div>
     </div>
   );

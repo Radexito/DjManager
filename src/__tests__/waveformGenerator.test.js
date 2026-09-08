@@ -8,13 +8,21 @@ vi.mock('child_process', () => ({
 }));
 
 // Import after mocks
-import { generateWaveform, PWAV_COLS, PWV2_COLS, PWV4_COLS } from '../audio/waveformGenerator.js';
+import {
+  generateWaveform,
+  generateEditorWaveform,
+  PWAV_COLS,
+  PWV2_COLS,
+  PWV4_COLS,
+} from '../audio/waveformGenerator.js';
 import { spawn } from 'child_process';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // Must match waveformGenerator.js: SAMPLE_RATE / COLS_PER_SEC = 22050 / 150 = 147
 const SAMPLES_PER_COL = Math.round(22050 / 150); // 147
+// Must match waveformGenerator.js: SAMPLE_RATE / COLS_PER_SEC_HIRES = 22050 / 600 = 37
+const SAMPLES_PER_COL_HIRES = Math.round(22050 / 600); // 37
 
 /** Convert a JS number array (float32 values) to a raw Buffer as f32le */
 function makeF32leBuffer(floatValues) {
@@ -246,5 +254,63 @@ describe('generateWaveform', () => {
     const result = await generateWaveform('/audio/chunked.mp3');
 
     expect(result.numCols).toBe(20);
+  });
+});
+
+// #262: high-resolution (600 cols/sec) detail buffer for the Beat Grid Editor
+describe('generateEditorWaveform', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns both the legacy 150 cols/sec detail buffer and the 600 cols/sec hires buffer', async () => {
+    // Long enough to produce several columns at both rates
+    const sampleCount = SAMPLES_PER_COL * 20;
+    spawn.mockReturnValue(makeFakeProc(makeF32leBuffer(new Array(sampleCount).fill(0.4))));
+
+    const result = await generateEditorWaveform('/audio/test.mp3');
+
+    expect(Buffer.isBuffer(result.detail)).toBe(true);
+    expect(Buffer.isBuffer(result.detailHires)).toBe(true);
+    expect(Buffer.isBuffer(result.overview)).toBe(true);
+    expect(result.colsPerSec).toBe(150);
+    expect(result.colsPerSecHires).toBe(600);
+  });
+
+  it('detail is 3 bytes/col at 150 cols/sec; detailHires is 3 bytes/col at 600 cols/sec', async () => {
+    // SAMPLES_PER_COL and SAMPLES_PER_COL_HIRES don't share a common multiple
+    // that divides cleanly, so just assert the byte-per-column encoding and
+    // that the hires buffer has meaningfully more columns for the same audio.
+    const sampleCount = SAMPLES_PER_COL * 20;
+    spawn.mockReturnValue(makeFakeProc(makeF32leBuffer(new Array(sampleCount).fill(0.4))));
+
+    const result = await generateEditorWaveform('/audio/test.mp3');
+
+    expect(result.detail.length).toBe(result.numCols * 3);
+    expect(result.detailHires.length).toBe(result.numColsHires * 3);
+    expect(result.numColsHires).toBeGreaterThan(result.numCols);
+  });
+
+  it('detailHires columns are within 0-255 range', async () => {
+    const sampleCount = SAMPLES_PER_COL_HIRES * 30;
+    spawn.mockReturnValue(makeFakeProc(makeF32leBuffer(new Array(sampleCount).fill(0.9))));
+
+    const result = await generateEditorWaveform('/audio/loud.mp3');
+
+    for (let i = 0; i < result.detailHires.length; i++) {
+      expect(result.detailHires[i]).toBeGreaterThanOrEqual(0);
+      expect(result.detailHires[i]).toBeLessThanOrEqual(255);
+    }
+  });
+
+  it('silent audio produces all-zero detailHires bytes', async () => {
+    const sampleCount = SAMPLES_PER_COL_HIRES * 20;
+    spawn.mockReturnValue(makeFakeProc(makeF32leBuffer(new Array(sampleCount).fill(0))));
+
+    const result = await generateEditorWaveform('/audio/silent.mp3');
+
+    for (let i = 0; i < result.detailHires.length; i++) {
+      expect(result.detailHires[i]).toBe(0);
+    }
   });
 });

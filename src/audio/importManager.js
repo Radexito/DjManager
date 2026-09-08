@@ -14,9 +14,17 @@ import {
   getTrackByHash,
   getTracksByPaths,
   updateTrackWaveform,
+  getTracks,
 } from '../db/trackRepository.js';
 import { getAnalyzerRuntimePath } from '../deps.js';
 import { getSetting } from '../db/settingsRepository.js';
+import { moveFileSafe } from '../utils/fsMove.js';
+import {
+  getLibrary,
+  getCurrentLibraryId,
+  getDefaultLibraryId,
+  setLibraryStorageFormat,
+} from '../db/libraryRepository.js';
 import { generateCuePoints } from './cueGen.js';
 import { getCuePoints, addCuePoint } from '../db/cuePointRepository.js';
 import { generateWaveformOverview } from './waveformGenerator.js';
@@ -63,24 +71,258 @@ function hashFile(filePath) {
   });
 }
 
-export function getLibraryBase() {
-  const custom = getSetting('library_path');
-  return custom || path.join(app.getPath('userData'), 'audio');
+// The oldest library (lowest id — seeded as "Default" by the #390 migration)
+// keeps the original, unscoped default paths so existing installs see no
+// change on upgrade. Any additional library gets its own scoped default so
+// two libraries never silently share a folder.
+function defaultAudioBase(libraryId) {
+  if (Number(libraryId) === Number(getDefaultLibraryId()))
+    return path.join(app.getPath('userData'), 'audio');
+  return path.join(app.getPath('userData'), 'libraries', String(libraryId), 'audio');
 }
 
-export function getArtworkBase() {
-  return path.join(app.getPath('userData'), 'artwork');
+function defaultArtworkBase(libraryId) {
+  if (Number(libraryId) === Number(getDefaultLibraryId()))
+    return path.join(app.getPath('userData'), 'artwork');
+  return path.join(app.getPath('userData'), 'libraries', String(libraryId), 'artwork');
 }
 
-function getAudioStoragePath(hash, ext) {
-  const base = getLibraryBase();
+/**
+ * Root folder for a library's audio files. Falls back to a per-library
+ * default scoped by id — never a shared path — unless the library has an
+ * explicit root_path set (via "Move Library").
+ */
+export function getLibraryBase(libraryId) {
+  const lib = getLibrary(libraryId);
+  return lib?.root_path || defaultAudioBase(libraryId);
+}
+
+export function getArtworkBase(libraryId) {
+  return defaultArtworkBase(libraryId);
+}
+
+function getDirSize(dir) {
+  let total = 0;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0; // not created yet (e.g. brand-new library with no imports)
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      total += getDirSize(full);
+    } else if (entry.isFile()) {
+      try {
+        total += fs.statSync(full).size;
+      } catch {
+        /* file removed mid-scan */
+      }
+    }
+  }
+  return total;
+}
+
+/** Total bytes a library's audio + artwork files occupy on disk. */
+export function getLibraryDiskUsage(libraryId) {
+  return getDirSize(getLibraryBase(libraryId)) + getDirSize(getArtworkBase(libraryId));
+}
+
+/**
+ * Free bytes remaining on the filesystem/partition backing a library.
+ * Walks up to the nearest existing ancestor directory since a brand-new
+ * library's folder may not be created on disk yet.
+ */
+export function getLibraryFreeSpace(libraryId) {
+  let dir = getLibraryBase(libraryId);
+  while (!fs.existsSync(dir)) {
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  try {
+    const stats = fs.statfsSync(dir);
+    return stats.bavail * stats.bsize;
+  } catch {
+    return null;
+  }
+}
+
+export function getStorageFormat(libraryId) {
+  return getLibrary(libraryId)?.storage_format === 'readable' ? 'readable' : 'hashed';
+}
+
+// Windows/macOS/Linux all reject at least these characters in filenames.
+function sanitizeForFilename(s) {
+  const cleaned = (s || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+  return cleaned || 'Unknown';
+}
+
+/**
+ * Where a track's audio file should live, given the library's current storage
+ * format setting. `meta.artist`/`meta.title` are only used for 'readable'
+ * mode — true duplicate content is already caught by the file-hash check in
+ * importAudioFile before this is called, so a filename collision here means
+ * a *different* track happens to share the same artist/title and just needs
+ * a disambiguating suffix.
+ */
+function getAudioStoragePath(hash, ext, meta = {}, libraryId) {
+  const base = getLibraryBase(libraryId);
+  if (getStorageFormat(libraryId) === 'readable') {
+    const artist = sanitizeForFilename(meta.artist);
+    const title = sanitizeForFilename(meta.title);
+    const artistDir = path.join(base, artist);
+    fs.mkdirSync(artistDir, { recursive: true });
+    let candidate = path.join(artistDir, `${artist} - ${title}${ext}`);
+    for (let n = 2; fs.existsSync(candidate); n++) {
+      candidate = path.join(artistDir, `${artist} - ${title} (${n})${ext}`);
+    }
+    return candidate;
+  }
   const shard = hash.slice(0, 2);
   fs.mkdirSync(path.join(base, shard), { recursive: true });
   return path.join(base, shard, `${hash}${ext}`);
 }
 
-async function extractArtwork(srcPath, hash) {
-  const artworkBase = getArtworkBase();
+/**
+ * Re-lay-out one library's tracks to match `newFormat`, reusing the same
+ * move-with-EXDEV-fallback approach as moving a library. Reported progress
+ * mirrors the move-library IPC event shape. Other libraries are untouched —
+ * storage format is per-library, not global.
+ */
+export function convertStorageFormat(libraryId, newFormat) {
+  if (newFormat !== 'hashed' && newFormat !== 'readable') {
+    throw new Error(`Unknown storage format: ${newFormat}`);
+  }
+  if (newFormat === getStorageFormat(libraryId)) return { moved: 0, total: 0 };
+
+  const tracks = getTracks({ limit: 999999, libraryIds: [libraryId] });
+  const total = tracks.length;
+  let moved = 0;
+
+  const oldBase = getLibraryBase(libraryId);
+  // Persist first so getAudioStoragePath() (called below via getStorageFormat())
+  // computes every destination in the new layout.
+  setLibraryStorageFormat(libraryId, newFormat);
+
+  for (const track of tracks) {
+    const oldPath = track.file_path;
+    // Linked tracks live wherever the user put them, outside app-managed
+    // storage, and have no file_hash — storage format doesn't apply to them.
+    if (!track.is_linked && fs.existsSync(oldPath)) {
+      const ext = path.extname(oldPath);
+      const newPath = getAudioStoragePath(
+        track.file_hash,
+        ext,
+        { artist: track.artist, title: track.title },
+        libraryId
+      );
+      if (newPath !== oldPath) {
+        moveFileSafe(oldPath, newPath);
+        updateTrack(track.id, { file_path: newPath });
+        // Keep the track list and any open Edit Details panel in sync —
+        // pass through the existing `analyzed` flag so this doesn't
+        // masquerade as a completed analysis for not-yet-analyzed tracks.
+        if (global.mainWindow) {
+          global.mainWindow.webContents.send('track-updated', {
+            trackId: track.id,
+            analysis: { file_path: newPath, analyzed: track.analyzed },
+          });
+        }
+      }
+    }
+    moved++;
+    if (global.mainWindow) {
+      global.mainWindow.webContents.send('convert-storage-format-progress', {
+        moved,
+        total,
+        pct: Math.round((moved / total) * 100),
+      });
+    }
+  }
+
+  // Remove now-empty shard/artist dirs left behind (best-effort)
+  try {
+    for (const entry of fs.readdirSync(oldBase)) {
+      const d = path.join(oldBase, entry);
+      if (fs.statSync(d).isDirectory() && fs.readdirSync(d).length === 0) fs.rmdirSync(d);
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return { moved, total };
+}
+
+/**
+ * Move (or, for a linked track, import a copy of) one track into a different
+ * library. Updates the same track row in place so playlist membership, cue
+ * points, and rating all carry over untouched — only file_path/library_id
+ * (and is_linked, for a linked source) change.
+ */
+export async function moveTrackToLibrary(trackId, targetLibraryId) {
+  const track = getTrackById(trackId);
+  if (!track) throw new Error('Track not found');
+  const targetLib = getLibrary(targetLibraryId);
+  if (!targetLib) throw new Error('Target library not found');
+  if (!track.is_linked && Number(track.library_id) === Number(targetLibraryId)) {
+    return { ok: true, moved: false };
+  }
+
+  const oldPath = track.file_path;
+  if (!fs.existsSync(oldPath)) {
+    throw new Error('Source file not found on disk');
+  }
+  const wasLinked = !!track.is_linked;
+  const ext = path.extname(oldPath);
+  const hash = track.file_hash || (await hashFile(oldPath));
+
+  // If this exact content is already owned by the destination library, just
+  // point at that copy rather than duplicating it.
+  const dupe = getTrackByHash(hash);
+  if (dupe && dupe.id !== trackId && Number(dupe.library_id) === Number(targetLibraryId)) {
+    updateTrack(trackId, {
+      file_path: dupe.file_path,
+      file_hash: hash,
+      library_id: targetLibraryId,
+      is_linked: 0,
+    });
+    return { ok: true, moved: true, newPath: dupe.file_path, mergedWithExisting: true };
+  }
+
+  const dest = getAudioStoragePath(
+    hash,
+    ext,
+    { artist: track.artist, title: track.title },
+    targetLibraryId
+  );
+
+  if (dest !== oldPath) {
+    if (wasLinked) {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(oldPath, dest);
+    } else {
+      moveFileSafe(oldPath, dest);
+    }
+  }
+
+  const artworkPath =
+    wasLinked && !track.artwork_path ? await extractArtwork(dest, hash, targetLibraryId) : null;
+
+  updateTrack(trackId, {
+    file_path: dest,
+    file_hash: hash,
+    library_id: targetLibraryId,
+    is_linked: 0,
+    ...(artworkPath ? { artwork_path: artworkPath, has_artwork: 1 } : {}),
+  });
+
+  return { ok: true, moved: true, newPath: dest };
+}
+
+async function extractArtwork(srcPath, hash, libraryId) {
+  const artworkBase = getArtworkBase(libraryId);
   fs.mkdirSync(artworkBase, { recursive: true });
   const artworkPath = path.join(artworkBase, `${hash}.jpg`);
   if (fs.existsSync(artworkPath)) return artworkPath;
@@ -239,8 +481,9 @@ export function spawnAnalysis(trackId, filePath, { silent = false } = {}) {
   });
 }
 
-export async function importAudioFile(filePath, sourceMeta = {}) {
+export async function importAudioFile(filePath, sourceMeta = {}, libraryId = null) {
   console.log(`Importing: ${filePath}`);
+  const targetLibraryId = libraryId ?? getCurrentLibraryId();
   const ext = path.extname(filePath);
   const hash = await hashFile(filePath);
 
@@ -251,13 +494,10 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
     return existing.id;
   }
 
-  const dest = getAudioStoragePath(hash, ext);
-
-  if (!fs.existsSync(dest)) {
-    fs.copyFileSync(filePath, dest);
-  }
-
-  const probe = await ffprobe(dest);
+  // Probe the SOURCE file (not yet copied) — 'readable' storage format needs
+  // artist/title to name the destination file, so tags must be known before
+  // getAudioStoragePath() is called.
+  const probe = await ffprobe(filePath);
   const format = ext.slice(1).toLowerCase();
   const duration = Number(probe.format.duration);
   const bitrate = Number(probe.format.bit_rate);
@@ -282,8 +522,19 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
     resolvedArtist = sourceMeta.channel;
   }
 
+  const dest = getAudioStoragePath(
+    hash,
+    ext,
+    { artist: resolvedArtist, title: resolvedTitle || basename },
+    targetLibraryId
+  );
+
+  if (!fs.existsSync(dest)) {
+    fs.copyFileSync(filePath, dest);
+  }
+
   // Extract embedded album art (best-effort, non-blocking)
-  const artworkPath = await extractArtwork(dest, hash);
+  const artworkPath = await extractArtwork(dest, hash, targetLibraryId);
 
   const trackId = addTrack({
     title: resolvedTitle || basename,
@@ -298,6 +549,7 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
     label,
     bpm,
     genres: JSON.stringify(genre),
+    library_id: targetLibraryId,
     source_url: sourceMeta.source_url ?? null,
     source_platform: sourceMeta.source_platform ?? null,
     source_quality: sourceMeta.source_quality ?? null,
@@ -312,7 +564,8 @@ export async function importAudioFile(filePath, sourceMeta = {}) {
   return trackId;
 }
 
-export async function linkAudioFile(filePath) {
+export async function linkAudioFile(filePath, libraryId = null) {
+  const targetLibraryId = libraryId ?? getCurrentLibraryId();
   const byPath = getTracksByPaths([filePath]);
   if (byPath.length > 0) return { id: byPath[0].id, duplicate: true };
 
@@ -372,6 +625,7 @@ export async function linkAudioFile(filePath) {
     has_artwork: 0,
     artwork_path: null,
     is_linked: 1,
+    library_id: targetLibraryId,
   });
 
   spawnAnalysis(trackId, filePath);

@@ -161,7 +161,7 @@ button.normalize-progress-wrap.ytdlp-progress-clickable:focus-visible {
 
 .import-button {
   margin-top: 12px;
-  margin-bottom: 25px;
+  margin-bottom: 8px;
   width: 100%;
   padding: 10px;
   background-color: #1db9542f;
@@ -181,6 +181,30 @@ button.normalize-progress-wrap.ytdlp-progress-clickable:focus-visible {
 .import-button:hover {
   background-color: #1db95455;
   border-color: #10c44f;
+}
+
+.link-button {
+  margin-top: 0;
+  margin-bottom: 25px;
+  width: 100%;
+  padding: 10px;
+  background-color: #457b9d2f;
+  border: 2px solid #457b9d;
+  color: #ffffff;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: all 0.2s ease;
+}
+
+.link-button:active,
+.link-button:focus {
+  outline: none;
+}
+
+.link-button:hover {
+  background-color: #457b9d55;
+  border-color: #5a94bd;
 }
 
 .playlists-header {
@@ -282,10 +306,10 @@ button.normalize-progress-wrap.ytdlp-progress-clickable:focus-visible {
   height: 18px;
   border-radius: 50%;
   cursor: pointer;
-  margin: 2px;
-  display: inline-block;
+  display: block;
   flex-shrink: 0;
   border: 2px solid transparent;
+  box-sizing: border-box;
 }
 
 .color-swatch:hover {
@@ -302,13 +326,18 @@ button.normalize-progress-wrap.ytdlp-progress-clickable:focus-visible {
   border-radius: 4px;
 }
 
-/* Override submenu layout for color picker */
-.context-submenu:has(.color-swatch) {
-  display: flex;
-  flex-wrap: wrap;
-  padding: 6px;
-  min-width: 110px;
-  max-width: 130px;
+/* Fixed grid keeps swatches inside the submenu background near viewport edges. */
+.context-submenu.context-submenu--colors {
+  min-width: 0;
+  width: 106px;
+  padding: 8px;
+  box-sizing: border-box;
+  grid-template-columns: repeat(4, 18px);
+  gap: 6px;
+}
+
+.context-menu-item--has-submenu:hover > .context-submenu.context-submenu--colors {
+  display: grid;
 }
 .scrollable-playlists::-webkit-scrollbar {
   width: 4px;

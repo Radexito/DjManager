@@ -326,7 +326,7 @@
   margin-bottom: 12px;
 }
 
-.dl-track-row {
+.tidal-track-row {
   display: grid;
   grid-template-columns: 20px 1fr auto;
   align-items: center;
@@ -335,7 +335,7 @@
   border-bottom: 1px solid var(--border, #1e1e1e);
 }
 
-.dl-track-row:last-child {
+.tidal-track-row:last-child {
   border-bottom: none;
 }
 
@@ -361,10 +361,10 @@
   color: #fc8181;
 }
 
-.dl-track-row--done {
+.tidal-track-row--done {
   background: rgba(104, 211, 145, 0.04);
 }
-.dl-track-row--failed {
+.tidal-track-row--failed {
   background: rgba(252, 129, 129, 0.04);
 }
 
@@ -374,7 +374,7 @@
   text-overflow: ellipsis;
 }
 
-.dl-track-title {
+.tidal-track-title {
   font-size: 13px;
   color: var(--text-primary, #ddd);
 }

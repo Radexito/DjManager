@@ -131,6 +131,7 @@ describe('ExportModal', () => {
     window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
     window.api.checkUsbFormat.mockResolvedValueOnce({
       needsFormat: true,
+      removable: true,
       fs: 'btrfs',
       fsLabel: 'btrfs',
       device: '/dev/sdb1',
@@ -149,6 +150,7 @@ describe('ExportModal', () => {
     window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
     window.api.checkUsbFormat.mockResolvedValueOnce({
       needsFormat: true,
+      removable: true,
       fs: 'btrfs',
       fsLabel: 'btrfs',
       device: '/dev/sdb1',
@@ -168,6 +170,7 @@ describe('ExportModal', () => {
     window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
     window.api.checkUsbFormat.mockResolvedValueOnce({
       needsFormat: true,
+      removable: true,
       fs: 'btrfs',
       fsLabel: 'btrfs',
       device: '/dev/sdb1',
@@ -194,6 +197,7 @@ describe('ExportModal', () => {
     window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
     window.api.checkUsbFormat.mockResolvedValueOnce({
       needsFormat: true,
+      removable: true,
       fs: 'btrfs',
       fsLabel: 'btrfs',
       device: '/dev/sdb1',
@@ -278,6 +282,69 @@ describe('ExportModal', () => {
     await waitFor(() => {
       expect(screen.getByText('Export complete!')).toBeInTheDocument();
       expect(screen.getByText(/2 playlists/)).toBeInTheDocument();
+    });
+  });
+
+  // ── Target device + force-MP3 options (#257) ──────────────────────────────────
+
+  it('defaults to no target device and forceMp3 unchecked, and passes them through as null/false', async () => {
+    window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
+    window.api.checkUsbFormat.mockResolvedValueOnce({
+      needsFormat: false,
+      fs: 'fat32',
+      fsLabel: 'FAT32',
+      device: '/dev/sdb1',
+    });
+
+    render(<ExportModal {...defaultProps} />);
+    expect(screen.getByText('Re-encode all tracks to MP3')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+
+    await waitFor(() => {
+      expect(window.api.exportRekordbox).toHaveBeenCalledWith(
+        expect.objectContaining({ targetDevice: null, forceMp3: false })
+      );
+    });
+  });
+
+  it('passes the selected target device and forceMp3 flag to exportRekordbox', async () => {
+    window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
+    window.api.checkUsbFormat.mockResolvedValueOnce({
+      needsFormat: false,
+      fs: 'fat32',
+      fsLabel: 'FAT32',
+      device: '/dev/sdb1',
+    });
+
+    render(<ExportModal {...defaultProps} />);
+    fireEvent.change(screen.getByLabelText('Target device'), { target: { value: 'xdj-rx2' } });
+    fireEvent.click(screen.getByText('Re-encode all tracks to MP3'));
+    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+
+    await waitFor(() => {
+      expect(window.api.exportRekordbox).toHaveBeenCalledWith(
+        expect.objectContaining({ targetDevice: 'xdj-rx2', forceMp3: true })
+      );
+    });
+  });
+
+  it('passes target device and forceMp3 to exportAll as well', async () => {
+    window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
+    window.api.checkUsbFormat.mockResolvedValueOnce({
+      needsFormat: false,
+      fs: 'fat32',
+      fsLabel: 'FAT32',
+      device: '/dev/sdb1',
+    });
+
+    render(<ExportModal {...defaultProps} />);
+    fireEvent.change(screen.getByLabelText('Target device'), { target: { value: 'cdj-3000' } });
+    fireEvent.click(screen.getByText('Export All'));
+
+    await waitFor(() => {
+      expect(window.api.exportAll).toHaveBeenCalledWith(
+        expect.objectContaining({ targetDevice: 'cdj-3000', forceMp3: false })
+      );
     });
   });
 });

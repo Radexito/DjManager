@@ -16,6 +16,7 @@ const LOG_RETENTION_DAYS = 7;
 
 let logStream = null;
 let logDir = null;
+let rendererLogStream = null;
 
 function pad(n) {
   return String(n).padStart(2, '0');
@@ -75,11 +76,11 @@ function patchConsole() {
   };
 }
 
-function pruneOldLogs() {
+function pruneOldLogs(prefix) {
   try {
     const cutoff = Date.now() - LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
     for (const f of fs.readdirSync(logDir)) {
-      if (!f.startsWith('app-') || !f.endsWith('.log')) continue;
+      if (!f.startsWith(prefix) || !f.endsWith('.log')) continue;
       const full = path.join(logDir, f);
       const stat = fs.statSync(full);
       if (stat.mtimeMs < cutoff) fs.unlinkSync(full);
@@ -93,7 +94,7 @@ export function initLogger() {
   logDir = path.join(app.getPath('userData'), 'logs');
   fs.mkdirSync(logDir, { recursive: true });
 
-  pruneOldLogs();
+  pruneOldLogs('app-');
 
   const logFile = path.join(logDir, `app-${today()}.log`);
   logStream = fs.createWriteStream(logFile, { flags: 'a' });
@@ -110,4 +111,28 @@ export function initLogger() {
 
 export function getLogDir() {
   return logDir;
+}
+
+/**
+ * Separate log file capturing the renderer's DevTools console (forwarded via
+ * webContents 'console-message'), so a bug reporter's browser-side errors are
+ * distinguishable from main-process logs without cross-referencing timestamps.
+ */
+export function initRendererLogger() {
+  pruneOldLogs('renderer-console-');
+
+  const logFile = path.join(logDir, `renderer-console-${today()}.log`);
+  rendererLogStream = fs.createWriteStream(logFile, { flags: 'a' });
+
+  rendererLogStream.write(`\n${'='.repeat(60)}\n`);
+  rendererLogStream.write(
+    `[${timestamp()}] [INFO]  DJ Manager renderer console log started — version ${app.getVersion()}\n`
+  );
+
+  return logFile;
+}
+
+export function logRendererMessage(level, message) {
+  const line = `[${timestamp()}] [${level.toUpperCase()}] ${message}\n`;
+  rendererLogStream?.write(line);
 }

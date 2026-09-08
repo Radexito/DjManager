@@ -7,6 +7,7 @@ import ImportPlaylistDialog from './ImportPlaylistDialog';
 const MENU_ITEMS = [
   { id: 'music', name: 'Music', icon: '🎵' },
   { id: 'explorer', name: 'Explorer', icon: '📁' },
+  { id: 'cloud-search', name: 'Cloud Search', icon: '🔎' },
   { id: 'download', name: 'YT-DLP', icon: '⬇️' },
   { id: 'tidal', name: 'TIDAL', icon: '🌊' },
 ];
@@ -35,17 +36,21 @@ function Sidebar({
   const [normalizeProgress, setNormalizeProgress] = useState(null); // { completed, total } | null
   const [analysisProgress, setAnalysisProgress] = useState(null); // { done, total } | null
   const [waveformGenProgress, setWaveformGenProgress] = useState(null); // { completed, total } | null
+  const [moveTracksProgress, setMoveTracksProgress] = useState(null); // { completed, total } | null
+  const [removeTracksProgress, setRemoveTracksProgress] = useState(null); // { completed, total } | null
   const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
   const [ytDlpCheckProgress, setYtDlpCheckProgress] = useState(null); // { checked, total } | null during fetch/check
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
   const [createError, setCreateError] = useState('');
   const [renameError, setRenameError] = useState('');
-  const [playlistMenu, setPlaylistMenu] = useState(null); // { id, x, y }
+  const [playlistMenu, setPlaylistMenu] = useState(null); // { id, x, y, flipLeft, flipUp }
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
   const [dragOverPlaylistId, setDragOverPlaylistId] = useState(null);
   const [importDialogFiles, setImportDialogFiles] = useState(null); // pending files waiting for playlist selection
+  const [linkDialogFiles, setLinkDialogFiles] = useState(null); // pending files waiting for playlist selection (link mode)
+  const [linking, setLinking] = useState(false);
   const newInputRef = useRef(null);
   const renameInputRef = useRef(null);
 
@@ -102,6 +107,31 @@ function Sidebar({
     await window.api.importAudioFiles(files, playlistId);
     // Small delay so the user sees 100% before the bar disappears
     setTimeout(() => setImportProgress({ total: 0, completed: 0 }), 800);
+  };
+
+  const handleLink = async () => {
+    const files = await window.api.selectAudioFiles();
+    if (!files.length) return;
+    setLinkDialogFiles(files);
+  };
+
+  const handleLinkConfirm = async (choice) => {
+    const files = linkDialogFiles;
+    setLinkDialogFiles(null);
+    if (!files?.length) return;
+
+    let playlistId = null;
+
+    if (choice.type === 'create') {
+      const result = await window.api.createPlaylist(choice.name);
+      playlistId = result?.id ?? null;
+    } else if (choice.type === 'existing') {
+      playlistId = choice.id;
+    }
+
+    setLinking(true);
+    await window.api.linkAudioFiles(files, playlistId);
+    setLinking(false);
   };
 
   const handleCreatePlaylist = async (e) => {
@@ -165,6 +195,30 @@ function Sidebar({
         setTimeout(() => setWaveformGenProgress(null), 1500);
       } else {
         setWaveformGenProgress({ completed: data.completed, total: data.total });
+      }
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (!window.api.onMoveTracksToLibraryProgress) return;
+    const unsub = window.api.onMoveTracksToLibraryProgress((data) => {
+      if (data.done) {
+        setTimeout(() => setMoveTracksProgress(null), 1500);
+      } else {
+        setMoveTracksProgress({ completed: data.completed, total: data.total });
+      }
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (!window.api.onRemoveTracksProgress) return;
+    const unsub = window.api.onRemoveTracksProgress((data) => {
+      if (data.done) {
+        setTimeout(() => setRemoveTracksProgress(null), 1500);
+      } else {
+        setRemoveTracksProgress({ completed: data.completed, total: data.total });
       }
     });
     return unsub;
@@ -323,7 +377,11 @@ function Sidebar({
                 onClick={() => onMenuSelect(String(pl.id))}
                 onContextMenu={(e) => {
                   e.preventDefault();
-                  setPlaylistMenu({ id: pl.id, x: e.clientX, y: e.clientY });
+                  // Flip the Color submenu to the opposite side/edge when it would
+                  // otherwise overflow the viewport (see issue #428).
+                  const flipLeft = e.clientX > window.innerWidth / 2;
+                  const flipUp = e.clientY > window.innerHeight / 2;
+                  setPlaylistMenu({ id: pl.id, x: e.clientX, y: e.clientY, flipLeft, flipUp });
                 }}
                 onDragOver={handleDragOver}
                 onDragEnter={(e) => handleDragEnter(e, pl.id)}
@@ -347,6 +405,7 @@ function Sidebar({
             Importing {importProgress.completed} / {importProgress.total}…
           </div>
         )}
+        {linking && <div className="import-progress">Linking files…</div>}
         {analysisProgress && (
           <div className="normalize-progress-wrap">
             <div className="normalize-progress-label">
@@ -396,6 +455,42 @@ function Sidebar({
                 className="normalize-progress-fill"
                 style={{
                   width: `${waveformGenProgress.total > 0 ? Math.round((waveformGenProgress.completed / waveformGenProgress.total) * 100) : 0}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
+        {moveTracksProgress && (
+          <div className="normalize-progress-wrap">
+            <div className="normalize-progress-label">
+              <span>Moving tracks</span>
+              <span>
+                {moveTracksProgress.completed} / {moveTracksProgress.total}
+              </span>
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill"
+                style={{
+                  width: `${moveTracksProgress.total > 0 ? Math.round((moveTracksProgress.completed / moveTracksProgress.total) * 100) : 0}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
+        {removeTracksProgress && (
+          <div className="normalize-progress-wrap">
+            <div className="normalize-progress-label">
+              <span>Removing tracks</span>
+              <span>
+                {removeTracksProgress.completed} / {removeTracksProgress.total}
+              </span>
+            </div>
+            <div className="normalize-progress-bar">
+              <div
+                className="normalize-progress-fill"
+                style={{
+                  width: `${removeTracksProgress.total > 0 ? Math.round((removeTracksProgress.completed / removeTracksProgress.total) * 100) : 0}%`,
                 }}
               />
             </div>
@@ -500,15 +595,26 @@ function Sidebar({
             Exporting {exportProgress.copied} / {exportProgress.total}… ({exportProgress.pct}%)
           </div>
         )}
-        <button className="import-button" onClick={handleImport}>
-          Import Audio Files
+        <button
+          className="import-button"
+          onClick={handleImport}
+          title="Copy audio files into the library"
+        >
+          Import
+        </button>
+        <button
+          className="link-button"
+          onClick={handleLink}
+          title="Reference files without copying them into the library"
+        >
+          Link
         </button>
       </div>
 
       {/* Playlist context menu */}
       {playlistMenu && (
         <div
-          className="context-menu"
+          className={`context-menu${playlistMenu.flipLeft ? ' context-menu--flip-left' : ''}${playlistMenu.flipUp ? ' context-menu--flip-up' : ''}`}
           style={{ top: playlistMenu.y, left: playlistMenu.x }}
           onMouseDown={(e) => e.stopPropagation()}
         >
@@ -525,7 +631,7 @@ function Sidebar({
           </div>
           <div className="context-menu-item context-menu-item--has-submenu">
             🎨 Color
-            <div className="context-submenu">
+            <div className="context-submenu context-submenu--colors">
               {PRESET_COLORS.map((c) => (
                 <div
                   key={c}
@@ -573,6 +679,16 @@ function Sidebar({
           playlists={playlists}
           onConfirm={handleImportConfirm}
           onCancel={() => setImportDialogFiles(null)}
+        />
+      )}
+
+      {linkDialogFiles && (
+        <ImportPlaylistDialog
+          playlists={playlists}
+          onConfirm={handleLinkConfirm}
+          onCancel={() => setLinkDialogFiles(null)}
+          title="Link to Playlist"
+          confirmLabel="Link"
         />
       )}
     </div>

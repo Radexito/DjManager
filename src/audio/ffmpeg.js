@@ -30,11 +30,25 @@ export function ffprobe(filePath) {
   });
 }
 
+/** ffmpeg codec args per output format, keyed by the extension resolveExportFormat() returns. */
+const FORMAT_CODEC = {
+  mp3: { args: ['-c:a', 'libmp3lame'], defaultBitrateKbps: 320, maxBitrateKbps: 320 },
+  aac: { args: ['-c:a', 'aac'], defaultBitrateKbps: 256, maxBitrateKbps: 320 },
+  flac: { args: ['-c:a', 'flac'] },
+  wav: { args: ['-c:a', 'pcm_s16le'] },
+  aiff: { args: ['-c:a', 'pcm_s16be'] },
+};
+
 /**
- * Copy srcPath to destPath via ffmpeg, optionally applying a gain adjustment.
+ * Copy srcPath to destPath via ffmpeg, optionally applying a gain adjustment
+ * and/or converting to a different output format/codec.
  * destPath is always overwritten (-y). Parent directory must already exist.
  */
-export function convertAudio(srcPath, destPath, { gainDb = 0, sourceBitrateKbps = null } = {}) {
+export function convertAudio(
+  srcPath,
+  destPath,
+  { gainDb = 0, sourceBitrateKbps = null, format = null } = {}
+) {
   const ffmpegPath = getFfmpegRuntimePath();
   if (!fs.existsSync(ffmpegPath))
     throw new Error(`ffmpeg not found at ${ffmpegPath} — still downloading?`);
@@ -51,10 +65,25 @@ export function convertAudio(srcPath, destPath, { gainDb = 0, sourceBitrateKbps 
         : `volume=${gainDb.toFixed(2)}dB`;
     args.push('-filter:a', filter);
   }
-  // Copy video/artwork stream unchanged; re-encode audio only when gain is applied
-  if (gainDb === 0) {
+
+  if (gainDb === 0 && !format) {
+    // No gain change, no format change — byte-identical copy.
     args.push('-c', 'copy');
+  } else if (format) {
+    const codec = FORMAT_CODEC[format];
+    if (!codec) throw new Error(`Unsupported export format: ${format}`);
+    // Changing container/codec — only carry the primary audio stream. Embedded
+    // artwork (an attached-pic video stream) isn't preserved across format conversion.
+    args.push('-map', '0:a:0', ...codec.args);
+    if (codec.defaultBitrateKbps) {
+      const bitrateKbps = Math.min(
+        sourceBitrateKbps || codec.defaultBitrateKbps,
+        codec.maxBitrateKbps
+      );
+      args.push('-b:a', `${Math.round(bitrateKbps)}k`);
+    }
   } else {
+    // Gain change only — copy video/artwork stream unchanged, re-encode audio.
     args.push('-c:v', 'copy');
     // Preserve source bitrate to avoid silent quality downgrade (ffmpeg default is 128 kbps)
     if (sourceBitrateKbps) args.push('-b:a', `${Math.round(sourceBitrateKbps)}k`);

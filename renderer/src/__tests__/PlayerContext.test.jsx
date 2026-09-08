@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 import { PlayerProvider, usePlayer } from '../PlayerContext.jsx';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -150,5 +150,42 @@ describe('PlayerProvider — AudioContext crash guard', () => {
 
     renderProvider();
     await waitFor(() => expect(window.api.getMediaPort).toHaveBeenCalledTimes(1));
+  });
+});
+
+// ── Unbounded-recursion regression (crash hit in manual testing of #389) ──────
+// A queue where every track is a known-unavailable linked track made
+// playAtIndex → next() → playAtIndex recurse synchronously with no bound,
+// crashing the renderer with "RangeError: Maximum call stack size exceeded".
+
+describe('PlayerProvider — bounded auto-skip on unavailable tracks', () => {
+  it('does not recurse infinitely (and eventually stops) when every track in the queue is unavailable', async () => {
+    const badIds = Array.from({ length: 40 }, (_, i) => i + 1);
+    window.api.getUnavailableLinkedTracks.mockResolvedValue(badIds);
+
+    const { result } = renderProvider();
+    await waitFor(() => expect(result.current.unavailableLinkedIds.size).toBe(40));
+
+    const queue = badIds.map((id) => ({
+      id,
+      title: `Track ${id}`,
+      is_linked: true,
+      file_path: `/music/${id}.mp3`,
+    }));
+
+    await act(async () => {
+      result.current.play(queue[0], queue, 0);
+    });
+
+    // Each retry is deferred one macrotask (setTimeout(0)) — step through
+    // with real timers, giving each hop room to land.
+    for (let i = 0; i < 60 && !/too many/i.test(result.current.playbackError ?? ''); i++) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      });
+    }
+
+    expect(result.current.playbackError).toMatch(/too many/i);
+    expect(result.current.isPlaying).toBe(false);
   });
 });

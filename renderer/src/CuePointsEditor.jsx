@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { Fragment, useState, useEffect, useCallback, useRef } from 'react';
 import { usePlayer } from './PlayerContext.jsx';
 import './CuePointsEditor.css';
 
@@ -22,7 +22,28 @@ function msToTime(ms) {
   return `${m}:${String(s).padStart(2, '0')}.${tenth}`;
 }
 
-const HOT_CUE_LABELS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+// 16 hot cues supported (2 "pages" of 8, matching native Rekordbox — CDJs/Rekordbox
+// display cues 9-16 as a second page toggled with a page button, but the ANLZ
+// format itself has no page marker; it's one flat list, hot_cue numbers 1-16).
+const HOT_CUE_LABELS = [
+  'A',
+  'B',
+  'C',
+  'D',
+  'E',
+  'F',
+  'G',
+  'H',
+  'I',
+  'J',
+  'K',
+  'L',
+  'M',
+  'N',
+  'O',
+  'P',
+];
+const HOT_CUE_PAGE_SIZE = 8;
 
 // Visibility preference keys in localStorage
 const LS_SHOW_HOT = 'cue-show-hot';
@@ -190,7 +211,7 @@ export default function CuePointsEditor({
     const usedIndices = new Set(
       cuePoints.filter((c) => c.hot_cue_index >= 0).map((c) => c.hot_cue_index)
     );
-    const nextIndex = [0, 1, 2, 3, 4, 5, 6, 7].find((i) => !usedIndices.has(i));
+    const nextIndex = HOT_CUE_LABELS.map((_, i) => i).find((i) => !usedIndices.has(i));
     if (nextIndex === undefined) return;
     const posMs = Math.round((currentTime ?? 0) * 1000);
     const color = COLOR_PALETTE[nextIndex % COLOR_PALETTE.length];
@@ -442,7 +463,7 @@ export default function CuePointsEditor({
                   style={{ background: cue.color }}
                   title={
                     cue.hot_cue_index >= 0
-                      ? `Hot cue ${HOT_CUE_LABELS[cue.hot_cue_index]} — click to change type`
+                      ? `Hot cue ${HOT_CUE_LABELS[cue.hot_cue_index]}${cue.hot_cue_index >= HOT_CUE_PAGE_SIZE ? ' (page 2)' : ''} — click to change type`
                       : 'Memory cue — click to change type'
                   }
                   onClick={() => setTypePickerId(typePickerId === cue.id ? null : cue.id)}
@@ -460,17 +481,19 @@ export default function CuePointsEditor({
                       ●
                     </button>
                     {HOT_CUE_LABELS.map((label, i) => (
-                      <button
-                        key={label}
-                        className={`cpe__type-opt${cue.hot_cue_index === i ? ' cpe__type-opt--active' : ''}`}
-                        style={
-                          cue.hot_cue_index === i ? { background: cue.color, color: '#000' } : {}
-                        }
-                        onClick={() => handleTypeChange(cue.id, i)}
-                        title={`Hot cue ${label}`}
-                      >
-                        {label}
-                      </button>
+                      <Fragment key={label}>
+                        {i === HOT_CUE_PAGE_SIZE && <div className="cpe__type-page-break" />}
+                        <button
+                          className={`cpe__type-opt${cue.hot_cue_index === i ? ' cpe__type-opt--active' : ''}`}
+                          style={
+                            cue.hot_cue_index === i ? { background: cue.color, color: '#000' } : {}
+                          }
+                          onClick={() => handleTypeChange(cue.id, i)}
+                          title={`Hot cue ${label}${i >= HOT_CUE_PAGE_SIZE ? ' (page 2)' : ''}`}
+                        >
+                          {label}
+                        </button>
+                      </Fragment>
                     ))}
                   </div>
                 )}

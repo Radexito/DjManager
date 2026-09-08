@@ -801,12 +801,12 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
           {trackStatuses.map((s) => {
             const si = STATUS_ICON[s.status] ?? STATUS_ICON.pending;
             return (
-              <div key={s.index} className={`dl-track-row dl-track-row--${s.status}`}>
+              <div key={s.index} className={`tidal-track-row tidal-track-row--${s.status}`}>
                 <span className={`dl-track-icon dl-track-icon--${s.status}`} title={si.label}>
                   {si.icon}
                 </span>
                 <span className="dl-track-info">
-                  <span className="dl-track-title">{s.title}</span>
+                  <span className="tidal-track-title">{s.title}</span>
                   {s.artist && <span className="dl-track-artist"> — {s.artist}</span>}
                 </span>
                 {s.error && <span className="dl-track-error">{s.error}</span>}
