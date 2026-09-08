@@ -68,7 +68,10 @@ export function DownloadProvider({ children }) {
     const unsubTrack = window.api.onYtDlpTrackUpdate((update) => {
       if (update.type === 'init') {
         setTrackStatuses((prev) => {
-          if (prev.length >= update.total) return prev;
+          // handleDownload already seeded the canonical list (download + link rows).
+          // Only seed placeholder rows if the list is empty — otherwise we'd clobber
+          // the link rows and cause the download list to glitch / duplicate.
+          if (prev.length > 0) return prev;
           return Array.from({ length: update.total }, (_, i) => ({
             index: i,
             title: `Track ${i + 1}`,

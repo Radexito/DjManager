@@ -410,6 +410,19 @@ export function removeTrack(id) {
   db.prepare('DELETE FROM tracks WHERE id = ?').run(id);
 }
 
+/** Deletes many track rows in a single transaction (bulk remove — DB write only, no filesystem I/O). */
+export function removeTracks(trackIds) {
+  const del = db.prepare('DELETE FROM tracks WHERE id = ?');
+  db.transaction(() => {
+    for (const id of trackIds) del.run(id);
+  })();
+}
+
+/** Counts tracks still referencing this file_path — used to avoid deleting a file that another track row still points at. */
+export function getTrackCountByFilePath(filePath) {
+  return db.prepare('SELECT COUNT(*) AS n FROM tracks WHERE file_path = ?').get(filePath).n;
+}
+
 export function normalizeLibrary(targetLufs) {
   const info = db
     .prepare(
@@ -506,6 +519,21 @@ export function updateTrackWaveform(trackId, buf) {
 export function getTrackWaveform(trackId) {
   const row = db.prepare('SELECT waveform_overview FROM tracks WHERE id = ?').get(trackId);
   return row?.waveform_overview ?? null;
+}
+
+/**
+ * High-resolution (600 cols/sec) detail waveform for the Beat Grid Editor
+ * zoom view (#262). Separate from `detail` (150 cols/sec), which stays at
+ * the Pioneer CDJ export resolution and is generated on demand rather than
+ * stored.
+ */
+export function updateTrackDetailHires(trackId, buf) {
+  db.prepare('UPDATE tracks SET waveform_detail_hires = ? WHERE id = ?').run(buf, trackId);
+}
+
+export function getTrackDetailHires(trackId) {
+  const row = db.prepare('SELECT waveform_detail_hires FROM tracks WHERE id = ?').get(trackId);
+  return row?.waveform_detail_hires ?? null;
 }
 
 /**

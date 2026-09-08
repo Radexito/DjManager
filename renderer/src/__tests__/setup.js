@@ -63,6 +63,8 @@ window.api = {
   getZoomFactor: vi.fn().mockReturnValue(1.0),
   setZoomFactor: vi.fn(),
   removeTrack: vi.fn().mockResolvedValue({ ok: true }),
+  removeTracks: vi.fn().mockResolvedValue({ ok: true, total: 0 }),
+  onRemoveTracksProgress: vi.fn().mockImplementation(noop),
   removeLinkedFile: vi.fn().mockResolvedValue({ ok: true }),
   adjustBpm: vi.fn().mockResolvedValue([]),
   updateTrack: vi.fn().mockResolvedValue({}),
@@ -151,6 +153,8 @@ window.api = {
   onExportRekordboxProgress: vi.fn().mockImplementation(noop),
   onExportAllProgress: vi.fn().mockImplementation(noop),
   onFormatUsbProgress: vi.fn().mockImplementation(noop),
+  autoTagSearch: vi.fn().mockResolvedValue({ ok: true, results: [] }),
+  fetchArtworkUrl: vi.fn().mockResolvedValue({ ok: true, artwork_path: '/tmp/artwork.jpg' }),
 };
 
 // jsdom does not implement Web Audio API — stub the minimum PlayerContext needs
