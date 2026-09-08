@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useState,
   useRef,
   useCallback,
@@ -560,12 +561,19 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
 
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [contextMenu, setContextMenu] = useState(null); // { x, y, targetIds }
+  // Nudge applied after measuring the rendered menu so it never overflows the
+  // viewport bottom/right edge (#310).
+  const menuRef = useRef(null);
+  const [menuShift, setMenuShift] = useState({ x: 0, y: 0 });
   const [toast, setToast] = useState(null); // { msg, ok } | null
   const toastTimerRef = useRef(null);
   const [drillStack, setDrillStack] = useState([]); // overlay drill-down stack [{ id, label, content }]
   const [playlistSubmenu, setPlaylistSubmenu] = useState(null); // [{ id, name, color, is_member }]
   const [librarySubmenu, setLibrarySubmenu] = useState(null); // [{ id, name, free_bytes }]
   const [newPlaylistInputActive, setNewPlaylistInputActive] = useState(false);
+  // When auto-cue generation is enabled every track has cue points, so the
+  // ◆ cue indicator column is meaningless — hide it live (#263).
+  const [autoCueOnImport, setAutoCueOnImport] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [newPlaylistError, setNewPlaylistError] = useState('');
   const newPlaylistInputRef = useRef(null);
@@ -620,8 +628,11 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const prevSearchRef = useRef(search);
 
   const visibleColumns = useMemo(
-    () => colOrder.map((k) => COL_BY_KEY[k]).filter((c) => c && colVis[c.key] !== false),
-    [colVis, colOrder]
+    () =>
+      colOrder
+        .map((k) => COL_BY_KEY[k])
+        .filter((c) => c && colVis[c.key] !== false && !(autoCueOnImport && c.key === 'cue')),
+    [colVis, colOrder, autoCueOnImport]
   );
   const gridTemplate = useMemo(
     () => visibleColumns.map((c) => c.width).join(' '),
@@ -851,6 +862,21 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   useEffect(() => {
     const unsub = window.api.onPlaylistsUpdated(() => setLoadKey((k) => k + 1));
     return unsub;
+  }, []);
+
+  // Auto-cue setting: initial value + live updates from the Settings modal
+  // (main broadcasts 'settings-updated' on every set-setting call).
+  useEffect(() => {
+    const api = window.api ?? {};
+    if (typeof api.getSetting === 'function') {
+      api.getSetting('auto_cue_on_import', 'false').then((v) => setAutoCueOnImport(v === 'true'));
+    }
+    if (typeof api.onSettingsUpdated === 'function') {
+      return api.onSettingsUpdated(({ key, value }) => {
+        if (key === 'auto_cue_on_import') setAutoCueOnImport(value === 'true');
+      });
+    }
+    return undefined;
   }, []);
 
   // DnD sensors
@@ -1112,6 +1138,23 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     [selectedIds]
   );
 
+  // Re-measure once the menu (or its drill/submenu content) renders: shift the
+  // whole menu up/left by exactly the overflow so it stays inside the window.
+  useLayoutEffect(() => {
+    if (!contextMenu) {
+      setMenuShift({ x: 0, y: 0 });
+      return;
+    }
+    const el = menuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const shiftX = Math.max(0, rect.right - window.innerWidth + 8);
+    const shiftY = Math.max(0, rect.bottom - window.innerHeight + 8);
+    setMenuShift((prev) =>
+      prev.x === -shiftX && prev.y === -shiftY ? prev : { x: -shiftX, y: -shiftY }
+    );
+  }, [contextMenu, drillStack, playlistSubmenu]);
+
   const handleReanalyze = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
     setContextMenu(null);
@@ -1156,12 +1199,12 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     const n = targetIds.length;
     const msg =
       n === 1
-        ? 'Remove this track from your library? This cannot be undone.'
-        : `Remove ${n} tracks from your library? This cannot be undone.`;
+        ? 'Remove this track from your library? Imported tracks also have their audio file deleted from disk. This cannot be undone.'
+        : `Remove ${n} tracks from your library? Imported tracks also have their audio files deleted from disk. This cannot be undone.`;
     if (!window.confirm(msg)) return;
     if (currentTrack && targetIds.includes(currentTrack.id)) stop();
     setContextMenu(null);
-    for (const id of targetIds) await window.api.removeTrack(id);
+    await window.api.removeTracks(targetIds);
     setTracks((prev) => prev.filter((t) => !targetIds.includes(t.id)));
     setSelectedIds(new Set());
     offsetRef.current = Math.max(0, offsetRef.current - targetIds.length);
@@ -1646,12 +1689,13 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                 ]
                   .filter(Boolean)
                   .join(' ')}
+                ref={menuRef}
                 style={
                   contextMenu.overlayMode
                     ? undefined
                     : {
-                        top: contextMenu.y,
-                        left: contextMenu.x,
+                        top: contextMenu.y + menuShift.y,
+                        left: contextMenu.x + menuShift.x,
                         '--submenu-max-h': `${contextMenu.submenuMaxH}px`,
                       }
                 }

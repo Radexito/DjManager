@@ -8,6 +8,7 @@ import {
   deleteCuePoint,
   deleteAllCuePoints,
   deleteAllCuePointsLibrary,
+  renumberSequentialCuesAfter,
 } from '../db/cuePointRepository.js';
 
 const TRACK = {
@@ -157,5 +158,97 @@ describe('deleteAllCuePointsLibrary', () => {
 
   it('returns empty array when no cue points exist', () => {
     expect(deleteAllCuePointsLibrary()).toEqual([]);
+  });
+});
+
+describe('renumberSequentialCuesAfter', () => {
+  function seedThree(trackId) {
+    addCuePoint({ trackId, positionMs: 1000, label: 'Cue 1', color: '#ff0000', hotCueIndex: -1 });
+    addCuePoint({ trackId, positionMs: 2000, label: 'Cue 2', color: '#ff0000', hotCueIndex: -1 });
+    addCuePoint({ trackId, positionMs: 3000, label: 'Cue 3', color: '#ff0000', hotCueIndex: -1 });
+  }
+
+  it('renumbers following cues when a sequential cue is inserted in the middle', () => {
+    const trackId = addTrack(TRACK);
+    seedThree(trackId);
+    const inserted = addCuePoint({
+      trackId,
+      positionMs: 1500,
+      label: 'Cue 2',
+      color: '#00ff00',
+      hotCueIndex: -1,
+    });
+
+    const changed = renumberSequentialCuesAfter(trackId, inserted);
+
+    expect(changed).toBe(2);
+    const pts = getCuePoints(trackId);
+    expect(pts.map((c) => c.label)).toEqual(['Cue 1', 'Cue 2', 'Cue 3', 'Cue 4']);
+    // Colors of the renamed cues are preserved
+    expect(pts[2].color).toBe('#ff0000');
+  });
+
+  it('leaves custom-labelled cues alone and continues numbering after them', () => {
+    const trackId = addTrack(TRACK);
+    seedThree(trackId);
+    // A custom label in the middle must not be renamed
+    const drop = addCuePoint({
+      trackId,
+      positionMs: 2500,
+      label: 'Drop',
+      color: '#00ffff',
+      hotCueIndex: -1,
+    });
+    const inserted = addCuePoint({
+      trackId,
+      positionMs: 1500,
+      label: 'Cue 2',
+      color: '#00ff00',
+      hotCueIndex: -1,
+    });
+
+    const changed = renumberSequentialCuesAfter(trackId, inserted);
+
+    expect(changed).toBe(2);
+    const pts = getCuePoints(trackId);
+    expect(pts.map((c) => c.label)).toEqual(['Cue 1', 'Cue 2', 'Cue 3', 'Drop', 'Cue 4']);
+    expect(getCuePoints(trackId).find((c) => c.id === drop).label).toBe('Drop');
+  });
+
+  it('does nothing when the trigger cue has a non-sequential label', () => {
+    const trackId = addTrack(TRACK);
+    seedThree(trackId);
+    const inserted = addCuePoint({
+      trackId,
+      positionMs: 1500,
+      label: '',
+      color: '#00ff00',
+      hotCueIndex: -1,
+    });
+
+    const changed = renumberSequentialCuesAfter(trackId, inserted);
+
+    expect(changed).toBe(0);
+    expect(getCuePoints(trackId).map((c) => c.label)).toEqual(['Cue 1', '', 'Cue 2', 'Cue 3']);
+  });
+
+  it('works for the rename flow: unnamed insert, then rename to Cue 2 cascades', () => {
+    const trackId = addTrack(TRACK);
+    seedThree(trackId);
+    const inserted = addCuePoint({
+      trackId,
+      positionMs: 1500,
+      label: '',
+      color: '#00ff00',
+      hotCueIndex: -1,
+    });
+    expect(renumberSequentialCuesAfter(trackId, inserted)).toBe(0); // unnamed — nothing yet
+
+    // Simulate the update-cue-point handler: user names it "Cue 2"
+    updateCuePoint(inserted, { label: 'Cue 2' });
+    const changed = renumberSequentialCuesAfter(trackId, inserted);
+
+    expect(changed).toBe(2);
+    expect(getCuePoints(trackId).map((c) => c.label)).toEqual(['Cue 1', 'Cue 2', 'Cue 3', 'Cue 4']);
   });
 });

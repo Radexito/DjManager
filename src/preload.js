@@ -20,6 +20,12 @@ contextBridge.exposeInMainWorld('api', {
   reanalyzeTrack: (trackId) => ipcRenderer.invoke('reanalyze-track', trackId),
   cancelAnalysis: (trackId) => ipcRenderer.invoke('cancel-analysis', trackId),
   removeTrack: (trackId) => ipcRenderer.invoke('remove-track', trackId),
+  removeTracks: (trackIds) => ipcRenderer.invoke('remove-tracks', trackIds),
+  onRemoveTracksProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('remove-tracks-progress', handler);
+    return () => ipcRenderer.removeListener('remove-tracks-progress', handler);
+  },
   removeLinkedFile: (trackId) => ipcRenderer.invoke('remove-linked-file', trackId),
   updateTrack: (id, data) => ipcRenderer.invoke('update-track', { id, data }),
   getEditorWaveform: (trackId) => ipcRenderer.invoke('get-editor-waveform', trackId),
@@ -86,6 +92,10 @@ contextBridge.exposeInMainWorld('api', {
   setSetting: (key, value) => ipcRenderer.invoke('set-setting', key, value),
   getLibraryPath: (libraryId) => ipcRenderer.invoke('get-library-path', libraryId),
   moveLibrary: (newDir, libraryId) => ipcRenderer.invoke('move-library', newDir, libraryId),
+  onSettingsUpdated: (cb) => {
+    ipcRenderer.on('settings-updated', (_, data) => cb(data));
+    return () => ipcRenderer.removeAllListeners('settings-updated');
+  },
   openDirDialog: () => ipcRenderer.invoke('open-dir-dialog'),
   onMoveLibraryProgress: (cb) => {
     ipcRenderer.on('move-library-progress', (_, data) => cb(data));

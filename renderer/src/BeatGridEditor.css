@@ -14,8 +14,8 @@
   background: #1a1a1a;
   border: 1px solid #333;
   border-radius: 8px;
-  width: min(860px, 96vw);
-  max-height: min(96vh, 900px);
+  width: min(1400px, 96vw);
+  max-height: min(96vh, 1200px);
   display: flex;
   flex-direction: column;
   overflow: hidden;

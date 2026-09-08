@@ -60,6 +60,8 @@ import {
   getLinkedTracksBasic,
   remapTracksByPrefix,
   removeTrack,
+  removeTracks,
+  getTrackCountByFilePath,
   updateTrack,
   resetNormalization,
   clearTracksForLibrary,
@@ -131,15 +133,19 @@ import {
 } from './deps.js';
 import { initLogger, getLogDir, initRendererLogger, logRendererMessage } from './logger.js';
 import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
+import { detectWindowsDrives } from './explorer/drives.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
 import { resolveExportFormat } from './usb/deviceFormats.js';
+import { reuseExistingUsbTrack } from './usb/exportReuse.js';
 import { getResetCleanupTargets, startResetCleanup } from './resetCleanup.js';
 import {
   getCuePoints,
+  getCuePointById,
   addCuePoint,
   updateCuePoint,
+  renumberSequentialCuesAfter,
   deleteCuePoint,
   deleteAllCuePoints,
   deleteAllCuePointsLibrary,
@@ -434,7 +440,12 @@ ipcMain.handle('get-track-waveform', (_, trackId) => {
   return buf ? new Uint8Array(buf) : null;
 });
 ipcMain.handle('get-setting', (_, key, def) => getSetting(key, def));
-ipcMain.handle('set-setting', (_, key, value) => setSetting(key, value));
+ipcMain.handle('set-setting', (_, key, value) => {
+  setSetting(key, value);
+  // Let the renderer react to settings changes live (e.g. hide the cue
+  // indicator column when auto-cue generation is toggled, #263).
+  global.mainWindow?.webContents.send('settings-updated', { key, value });
+});
 // `libraryId` defaults to the current "import target" library when omitted —
 // most existing call sites predate multi-library support and don't pass one.
 ipcMain.handle('get-library-path', (_, libraryId) =>
@@ -647,9 +658,44 @@ ipcMain.handle('cancel-analysis', (_, trackId) => {
   return { cancelled };
 });
 ipcMain.handle('remove-track', (_, trackId) => {
+  const track = getTrackById(trackId);
   removeTrack(trackId); // ON DELETE CASCADE removes playlist_tracks rows
+  // Imported tracks own their copy in userData/audio — delete it too, unless another
+  // track row still references the same path (SHA-1 import dedup isn't transactional,
+  // so two rows can share one file_path).
+  if (track && !track.is_linked && track.file_path) {
+    if (getTrackCountByFilePath(track.file_path) === 0) {
+      try {
+        fs.unlinkSync(track.file_path);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
   if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
   return { ok: true };
+});
+ipcMain.handle('remove-tracks', (_, trackIds) => {
+  const total = trackIds.length;
+  const tracks = trackIds.map((id) => getTrackById(id)).filter(Boolean);
+
+  removeTracks(trackIds); // single transaction — ON DELETE CASCADE removes playlist_tracks rows
+
+  for (let i = 0; i < tracks.length; i++) {
+    const track = tracks[i];
+    if (!track.is_linked && track.file_path && getTrackCountByFilePath(track.file_path) === 0) {
+      try {
+        fs.unlinkSync(track.file_path);
+      } catch {
+        /* already gone */
+      }
+    }
+    send('remove-tracks-progress', { completed: i + 1, total });
+  }
+
+  if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+  send('remove-tracks-progress', { completed: total, total, done: true });
+  return { ok: true, total };
 });
 ipcMain.handle('remove-linked-file', async (_, trackId) => {
   const track = getTrackById(trackId);
@@ -752,11 +798,20 @@ ipcMain.handle('get-cue-points', (_, trackId) => getCuePoints(trackId));
 
 ipcMain.handle('add-cue-point', (_, { trackId, positionMs, label, color, hotCueIndex }) => {
   const id = addCuePoint({ trackId, positionMs, label, color, hotCueIndex });
+  // Adding a sequentially-named cue shifts the positional order — renumber the
+  // following auto-named cues so names stay unique (#253).
+  renumberSequentialCuesAfter(trackId, id);
   return { id };
 });
 
 ipcMain.handle('update-cue-point', (_, { id, label, color, hotCueIndex, enabled }) => {
+  const before = getCuePointById(id);
   updateCuePoint(id, { label, color, hotCueIndex, enabled });
+  // Renaming a cue to a sequential name (e.g. the newly inserted "Cue 2")
+  // must cascade a renumber onto the following auto-named cues (#253).
+  if (before && typeof label === 'string') {
+    renumberSequentialCuesAfter(before.track_id, id);
+  }
   return { ok: true };
 });
 
@@ -1397,7 +1452,8 @@ ipcMain.handle('cloud-search', async (_event, { source, query, types, limit }) =
   if (!query?.trim()) return { ok: false, error: 'Empty query' };
   try {
     if (source === 'youtube') {
-      const results = await searchYouTube(query, { limit });
+      const cookiesBrowser = getSetting('ytdlp_cookies_browser', '') || null;
+      const results = await searchYouTube(query, { limit, cookiesBrowser });
       return { ok: true, results };
     }
     if (source === 'tidal') {
@@ -1805,12 +1861,17 @@ ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlis
 ipcMain.handle('get-computer-root', () => {
   const home = os.homedir();
   let root;
+  let drives = [];
   if (process.platform === 'win32') {
     root = path.parse(home).root || 'C:\\';
+    // #473: enumerate ALL present drives so the Explorer can switch from C:
+    // to any other volume (D:, E:, ...).
+    drives = detectWindowsDrives();
+    if (!drives.includes(root)) drives.unshift(root);
   } else {
     root = '/';
   }
-  return { root, home };
+  return { root, home, drives };
 });
 
 ipcMain.handle('get-tracks-by-paths', (_, filePaths) => {
@@ -2156,12 +2217,13 @@ ipcMain.handle(
 
       // Load existing manifest so we can merge with previously exported tracks/playlists
       const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
-      const existingCount = existingTracks.size;
+      const copyTargets = tracks.filter(
+        (t) => !reuseExistingUsbTrack(existingTracks, t.id, new Map())
+      );
+      const copyTotal = copyTargets.length;
 
       send('export-rekordbox-progress', {
-        msg: existingCount
-          ? `Merging ${total} tracks into existing export (${existingCount} tracks already on USB)…`
-          : `Exporting ${total} tracks…`,
+        msg: `Exporting ${total} tracks…`,
         pct: 0,
       });
 
@@ -2175,18 +2237,29 @@ ipcMain.handle(
       // 2. Copy files to USB, build USB path map
       const usbPaths = new Map(); // trackId → USB path
       const usbMeta = new Map(); // trackId → { fileSize, bitrate } override, only set on re-encode
+      let copiedCount = 0;
       for (let i = 0; i < tracks.length; i++) {
         const t = tracks[i];
-        const { path: usbPath, meta } = await copyTrackToUsb(t, usbRoot, usedNames, {
-          useNormalized,
-          targetLufs,
-          targetDevice,
-          forceMp3,
-        });
-        usbPaths.set(t.id, usbPath);
-        if (meta) usbMeta.set(t.id, meta);
+        const reused = reuseExistingUsbTrack(existingTracks, t.id, usedNames);
+        if (reused) {
+          usbPaths.set(t.id, reused.path);
+          if (reused.meta) usbMeta.set(t.id, reused.meta);
+        } else {
+          const { path: usbPath, meta } = await copyTrackToUsb(t, usbRoot, usedNames, {
+            useNormalized,
+            targetLufs,
+            targetDevice,
+            forceMp3,
+          });
+          usbPaths.set(t.id, usbPath);
+          if (meta) usbMeta.set(t.id, meta);
+          copiedCount += 1;
+        }
+        const copyMsg = copyTotal
+          ? `Copying files… ${copiedCount}/${copyTotal}`
+          : 'Copying files… all tracks already on USB';
         send('export-rekordbox-progress', {
-          msg: `Copying files… ${i + 1}/${total}`,
+          msg: copyMsg,
           pct: Math.round(((i + 1) / total) * 40),
         });
       }
@@ -2308,12 +2381,13 @@ ipcMain.handle(
 
       // Load existing manifest for merging
       const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
-      const existingCount = existingTracks.size;
+      const copyTargets = allTracks.filter(
+        (t) => !reuseExistingUsbTrack(existingTracks, t.id, new Map())
+      );
+      const copyTotal = copyTargets.length;
 
       send('export-all-progress', {
-        msg: existingCount
-          ? `Merging ${total} tracks into existing export (${existingCount} tracks already on USB)…`
-          : `Exporting ${total} tracks…`,
+        msg: `Exporting ${total} tracks…`,
         pct: 0,
       });
 
@@ -2327,18 +2401,29 @@ ipcMain.handle(
       // Copy files once
       const usbPaths = new Map();
       const usbMeta = new Map(); // trackId → { fileSize, bitrate } override, only set on re-encode
+      let copiedCount = 0;
       for (let i = 0; i < allTracks.length; i++) {
         const t = allTracks[i];
-        const { path: usbPath, meta } = await copyTrackToUsb(t, usbRoot, usedNames, {
-          useNormalized,
-          targetLufs,
-          targetDevice,
-          forceMp3,
-        });
-        usbPaths.set(t.id, usbPath);
-        if (meta) usbMeta.set(t.id, meta);
+        const reused = reuseExistingUsbTrack(existingTracks, t.id, usedNames);
+        if (reused) {
+          usbPaths.set(t.id, reused.path);
+          if (reused.meta) usbMeta.set(t.id, reused.meta);
+        } else {
+          const { path: usbPath, meta } = await copyTrackToUsb(t, usbRoot, usedNames, {
+            useNormalized,
+            targetLufs,
+            targetDevice,
+            forceMp3,
+          });
+          usbPaths.set(t.id, usbPath);
+          if (meta) usbMeta.set(t.id, meta);
+          copiedCount += 1;
+        }
+        const copyMsg = copyTotal
+          ? `Copying files… ${copiedCount}/${copyTotal}`
+          : 'Copying files… all tracks already on USB';
         send('export-all-progress', {
-          msg: `Copying files… ${i + 1}/${total}`,
+          msg: copyMsg,
           pct: Math.round(((i + 1) / total) * 35),
         });
       }

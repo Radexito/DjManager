@@ -51,6 +51,12 @@ export default function AutoTaggerModal({ track, onApply, onClose }) {
   const [zoomedCover, setZoomedCover] = useState(null);
   const inputRef = useRef(null);
 
+  const dropBrokenCover = useCallback((url) => {
+    setResults((prev) => prev.map((r) => (r.coverUrl === url ? { ...r, coverUrl: '' } : r)));
+    setSelectedCoverUrl((prev) => (prev === url ? '' : prev));
+    setZoomedCover((prev) => (prev === url ? null : prev));
+  }, []);
+
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
@@ -246,7 +252,12 @@ export default function AutoTaggerModal({ track, onApply, onClose }) {
                     }}
                     title={`${source} — click to select and zoom`}
                   >
-                    <img src={url} alt={source} loading="lazy" />
+                    <img
+                      src={url}
+                      alt={source}
+                      loading="lazy"
+                      onError={() => dropBrokenCover(url)}
+                    />
                   </button>
                 ))}
               </div>
@@ -268,7 +279,12 @@ export default function AutoTaggerModal({ track, onApply, onClose }) {
       {/* Cover zoom lightbox */}
       {zoomedCover && (
         <div className="at-zoom-overlay" onClick={() => setZoomedCover(null)}>
-          <img className="at-zoom-img" src={zoomedCover} alt="Cover art" />
+          <img
+            className="at-zoom-img"
+            src={zoomedCover}
+            alt="Cover art"
+            onError={() => dropBrokenCover(zoomedCover)}
+          />
         </div>
       )}
     </>

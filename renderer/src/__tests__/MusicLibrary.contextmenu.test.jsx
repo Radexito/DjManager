@@ -323,20 +323,20 @@ describe('context menu — remove from library with confirmation', () => {
     expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Remove'));
   });
 
-  it('if window.confirm returns false, removeTrack is NOT called', async () => {
+  it('if window.confirm returns false, removeTracks is NOT called', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     renderLibrary();
     await openContextMenu('Track One');
     fireEvent.click(screen.getByText(/🗑️ Remove from library/));
-    expect(window.api.removeTrack).not.toHaveBeenCalled();
+    expect(window.api.removeTracks).not.toHaveBeenCalled();
   });
 
-  it('if window.confirm returns true, removeTrack IS called with the track ID', async () => {
+  it('if window.confirm returns true, removeTracks IS called with the track ID', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     renderLibrary();
     await openContextMenu('Track One');
     fireEvent.click(screen.getByText(/🗑️ Remove from library/));
-    await waitFor(() => expect(window.api.removeTrack).toHaveBeenCalledWith(1));
+    await waitFor(() => expect(window.api.removeTracks).toHaveBeenCalledWith([1]));
   });
 });
 

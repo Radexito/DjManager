@@ -410,6 +410,19 @@ export function removeTrack(id) {
   db.prepare('DELETE FROM tracks WHERE id = ?').run(id);
 }
 
+/** Deletes many track rows in a single transaction (bulk remove — DB write only, no filesystem I/O). */
+export function removeTracks(trackIds) {
+  const del = db.prepare('DELETE FROM tracks WHERE id = ?');
+  db.transaction(() => {
+    for (const id of trackIds) del.run(id);
+  })();
+}
+
+/** Counts tracks still referencing this file_path — used to avoid deleting a file that another track row still points at. */
+export function getTrackCountByFilePath(filePath) {
+  return db.prepare('SELECT COUNT(*) AS n FROM tracks WHERE file_path = ?').get(filePath).n;
+}
+
 export function normalizeLibrary(targetLufs) {
   const info = db
     .prepare(

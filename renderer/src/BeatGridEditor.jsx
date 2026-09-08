@@ -367,6 +367,13 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
   useEffect(() => {
     currentTimeSecRef.current = currentTime;
     lastTimeUpdateRef.current = performance.now();
+    // While paused the RAF loop's recenter branch never runs (it only tracks
+    // the playhead while playing), so an explicit seek (e.g. clicking a cue's
+    // timestamp) would leave the view stuck on the old window until play was
+    // toggled. Recenter immediately here for the paused case.
+    if (isThisTrackRef.current && !isPlayingRef.current && !userScrollingRef.current) {
+      viewCenterRef.current = currentTime * 1000;
+    }
   }, [currentTime]);
 
   // Reset the wall-clock reference the moment playback starts so the elapsed
