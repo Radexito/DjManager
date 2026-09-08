@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { List } from 'react-window';
 import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
@@ -308,6 +308,10 @@ export default function FileExplorerView({ style }) {
   const [selectedPaths, setSelectedPaths] = useState(new Set());
   const [playlists, setPlaylists] = useState([]);
   const [contextMenu, setContextMenu] = useState(null);
+  // Nudge applied after measuring the rendered menu so it never overflows the
+  // viewport bottom/right edge (#310).
+  const menuRef = useRef(null);
+  const [menuShift, setMenuShift] = useState({ x: 0, y: 0 });
   const [detailsTrack, setDetailsTrack] = useState(null);
   const [beatGridTrack, setBeatGridTrack] = useState(null);
   const [toast, setToast] = useState(null);
@@ -710,6 +714,23 @@ export default function FileExplorerView({ style }) {
     [selectedPaths, displayItems]
   );
 
+  // Shift the menu up/left by exactly the overflow once it renders, so it
+  // always stays inside the window bounds (#310).
+  useLayoutEffect(() => {
+    if (!contextMenu) {
+      setMenuShift({ x: 0, y: 0 });
+      return;
+    }
+    const el = menuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const shiftX = Math.max(0, rect.right - window.innerWidth + 8);
+    const shiftY = Math.max(0, rect.bottom - window.innerHeight + 8);
+    setMenuShift((prev) =>
+      prev.x === -shiftX && prev.y === -shiftY ? prev : { x: -shiftX, y: -shiftY }
+    );
+  }, [contextMenu]);
+
   const closeMenu = useCallback(() => setContextMenu(null), []);
 
   // ── Details save ──────────────────────────────────────────────────────────
@@ -962,7 +983,8 @@ export default function FileExplorerView({ style }) {
             <div className="context-backdrop-invisible" onClick={closeMenu} />
             <div
               className={`context-menu${contextMenu.flipLeft ? ' context-menu--flip-left' : ''}${contextMenu.flipUp ? ' context-menu--flip-up' : ''}`}
-              style={{ top: contextMenu.y, left: contextMenu.x }}
+              ref={menuRef}
+              style={{ top: contextMenu.y + menuShift.y, left: contextMenu.x + menuShift.x }}
               onMouseDown={(e) => e.stopPropagation()}
             >
               {menuIsDir ? (

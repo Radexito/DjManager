@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useState,
   useRef,
   useCallback,
@@ -560,6 +561,10 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
 
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [contextMenu, setContextMenu] = useState(null); // { x, y, targetIds }
+  // Nudge applied after measuring the rendered menu so it never overflows the
+  // viewport bottom/right edge (#310).
+  const menuRef = useRef(null);
+  const [menuShift, setMenuShift] = useState({ x: 0, y: 0 });
   const [toast, setToast] = useState(null); // { msg, ok } | null
   const toastTimerRef = useRef(null);
   const [drillStack, setDrillStack] = useState([]); // overlay drill-down stack [{ id, label, content }]
@@ -1133,6 +1138,23 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     [selectedIds]
   );
 
+  // Re-measure once the menu (or its drill/submenu content) renders: shift the
+  // whole menu up/left by exactly the overflow so it stays inside the window.
+  useLayoutEffect(() => {
+    if (!contextMenu) {
+      setMenuShift({ x: 0, y: 0 });
+      return;
+    }
+    const el = menuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const shiftX = Math.max(0, rect.right - window.innerWidth + 8);
+    const shiftY = Math.max(0, rect.bottom - window.innerHeight + 8);
+    setMenuShift((prev) =>
+      prev.x === -shiftX && prev.y === -shiftY ? prev : { x: -shiftX, y: -shiftY }
+    );
+  }, [contextMenu, drillStack, playlistSubmenu]);
+
   const handleReanalyze = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
     setContextMenu(null);
@@ -1667,12 +1689,13 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
                 ]
                   .filter(Boolean)
                   .join(' ')}
+                ref={menuRef}
                 style={
                   contextMenu.overlayMode
                     ? undefined
                     : {
-                        top: contextMenu.y,
-                        left: contextMenu.x,
+                        top: contextMenu.y + menuShift.y,
+                        left: contextMenu.x + menuShift.x,
                         '--submenu-max-h': `${contextMenu.submenuMaxH}px`,
                       }
                 }
