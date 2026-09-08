@@ -501,6 +501,24 @@ export default function FileExplorerView({ style }) {
     ];
   }, [dirEntries, recursiveFiles]);
 
+  // ── Keyboard: Ctrl+A selects all visible rows (mirrors MusicLibrary) ─────
+  // MusicLibrary is unmounted while this tab is active, but other views stay
+  // mounted (hidden via display:none) — gate on visibility so Ctrl+A is only
+  // stolen when the Explorer is actually the active view.
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key !== 'a') return;
+      const target = e.target;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+        return;
+      if (!containerRef.current?.offsetParent) return; // view hidden
+      e.preventDefault();
+      setSelectedPaths(new Set(displayItems.map((x) => x.path)));
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [displayItems, setSelectedPaths]);
+
   const brokenByFilename = useMemo(() => {
     const m = new Map();
     for (const t of brokenTracks) {
