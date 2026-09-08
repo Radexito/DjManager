@@ -52,6 +52,18 @@ export function getTidalBinPath() {
   return path.join(getBinDir(), process.platform === 'win32' ? 'tdn.exe' : 'tdn');
 }
 
+// uv installs the tool shim under the package's own name (`tidal-dl-ng`,
+// plus `tidal-dl-ng-gui`), not the legacy `tdn` name. Probe both so a fresh
+// install is recognised and first-run does not re-run on every launch.
+function getTidalBin() {
+  const ext = process.platform === 'win32' ? '.exe' : '';
+  for (const name of ['tidal-dl-ng', 'tdn']) {
+    const p = path.join(getBinDir(), name + ext);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
 // env vars that pin uv tool install/list to DjManager's own bin dir
 function uvToolEnv() {
   const binDir = getBinDir();
@@ -116,7 +128,7 @@ async function probeYtDlpVersion() {
 }
 
 async function probeTidalVersion() {
-  if (!fs.existsSync(getTidalBinPath())) return null;
+  if (!getTidalBin()) return null;
   return { version: await getTidalDlNgVersion() };
 }
 
@@ -690,7 +702,7 @@ export async function ensureDeps(onProgress) {
     fs.existsSync(getFfmpegRuntimePath()) && fs.existsSync(getFfprobeRuntimePath());
   const analyzerReady = fs.existsSync(getAnalyzerRuntimePath());
   const ytDlpReady = fs.existsSync(getYtDlpRuntimePath());
-  const tidalReady = fs.existsSync(getTidalBinPath());
+  const tidalReady = getTidalBin() != null;
 
   // Tidal is optional — not a required step, handled separately after required deps
   const STEP_DEFS = [

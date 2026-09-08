@@ -21,6 +21,9 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [exportState, setExportState] = useState(null); // { playlistId, mode } | null
   const [depsProgress, setDepsProgress] = useState(null); // { msg, pct } or null
+  const [depsLog, setDepsLog] = useState([]); // console lines [{ text, kind }]
+  const [depsDone, setDepsDone] = useState(false); // run finished, awaiting Close
+  const depsHadWorkRef = useRef(false); // real install ran (vs. "up to date")
   const [zoomLevel, setZoomLevel] = useState(null); // shown when != 1.0, null = hidden
   const [zoomKey, setZoomKey] = useState(0); // incremented on each zoom change to restart bar animation
   const zoomHideTimer = useRef(null);
@@ -54,11 +57,55 @@ function App() {
     return unsub;
   }, []);
 
+  // First-time setup console. Progress events stream in from the main
+  // process; we accumulate them into a readable log. A finished run STAYS on
+  // screen (done=true) until the user clicks Close - never auto-dismisses
+  // after real work. The quiet startup case ("Dependencies up to date.")
+  // produces no work events and stays hidden.
   useEffect(() => {
-    if (!window.api.onDepsProgress) return;
-    const unsub = window.api.onDepsProgress((data) => setDepsProgress(data));
+    if (!window.api.onDepsProgress) return undefined;
+    const unsub = window.api.onDepsProgress((data) => {
+      if (data == null) {
+        // Run ended. Show the console with Close only if something ran;
+        // otherwise (deps already fine at startup) stay silent.
+        if (depsHadWorkRef.current) {
+          setDepsDone(true);
+          setDepsProgress(null);
+        } else {
+          setDepsProgress(null);
+          setDepsLog([]);
+        }
+        depsHadWorkRef.current = false;
+        return;
+      }
+      const { msg, pct, stepTotal, error } = data;
+      const isNoop = pct === 100 && stepTotal === 0 && !error;
+      if (!isNoop) depsHadWorkRef.current = true;
+      setDepsLog((prev) => {
+        const line = { text: error || msg || '', kind: error ? 'error' : 'log' };
+        if (!line.text) return prev;
+        // Skip consecutive duplicates (byte-progress re-emits the same label).
+        const last = prev[prev.length - 1];
+        if (last && last.text === line.text && last.kind === line.kind) return prev;
+        const next = [...prev, line];
+        return next.length > 400 ? next.slice(next.length - 400) : next;
+      });
+      setDepsProgress(data);
+    });
     return unsub;
   }, []);
+
+  const resetDepsOverlay = () => {
+    depsHadWorkRef.current = false;
+    setDepsDone(false);
+    setDepsLog([]);
+    setDepsProgress(null);
+  };
+
+  const retryDeps = () => {
+    resetDepsOverlay();
+    window.api.retryDeps?.();
+  };
 
   // Zoom control: Ctrl+Scroll and Ctrl+=/−/0, persisted to localStorage
   useEffect(() => {
@@ -202,7 +249,13 @@ function App() {
               <span key={zoomKey} className="zoom-indicator-bar" />
             </button>
           )}
-          <DepsOverlay progress={depsProgress} onRetry={() => window.api.retryDeps?.()} />
+          <DepsOverlay
+            progress={depsProgress}
+            log={depsLog}
+            done={depsDone}
+            onRetry={retryDeps}
+            onClose={resetDepsOverlay}
+          />
         </TidalDownloadProvider>
       </DownloadProvider>
     </PlayerProvider>
