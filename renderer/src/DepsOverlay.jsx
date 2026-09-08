@@ -53,7 +53,9 @@ export function DepsOverlay({ progress, onRetry }) {
   }).slice(0, stepTotal);
 
   const currentIdx = activeSteps.findIndex((s) => s.id === stepId);
-  const isError = pct === -1 || !!error;
+  // pct === -1 means "indeterminate progress" (status/log lines streamed from
+  // uv/pip installs) — NOT an error. Only a real failure carries `error`.
+  const isError = !!error;
   const isDone = pct === 100 && !error;
 
   const speed = fmtSpeed(bytesPerSec);
