@@ -30,6 +30,7 @@ import { parseQuery } from './searchParser.js';
 import TrackDetails from './TrackDetails.jsx';
 import RatingStars from './RatingStars.jsx';
 import BeatGridEditor from './BeatGridEditor.jsx';
+import SearchBar from './SearchBar.jsx';
 import './MusicLibrary.css';
 
 const PAGE_SIZE = 50;
@@ -514,7 +515,7 @@ function SortableColItem({ colKey, label, checked, onToggle }) {
   );
 }
 
-function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
+function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsRequest }) {
   const isPlaylistView = selectedPlaylist !== 'music';
   const {
     play,
@@ -982,6 +983,23 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
     setDetailsTrack(null);
     setDetailsBulkTracks(null);
   }, []);
+
+  useEffect(() => {
+    const trackId = openDetailsRequest?.trackId;
+    if (!trackId) return;
+
+    let alive = true;
+    window.api.getTrackById(trackId).then((track) => {
+      if (!alive || !track) return;
+      setDetailsBulkTracks(null);
+      setDetailsTrack(track);
+      setSelectedIds(new Set([track.id]));
+    });
+
+    return () => {
+      alive = false;
+    };
+  }, [openDetailsRequest]);
 
   // ── Cue column click — open Prepare Track window ──────────────────────────
 
@@ -1474,6 +1492,9 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
       className={`music-library${detailsTrack || detailsBulkTracks ? ' music-library--with-panel' : ''}`}
     >
       <div className="music-library__main">
+        <div className="music-library__search">
+          <SearchBar value={search} onChange={onSearchChange} />
+        </div>
         {unavailableLinkedIds.size > 0 && (
           <label className="hide-unavailable-toggle">
             <input

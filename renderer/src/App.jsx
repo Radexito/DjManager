@@ -16,10 +16,6 @@ import { TidalDownloadProvider } from './TidalDownloadContext.jsx';
 import { DepsOverlay } from './DepsOverlay.jsx';
 import './App.css';
 
-// Tabs that don't use the shared MusicLibrary search bar — clicking one of
-// these again shouldn't try to clear a search that isn't showing there.
-const NON_SEARCHABLE_TABS = new Set(['download', 'tidal', 'cloud-search', 'explorer']);
-
 function App() {
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('music');
   const [showSettings, setShowSettings] = useState(false);
@@ -30,6 +26,7 @@ function App() {
   const zoomHideTimer = useRef(null);
   const ZOOM_HIDE_DELAY = 3000;
   const [search, setSearch] = useState('');
+  const [openDetailsRequest, setOpenDetailsRequest] = useState(null);
 
   const handleArtistSearch = (artist) => {
     setSelectedPlaylistId('music');
@@ -41,8 +38,14 @@ function App() {
     setSearch('');
   };
 
+  const handlePlayerOpenDetails = (trackId, playlistId) => {
+    if (!trackId) return;
+    setSelectedPlaylistId(playlistId != null ? String(playlistId) : 'music');
+    setOpenDetailsRequest({ trackId, nonce: Date.now() });
+  };
+
   const handleMenuSelect = (id) => {
-    if (id === selectedPlaylistId && !NON_SEARCHABLE_TABS.has(id)) setSearch('');
+    if (id === selectedPlaylistId) setSearch('');
     setSelectedPlaylistId(id);
   };
 
@@ -123,12 +126,7 @@ function App() {
       <DownloadProvider>
         <TidalDownloadProvider>
           <div className="app-body">
-            <TopBar
-              search={search}
-              onSearchChange={setSearch}
-              onOpenSettings={() => setShowSettings(true)}
-              onLogoClick={handleLogoClick}
-            />
+            <TopBar onOpenSettings={() => setShowSettings(true)} onLogoClick={handleLogoClick} />
             <div className="app-main">
               <Sidebar
                 selectedMenuItemId={selectedPlaylistId}
@@ -166,6 +164,7 @@ function App() {
                     selectedPlaylist={selectedPlaylistId}
                     search={search}
                     onSearchChange={setSearch}
+                    openDetailsRequest={openDetailsRequest}
                   />
                 )}
             </div>
@@ -173,6 +172,7 @@ function App() {
           <PlayerBar
             onNavigateToPlaylist={setSelectedPlaylistId}
             onArtistSearch={handleArtistSearch}
+            onOpenTrackDetails={handlePlayerOpenDetails}
           />
           {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
           {exportState != null && (

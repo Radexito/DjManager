@@ -427,6 +427,7 @@ ipcMain.handle('retry-deps', () => {
 });
 ipcMain.handle('get-tracks', (_, params) => getTracks(params));
 ipcMain.handle('get-track-ids', (_, params) => getTrackIds(params));
+ipcMain.handle('get-track-by-id', (_, trackId) => getTrackById(trackId) ?? null);
 // Linked (Explorer-referenced) tracks point at arbitrary, often removable paths
 // (USB drives, etc.) — check which ones are currently unreachable so the UI can
 // gray them out instead of failing playback with no explanation.
