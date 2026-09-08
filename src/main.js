@@ -140,8 +140,10 @@ import { resolveExportFormat } from './usb/deviceFormats.js';
 import { getResetCleanupTargets, startResetCleanup } from './resetCleanup.js';
 import {
   getCuePoints,
+  getCuePointById,
   addCuePoint,
   updateCuePoint,
+  renumberSequentialCuesAfter,
   deleteCuePoint,
   deleteAllCuePoints,
   deleteAllCuePointsLibrary,
@@ -751,11 +753,20 @@ ipcMain.handle('get-cue-points', (_, trackId) => getCuePoints(trackId));
 
 ipcMain.handle('add-cue-point', (_, { trackId, positionMs, label, color, hotCueIndex }) => {
   const id = addCuePoint({ trackId, positionMs, label, color, hotCueIndex });
+  // Adding a sequentially-named cue shifts the positional order — renumber the
+  // following auto-named cues so names stay unique (#253).
+  renumberSequentialCuesAfter(trackId, id);
   return { id };
 });
 
 ipcMain.handle('update-cue-point', (_, { id, label, color, hotCueIndex, enabled }) => {
+  const before = getCuePointById(id);
   updateCuePoint(id, { label, color, hotCueIndex, enabled });
+  // Renaming a cue to a sequential name (e.g. the newly inserted "Cue 2")
+  // must cascade a renumber onto the following auto-named cues (#253).
+  if (before && typeof label === 'string') {
+    renumberSequentialCuesAfter(before.track_id, id);
+  }
   return { ok: true };
 });
 
