@@ -438,7 +438,12 @@ ipcMain.handle('get-track-waveform', (_, trackId) => {
   return buf ? new Uint8Array(buf) : null;
 });
 ipcMain.handle('get-setting', (_, key, def) => getSetting(key, def));
-ipcMain.handle('set-setting', (_, key, value) => setSetting(key, value));
+ipcMain.handle('set-setting', (_, key, value) => {
+  setSetting(key, value);
+  // Let the renderer react to settings changes live (e.g. hide the cue
+  // indicator column when auto-cue generation is toggled, #263).
+  global.mainWindow?.webContents.send('settings-updated', { key, value });
+});
 // `libraryId` defaults to the current "import target" library when omitted —
 // most existing call sites predate multi-library support and don't pass one.
 ipcMain.handle('get-library-path', (_, libraryId) =>

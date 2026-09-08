@@ -92,6 +92,10 @@ contextBridge.exposeInMainWorld('api', {
   setSetting: (key, value) => ipcRenderer.invoke('set-setting', key, value),
   getLibraryPath: (libraryId) => ipcRenderer.invoke('get-library-path', libraryId),
   moveLibrary: (newDir, libraryId) => ipcRenderer.invoke('move-library', newDir, libraryId),
+  onSettingsUpdated: (cb) => {
+    ipcRenderer.on('settings-updated', (_, data) => cb(data));
+    return () => ipcRenderer.removeAllListeners('settings-updated');
+  },
   openDirDialog: () => ipcRenderer.invoke('open-dir-dialog'),
   onMoveLibraryProgress: (cb) => {
     ipcRenderer.on('move-library-progress', (_, data) => cb(data));

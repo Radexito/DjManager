@@ -566,6 +566,9 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const [playlistSubmenu, setPlaylistSubmenu] = useState(null); // [{ id, name, color, is_member }]
   const [librarySubmenu, setLibrarySubmenu] = useState(null); // [{ id, name, free_bytes }]
   const [newPlaylistInputActive, setNewPlaylistInputActive] = useState(false);
+  // When auto-cue generation is enabled every track has cue points, so the
+  // ◆ cue indicator column is meaningless — hide it live (#263).
+  const [autoCueOnImport, setAutoCueOnImport] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [newPlaylistError, setNewPlaylistError] = useState('');
   const newPlaylistInputRef = useRef(null);
@@ -620,8 +623,11 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   const prevSearchRef = useRef(search);
 
   const visibleColumns = useMemo(
-    () => colOrder.map((k) => COL_BY_KEY[k]).filter((c) => c && colVis[c.key] !== false),
-    [colVis, colOrder]
+    () =>
+      colOrder
+        .map((k) => COL_BY_KEY[k])
+        .filter((c) => c && colVis[c.key] !== false && !(autoCueOnImport && c.key === 'cue')),
+    [colVis, colOrder, autoCueOnImport]
   );
   const gridTemplate = useMemo(
     () => visibleColumns.map((c) => c.width).join(' '),
@@ -851,6 +857,21 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange }) {
   useEffect(() => {
     const unsub = window.api.onPlaylistsUpdated(() => setLoadKey((k) => k + 1));
     return unsub;
+  }, []);
+
+  // Auto-cue setting: initial value + live updates from the Settings modal
+  // (main broadcasts 'settings-updated' on every set-setting call).
+  useEffect(() => {
+    const api = window.api ?? {};
+    if (typeof api.getSetting === 'function') {
+      api.getSetting('auto_cue_on_import', 'false').then((v) => setAutoCueOnImport(v === 'true'));
+    }
+    if (typeof api.onSettingsUpdated === 'function') {
+      return api.onSettingsUpdated(({ key, value }) => {
+        if (key === 'auto_cue_on_import') setAutoCueOnImport(value === 'true');
+      });
+    }
+    return undefined;
   }, []);
 
   // DnD sensors
