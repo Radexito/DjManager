@@ -822,7 +822,6 @@ function MusicLibrary({
 
   const offsetRef = useRef(0);
   const loadingRef = useRef(false);
-  const pageLoadEndRef = useRef(0); // TEMP perf: timestamp when loadTracks appended
   const hasMoreRef = useRef(true); // ref copy of hasMore — avoids stale closures in loadTracks
   const resetTokenRef = useRef(0); // incremented on every reset; stale fetches compare and discard
   const listRef = useRef();
@@ -893,21 +892,6 @@ function MusicLibrary({
   // Rows at/above this threshold get the flash overlay before the sync sort.
   const SORT_FLASH_MIN_ROWS = 1200;
 
-  // ── TEMP profiling (sort / locate) ────────────────────────────────────────
-  // Remove once the slow-sort report is chased down. Keeps per-step timings in
-  // a state line shown on screen for a few seconds + console.log detail.
-  const [perfLine, setPerfLine] = useState(null);
-  const sortStartRef = useRef(0);
-  const lastSortMsRef = useRef(0);
-  const perfTimerRef = useRef(null);
-  const showPerf = useCallback((text, detail) => {
-    console.log(`[perf] ${text}${detail ? ' | ' + detail : ''}`);
-    setPerfLine({ text: `⏱ ${text}`, at: Date.now() });
-    clearTimeout(perfTimerRef.current);
-    perfTimerRef.current = setTimeout(() => setPerfLine(null), 8000);
-  }, []);
-  useEffect(() => () => clearTimeout(perfTimerRef.current), []);
-
   // ── Full-set queue snapshots ───────────────────────────────────────────────
   // Playback (and therefore shuffle/next) must operate on the FULL set matching
   // the current view, not on whatever lazy scroll has loaded so far (#506). All
@@ -936,7 +920,6 @@ function MusicLibrary({
   const locateHandledRef = useRef(null); // last locateTrack nonce we fulfilled
   const [queuePreparing, setQueuePreparing] = useState(false);
   const [locating, setLocating] = useState(false); // show the busy overlay while locating a track
-  const locateStartRef = useRef(0);
 
   const fetchFullViewTracks = useCallback(async () => {
     const { filters, remaining } = parseQuery(searchRef.current);
@@ -993,8 +976,6 @@ function MusicLibrary({
         setTracks((prev) => [...prev, ...rows]);
       }
       offsetRef.current += rows.length;
-      pageLoadEndRef.current = performance.now();
-      console.log(`[perf] page.loaded offset=${offsetRef.current} rows=${rows.length}`);
 
       if (rows.length < PAGE_SIZE) {
         hasMoreRef.current = false;
@@ -1005,30 +986,12 @@ function MusicLibrary({
     }
   }, [search, selectedPlaylist]); // no hasMore in deps — we use hasMoreRef
 
-  // TEMP perf: how long a page append takes to commit (render+paint) once loaded
-  useEffect(() => {
-    if (pageLoadEndRef.current === 0) return;
-    const d = performance.now() - pageLoadEndRef.current;
-    if (d >= 0) {
-      console.log(`[perf] page.render n=${tracks.length} commitMs=${d.toFixed(0)}`);
-    }
-    pageLoadEndRef.current = 0;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tracks.length]);
-
   const sortedTracks = useMemo(() => {
-    const ts = performance.now();
     const base = hideUnavailable
       ? tracks.filter((t) => !(t.is_linked && unavailableLinkedIds.has(t.id)))
       : tracks;
     const sorted = sortTrackRows(base, sortBy);
-    lastSortMsRef.current = performance.now() - ts;
     sortedTracksRef.current = sorted;
-    if (sortBy.key !== 'index') {
-      console.log(
-        `[perf] sort.compute key=${sortBy.key} n=${base.length} computeMs=${(performance.now() - ts).toFixed(1)} at=${performance.now().toFixed(0)}`
-      );
-    }
     return sorted;
   }, [tracks, sortBy, hideUnavailable, unavailableLinkedIds]);
 
@@ -1456,8 +1419,6 @@ function MusicLibrary({
       }
       if (locating) {
         setLocating(false);
-        const totalMs = performance.now() - (locateStartRef.current || performance.now());
-        showPerf(`locate ok id=${trackId} → row ${idx}`, `total=${totalMs.toFixed(0)}ms`);
       }
       return;
     }
@@ -1474,15 +1435,10 @@ function MusicLibrary({
     // Not loaded and not loading: fetch the full set and jump. Overlay first,
     // synchronously, so the spinner paints before any async work starts.
     setLocating(true);
-    const t0 = performance.now();
     let alive = true;
     (async () => {
       const token = resetTokenRef.current;
       const full = await fetchFullViewTracks();
-      const fetchMs = performance.now() - t0;
-      console.log(
-        `[perf] locate.fetch id=${trackId} fetch=${fetchMs.toFixed(1)}ms rows=${full.length}`
-      );
       if (!alive || token !== resetTokenRef.current) {
         setLocating(false); // view changed
         return;
@@ -1496,12 +1452,10 @@ function MusicLibrary({
       if (fullIndex === -1) {
         locateHandledRef.current = req.nonce; // gone from the library — give up
         setLocating(false);
-        showPerf(`locate failed (id ${trackId} not in library)`, `fetch=${fetchMs.toFixed(0)}ms`);
         return;
       }
       // Materialize the full set (matches the playing queue scope) and let the
       // re-run below do the scroll once the new rows are committed.
-      locateStartRef.current = t0;
       resetTokenRef.current += 1; // invalidate any in-flight page load
       loadingRef.current = false; // ...and make sure that load can never get stuck
       offsetRef.current = full.length;
@@ -1521,7 +1475,7 @@ function MusicLibrary({
     // and abort the in-flight fetch via the cleanup above. The flag flips happen
     // between the fetch and the post-commit scroll, both of which must survive.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locateTrack, search, tracks.length, onSearchChange, fetchFullViewTracks, showPerf]);
+  }, [locateTrack, search, tracks.length, onSearchChange, fetchFullViewTracks]);
 
   // ── Cue column click — open Prepare Track window ──────────────────────────
 
@@ -1977,12 +1931,8 @@ function MusicLibrary({
 
   const handleSort = useCallback(
     (key) => {
-      const t0 = performance.now();
-      sortStartRef.current = t0;
       setPendingSortKey(key);
-      console.log(`[perf] sort.click key=${key} sync n=${tracks.length} t0=${t0.toFixed(1)}`);
       const apply = () => {
-        console.log(`[perf] sort.apply key=${key} t+${(performance.now() - t0).toFixed(0)}`);
         setSortBy((prev) => {
           const next = { key, asc: prev.key === key ? !prev.asc : true };
           if (isPlaylistView) setSortSaved(next.key === 'index');
@@ -2001,28 +1951,6 @@ function MusicLibrary({
     },
     [isPlaylistView, tracks.length]
   );
-
-  // TEMP profiling: report the whole click→committed-sort timeline once the
-  // deferred sortBy lands (compute + commit are visible in one line).
-  useEffect(() => {
-    if (sortStartRef.current === 0 || sortBy.key === 'index') return;
-    const total = performance.now() - sortStartRef.current;
-    console.log(`[perf] sort.commitEffect key=${sortBy.key} t+${total.toFixed(0)}`);
-    sortStartRef.current = 0;
-    showPerf(
-      `sort ${sortBy.key} ${sortBy.asc ? 'asc' : 'desc'} total=${total.toFixed(0)}ms`,
-      `compute=${lastSortMsRef.current.toFixed(1)}ms rows=${tracks.length}`
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortBy]);
-
-  useLayoutEffect(() => {
-    if (sortStartRef.current === 0 || sortBy.key === 'index') return;
-    console.log(
-      `[perf] sort.layoutCommit key=${sortBy.key} t+${(performance.now() - sortStartRef.current).toFixed(0)}`
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortBy]);
 
   // ── Row (library view) — handled by LibraryRow above via itemData ─────────
 
@@ -2087,27 +2015,6 @@ function MusicLibrary({
                 <span className="table-busy-spinner" aria-hidden="true" />
                 {sortFlash ? 'Sorting…' : locating ? 'Locating track…' : 'Building queue…'}
               </div>
-            </div>
-          )}
-          {perfLine && (
-            <div
-              className="perf-readout"
-              style={{
-                position: 'fixed',
-                top: 84,
-                left: '50%',
-                transform: 'translateX(-50%)',
-                zIndex: 98,
-                background: '#1a1206',
-                border: '1px solid #b8860b',
-                color: '#ffd479',
-                font: 'bold 15px monospace',
-                padding: '3px 10px',
-                borderRadius: 5,
-                pointerEvents: 'none',
-              }}
-            >
-              {perfLine.text}
             </div>
           )}
           <TrackTableHeader
