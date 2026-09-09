@@ -16,8 +16,11 @@ import {
   getLegacyNormalizedTracks,
   clearLegacyNormalizedPaths,
   resetNormalization,
+  countTracks,
+  getTrackRank,
 } from '../db/trackRepository.js';
 import { createLibrary } from '../db/libraryRepository.js';
+import { createPlaylist, addTracksToPlaylist } from '../db/playlistRepository.js';
 
 const SAMPLE = {
   title: 'Test Track',
@@ -542,5 +545,159 @@ describe('getLegacyNormalizedTracks / clearLegacyNormalizedPaths', () => {
     clearLegacyNormalizedPaths();
 
     expect(getTrackById(id).loudness).toBeCloseTo(-12);
+  });
+});
+
+describe('countTracks', () => {
+  const seed = () => {
+    addTrack({
+      ...SAMPLE,
+      title: 'Alpha',
+      artist: 'Zed',
+      bpm: 120,
+      file_hash: 'c1',
+      file_path: '/tmp/c1.mp3',
+    });
+    addTrack({
+      ...SAMPLE,
+      title: 'Bravo',
+      artist: 'Ann',
+      bpm: 128,
+      file_hash: 'c2',
+      file_path: '/tmp/c2.mp3',
+    });
+    addTrack({
+      ...SAMPLE,
+      title: 'Charlie',
+      artist: 'Zed',
+      bpm: null,
+      file_hash: 'c3',
+      file_path: '/tmp/c3.mp3',
+    });
+  };
+
+  it('counts the whole library', () => {
+    seed();
+    expect(countTracks()).toBe(3);
+  });
+
+  it('respects the search term', () => {
+    seed();
+    expect(countTracks({ search: 'bravo' })).toBe(1);
+    expect(countTracks({ search: 'zed' })).toBe(2);
+  });
+
+  it('respects structured filters', () => {
+    seed();
+    expect(countTracks({ filters: [{ field: 'artist', op: 'is', value: 'zed' }] })).toBe(2);
+    expect(countTracks({ filters: [{ field: 'bpm', op: 'is', value: 128 }] })).toBe(1);
+  });
+
+  it('agrees with the number of rows getTracks returns', () => {
+    seed();
+    expect(countTracks()).toBe(getTracks({ limit: 999999 }).length);
+    expect(countTracks({ search: 'zed' })).toBe(getTracks({ limit: 999999, search: 'zed' }).length);
+  });
+
+  it('counts only the rows of one playlist', () => {
+    const a = addTrack({ ...SAMPLE, file_hash: 'p1', file_path: '/tmp/p1.mp3' });
+    const b = addTrack({ ...SAMPLE, file_hash: 'p2', file_path: '/tmp/p2.mp3' });
+    addTrack({ ...SAMPLE, file_hash: 'p3', file_path: '/tmp/p3.mp3' });
+    const pl = createPlaylist('Rank Set');
+    addTracksToPlaylist(pl, [a, b]);
+    expect(countTracks()).toBe(3);
+    expect(countTracks({ playlistId: pl })).toBe(2);
+    // same row set as the paged playlist query
+    expect(countTracks({ playlistId: pl })).toBe(
+      getTracks({ playlistId: pl, limit: 999999 }).length
+    );
+  });
+});
+
+describe('getTrackRank', () => {
+  // A helper seed returning { id, title } of three tracks with distinct
+  // title/bpm values so sorted order is fully deterministic.
+  const seedThree = () => {
+    const a = addTrack({
+      ...SAMPLE,
+      title: 'Alpha',
+      artist: 'Zed',
+      bpm: 120,
+      file_hash: 'r1',
+      file_path: '/tmp/r1.mp3',
+    });
+    const b = addTrack({
+      ...SAMPLE,
+      title: 'bravo',
+      artist: 'Ann',
+      bpm: 128,
+      file_hash: 'r2',
+      file_path: '/tmp/r2.mp3',
+    });
+    const c = addTrack({
+      ...SAMPLE,
+      title: 'Charlie',
+      artist: 'Mia',
+      bpm: null,
+      file_hash: 'r3',
+      file_path: '/tmp/r3.mp3',
+    });
+    return { a, b, c };
+  };
+
+  it('agrees with getTracks order for title ASC (NOCASE)', () => {
+    const { a, b, c } = seedThree();
+    const sort = { key: 'title', asc: true };
+    const sorted = getTracks({ limit: 999999, sort });
+    expect(sorted.map((t) => t.title)).toEqual(['Alpha', 'bravo', 'Charlie']);
+    sorted.forEach((t, i) => {
+      expect(getTrackRank({ trackId: t.id, sort })).toBe(i);
+    });
+    expect(getTrackRank({ trackId: a, sort })).toBe(0);
+    expect(getTrackRank({ trackId: b, sort })).toBe(1);
+    expect(getTrackRank({ trackId: c, sort })).toBe(2);
+  });
+
+  it('agrees with getTracks for BPM DESC (NULL/empty last in both directions)', () => {
+    const { a, b, c } = seedThree();
+    const sort = { key: 'bpm', asc: false };
+    const sorted = getTracks({ limit: 999999, sort });
+    // bpm: 128, 120, then the NULL bpm track last even on DESC
+    expect(sorted.map((t) => t.id)).toEqual([b, a, c]);
+    sorted.forEach((t, i) => {
+      expect(getTrackRank({ trackId: t.id, sort })).toBe(i);
+    });
+  });
+
+  it('returns null for a track outside the searched row set', () => {
+    const { a } = seedThree();
+    const sort = { key: 'title', asc: true };
+    expect(getTrackRank({ trackId: a, sort, search: 'charlie' })).toBeNull();
+  });
+
+  it('ranks within a playlist by position when sort is index', () => {
+    const a = addTrack({ ...SAMPLE, title: 'First', file_hash: 'q1', file_path: '/tmp/q1.mp3' });
+    const b = addTrack({ ...SAMPLE, title: 'Second', file_hash: 'q2', file_path: '/tmp/q2.mp3' });
+    const c = addTrack({ ...SAMPLE, title: 'Third', file_hash: 'q3', file_path: '/tmp/q3.mp3' });
+    const pl = createPlaylist('Position Set');
+    addTracksToPlaylist(pl, [a, b, c]);
+    expect(getTrackRank({ trackId: b, playlistId: pl })).toBe(1);
+    expect(getTrackRank({ trackId: c, playlistId: pl })).toBe(2);
+  });
+
+  it('ranks inside a playlist by a real column sort', () => {
+    const a = addTrack({ ...SAMPLE, title: 'Zulu', file_hash: 'q4', file_path: '/tmp/q4.mp3' });
+    const b = addTrack({ ...SAMPLE, title: 'Alpha', file_hash: 'q5', file_path: '/tmp/q5.mp3' });
+    const c = addTrack({ ...SAMPLE, title: 'Mike', file_hash: 'q6', file_path: '/tmp/q6.mp3' });
+    const pl = createPlaylist('Sorted Set');
+    addTracksToPlaylist(pl, [a, b, c]);
+    const sort = { key: 'title', asc: true };
+    expect(getTrackRank({ trackId: b, playlistId: pl, sort })).toBe(0);
+    expect(getTrackRank({ trackId: c, playlistId: pl, sort })).toBe(1);
+    expect(getTrackRank({ trackId: a, playlistId: pl, sort })).toBe(2);
+  });
+
+  it('returns null for an unknown track id', () => {
+    expect(getTrackRank({ trackId: 999999, sort: { key: 'title', asc: true } })).toBeNull();
   });
 });

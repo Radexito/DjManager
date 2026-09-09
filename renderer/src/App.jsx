@@ -31,10 +31,21 @@ function App() {
   const ZOOM_HIDE_DELAY = 3000;
   const [search, setSearch] = useState('');
   const [openDetailsRequest, setOpenDetailsRequest] = useState(null);
+  // "Show track in Music" — the player-bar title while playing from the
+  // all-tracks view asks the library to jump to that track.
+  const [locateTrackRequest, setLocateTrackRequest] = useState(null);
 
   const handleArtistSearch = (artist) => {
     setSelectedPlaylistId('music');
     setSearch(`ARTIST is ${artist}`);
+  };
+
+  const handleLocateTrack = (trackId) => {
+    if (!trackId) return;
+    // MusicLibrary clears the search itself only when a filter hides the track;
+    // leaving it untouched preserves the current sort/filter otherwise.
+    setSelectedPlaylistId('music');
+    setLocateTrackRequest({ trackId, nonce: Date.now() });
   };
 
   const handleLogoClick = () => {
@@ -223,6 +234,7 @@ function App() {
                     search={search}
                     onSearchChange={setSearch}
                     openDetailsRequest={openDetailsRequest}
+                    locateTrack={locateTrackRequest}
                   />
                 )}
             </div>
@@ -231,6 +243,7 @@ function App() {
             onNavigateToPlaylist={setSelectedPlaylistId}
             onArtistSearch={handleArtistSearch}
             onOpenTrackDetails={handlePlayerOpenDetails}
+            onLocateTrack={handleLocateTrack}
           />
           {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
           {exportState != null && (

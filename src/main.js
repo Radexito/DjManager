@@ -76,6 +76,8 @@ import {
   getTrackWaveform,
   updateTrackWaveform,
   updateTrackDetailHires,
+  countTracks,
+  getTrackRank,
 } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import {
@@ -426,6 +428,8 @@ ipcMain.handle('retry-deps', () => {
     );
 });
 ipcMain.handle('get-tracks', (_, params) => getTracks(params));
+ipcMain.handle('count-tracks', (_, params) => countTracks(params));
+ipcMain.handle('get-track-rank', (_, params) => getTrackRank(params));
 ipcMain.handle('get-track-ids', (_, params) => getTrackIds(params));
 ipcMain.handle('get-track-by-id', (_, trackId) => getTrackById(trackId) ?? null);
 // Linked (Explorer-referenced) tracks point at arbitrary, often removable paths

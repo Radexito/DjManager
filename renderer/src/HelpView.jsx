@@ -61,7 +61,7 @@ const SECTIONS = [
       'The transport lives in the bottom bar: play/pause (Space also works), previous/next, shuffle and repeat (green = on).',
       'The volume icon opens a vertical slider on hover; clicking the icon mutes/unmutes. Output devices can be switched next to it.',
       'Click anywhere on the waveform to seek. The bar can be made taller by dragging its top edge; drag the thin separators to re-balance the zones.',
-      'The clock icon opens playback history. Clicking the track title jumps to the playlist the track belongs to (when it has one).',
+      'The clock icon opens playback history. Clicking the track title jumps to the list it is playing from: the playlist it belongs to, or the Music list scrolled to that track.',
       'Media keys of your OS (play/pause/next/previous) control the player as well.',
     ],
   },

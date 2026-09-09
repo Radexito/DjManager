@@ -3,6 +3,8 @@ const { contextBridge, ipcRenderer, webFrame } = require('electron');
 contextBridge.exposeInMainWorld('api', {
   // Track library
   getTracks: (params) => ipcRenderer.invoke('get-tracks', params),
+  countTracks: (params) => ipcRenderer.invoke('count-tracks', params),
+  getTrackRank: (params) => ipcRenderer.invoke('get-track-rank', params),
   getTrackIds: (params) => ipcRenderer.invoke('get-track-ids', params),
   getTrackById: (trackId) => ipcRenderer.invoke('get-track-by-id', trackId),
   getUnavailableLinkedTracks: () => ipcRenderer.invoke('get-unavailable-linked-tracks'),
