@@ -35,6 +35,30 @@ import SearchBar from './SearchBar.jsx';
 import './MusicLibrary.css';
 
 const PAGE_SIZE = 50;
+// Used for queue snapshots: playback operates on the FULL matching result set
+// (lazy scroll pagination must not decide what the shuffle sees).
+const FULL_RESULT_LIMIT = 999999;
+
+/**
+ * Shared comparator for column sorting. Both the visible (lazy) list and the
+ * full queue snapshot use it so the playback order always matches what the
+ * table shows for the same sortBy.
+ */
+function sortTrackRows(base, sortBy) {
+  return [...base].sort((a, b) => {
+    if (sortBy.key === 'index') return 0;
+    // For BPM, prefer the override value
+    const va = sortBy.key === 'bpm' ? (a.bpm_override ?? a.bpm ?? '') : (a[sortBy.key] ?? '');
+    const vb = sortBy.key === 'bpm' ? (b.bpm_override ?? b.bpm ?? '') : (b[sortBy.key] ?? '');
+    if (typeof va === 'string' || typeof vb === 'string') {
+      const sa = String(va ?? '');
+      const sb = String(vb ?? '');
+      return sortBy.asc ? sa.localeCompare(sb) : sb.localeCompare(sa);
+    }
+    if (typeof va === 'number') return sortBy.asc ? va - vb : vb - va;
+    return 0;
+  });
+}
 const ROW_HEIGHT = 50;
 const PRELOAD_TRIGGER = 3;
 const RIGHT_ALIGNED_COLUMNS = new Set([
@@ -829,6 +853,51 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
   const [isSorting, startSortTransition] = useTransition();
   const [pendingSortKey, setPendingSortKey] = useState(null);
 
+  // ── Full-set queue snapshots ───────────────────────────────────────────────
+  // Playback (and therefore shuffle/next) must operate on the FULL set matching
+  // the current view, not on whatever lazy scroll has loaded so far (#506). All
+  // live mirror refs keep the fetch callback stable.
+  const sortByRef = useRef(sortBy);
+  const hideUnavailableRef = useRef(hideUnavailable);
+  const unavailableLinkedIdsRef = useRef(unavailableLinkedIds);
+  const playlistInfoRef = useRef(playlistInfo);
+  useEffect(() => {
+    sortByRef.current = sortBy;
+  }, [sortBy]);
+  useEffect(() => {
+    hideUnavailableRef.current = hideUnavailable;
+  }, [hideUnavailable]);
+  useEffect(() => {
+    unavailableLinkedIdsRef.current = unavailableLinkedIds;
+  }, [unavailableLinkedIds]);
+  useEffect(() => {
+    playlistInfoRef.current = playlistInfo;
+  }, [playlistInfo]);
+  // Set by loadTracks when it APPENDS a lazy page. The queue-sync effects skip
+  // those runs: the queue is a full-set snapshot and pagination must not grow
+  // it (nor shrink it to the currently visible page).
+  const appendedPageRef = useRef(false);
+  const queueBusyRef = useRef(false);
+  const [queuePreparing, setQueuePreparing] = useState(false);
+
+  const fetchFullViewTracks = useCallback(async () => {
+    const { filters, remaining } = parseQuery(searchRef.current);
+    const structuredFilters = filters.filter((f) => f.field !== '_text');
+    const textSearch = remaining || filters.find((f) => f.field === '_text')?.value || '';
+    const playlistId =
+      selectedPlaylistRef.current !== 'music' ? selectedPlaylistRef.current : undefined;
+    const rows = await window.api.getTracks({
+      limit: FULL_RESULT_LIMIT,
+      search: textSearch,
+      filters: structuredFilters,
+      playlistId,
+    });
+    const base = hideUnavailableRef.current
+      ? rows.filter((r) => !(r.is_linked && unavailableLinkedIdsRef.current.has(r.id)))
+      : rows;
+    return sortTrackRows(base, sortByRef.current);
+  }, []);
+
   const loadTracks = useCallback(async () => {
     if (loadingRef.current || !hasMoreRef.current) return;
 
@@ -862,6 +931,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
         }
         setTracks(rows);
       } else {
+        appendedPageRef.current = true; // queue-sync effects must skip lazy pages
         setTracks((prev) => [...prev, ...rows]);
       }
       offsetRef.current += rows.length;
@@ -879,19 +949,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
     const base = hideUnavailable
       ? tracks.filter((t) => !(t.is_linked && unavailableLinkedIds.has(t.id)))
       : tracks;
-    const sorted = [...base].sort((a, b) => {
-      if (sortBy.key === 'index') return 0;
-      // For BPM, prefer the override value
-      const va = sortBy.key === 'bpm' ? (a.bpm_override ?? a.bpm ?? '') : (a[sortBy.key] ?? '');
-      const vb = sortBy.key === 'bpm' ? (b.bpm_override ?? b.bpm ?? '') : (b[sortBy.key] ?? '');
-      if (typeof va === 'string' || typeof vb === 'string') {
-        const sa = String(va ?? '');
-        const sb = String(vb ?? '');
-        return sortBy.asc ? sa.localeCompare(sb) : sb.localeCompare(sa);
-      }
-      if (typeof va === 'number') return sortBy.asc ? va - vb : vb - va;
-      return 0;
-    });
+    const sorted = sortTrackRows(base, sortBy);
     sortedTracksRef.current = sorted;
     return sorted;
   }, [tracks, sortBy, hideUnavailable, unavailableLinkedIds]);
@@ -912,6 +970,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
     loadingRef.current = false;
     hasMoreRef.current = true;
     resetTokenRef.current += 1;
+    appendedPageRef.current = false; // a full reload is not a lazy append
     setHasMore(true);
     if (viewChanged) {
       setSelectedIds(new Set());
@@ -986,13 +1045,24 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
               const deduped = newRows.filter((r) => !prevIds.has(r.id));
               if (deduped.length === 0) return prev;
               const merged = [...prev, ...deduped];
-              // Keep the player queue in sync when playing from the music (all-tracks) view.
-              if (currentPlaylistIdRef.current === null) {
-                updateQueueRef.current(merged);
-              }
               return merged;
             });
             offsetRef.current = sortedTracksRef.current.length + newRows.length;
+            // If a library (all-tracks) queue is playing, re-snapshot it against
+            // the full set so the newly imported tracks join next/shuffle too.
+            if (currentPlaylistIdRef.current === null) {
+              const token = resetTokenRef.current;
+              const full = await fetchFullViewTracks();
+              if (
+                token !== resetTokenRef.current ||
+                currentPlaylistIdRef.current !== null ||
+                selectedPlaylistRef.current !== 'music' ||
+                searchRef.current
+              ) {
+                return;
+              }
+              updateQueueRef.current(full);
+            }
             // If the batch we fetched is smaller than a full page, we've reached the end.
             if (rows.length < PAGE_SIZE) {
               hasMoreRef.current = false;
@@ -1010,21 +1080,42 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
     return unsub;
   }, []);
 
-  // Keep player queue in sync when tracks are added/removed from the current playlist (#213).
-  // The all-tracks view is handled inside onLibraryUpdated; playlist view needs its own sync
-  // because it does a full reload (setLoadKey) rather than a soft-append.
+  // Keep the player queue aligned with the current playlist when its content
+  // changes externally (import/reload). The queue is a FULL-set snapshot, so a
+  // real change triggers a fresh full fetch; lazy scroll pages (appendedPageRef)
+  // never touch the queue.
   useEffect(() => {
-    if (
+    if (appendedPageRef.current) {
+      appendedPageRef.current = false;
+      return;
+    }
+    if (!(
       isPlaylistView &&
       currentPlaylistId !== null &&
-      String(currentPlaylistId) === String(selectedPlaylist) &&
-      sortedTracksRef.current.length > 0
-    ) {
-      updateQueue(sortedTracksRef.current);
+      String(currentPlaylistId) === String(selectedPlaylist)
+    )) {
+      return;
     }
-    // Only react to track count changes — sort-order changes should not reshuffle the queue.
+    let cancelled = false;
+    (async () => {
+      const token = resetTokenRef.current;
+      const full = await fetchFullViewTracks();
+      if (cancelled || token !== resetTokenRef.current) return;
+      if (
+        currentPlaylistIdRef.current === null ||
+        String(currentPlaylistIdRef.current) !== String(selectedPlaylistRef.current)
+      ) {
+        return; // playback moved elsewhere while fetching
+      }
+      updateQueueRef.current(full);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Only re-sync on count changes / full reloads — sort-order changes must not
+    // reshuffle the playing queue.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tracks.length, isPlaylistView, selectedPlaylist, currentPlaylistId]);
+  }, [tracks.length, loadKey, isPlaylistView, selectedPlaylist, currentPlaylistId]);
 
   // Reload playlist info (name, duration) when entering playlist view or tracks change
   useEffect(() => {
@@ -1143,17 +1234,41 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
     }
   }, []);
 
+  // Double-click starts playback scoped to the full matching set (lazy-loaded
+  // pages appended later must not change what next/shuffle operate on).
+  const playFromList = useCallback(
+    async (track, visibleIndex) => {
+      if (queueBusyRef.current) return;
+      queueBusyRef.current = true;
+      setQueuePreparing(true);
+      const token = resetTokenRef.current;
+      try {
+        const full = await fetchFullViewTracks();
+        if (token !== resetTokenRef.current) return; // view changed while fetching
+        const playlistId =
+          selectedPlaylistRef.current === 'music' ? null : selectedPlaylistRef.current;
+        const name = playlistId ? (playlistInfoRef.current?.name ?? null) : null;
+        const fullIndex = full.findIndex((t) => t.id === track.id);
+        if (fullIndex !== -1) {
+          play(track, full, fullIndex, playlistId, name);
+        } else {
+          // Track missing from the full snapshot (hide-unavailable race) — start
+          // with the visible list so the click always plays something.
+          play(track, sortedTracksRef.current, visibleIndex, playlistId, name);
+        }
+      } finally {
+        queueBusyRef.current = false;
+        setQueuePreparing(false);
+      }
+    },
+    [fetchFullViewTracks, play]
+  );
+
   const handleDoubleClick = useCallback(
     (track, index) => {
-      play(
-        track,
-        sortedTracksRef.current,
-        index,
-        isPlaylistView ? selectedPlaylist : null,
-        isPlaylistView ? (playlistInfo?.name ?? null) : null
-      );
+      playFromList(track, index);
     },
-    [play, isPlaylistView, selectedPlaylist, playlistInfo]
+    [playFromList]
   );
 
   // ── Details panel ──────────────────────────────────────────────────────────
@@ -1769,6 +1884,14 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
         )}
 
         <div className="table-scroll-wrap library-mode">
+          {(isSorting || queuePreparing) && (
+            <div className="table-busy-overlay" role="status">
+              <div className="table-busy-box">
+                <span className="table-busy-spinner" aria-hidden="true" />
+                {isSorting ? 'Sorting…' : 'Building queue…'}
+              </div>
+            </div>
+          )}
           <TrackTableHeader
             headerScrollRef={headerScrollRef}
             headerRef={headerRef}
