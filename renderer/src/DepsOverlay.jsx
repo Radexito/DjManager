@@ -1,11 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import './DepsOverlay.css';
 
 const KNOWN_STEPS = [
   { id: 'ffmpeg', label: 'FFmpeg' },
   { id: 'analyzer', label: 'mixxx-analyzer' },
   { id: 'ytdlp', label: 'yt-dlp' },
-  { id: 'tidal', label: 'tidal-dl-ng' },
+  { id: 'tidal', label: 'tidal-dl-ng (optional)' },
 ];
 
 function fmt(bytes) {
@@ -26,14 +26,17 @@ function fmtEta(sec) {
 }
 
 /**
- * First-time setup overlay.
+ * First-time setup overlay, installer-console style.
  *
- * Behaves like a classic Windows installer console: every step streams into a
- * scrollable log the user can read, and when the run finishes the window STAYS
- * open with a Close button. It never auto-dismisses after real work.
+ * - Required dependency steps render as a checklist (done/active/pending).
+ * - The optional tidal-dl-ng step renders as a normal step row too (marked
+ *   "optional"), with the required rows staying checked while it runs.
+ * - The raw log console is COLLAPSED by default; "Show log" expands it.
+ * - When a run finishes the overlay STAYS open with a Close button; it never
+ *   auto-dismisses after real work.
  *
  * props:
- *   progress - live progress event ({ stepId, pct, msg, error, ... }) or null
+ *   progress - live progress event ({ stepId, stepTotal, pct, error, ... })
  *   log      - accumulated console lines [{ text, kind: 'log' | 'error' }]
  *   done     - true when the run finished successfully (progress was cleared)
  *   onRetry  - re-run dependency install
@@ -41,18 +44,19 @@ function fmtEta(sec) {
  */
 export function DepsOverlay({ progress, log = [], done = false, onRetry, onClose }) {
   const logRef = useRef(null);
+  const [showLog, setShowLog] = useState(false);
 
   // Keep the newest line visible while the log grows (console behaviour).
   useEffect(() => {
+    if (!showLog) return;
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [log.length]);
+  }, [log.length, showLog]);
 
   if (!progress && !done) return null;
 
   const {
     stepId,
-    stepIndex,
     stepTotal,
     stepPct,
     bytesDownloaded,
@@ -61,25 +65,36 @@ export function DepsOverlay({ progress, log = [], done = false, onRetry, onClose
     etaSec,
     pct,
     error,
+    stepsCompleted,
+    optional,
   } = progress ?? {};
 
   const isError = !!error;
   const running = !done && !isError;
 
-  // Step list (only meaningful while a multi-step run is live).
-  const hasSteps = running && stepTotal > 0 && stepId !== undefined;
+  // Step checklist. Required rows are the first stepTotal entries; the
+  // optional tidal row appears when it becomes the active step.
+  const hasSteps = running && stepTotal > 0;
   const activeSteps = hasSteps
-    ? KNOWN_STEPS.filter((s) => KNOWN_STEPS.indexOf(s) < stepTotal || s.id === stepId).slice(
-        0,
-        stepTotal
-      )
+    ? KNOWN_STEPS.filter((s) => {
+        const idx = KNOWN_STEPS.indexOf(s);
+        return idx < stepTotal || s.id === stepId;
+      })
     : [];
-  const currentIdx = activeSteps.findIndex((s) => s.id === stepId);
+  const doneCount =
+    stepsCompleted ??
+    Math.max(
+      0,
+      activeSteps.findIndex((s) => s.id === stepId)
+    );
 
   const speed = fmtSpeed(bytesPerSec);
   const eta = fmtEta(etaSec);
   const hasBytes = bytesTotal > 0 && bytesDownloaded > 0;
   const showBar = running && (stepPct >= 0 || pct >= 0);
+  // Optional step streams log lines without a percentage: show an animated
+  // indeterminate bar instead of nothing.
+  const indeterminate = running && !!stepId && pct != null && pct < 0;
 
   return (
     <div className="deps-overlay">
@@ -91,15 +106,16 @@ export function DepsOverlay({ progress, log = [], done = false, onRetry, onClose
         {hasSteps && (
           <div className="deps-steps">
             {activeSteps.map((s, i) => {
-              const isActive = s.id === stepId && !isError;
-              const isDoneStep = i < currentIdx;
+              const isDoneStep = i < doneCount;
+              const isActive = s.id === stepId && running && !isDoneStep;
+              const rowLabel = optional && s.id === 'tidal' ? 'tidal-dl-ng (optional)' : s.label;
               return (
                 <div
                   key={s.id}
                   className={`deps-step${isActive ? ' active' : ''}${isDoneStep ? ' done' : ''}`}
                 >
                   <span className="deps-step-icon">{isDoneStep ? '✓' : isActive ? '↓' : '·'}</span>
-                  <span className="deps-step-label">{s.label}</span>
+                  <span className="deps-step-label">{rowLabel}</span>
                   {isActive && hasBytes && (
                     <span className="deps-step-meta">
                       {fmt(bytesDownloaded)} / {fmt(bytesTotal)}
@@ -113,29 +129,42 @@ export function DepsOverlay({ progress, log = [], done = false, onRetry, onClose
           </div>
         )}
 
-        {showBar && (
+        {showBar && !indeterminate && (
           <div className="deps-bar-track">
             <div className="deps-bar-fill" style={{ width: `${stepPct >= 0 ? stepPct : pct}%` }} />
           </div>
         )}
 
-        {running && stepTotal > 1 && (
+        {indeterminate && (
+          <div className="deps-bar-track">
+            <div className="deps-bar-fill deps-bar-fill--indet" />
+          </div>
+        )}
+
+        {running && stepTotal > 1 && !optional && (
           <div className="deps-overall">
-            Step {stepIndex} of {stepTotal}
+            Step {doneCount + 1} of {stepTotal}
           </div>
         )}
 
         {log.length > 0 && (
-          <div className="deps-log" ref={logRef}>
-            {log.map((l, i) => (
-              <div
-                key={i}
-                className={`deps-log-line${l.kind === 'error' ? ' deps-log-line--err' : ''}`}
-              >
-                {l.text}
+          <div className="deps-console">
+            <button type="button" className="deps-log-toggle" onClick={() => setShowLog((s) => !s)}>
+              {showLog ? 'Hide log ▴' : `Show log (${log.length}) ▾`}
+            </button>
+            {showLog && (
+              <div className="deps-log" ref={logRef}>
+                {log.map((l, i) => (
+                  <div
+                    key={i}
+                    className={`deps-log-line${l.kind === 'error' ? ' deps-log-line--err' : ''}`}
+                  >
+                    {l.text}
+                  </div>
+                ))}
+                {running && <div className="deps-log-cursor">▌</div>}
               </div>
-            ))}
-            {running && <div className="deps-log-cursor">▌</div>}
+            )}
           </div>
         )}
 
