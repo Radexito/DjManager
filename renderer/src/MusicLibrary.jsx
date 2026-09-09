@@ -8,6 +8,7 @@ import {
   memo,
   createContext,
   useContext,
+  startTransition,
 } from 'react';
 import {
   DndContext,
@@ -1094,7 +1095,13 @@ function MusicLibrary({
       sortFollowCommittedRef.current = nonce;
       const commitToken = resetTokenRef.current;
       setTimeout(() => {
-        if (alive && commitToken === resetTokenRef.current) setTracks(full);
+        if (alive && commitToken === resetTokenRef.current) {
+          // Non-urgent: a full-set commit must never starve transport input
+          // (pause/next/volume). As a transition, React yields to urgent
+          // events between work slices, so the player bar stays responsive
+          // while the sorted rows paint.
+          startTransition(() => setTracks(full));
+        }
         // re-run (tracks identity change) then scrolls to the selected row
       }, 60);
     })();
@@ -1574,7 +1581,11 @@ function MusicLibrary({
       // first; the set itself is a plain (synchronous) state update.
       const tokenAfterBump = resetTokenRef.current;
       setTimeout(() => {
-        if (alive && tokenAfterBump === resetTokenRef.current) setTracks(full);
+        if (alive && tokenAfterBump === resetTokenRef.current) {
+          // Same as the sort-follow commit: transition so transport input
+          // (pause/seek/volume) stays responsive while the rows paint.
+          startTransition(() => setTracks(full));
+        }
       }, 60);
     })();
     return () => {
