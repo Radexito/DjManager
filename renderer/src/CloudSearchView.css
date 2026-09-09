@@ -1,5 +1,6 @@
 .cloud-search-view {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   padding: 20px 24px;
@@ -120,6 +121,7 @@
 }
 
 .cloud-search-results {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -157,11 +159,14 @@
 }
 
 .cloud-search-table {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   border: 1px solid #2a2a2a;
   border-radius: 6px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .cloud-search-row {
@@ -183,6 +188,9 @@
 }
 
 .cloud-search-row--head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   cursor: default;
   color: var(--text-secondary, #888);
   text-transform: uppercase;
@@ -204,6 +212,27 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cloud-search-preview-btn {
+  background: none;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: var(--text-secondary, #aaa);
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cloud-search-preview-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary, #e0e0e0);
+  border-color: var(--accent, #7c5cfc);
 }
 
 .cloud-search-status--done {

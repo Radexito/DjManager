@@ -27,6 +27,11 @@ const COOKIE_BROWSERS = [
   { value: 'edge', label: 'Edge' },
 ];
 
+const CLOUD_PREVIEW_PLAYBACK_MODES = [
+  { value: 'overlay', label: 'Play previews over the main player' },
+  { value: 'pause-main', label: 'Pause the main player and resume after the preview' },
+];
+
 function SettingsModal({ onClose }) {
   const [activeSection, setActiveSection] = useState('library');
   const [targetInput, setTargetInput] = useState(String(DEFAULT_TARGET));
@@ -50,6 +55,7 @@ function SettingsModal({ onClose }) {
   const [ytdlpUpdating, setYtdlpUpdating] = useState(false);
   const [tidalUpdating, setTidalUpdating] = useState(false);
   const [cookiesBrowser, setCookiesBrowser] = useState('');
+  const [cloudPreviewPlaybackMode, setCloudPreviewPlaybackMode] = useState('overlay');
   const [waveformColorMode, setWaveformColorMode] = useState('rgb');
   const [generatingWaveforms, setGeneratingWaveforms] = useState(false);
   const [waveformGenProgress, setWaveformGenProgress] = useState(null);
@@ -113,6 +119,9 @@ function SettingsModal({ onClose }) {
     window.api
       .getSetting('auto_cue_on_import', 'false')
       .then((v) => setAutoCueOnImport(v === 'true'));
+    window.api
+      .getSetting('cloud_preview_playback_mode', 'overlay')
+      .then((v) => setCloudPreviewPlaybackMode(v || 'overlay'));
     window.api.getSetting('waveform_color_mode', 'rgb').then((v) => setWaveformColorMode(v));
   }, []);
 
@@ -251,6 +260,11 @@ function SettingsModal({ onClose }) {
     window.api.setSetting('ytdlp_cookies_browser', value);
   };
 
+  const handleCloudPreviewPlaybackModeChange = (value) => {
+    setCloudPreviewPlaybackMode(value);
+    window.api.setSetting('cloud_preview_playback_mode', value);
+  };
+
   const handleClearLibrary = async () => {
     await window.api.clearLibrary();
     setConfirmClear(null);
@@ -351,6 +365,7 @@ function SettingsModal({ onClose }) {
     { id: 'normalization', label: 'Normalization' },
     { id: 'cuepoints', label: 'Cue Points' },
     { id: 'waveform', label: 'Waveform' },
+    { id: 'playback', label: 'Playback' },
     { id: 'downloads', label: 'Downloads' },
     { id: 'updates', label: 'Dependencies' },
     { id: 'advanced', label: 'Advanced' },
@@ -988,6 +1003,34 @@ function SettingsModal({ onClose }) {
                     🔒 No browser selected — private or age-restricted content may fail.
                   </div>
                 )}
+              </div>
+            </>
+          )}
+
+          {activeSection === 'playback' && (
+            <>
+              <h3>Playback</h3>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Cloud Search Preview</div>
+                <p className="settings-group-desc">
+                  Choose whether inline previews from Cloud Search should temporarily pause the main
+                  player and resume it afterward, or play on top of the current deck.
+                </p>
+                <div className="settings-row">
+                  <label>When playing a preview</label>
+                  <select
+                    value={cloudPreviewPlaybackMode}
+                    onChange={(e) => handleCloudPreviewPlaybackModeChange(e.target.value)}
+                    className="settings-select"
+                  >
+                    {CLOUD_PREVIEW_PLAYBACK_MODES.map((mode) => (
+                      <option key={mode.value} value={mode.value}>
+                        {mode.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </>
           )}

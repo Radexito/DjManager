@@ -8,7 +8,10 @@ vi.mock('../deps.js', () => ({
 }));
 
 vi.mock('fs', () => ({
-  default: { existsSync: vi.fn().mockReturnValue(true) },
+  default: {
+    existsSync: vi.fn().mockReturnValue(true),
+    promises: { mkdir: vi.fn().mockResolvedValue(undefined) },
+  },
   existsSync: vi.fn().mockReturnValue(true),
 }));
 
@@ -73,7 +76,12 @@ function makeFakeProc() {
 }
 
 import fs from 'fs';
-import { detectPlatform, fetchPlaylistInfo, searchYouTube } from '../audio/ytDlpManager.js';
+import {
+  detectPlatform,
+  fetchPlaylistInfo,
+  searchYouTube,
+  createPreviewAudioStream,
+} from '../audio/ytDlpManager.js';
 
 describe('detectPlatform', () => {
   it('returns youtube for youtube.com URLs', () => {
@@ -223,5 +231,32 @@ describe('checkYouTubeAvailability (via fetchPlaylistInfo)', () => {
   it('does not flag a publicly-available entry as unavailable', async () => {
     const info = await fetchPlaylistInfo('https://www.youtube.com/playlist?list=xyz');
     expect(info.entries[0].unavailable).toBe(false);
+  });
+});
+
+// Cloud-search inline preview streams yt-dlp stdout live (-o -) so playback
+// starts as data arrives; cookies are required for age-restricted tracks.
+describe('createPreviewAudioStream', () => {
+  beforeEach(() => {
+    spawnCalls.length = 0;
+    fakeProc = makeFakeProc();
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+  });
+
+  it('spawns yt-dlp with -o - and cookies when cookiesBrowser is provided', () => {
+    createPreviewAudioStream('https://www.youtube.com/watch?v=abc123', {
+      cookiesBrowser: 'librewolf',
+    });
+
+    expect(lastSpawnArgs).toContain('-o');
+    expect(lastSpawnArgs).toContain('-');
+    const cookieIdx = lastSpawnArgs.indexOf('--cookies-from-browser');
+    expect(cookieIdx).toBeGreaterThan(-1);
+    expect(lastSpawnArgs[lastSpawnArgs.length - 1]).toBe('https://www.youtube.com/watch?v=abc123');
+  });
+
+  it('does NOT add --cookies-from-browser when cookiesBrowser is omitted', () => {
+    createPreviewAudioStream('https://www.youtube.com/watch?v=abc123');
+    expect(lastSpawnArgs).not.toContain('--cookies-from-browser');
   });
 });

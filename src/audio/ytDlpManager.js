@@ -438,6 +438,30 @@ export async function searchYouTube(query, options = {}) {
 }
 
 /**
+ * Spawn yt-dlp streaming a single audio track to stdout (-o -). The caller
+ * pipes stdout to an HTTP response / file. Default client only: pinned
+ * clients (ios/android_vr/tv) fail age-restricted tracks with "Requested
+ * format is not available", and only the default client + cookies can solve
+ * PO tokens for direct playback.
+ * @returns {import('child_process').ChildProcessWithoutNullStreams}
+ */
+export function createPreviewAudioStream(url, options = {}) {
+  const ytDlp = getYtDlpRuntimePath();
+  const args = [
+    '-f',
+    'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio/best',
+    '--no-warnings',
+    '-o',
+    '-',
+  ];
+  if (options.cookiesBrowser) {
+    args.push('--cookies-from-browser', resolveBrowser(options.cookiesBrowser));
+  }
+  args.push(url);
+  return spawn(ytDlp, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+/**
  * Download audio from a URL using yt-dlp.
  * Supports both single tracks and playlists — always resolves with an array of file results.
  *

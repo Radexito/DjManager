@@ -228,6 +228,7 @@ contextBridge.exposeInMainWorld('api', {
   tidalLogin: () => ipcRenderer.invoke('tidal-login'),
   cloudSearch: ({ source, query, types, limit }) =>
     ipcRenderer.invoke('cloud-search', { source, query, types, limit }),
+  cloudSearchPreview: (payload) => ipcRenderer.invoke('cloud-search-preview', payload),
   tidalDownloadUrl: (opts) => ipcRenderer.invoke('tidal-download-url', opts),
   onTidalProgress: (cb) => {
     const handler = (_, data) => cb(data);

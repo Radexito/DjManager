@@ -197,6 +197,60 @@ except Exception as e:
     sys.exit(1)
 `;
 
+const PREVIEW_URL_SCRIPT = `
+import sys, json, re
+try:
+    import tidalapi
+except ImportError:
+    print(json.dumps({'ok': False, 'error': 'tidalapi not installed'}))
+    sys.exit(1)
+
+def parse_track_id(url):
+    m = re.search(r'/track/(\\d+)', url)
+    return m.group(1) if m else None
+
+if len(sys.argv) < 3:
+    print(json.dumps({'ok': False, 'error': 'Usage: script.py <track_url> <token_path>'}))
+    sys.exit(1)
+
+url = sys.argv[1]
+token_path = sys.argv[2]
+track_id = parse_track_id(url)
+if not track_id:
+    print(json.dumps({'ok': False, 'error': 'Inline preview is only available for TIDAL track results'}))
+    sys.exit(1)
+
+try:
+    with open(token_path) as f:
+        token = json.load(f)
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': f'Token error: {str(e)}'}))
+    sys.exit(1)
+
+try:
+    session = tidalapi.Session()
+    session.load_oauth_session(
+        token.get('token_type', 'Bearer'),
+        token['access_token'],
+        token.get('refresh_token')
+    )
+    if not session.check_login():
+        print(json.dumps({'ok': False, 'error': 'Not logged in to TIDAL'}))
+        sys.exit(1)
+    track = session.track(int(track_id))
+    stream = track.get_stream()
+    manifest = stream.get_stream_manifest()
+    urls = manifest.get_urls()
+    preview_url = urls[0] if urls else None
+    if not preview_url:
+        print(json.dumps({'ok': False, 'error': 'No preview stream URL returned by TIDAL'}))
+        sys.exit(1)
+    print(json.dumps({'ok': True, 'url': preview_url}))
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': str(e)}))
+    sys.exit(1)
+`;
+
 // Strip ANSI escape codes from terminal output
 function stripAnsi(str) {
   return str.replace(/\x1B\[[0-9;]*[mGKHFABCDST]/g, '');
@@ -402,6 +456,53 @@ export async function searchTidal(query, opts = {}) {
       }
     });
 
+    proc.on('error', (err) => {
+      resolve({ ok: false, error: err.message });
+    });
+  });
+}
+
+export async function getTidalPreviewUrl(url) {
+  const pythonPath = findTidalPython();
+  if (!pythonPath) {
+    return { ok: false, error: 'Python interpreter not found. Ensure tidal-dl-ng is installed.' };
+  }
+
+  const tokenPath = getTokenPath();
+  if (!fs.existsSync(tokenPath)) {
+    return { ok: false, error: 'Not logged in to TIDAL. Please connect your account first.' };
+  }
+
+  const scriptPath = path.join(os.tmpdir(), 'dj_manager_tidal_preview.py');
+  try {
+    fs.writeFileSync(scriptPath, PREVIEW_URL_SCRIPT.trimStart());
+  } catch (e) {
+    return { ok: false, error: `Failed to write preview script: ${e.message}` };
+  }
+
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+
+    const proc = spawn(pythonPath, [scriptPath, url, tokenPath], {
+      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    proc.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    proc.on('close', () => {
+      try {
+        resolve(JSON.parse(stdout.trim()));
+      } catch {
+        resolve({ ok: false, error: stderr.trim() || stdout.trim() || 'Failed to parse response' });
+      }
+    });
     proc.on('error', (err) => {
       resolve({ ok: false, error: err.message });
     });

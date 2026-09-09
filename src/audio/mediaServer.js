@@ -9,6 +9,8 @@ export const AUDIO_MIME = {
   '.ogg': 'audio/ogg',
   '.m4a': 'audio/mp4',
   '.aac': 'audio/aac',
+  '.webm': 'audio/webm',
+  '.opus': 'audio/ogg',
 };
 
 const IMAGE_MIME = {
@@ -36,9 +38,17 @@ export function streamFile(stream, res) {
  * Build the HTTP request handler that serves audio files from `audioBase`
  * and optionally artwork files from `artworkBase`.
  * `allowedBases` is a mutable array; entries added at runtime are respected immediately.
+ * `previewStreams` (optional): Map of token -> (req, res, corsHeaders) => void,
+ * dispatched from /djman-yt-preview/<token>. Lets the cloud-search preview
+ * stream yt-dlp output live (play as data arrives) while tee-ing it to a file.
  * Exported separately so it can be unit-tested without spinning up a server.
  */
-export function createMediaRequestHandler(audioBase, artworkBase = null, allowedBases = []) {
+export function createMediaRequestHandler(
+  audioBase,
+  artworkBase = null,
+  allowedBases = [],
+  previewStreams = null
+) {
   return (req, res) => {
     // Allow Web Audio API (createMediaElementSource) to process audio from any
     // renderer origin. In dev mode the renderer runs at localhost:517x while the
@@ -51,6 +61,18 @@ export function createMediaRequestHandler(audioBase, artworkBase = null, allowed
     const corsHeaders = { 'Access-Control-Allow-Origin': '*' };
     try {
       let urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+      // Live cloud-search previews: /djman-yt-preview/<token> -> registry entry.
+      if (previewStreams && urlPath.startsWith('/djman-yt-preview/')) {
+        const token = urlPath.slice('/djman-yt-preview/'.length);
+        const entry = previewStreams.get(token);
+        if (!entry) {
+          res.writeHead(404, corsHeaders);
+          res.end();
+          return;
+        }
+        entry(req, res, corsHeaders);
+        return;
+      }
       if (process.platform === 'win32') {
         // URL pathname is '/C:/Users/...' — strip the leading slash and use OS separators
         urlPath = urlPath.slice(1).replace(/\//g, '\\');
@@ -114,10 +136,15 @@ export function createMediaRequestHandler(audioBase, artworkBase = null, allowed
  * @param {string[]} allowedBases  Mutable array of extra allowed base paths (explorer-linked dirs).
  * @returns {Promise<{server: http.Server, port: number}>}
  */
-export function startMediaServer(audioBase, artworkBase = null, allowedBases = []) {
+export function startMediaServer(
+  audioBase,
+  artworkBase = null,
+  allowedBases = [],
+  previewStreams = null
+) {
   return new Promise((resolve, reject) => {
     const server = http.createServer(
-      createMediaRequestHandler(audioBase, artworkBase, allowedBases)
+      createMediaRequestHandler(audioBase, artworkBase, allowedBases, previewStreams)
     );
     server.listen(0, '127.0.0.1', () => {
       const port = server.address().port;

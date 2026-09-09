@@ -213,6 +213,7 @@ function App() {
               />
               <CloudSearchView
                 style={{ display: selectedPlaylistId === 'cloud-search' ? '' : 'none' }}
+                isActive={selectedPlaylistId === 'cloud-search'}
                 onGoToLibrary={() => setSelectedPlaylistId('music')}
                 onGoToTidalSetup={() => setSelectedPlaylistId('tidal')}
               />
