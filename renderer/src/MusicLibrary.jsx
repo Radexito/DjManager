@@ -989,10 +989,19 @@ function MusicLibrary({
     return base;
   }, [tracks, hideUnavailable, unavailableLinkedIds]);
 
-  // When the sort key/direction changes, pages must be refetched from scratch
-  // under the new ORDER BY (otherwise lazy pages would mix two orders).
+  // When the sort key/direction changes:
+  //  - no single selection: pages are refetched from scratch under the new
+  //    ORDER BY so lazy appends keep landing at the bottom of the list;
+  //  - exactly ONE selected row: materialize the FULL set in the new order and
+  //    scroll to the row after commit — the same scroll path "locate track"
+  //    uses (user-confirmed working), instead of a parallel focus mechanism.
   const suppressSortReloadRef = useRef(false);
   const prevSortRef = useRef(sortBy);
+  const [sortFollow, setSortFollow] = useState(null); // { id, nonce }
+  const sortFollowNonceRef = useRef(0);
+  const sortFollowHandledRef = useRef(null); // nonce fulfilled (row scrolled / gone)
+  const sortFollowCommittedRef = useRef(null); // nonce whose full set is committed
+
   useEffect(() => {
     if (suppressSortReloadRef.current) {
       // A DnD / save / view-reset flow already handles the reload (or must not
@@ -1005,77 +1014,78 @@ function MusicLibrary({
     if (prev.key === sortBy.key && prev.asc === sortBy.asc) return;
     prevSortRef.current = sortBy;
     const singleSel = selectedIds.size === 1 ? [...selectedIds][0] : null;
-    // Reload pages from offset 0 in the new order; keep the selection.
-    offsetRef.current = 0;
-    loadingRef.current = false;
-    hasMoreRef.current = true;
+    if (singleSel == null) {
+      // Reload pages from offset 0 in the new order.
+      offsetRef.current = 0;
+      loadingRef.current = false;
+      hasMoreRef.current = true;
+      resetTokenRef.current += 1;
+      appendedPageRef.current = false;
+      setHasMore(true);
+      const t = setTimeout(loadTracks, 0);
+      return () => clearTimeout(t);
+    }
+    // Keep the single selection: cancel any in-flight page load, then hand the
+    // row to the follow effect, which fetches the full set in the new order
+    // (sortByRef is already updated) and scrolls once it has committed.
     resetTokenRef.current += 1;
-    appendedPageRef.current = false;
-    setHasMore(true);
-    const t = setTimeout(() => {
-      loadTracks();
-      if (singleSel != null) {
-        sortFocusNonceRef.current += 1;
-        setSortFocus({ id: singleSel, nonce: sortFocusNonceRef.current });
-      }
-    }, 0);
-    return () => clearTimeout(t);
+    loadingRef.current = false;
+    sortFollowNonceRef.current += 1;
+    setSortFollow({ id: singleSel, nonce: sortFollowNonceRef.current });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortBy.key, sortBy.asc, selectedIds]);
 
-  // Keep the previously selected single track selected and scroll it into view
-  // after a column sort (selection survives; the list repositions to it).
-  const [sortFocus, setSortFocus] = useState(null);
-  const sortFocusNonceRef = useRef(0);
-  const sortFocusHandledRef = useRef(null);
   useEffect(() => {
-    if (!sortFocus || sortFocus.nonce === sortFocusHandledRef.current) return;
-    const { id } = sortFocus;
+    if (!sortFollow || sortFollow.nonce === sortFollowHandledRef.current) return;
+    const { id, nonce } = sortFollow;
     const scrollToRow = (idx) => {
-      const container = isPlaylistView ? dndScrollRef.current : listRef.current?.element;
-      if (!container) return;
+      const el = isPlaylistView ? dndScrollRef.current : listRef.current?.element;
+      if (!el) return false;
       const top = idx * ROW_HEIGHT;
-      const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
-      const target = Math.min(maxTop, Math.max(0, top - (container.clientHeight - ROW_HEIGHT) / 2));
-      container.scrollTop = target;
+      const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+      const target = Math.min(maxTop, Math.max(0, top - (el.clientHeight - ROW_HEIGHT) / 2));
+      el.scrollTop = target;
+      return true;
     };
-    // Wait until the post-sort reload has actually committed: scanning while
-    // loadingRef is true finds the row in the STALE pre-sort array, scrolls to
-    // the old position, marks itself handled and never re-runs when the sorted
-    // page arrives (the selected row then sits off-screen — "selection lost").
-    if (loadingRef.current) return; // rows not settled yet — retried on commit
-    const idx = sortedTracksRef.current.findIndex((t) => t.id === id);
-    if (idx !== -1) {
-      sortFocusHandledRef.current = sortFocus.nonce;
-      scrollToRow(idx);
+    // Our own full-set commit already landed → find the row and jump.
+    if (sortFollowCommittedRef.current === nonce) {
+      sortFollowHandledRef.current = nonce;
+      const idx = sortedTracksRef.current.findIndex((t) => t.id === id);
+      if (idx !== -1) scrollToRow(idx);
       return;
     }
-    if (loadingRef.current) return; // page reload in flight — retried on change
+    if (loadingRef.current) return; // page load mid-flight — retried on commit
+    const playlistAtStart = selectedPlaylist;
+    const searchAtStart = search;
     let alive = true;
     (async () => {
-      const token = resetTokenRef.current;
+      const token = resetTokenRef.current; // reload effect already bumped it
       const full = await fetchFullViewTracks();
       if (!alive || token !== resetTokenRef.current) return;
-      const fullIdx = full.findIndex((t) => t.id === id);
-      if (fullIdx === -1) {
-        sortFocusHandledRef.current = sortFocus.nonce; // gone — give up
+      // The view may have changed while fetching (search/playlist switch).
+      if (selectedPlaylistRef.current !== playlistAtStart || searchRef.current !== searchAtStart) {
+        sortFollowHandledRef.current = nonce;
         return;
       }
-      resetTokenRef.current += 1;
-      loadingRef.current = false;
+      if (!full.some((t) => t.id === id)) {
+        sortFollowHandledRef.current = nonce; // gone from the view — give up
+        return;
+      }
       offsetRef.current = full.length;
       hasMoreRef.current = false;
       setHasMore(false);
+      sortFollowCommittedRef.current = nonce;
+      const commitToken = resetTokenRef.current;
       setTimeout(() => {
-        if (alive) setTracks(full);
-        // re-run below (tracks identity change) finds the row and scrolls
+        if (alive && commitToken === resetTokenRef.current) setTracks(full);
+        // re-run (tracks identity change) then scrolls to the selected row
       }, 60);
     })();
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortFocus, tracks, isPlaylistView]);
+  }, [sortFollow, tracks, isPlaylistView]);
 
   useEffect(() => {
     // Snapshot IDs currently visible so loadTracks can diff truly-new rows
