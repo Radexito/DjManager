@@ -3,8 +3,14 @@ import { spawn } from 'child_process';
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const SAMPLE_RATE = 22050; // Hz — sufficient for waveform resolution
-const COLS_PER_SEC = 150; // native Rekordbox scroll waveform resolution (confirmed)
+const COLS_PER_SEC = 150; // native Rekordbox scroll waveform resolution (confirmed) — USB export MUST stay at this rate (Pioneer CDJ protocol constraint)
 const SAMPLES_PER_COL = Math.round(SAMPLE_RATE / COLS_PER_SEC); // 147 samples/col
+
+// High-resolution detail buffer for the Beat Grid Editor (#262). Only ever
+// used in-app (editor zoom rendering) — never written to the rekordbox
+// export, which is hard-locked to COLS_PER_SEC above.
+const COLS_PER_SEC_HIRES = 600; // 4x the export resolution, ~1.67 ms/col
+const SAMPLES_PER_COL_HIRES = Math.round(SAMPLE_RATE / COLS_PER_SEC_HIRES); // 37 samples/col
 
 // Fixed-size preview waveform column counts (per Pioneer/rekordcrate spec)
 export const PWAV_COLS = 400; // PWAV: overview waveform (touch strip)
@@ -210,6 +216,49 @@ function computeColumns(samples) {
   return { pwv3, pwv5, pwav, pwv2, pwv4, pwv6, pwv7, numCols };
 }
 
+/**
+ * Compute a pwv7-style scroll waveform (3 bytes/col: treble, mid, bass, each
+ * 0-255) at an arbitrary columns-per-second rate. Shares the EMA band-split
+ * logic used inside computeColumns() for the 150 cols/sec pwv7 buffer, but is
+ * factored out so it can also drive the 600 cols/sec hires detail buffer
+ * (#262) without duplicating the whole computeColumns() pass (pwv3/pwv5/etc.
+ * are export-only and always stay at COLS_PER_SEC).
+ */
+function computePwv7AtRate(samples, samplesPerCol) {
+  const numCols = Math.floor(samples.length / samplesPerCol);
+  const pwv7 = Buffer.alloc(numCols * 3);
+
+  let emaBass = 0;
+  let emaMid = 0;
+
+  for (let col = 0; col < numCols; col++) {
+    const start = col * samplesPerCol;
+    let bassSum = 0;
+    let midSum = 0;
+    let trebleSum = 0;
+
+    for (let i = start; i < start + samplesPerCol; i++) {
+      const s = samples[i] || 0;
+      const abs = Math.abs(s);
+      emaBass = ALPHA_BASS * abs + (1 - ALPHA_BASS) * emaBass;
+      emaMid = ALPHA_MID * abs + (1 - ALPHA_MID) * emaMid;
+      bassSum += emaBass;
+      midSum += Math.max(0, emaMid - emaBass);
+      trebleSum += Math.max(0, abs - emaMid);
+    }
+
+    const bassRms = bassSum / samplesPerCol;
+    const midRms = midSum / samplesPerCol;
+    const trebleRms = trebleSum / samplesPerCol;
+
+    pwv7[col * 3 + 0] = Math.min(255, Math.round(trebleRms * 510));
+    pwv7[col * 3 + 1] = Math.min(255, Math.round(midRms * 510));
+    pwv7[col * 3 + 2] = Math.min(255, Math.round(bassRms * 510));
+  }
+
+  return { pwv7, numCols };
+}
+
 // ─── ffmpeg PCM extraction ────────────────────────────────────────────────────
 
 function extractPcm(filePath, ffmpegBin = 'ffmpeg') {
@@ -271,15 +320,26 @@ export async function generateWaveform(filePath, ffmpegBin = 'ffmpeg') {
  * Generate waveform data optimised for the Beat Grid Editor UI.
  *
  * Returns:
- *   detail   — pwv7 scroll waveform (3 bytes/col: treble, mid, bass each 0-255)
- *              at COLS_PER_SEC columns per second (variable length)
- *   overview — 4 bytes/col × PWV4_COLS cols [rms, bass, mid, treble] each 0-255
- *              for the full-track navigation strip
- *   numCols  — number of detail columns
- *   colsPerSec — COLS_PER_SEC (150)
+ *   detail       — pwv7 scroll waveform (3 bytes/col: treble, mid, bass each 0-255)
+ *                  at COLS_PER_SEC (150) columns per second (variable length) —
+ *                  kept for backwards compat / fast overview reads
+ *   detailHires  — pwv7-style scroll waveform at COLS_PER_SEC_HIRES (600)
+ *                  columns per second, for sharp rendering at high zoom (#262)
+ *   overview     — 4 bytes/col × PWV4_COLS cols [rms, bass, mid, treble] each 0-255
+ *                  for the full-track navigation strip
+ *   numCols      — number of `detail` columns
+ *   numColsHires — number of `detailHires` columns
+ *   colsPerSec      — COLS_PER_SEC (150)
+ *   colsPerSecHires — COLS_PER_SEC_HIRES (600)
  */
 export async function generateEditorWaveform(filePath, ffmpegBin = 'ffmpeg') {
-  const { pwv7, pwv4, numCols } = await generateWaveform(filePath, ffmpegBin);
+  const samples = await extractPcm(filePath, ffmpegBin);
+  const { pwv7, pwv4, numCols } = computeColumns(samples);
+  const { pwv7: detailHires, numCols: numColsHires } = computePwv7AtRate(
+    samples,
+    SAMPLES_PER_COL_HIRES
+  );
+
   // Build 4-byte/col overview [rms, bass, mid, treble] from pwv4
   // pwv4 layout: [peak, complement, rms, bass, mid, treble] per col (6 bytes/col)
   const overview = Buffer.alloc(PWV4_COLS * 4);
@@ -289,7 +349,15 @@ export async function generateEditorWaveform(filePath, ffmpegBin = 'ffmpeg') {
     overview[i * 4 + 2] = pwv4[i * 6 + 4]; // mid
     overview[i * 4 + 3] = pwv4[i * 6 + 5]; // treble
   }
-  return { detail: pwv7, overview, numCols, colsPerSec: COLS_PER_SEC };
+  return {
+    detail: pwv7,
+    detailHires,
+    overview,
+    numCols,
+    numColsHires,
+    colsPerSec: COLS_PER_SEC,
+    colsPerSecHires: COLS_PER_SEC_HIRES,
+  };
 }
 
 /**

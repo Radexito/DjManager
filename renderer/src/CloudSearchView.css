@@ -166,9 +166,6 @@
 
 .cloud-search-row {
   display: grid;
-  grid-template-columns:
-    28px minmax(160px, 2fr) minmax(100px, 1fr) minmax(100px, 1fr)
-    70px 110px 20px;
   align-items: center;
   gap: 10px;
   padding: 7px 10px;
@@ -203,16 +200,7 @@
 }
 
 .cloud-search-title,
-.cloud-search-row span:nth-child(3),
-.cloud-search-row span:nth-child(4) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cloud-search-source-badge {
-  color: var(--text-secondary, #999);
-  font-size: 11px;
+.cloud-search-cell--ellipsis {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

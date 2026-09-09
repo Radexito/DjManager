@@ -3,6 +3,11 @@
 Reverse-engineered specification for writing Pioneer CDJ-compatible USB drives.
 Confirmed working with Rekordbox 6 / CDJ-3000 / CDJ-NXS2 / CDJ-900.
 
+Based on reverse-engineering of real Rekordbox-generated files, cross-referenced
+against the open-source projects `rekordcrate` (Holzhaus), `pyrekordbox`
+(dylanljones), `crate-digger` (brunchboy/Deep Symmetry), `rekordbox-explorer`
+(CarlosFranzetti), and `dj-library-converter` (sowens81).
+
 ---
 
 ## Directory Structure
@@ -20,6 +25,13 @@ USB_ROOT/
 │   └── DEVSETTING.DAT
 └── export.pdb                   ← DeviceSQL binary database (track index)
 ```
+
+Audio files themselves aren't shown in the tree above since their location is
+convention-dependent: native Rekordbox exports place them under
+`Contents/<artist>/<album>/track.mp3`, while third-party tools (including this
+application) place them under `/music/` or any other user-chosen path. Only the
+USB-relative path recorded in `export.pdb`/ANLZ files matters to the CDJ — the
+directory layout of the audio itself is not otherwise constrained.
 
 ### Path Hash (`getFolderName`)
 
@@ -674,6 +686,24 @@ All use the same format:
 | 8      | …    | Settings fields (format differs per file) |
 
 CRC-16/XMODEM: poly `0x1021`, init `0x0000`, no reflection.
+
+---
+
+## Waveform Resolution Summary
+
+| Section | Type     | Cols/sec | Columns | Bytes/col | Notes                         |
+| ------- | -------- | -------- | ------- | --------- | ----------------------------- |
+| PWAV    | Overview | varies   | 400     | 1         | Fixed, spans full track       |
+| PWV2    | Overview | varies   | 100     | 1         | Fixed, spans full track       |
+| PWV4    | Overview | varies   | 1200    | 6         | Fixed, spans full track       |
+| PWV6    | Overview | varies   | 1200    | 3         | Fixed, spans full track (2EX) |
+| PWV3    | Scroll   | 100      | dynamic | 1         | 10 ms/col, mono               |
+| PWV5    | Scroll   | 100      | dynamic | 2         | 10 ms/col, RGB colour         |
+| PWV7    | Scroll   | 100      | dynamic | 3         | 10 ms/col, RGB colour (2EX)   |
+
+Native Rekordbox generates scroll waveforms at 150 cols/sec (≈6.67 ms/col), but
+CDJ hardware accepts non-native resolutions. This application generates at
+100 cols/sec (10 ms/col).
 
 ---
 

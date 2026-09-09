@@ -70,6 +70,7 @@ export function initDB() {
     'ALTER TABLE tracks ADD COLUMN beatgrid_offset INTEGER DEFAULT 0',
     'ALTER TABLE tracks ADD COLUMN waveform_overview BLOB',
     'ALTER TABLE tracks ADD COLUMN is_linked INTEGER DEFAULT 0',
+    'ALTER TABLE tracks ADD COLUMN waveform_detail_hires BLOB',
   ]) {
     try {
       db.prepare(col).run();
@@ -194,4 +195,58 @@ export function initDB() {
   try {
     db.prepare('ALTER TABLE cue_points ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1').run();
   } catch {}
+
+  // ── Multiple libraries (#390) ────────────────────────────────────────────
+  // All libraries live in this one database — a "library" is just a row plus
+  // a tag on tracks, so everything is queryable together at once (unified
+  // view, not a switchable profile). Playlists intentionally have no
+  // library_id: a playlist is just a list of track references and may mix
+  // tracks from different libraries.
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS libraries (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      name           TEXT NOT NULL,
+      root_path      TEXT,
+      storage_format TEXT NOT NULL DEFAULT 'hashed',
+      created_at     INTEGER NOT NULL
+    )
+  `
+  ).run();
+
+  try {
+    db.prepare('ALTER TABLE tracks ADD COLUMN library_id INTEGER REFERENCES libraries(id)').run();
+  } catch {
+    /* column already exists */
+  }
+
+  // First run after upgrading from a single-library install: seed one
+  // "Default" library from the old global library_path/storage_format
+  // settings (if set) and backfill every existing track onto it, so nothing
+  // becomes orphaned. Safe to run every startup — only acts once.
+  const libraryCount = db.prepare('SELECT COUNT(*) AS n FROM libraries').get().n;
+  if (libraryCount === 0) {
+    const getOldSetting = (key) =>
+      db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
+    const rootPath = getOldSetting('library_path');
+    const storageFormat = getOldSetting('storage_format') === 'readable' ? 'readable' : 'hashed';
+    const info = db
+      .prepare(
+        'INSERT INTO libraries (name, root_path, storage_format, created_at) VALUES (?, ?, ?, ?)'
+      )
+      .run('Default', rootPath, storageFormat, Date.now());
+    db.prepare('UPDATE tracks SET library_id = ? WHERE library_id IS NULL').run(
+      info.lastInsertRowid
+    );
+    db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('current_library_id', ?)`).run(
+      String(info.lastInsertRowid)
+    );
+  }
+
+  db.prepare(
+    `
+    CREATE INDEX IF NOT EXISTS idx_tracks_library_id
+    ON tracks(library_id)
+  `
+  ).run();
 }

@@ -2,6 +2,46 @@
 import path from 'path';
 import db from './database.js';
 
+// Whitelist of columns that may be updated via updateTrack().
+// Prevents SQL injection via dynamic column-name interpolation if arbitrary
+// keys were ever passed through the update-track IPC channel.
+const ALLOWED_TRACK_COLUMNS = new Set([
+  'title',
+  'artist',
+  'album',
+  'year',
+  'label',
+  'genres',
+  'bpm',
+  'bpm_override',
+  'key_raw',
+  'key_camelot',
+  'loudness',
+  'replay_gain',
+  'intro_secs',
+  'outro_secs',
+  'beatgrid',
+  'beatgrid_offset',
+  'rating',
+  'comments',
+  'user_tags',
+  'has_artwork',
+  'artwork_path',
+  'normalized_file_path',
+  'source_loudness',
+  'file_path',
+  'file_hash',
+  'format',
+  'bitrate',
+  'duration',
+  'source_url',
+  'source_platform',
+  'source_quality',
+  'source_link',
+  'library_id',
+  'is_linked',
+]);
+
 // ─── Camelot helpers (mirrors renderer/src/searchParser.js) ─────────────────
 
 function parseCamelot(key) {
@@ -153,6 +193,17 @@ function buildFiltersSQL(filters = []) {
   return { clauses, params };
 }
 
+/** IN-clause for an optional library_id filter — omitted entirely (all libraries) when unset. */
+function buildLibraryIdsSQL(libraryIds) {
+  if (!libraryIds || !libraryIds.length) return { clause: null, params: {} };
+  const params = {};
+  const placeholders = libraryIds.map((id, i) => {
+    params[`_lib${i}`] = id;
+    return `@_lib${i}`;
+  });
+  return { clause: `library_id IN (${placeholders.join(',')})`, params };
+}
+
 export function addTrack(track) {
   console.log('Adding track:', track);
   const stmt = db.prepare(`
@@ -161,14 +212,14 @@ export function addTrack(track) {
       file_path, file_hash, format, bitrate,
       year, label, genres, bpm,
       source_url, source_platform, source_quality, source_link,
-      user_tags, has_artwork, artwork_path, is_linked,
+      user_tags, has_artwork, artwork_path, is_linked, library_id,
       created_at
     ) VALUES (
       @title, @artist, @album, @duration,
       @file_path, @file_hash, @format, @bitrate,
       @year, @label, @genres, @bpm,
       @source_url, @source_platform, @source_quality, @source_link,
-      @user_tags, @has_artwork, @artwork_path, @is_linked,
+      @user_tags, @has_artwork, @artwork_path, @is_linked, @library_id,
       @created_at
     )
   `);
@@ -194,6 +245,7 @@ export function addTrack(track) {
     has_artwork: track.has_artwork ?? 0,
     artwork_path: track.artwork_path ?? null,
     is_linked: track.is_linked ?? 0,
+    library_id: track.library_id ?? null,
     created_at: Date.now(),
   });
 
@@ -202,28 +254,50 @@ export function addTrack(track) {
 
 export function updateTrack(id, data) {
   console.log(`Updating track ${id} with data:`, data);
-  const fields = Object.keys(data);
+  const fields = Object.keys(data).filter((f) => {
+    if (!ALLOWED_TRACK_COLUMNS.has(f)) {
+      console.warn(`[updateTrack] Ignoring unknown column: ${f}`);
+      return false;
+    }
+    return true;
+  });
   if (!fields.length) return;
 
   const set = fields.map((f) => `${f} = @${f}`).join(', ');
+  const safeData = Object.fromEntries(fields.map((f) => [f, data[f]]));
   db.prepare(
     `
     UPDATE tracks
     SET ${set}, analyzed = 1
     WHERE id = @id
   `
-  ).run({ id, ...data });
+  ).run({ id, ...safeData });
 }
 
-export function getTracks({ limit = 50, offset = 0, search = '', filters = [], playlistId } = {}) {
+export function getTracks({
+  limit = 50,
+  offset = 0,
+  search = '',
+  filters = [],
+  playlistId,
+  libraryIds,
+} = {}) {
   const { clauses: filterClauses, params: filterParams } = buildFiltersSQL(filters);
 
   // Plain-text search (title / artist / album)
   const textClause = search ? '(title LIKE @_q OR artist LIKE @_q OR album LIKE @_q)' : null;
   const textParams = search ? { _q: `%${search}%` } : {};
 
-  const allClauses = [...filterClauses, ...(textClause ? [textClause] : [])];
-  const allParams = { ...filterParams, ...textParams, limit, offset };
+  // Unified multi-library view: omit entirely to show all libraries at once,
+  // or restrict to a chosen set (library filter in the UI).
+  const { clause: libClause, params: libParams } = buildLibraryIdsSQL(libraryIds);
+
+  const allClauses = [
+    ...filterClauses,
+    ...(textClause ? [textClause] : []),
+    ...(libClause ? [libClause] : []),
+  ];
+  const allParams = { ...filterParams, ...textParams, ...libParams, limit, offset };
 
   if (playlistId) {
     const extra = allClauses.length ? `AND ${allClauses.join(' AND ')}` : '';
@@ -259,14 +333,19 @@ export function getTracks({ limit = 50, offset = 0, search = '', filters = [], p
     .all(allParams);
 }
 
-export function getTrackIds({ search = '', filters = [], playlistId } = {}) {
+export function getTrackIds({ search = '', filters = [], playlistId, libraryIds } = {}) {
   const { clauses: filterClauses, params: filterParams } = buildFiltersSQL(filters);
 
   const textClause = search ? '(title LIKE @_q OR artist LIKE @_q OR album LIKE @_q)' : null;
   const textParams = search ? { _q: `%${search}%` } : {};
+  const { clause: libClause, params: libParams } = buildLibraryIdsSQL(libraryIds);
 
-  const allClauses = [...filterClauses, ...(textClause ? [textClause] : [])];
-  const allParams = { ...filterParams, ...textParams };
+  const allClauses = [
+    ...filterClauses,
+    ...(textClause ? [textClause] : []),
+    ...(libClause ? [libClause] : []),
+  ];
+  const allParams = { ...filterParams, ...textParams, ...libParams };
 
   if (playlistId) {
     const extra = allClauses.length ? `AND ${allClauses.join(' AND ')}` : '';
@@ -331,6 +410,19 @@ export function removeTrack(id) {
   db.prepare('DELETE FROM tracks WHERE id = ?').run(id);
 }
 
+/** Deletes many track rows in a single transaction (bulk remove — DB write only, no filesystem I/O). */
+export function removeTracks(trackIds) {
+  const del = db.prepare('DELETE FROM tracks WHERE id = ?');
+  db.transaction(() => {
+    for (const id of trackIds) del.run(id);
+  })();
+}
+
+/** Counts tracks still referencing this file_path — used to avoid deleting a file that another track row still points at. */
+export function getTrackCountByFilePath(filePath) {
+  return db.prepare('SELECT COUNT(*) AS n FROM tracks WHERE file_path = ?').get(filePath).n;
+}
+
 export function normalizeLibrary(targetLufs) {
   const info = db
     .prepare(
@@ -386,6 +478,13 @@ export function clearTracks() {
   db.prepare(`VACUUM`).run();
 }
 
+/** Clears only one library's tracks — other libraries are untouched. */
+export function clearTracksForLibrary(libraryId) {
+  console.log(`Clearing all tracks for library ${libraryId}`);
+  db.prepare(`DELETE FROM tracks WHERE library_id = ?`).run(libraryId);
+  db.prepare(`VACUUM`).run();
+}
+
 /**
  * Given an array of { url, id } entry objects, returns a Set of URLs whose
  * video ID already exists in the library.
@@ -420,6 +519,21 @@ export function updateTrackWaveform(trackId, buf) {
 export function getTrackWaveform(trackId) {
   const row = db.prepare('SELECT waveform_overview FROM tracks WHERE id = ?').get(trackId);
   return row?.waveform_overview ?? null;
+}
+
+/**
+ * High-resolution (600 cols/sec) detail waveform for the Beat Grid Editor
+ * zoom view (#262). Separate from `detail` (150 cols/sec), which stays at
+ * the Pioneer CDJ export resolution and is generated on demand rather than
+ * stored.
+ */
+export function updateTrackDetailHires(trackId, buf) {
+  db.prepare('UPDATE tracks SET waveform_detail_hires = ? WHERE id = ?').run(buf, trackId);
+}
+
+export function getTrackDetailHires(trackId) {
+  const row = db.prepare('SELECT waveform_detail_hires FROM tracks WHERE id = ?').get(trackId);
+  return row?.waveform_detail_hires ?? null;
 }
 
 /**

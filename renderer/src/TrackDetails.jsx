@@ -24,6 +24,14 @@ function formatDuration(secs) {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+function formatCoverArtDownloadError(error) {
+  const message = error?.trim?.() || '';
+  if (!message || message === 'unknown error' || message === 'fetch failed') {
+    return 'Failed to download cover art. The selected image could not be fetched.';
+  }
+  return `Failed to download cover art: ${message}`;
+}
+
 function trackToForm(track) {
   return {
     title: track.title ?? '',
@@ -60,6 +68,9 @@ export default function TrackDetails({
   onNext,
   hasPrev,
   hasNext,
+  pinned,
+  onTogglePin,
+  onDirtyChange,
 }) {
   const isBulk = Array.isArray(tracks) && tracks.length > 1;
   const { mediaPort } = usePlayer() ?? {};
@@ -69,6 +80,10 @@ export default function TrackDetails({
   const [error, setError] = useState(null);
   const [showAutoTagger, setShowAutoTagger] = useState(false);
   const [artworkPath, setArtworkPath] = useState(() => track?.artwork_path ?? null);
+  const [libraries, setLibraries] = useState([]);
+  const [moveTargetId, setMoveTargetId] = useState('');
+  const [locationBusy, setLocationBusy] = useState(false);
+  const [locationError, setLocationError] = useState(null);
 
   // Reset form when track/tracks changes
   useEffect(() => {
@@ -76,8 +91,67 @@ export default function TrackDetails({
     setArtworkPath(track?.artwork_path ?? null);
     setDirty(false);
     setError(null);
+    setMoveTargetId('');
+    setLocationError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isBulk ? tracks.map((t) => t.id).join(',') : track?.id]);
+
+  useEffect(() => {
+    if (!isBulk) window.api.listLibraries().then(setLibraries);
+  }, [isBulk]);
+
+  const handleCopyPath = useCallback(() => {
+    if (track?.file_path) navigator.clipboard.writeText(track.file_path).catch(() => {});
+  }, [track]);
+
+  const handleBrowseRelink = useCallback(async () => {
+    setLocationBusy(true);
+    setLocationError(null);
+    try {
+      const res = await window.api.remapTrack(track.id, track.file_path);
+      if (res.ok) onSave({ ...track, file_path: res.newPath });
+    } catch (e) {
+      setLocationError(e.message ?? 'Relink failed');
+    } finally {
+      setLocationBusy(false);
+    }
+  }, [track, onSave]);
+
+  const handleMoveToLibrary = useCallback(
+    async (targetLibraryId) => {
+      if (!targetLibraryId) return;
+      setLocationBusy(true);
+      setLocationError(null);
+      try {
+        const res = await window.api.moveTrackToLibrary(track.id, Number(targetLibraryId));
+        if (res.ok) {
+          onSave({
+            ...track,
+            library_id: Number(targetLibraryId),
+            is_linked: 0,
+            ...(res.newPath ? { file_path: res.newPath } : {}),
+          });
+          setMoveTargetId('');
+        }
+      } catch (e) {
+        setLocationError(e.message ?? 'Move failed');
+      } finally {
+        setLocationBusy(false);
+      }
+    },
+    [track, onSave]
+  );
+
+  const currentLibraryName = track?.is_linked
+    ? null
+    : (libraries.find((l) => l.id === track?.library_id)?.name ?? (track?.library_id ? '—' : null));
+  const otherLibraries = libraries.filter((l) => l.id !== track?.library_id);
+
+  // Let the parent know whenever unsaved-changes state flips, so it can decide
+  // whether to auto-follow row selection or prompt before switching tracks.
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   const handleChange = useCallback((key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -161,6 +235,19 @@ export default function TrackDetails({
         <span className="track-details__title">
           {isBulk ? `Edit ${tracks.length} Tracks` : 'Track Details'}
         </span>
+        {!isBulk && onTogglePin && (
+          <button
+            className={`track-details__pin${pinned ? ' track-details__pin--active' : ''}`}
+            onClick={onTogglePin}
+            title={
+              pinned
+                ? 'Unpin — resume following the row selection'
+                : 'Pin — keep this track open regardless of selection'
+            }
+          >
+            {pinned ? '📌 Pinned' : '📌'}
+          </button>
+        )}
         <button className="track-details__close" onClick={onCancel} title="Close (Esc)">
           ✕
         </button>
@@ -266,6 +353,95 @@ export default function TrackDetails({
         </div>
       )}
 
+      {!isBulk && (
+        <div className="track-details__info">
+          <div className="track-details__info-header">
+            <span className="track-details__info-title">Location</span>
+          </div>
+          <div className="track-details__location-row">
+            <input
+              className="track-details__input track-details__path-input"
+              type="text"
+              readOnly
+              value={track.file_path ?? ''}
+              title={track.file_path ?? ''}
+              onFocus={(e) => e.target.select()}
+            />
+            <button
+              className="track-details__btn track-details__btn--small"
+              onClick={handleCopyPath}
+              title="Copy path"
+            >
+              Copy
+            </button>
+            {track.is_linked && (
+              <button
+                className="track-details__btn track-details__btn--small"
+                onClick={handleBrowseRelink}
+                disabled={locationBusy}
+                title="Point this track at a different file"
+              >
+                Browse…
+              </button>
+            )}
+          </div>
+          <div className="track-details__location-row">
+            <span className="track-details__label">Library</span>
+            {!track.is_linked && <span>{currentLibraryName ?? '—'}</span>}
+            {track.is_linked ? (
+              libraries.length > 0 && (
+                <>
+                  <select
+                    className="track-details__select"
+                    value={moveTargetId || String(track.library_id ?? '')}
+                    onChange={(e) => setMoveTargetId(e.target.value)}
+                    disabled={locationBusy}
+                  >
+                    {libraries.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="track-details__btn track-details__btn--small"
+                    onClick={() => handleMoveToLibrary(moveTargetId || track.library_id)}
+                    disabled={locationBusy}
+                    title="Copy this linked file into the selected library, making it a managed track"
+                  >
+                    Import into library
+                  </button>
+                </>
+              )
+            ) : otherLibraries.length > 0 ? (
+              <>
+                <select
+                  className="track-details__select"
+                  value={moveTargetId}
+                  onChange={(e) => setMoveTargetId(e.target.value)}
+                  disabled={locationBusy}
+                >
+                  <option value="">Move to…</option>
+                  {otherLibraries.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="track-details__btn track-details__btn--small"
+                  onClick={() => handleMoveToLibrary(moveTargetId)}
+                  disabled={!moveTargetId || locationBusy}
+                >
+                  Move
+                </button>
+              </>
+            ) : null}
+          </div>
+          {locationError && <div className="track-details__error">{locationError}</div>}
+        </div>
+      )}
+
       {error && <div className="track-details__error">{error}</div>}
 
       <div className="track-details__actions">
@@ -310,30 +486,65 @@ export default function TrackDetails({
           track={track}
           onClose={() => setShowAutoTagger(false)}
           onApply={async (update) => {
-            // Merge result into form fields (convert genres array → comma string)
-            const merged = { ...form };
-            if (update.title != null) merged.title = update.title;
-            if (update.artist != null) merged.artist = update.artist;
-            if (update.album != null) merged.album = update.album;
-            if (update.label != null) merged.label = update.label;
-            if (update.year != null) merged.year = String(update.year);
-            if (update.genres != null) {
-              try {
-                merged.genres = JSON.parse(update.genres).join(', ');
-              } catch {
-                merged.genres = update.genres;
-              }
-            }
-            setForm(merged);
-            setDirty(true);
             setShowAutoTagger(false);
-            // Download and save cover art if selected
-            if (update.coverUrl && track?.id) {
-              const res = await window.api.fetchArtworkUrl({
-                trackId: track.id,
-                url: update.coverUrl,
-              });
-              if (res.ok) setArtworkPath(res.artwork_path);
+            setSaving(true);
+            setError(null);
+            try {
+              // Auto-tag applies straight to the DB - no separate Save step
+              // needed. (Text fields are now consistent with cover art.)
+              const data = {};
+              if (update.title != null) data.title = update.title;
+              if (update.artist != null) data.artist = update.artist;
+              if (update.album != null) data.album = update.album;
+              if (update.label != null) data.label = update.label;
+              if (update.year != null) data.year = update.year;
+              if (update.genres != null) data.genres = update.genres;
+
+              // Merge result into form fields (convert genres array → comma string)
+              const merged = { ...form };
+              if (update.title != null) merged.title = update.title;
+              if (update.artist != null) merged.artist = update.artist;
+              if (update.album != null) merged.album = update.album;
+              if (update.label != null) merged.label = update.label;
+              if (update.year != null) merged.year = String(update.year);
+              if (update.genres != null) {
+                try {
+                  merged.genres = JSON.parse(update.genres).join(', ');
+                } catch {
+                  merged.genres = update.genres;
+                }
+              }
+              setForm(merged);
+
+              if (Object.keys(data).length > 0) {
+                await window.api.updateTrack(track.id, data);
+                // Push the saved values into MusicLibrary's track state.
+                onSave({ ...track, ...data });
+              }
+
+              // Download and save cover art if selected
+              if (update.coverUrl && track?.id) {
+                try {
+                  const res = await window.api.fetchArtworkUrl({
+                    trackId: track.id,
+                    url: update.coverUrl,
+                  });
+                  if (res.ok) {
+                    setArtworkPath(res.artwork_path);
+                    // Push the new artwork into MusicLibrary's track state so
+                    // the list thumbnail refreshes without waiting for reload.
+                    onSave({ ...track, ...data, artwork_path: res.artwork_path, has_artwork: 1 });
+                  } else {
+                    setError(formatCoverArtDownloadError(res.error));
+                  }
+                } catch (err) {
+                  setError(formatCoverArtDownloadError(err?.message));
+                }
+              }
+            } catch (e) {
+              setError(e.message ?? 'Auto-tag apply failed');
+            } finally {
+              setSaving(false);
             }
           }}
         />
