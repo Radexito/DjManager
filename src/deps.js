@@ -798,12 +798,12 @@ export async function ensureDeps(onProgress) {
       // Required steps are all done now - report them as completed so the
       // overlay keeps them checked while the optional step runs.
       stepsCompleted = totalSteps;
-      currentStep = { id: 'tidal', label: 'tidal-dl-ng (optional)' };
+      currentStep = { id: 'tidal', label: 'tidal-dl-ng' };
       onProgress?.({
-        msg: '[optional] Installing tidal-dl-ng…',
+        msg: 'Installing tidal-dl-ng…',
         pct: 0,
         stepId: 'tidal',
-        stepLabel: 'tidal-dl-ng (optional)',
+        stepLabel: 'tidal-dl-ng',
         optional: true,
         stepIndex,
         stepTotal: totalSteps,
@@ -812,10 +812,10 @@ export async function ensureDeps(onProgress) {
       try {
         await installTidalDlNgDep((msg) =>
           onProgress?.({
-            msg: `[optional] ${msg}`,
+            msg,
             pct: -1,
             stepId: 'tidal',
-            stepLabel: 'tidal-dl-ng (optional)',
+            stepLabel: 'tidal-dl-ng',
             optional: true,
             stepIndex,
             stepTotal: totalSteps,
@@ -823,10 +823,10 @@ export async function ensureDeps(onProgress) {
           })
         );
         onProgress?.({
-          msg: '[optional] tidal-dl-ng installed.',
+          msg: 'tidal-dl-ng installed.',
           pct: 100,
           stepId: 'tidal',
-          stepLabel: 'tidal-dl-ng (optional)',
+          stepLabel: 'tidal-dl-ng',
           optional: true,
           stepIndex,
           stepTotal: totalSteps,
@@ -835,10 +835,10 @@ export async function ensureDeps(onProgress) {
       } catch (err) {
         console.warn('[deps] tidal-dl-ng install failed (non-fatal):', err.message);
         onProgress?.({
-          msg: '[optional] tidal-dl-ng install failed — Python 3.12+ may not be available.',
+          msg: 'tidal-dl-ng install failed — Python 3.12+ may not be available.',
           pct: -1,
           stepId: 'tidal',
-          stepLabel: 'tidal-dl-ng (optional)',
+          stepLabel: 'tidal-dl-ng',
           optional: true,
           stepIndex,
           stepTotal: totalSteps,

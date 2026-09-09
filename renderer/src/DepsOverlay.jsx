@@ -5,7 +5,7 @@ const KNOWN_STEPS = [
   { id: 'ffmpeg', label: 'FFmpeg' },
   { id: 'analyzer', label: 'mixxx-analyzer' },
   { id: 'ytdlp', label: 'yt-dlp' },
-  { id: 'tidal', label: 'tidal-dl-ng (optional)' },
+  { id: 'tidal', label: 'tidal-dl-ng' },
 ];
 
 function fmt(bytes) {
@@ -57,7 +57,6 @@ export function DepsOverlay({ progress, log = [], done = false, onRetry, onClose
 
   const {
     stepId,
-    stepTotal,
     stepPct,
     bytesDownloaded,
     bytesTotal,
@@ -66,21 +65,17 @@ export function DepsOverlay({ progress, log = [], done = false, onRetry, onClose
     pct,
     error,
     stepsCompleted,
-    optional,
   } = progress ?? {};
 
   const isError = !!error;
   const running = !done && !isError;
 
-  // Step checklist. Required rows are the first stepTotal entries; the
-  // optional tidal row appears when it becomes the active step.
-  const hasSteps = running && stepTotal > 0;
-  const activeSteps = hasSteps
-    ? KNOWN_STEPS.filter((s) => {
-        const idx = KNOWN_STEPS.indexOf(s);
-        return idx < stepTotal || s.id === stepId;
-      })
-    : [];
+  // Step checklist. Show the FULL list (FFmpeg, mixxx-analyzer, yt-dlp,
+  // tidal-dl-ng) up front, installer style: pending rows stay visible until
+  // they run. Required rows flip to done as stepsCompleted advances; the
+  // auto-installed tidal row activates after them.
+  const hasSteps = running;
+  const activeSteps = hasSteps ? KNOWN_STEPS : [];
   const doneCount =
     stepsCompleted ??
     Math.max(
@@ -108,14 +103,13 @@ export function DepsOverlay({ progress, log = [], done = false, onRetry, onClose
             {activeSteps.map((s, i) => {
               const isDoneStep = i < doneCount;
               const isActive = s.id === stepId && running && !isDoneStep;
-              const rowLabel = optional && s.id === 'tidal' ? 'tidal-dl-ng (optional)' : s.label;
               return (
                 <div
                   key={s.id}
                   className={`deps-step${isActive ? ' active' : ''}${isDoneStep ? ' done' : ''}`}
                 >
                   <span className="deps-step-icon">{isDoneStep ? '✓' : isActive ? '↓' : '·'}</span>
-                  <span className="deps-step-label">{rowLabel}</span>
+                  <span className="deps-step-label">{s.label}</span>
                   {isActive && hasBytes && (
                     <span className="deps-step-meta">
                       {fmt(bytesDownloaded)} / {fmt(bytesTotal)}
@@ -138,12 +132,6 @@ export function DepsOverlay({ progress, log = [], done = false, onRetry, onClose
         {indeterminate && (
           <div className="deps-bar-track">
             <div className="deps-bar-fill deps-bar-fill--indet" />
-          </div>
-        )}
-
-        {running && stepTotal > 1 && !optional && (
-          <div className="deps-overall">
-            Step {doneCount + 1} of {stepTotal}
           </div>
         )}
 
