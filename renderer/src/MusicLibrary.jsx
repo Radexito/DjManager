@@ -1002,6 +1002,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
   useEffect(() => {
     const ids = [...selectedIds];
     if (ids.length === 0) return; // nothing selected
+    // Selection only DRIVES an already-open panel; it never opens one.
+    if (!detailsTrack && !detailsBulkTracks) return;
     if (detailsTrack && detailsPinned) return; // pinned single-track panel ignores selection
     if (ids.length === 1) {
       const [id] = ids;
