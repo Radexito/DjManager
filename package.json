@@ -127,7 +127,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.62.0",
-    "@vitest/coverage-v8": "^4.1.6",
+    "@vitest/coverage-v8": "^5.0.0",
     "concurrently": "^10.0.5",
     "electron": "^42.5.0",
     "electron-builder": "^26.15.3",
