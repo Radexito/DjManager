@@ -712,6 +712,16 @@ export async function ensureDeps(onProgress) {
   ].filter(Boolean);
   const totalSteps = STEP_DEFS.length;
 
+  // Steps whose binary is already present. The overlay shows these as
+  // checked from the start ("already installed"), so a row never looks like
+  // it "finished instantly" without downloading anything.
+  const readyStepIds = [
+    ffmpegReady && 'ffmpeg',
+    analyzerReady && 'analyzer',
+    ytDlpReady && 'ytdlp',
+    tidalReady && 'tidal',
+  ].filter(Boolean);
+
   if (totalSteps === 0 && tidalReady) {
     onProgress?.({ msg: 'Dependencies up to date.', pct: 100, stepIndex: 0, stepTotal: 0 });
     return;
@@ -764,6 +774,7 @@ export async function ensureDeps(onProgress) {
       stepIndex,
       stepTotal: totalSteps,
       stepsCompleted,
+      readyStepIds,
       stepPct: pct,
       bytesDownloaded: bytesReceived ?? 0,
       bytesTotal: bytesTotal ?? -1,
@@ -808,6 +819,7 @@ export async function ensureDeps(onProgress) {
         stepIndex,
         stepTotal: totalSteps,
         stepsCompleted,
+        readyStepIds,
       });
       try {
         await installTidalDlNgDep((msg) =>
@@ -820,6 +832,7 @@ export async function ensureDeps(onProgress) {
             stepIndex,
             stepTotal: totalSteps,
             stepsCompleted,
+            readyStepIds,
           })
         );
         onProgress?.({
@@ -831,6 +844,7 @@ export async function ensureDeps(onProgress) {
           stepIndex,
           stepTotal: totalSteps,
           stepsCompleted,
+          readyStepIds,
         });
       } catch (err) {
         console.warn('[deps] tidal-dl-ng install failed (non-fatal):', err.message);
@@ -843,6 +857,7 @@ export async function ensureDeps(onProgress) {
           stepIndex,
           stepTotal: totalSteps,
           stepsCompleted,
+          readyStepIds,
         });
       }
     }

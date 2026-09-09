@@ -65,6 +65,7 @@ export function DepsOverlay({ progress, log = [], done = false, onRetry, onClose
     pct,
     error,
     stepsCompleted,
+    readyStepIds,
   } = progress ?? {};
 
   const isError = !!error;
@@ -101,7 +102,8 @@ export function DepsOverlay({ progress, log = [], done = false, onRetry, onClose
         {hasSteps && (
           <div className="deps-steps">
             {activeSteps.map((s, i) => {
-              const isDoneStep = i < doneCount;
+              const wasReady = Array.isArray(readyStepIds) && readyStepIds.includes(s.id);
+              const isDoneStep = i < doneCount || wasReady;
               const isActive = s.id === stepId && running && !isDoneStep;
               return (
                 <div
