@@ -892,6 +892,13 @@ function MusicLibrary({
   const offsetRef = useRef(0);
   const windowStartRef = useRef(0); // global index of tracks[0] (windowed list)
   const loadingRef = useRef(false);
+  // Scroll lazy-loads may overlap: a NEW request in the same direction
+  // supersedes the in-flight one (its result is DROPPED on arrival), so a fast
+  // scroll never commits a stale window under the viewport — the freshest
+  // fetch wins. loadingRef still mirrors "any page fetch in flight" (the
+  // locate flow waits on it) via inflightRef.
+  const lazyReqRef = useRef({ append: 0, prepend: 0 });
+  const inflightRef = useRef(0);
   const hasMoreRef = useRef(true); // ref copy of hasMore — avoids stale closures in loadTracks
   const resetTokenRef = useRef(0); // incremented on every reset; stale fetches compare and discard
   const [totalRows, setTotalRows] = useState(0); // full result-set size (SQL COUNT) — drives the windowed spacer
@@ -1028,18 +1035,25 @@ function MusicLibrary({
     return base;
   }, []);
 
-  // Core page loader for the windowed list. Fetches one PAGE_SIZE page at a
-  // global offset and folds it into the loaded window:
+  // Core page loader for the windowed list. Fetches `limit` rows at a global
+  // offset and folds them into the loaded window:
   //  - reset:   clear the window, start at `at` (view reloads, no-selection re-sorts)
   //  - jump:    clear the window, start at `at` (rank-follow lands mid-list)
   //  - append:  extend the window downward (scroll near the bottom)
   //  - prepend: extend the window upward (scroll back above a jump point)
+  // `limit` is PAGE_SIZE by default; the lazy triggers pass a BATCH size (up to
+  // a few pages) so a fast scroll across unloaded territory is caught up in one
+  // or two fetches instead of a serialized page-by-page chain.
   // Pages arrive pre-sorted from SQL, so folding never re-sorts client-side.
   const loadPage = useCallback(
-    async ({ at, mode }) => {
-      if (loadingRef.current) return;
+    async ({ at, mode, limit = PAGE_SIZE }) => {
       if (mode === 'append' && !hasMoreRef.current) return;
-
+      const lazy = mode === 'append' || mode === 'prepend';
+      // Scroll-request generation: a new lazy load in the same direction makes
+      // the in-flight one stale — we still run the IPC (can't cancel it) but
+      // drop its result on arrival so only the freshest window commits.
+      const req = lazy ? ++lazyReqRef.current[mode] : null;
+      inflightRef.current += 1;
       loadingRef.current = true;
       const token = resetTokenRef.current;
 
@@ -1050,7 +1064,7 @@ function MusicLibrary({
         const sb = sortByRef.current;
 
         const rows = await window.api.getTracks({
-          limit: PAGE_SIZE,
+          limit,
           offset: at,
           search: textSearch,
           filters: structuredFilters,
@@ -1062,6 +1076,11 @@ function MusicLibrary({
         });
 
         if (token !== resetTokenRef.current) return; // stale — reset happened mid-flight
+        // A newer scroll request in the same direction superseded this one —
+        // drop the result so an outdated window never commits under the viewport.
+        if (req != null && lazyReqRef.current[mode] !== req) {
+          return;
+        }
 
         // reset / jump — replace the whole window atomically; append/prepend
         // extend it. Only reset/jump/append advance the next-append offset —
@@ -1088,12 +1107,20 @@ function MusicLibrary({
           clearSortFlash();
         }
 
-        if (rows.length < PAGE_SIZE) {
+        // A short page means the END of the set downward — but only for modes
+        // that load toward the bottom (a prepend batch may come back short
+        // merely because it started near the end; the downward status is
+        // unchanged by an upward load).
+        if (mode !== 'prepend' && rows.length < limit) {
           hasMoreRef.current = false;
           setHasMore(false);
         }
       } finally {
-        if (token === resetTokenRef.current) loadingRef.current = false;
+        inflightRef.current -= 1;
+        // Note: reset callers force loadingRef=false themselves; the counter
+        // keeps it true while OTHER lazy fetches are still flying, so locate
+        // waits for the scroll to settle.
+        loadingRef.current = inflightRef.current > 0;
       }
     },
     [clearSortFlash]
@@ -2246,13 +2273,20 @@ function MusicLibrary({
     ({ startIndex, stopIndex }) => {
       // Keep the loaded window covering the visible range: append downward when
       // the viewport nears the bottom of the loaded rows, prepend upward when it
-      // climbs back above a mid-list jump point.
+      // climbs back above a mid-list jump point. When the viewport has run far
+      // past the edge (fast scroll across unloaded territory), fetch the whole
+      // gap in ONE batched page (capped) instead of a serialized 50-row chain.
       const winStart = windowStartRef.current;
       const loadedEnd = winStart + sortedTracksRef.current.length;
       if (stopIndex >= loadedEnd - PRELOAD_TRIGGER) {
-        loadPage({ at: offsetRef.current, mode: 'append' });
+        const gapDown = Math.max(1, Math.ceil((stopIndex - loadedEnd) / PAGE_SIZE) + 1);
+        const fwd = Math.min(gapDown, 4);
+        loadPage({ at: offsetRef.current, mode: 'append', limit: fwd * PAGE_SIZE });
       } else if (startIndex <= winStart + PRELOAD_TRIGGER && winStart > 0) {
-        loadPage({ at: Math.max(0, winStart - PAGE_SIZE), mode: 'prepend' });
+        const gapUp = Math.max(1, Math.ceil((winStart - startIndex) / PAGE_SIZE));
+        const back = Math.min(gapUp, 4);
+        const at = Math.max(0, winStart - back * PAGE_SIZE);
+        loadPage({ at, mode: 'prepend', limit: winStart - at });
       }
     },
     [loadPage]
