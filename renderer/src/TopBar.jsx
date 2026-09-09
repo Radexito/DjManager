@@ -29,7 +29,7 @@ export default function TopBar({ onOpenHelp, onOpenSettings, onLogoClick }) {
           title="Help"
           aria-label="Help"
         >
-          Help
+          ❓
         </button>
         <button
           type="button"

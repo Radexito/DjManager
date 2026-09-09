@@ -208,7 +208,11 @@ function App() {
               <FileExplorerView
                 style={{ display: selectedPlaylistId === 'explorer' ? '' : 'none' }}
               />
-              <HelpView style={{ display: selectedPlaylistId === 'help' ? '' : 'none' }} />
+              <HelpView
+                style={{ display: selectedPlaylistId === 'help' ? '' : 'none' }}
+                active={selectedPlaylistId === 'help'}
+                onClose={() => setSelectedPlaylistId('music')}
+              />
               {selectedPlaylistId !== 'download' &&
                 selectedPlaylistId !== 'tidal' &&
                 selectedPlaylistId !== 'cloud-search' &&
