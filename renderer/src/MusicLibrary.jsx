@@ -1039,6 +1039,11 @@ function MusicLibrary({
       const target = Math.min(maxTop, Math.max(0, top - (container.clientHeight - ROW_HEIGHT) / 2));
       container.scrollTop = target;
     };
+    // Wait until the post-sort reload has actually committed: scanning while
+    // loadingRef is true finds the row in the STALE pre-sort array, scrolls to
+    // the old position, marks itself handled and never re-runs when the sorted
+    // page arrives (the selected row then sits off-screen — "selection lost").
+    if (loadingRef.current) return; // rows not settled yet — retried on commit
     const idx = sortedTracksRef.current.findIndex((t) => t.id === id);
     if (idx !== -1) {
       sortFocusHandledRef.current = sortFocus.nonce;
@@ -1063,14 +1068,14 @@ function MusicLibrary({
       setHasMore(false);
       setTimeout(() => {
         if (alive) setTracks(full);
-        // re-run below (tracks.length change) finds the row and scrolls
+        // re-run below (tracks identity change) finds the row and scrolls
       }, 60);
     })();
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortFocus, tracks.length, isPlaylistView]);
+  }, [sortFocus, tracks, isPlaylistView]);
 
   useEffect(() => {
     // Snapshot IDs currently visible so loadTracks can diff truly-new rows
