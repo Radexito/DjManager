@@ -681,6 +681,7 @@ function TrackTableBody({
       rowHeight={ROW_HEIGHT}
       width="100%"
       style={{}}
+      overscanCount={6}
       onRowsRendered={handleItemsRendered}
       className="track-list"
       rowComponent={LibraryRow}
@@ -1378,7 +1379,7 @@ function MusicLibrary({
     if (idx !== -1) {
       locateHandledRef.current = req.nonce;
       try {
-        listRef.current?.scrollToIndex?.(idx, { align: 'center' });
+        listRef.current?.scrollToRow?.({ index: idx, align: 'center' });
       } catch {
         // Out-of-range clamps are safe to ignore — the row may have just been
         // replaced by a reload.

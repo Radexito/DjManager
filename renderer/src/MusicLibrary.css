@@ -234,8 +234,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(16, 16, 16, 0.62);
-  backdrop-filter: blur(1px);
+  /* No backdrop-filter here — on some GPU/driver combos Chromium's backdrop
+     blur smears the whole window with artifacts while the overlay is up. */
+  background: rgba(16, 16, 16, 0.66);
+  pointer-events: none;
 }
 
 .table-busy-box {
