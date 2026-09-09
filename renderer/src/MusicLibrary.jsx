@@ -5,7 +5,6 @@ import {
   useRef,
   useCallback,
   useMemo,
-  useTransition,
   createContext,
   useContext,
 } from 'react';
@@ -853,12 +852,15 @@ function MusicLibrary({
   }, [visibleColumns]);
 
   const [sortBy, setSortBy] = useState({ key: 'index', asc: true });
-  // Sorting large libraries client-side can take long enough to block a paint.
-  // useTransition lets the click handler return immediately (React stays responsive
-  // and can render a pending indicator) while the expensive re-sort + re-render
-  // happens at low priority in the background.
-  const [isSorting, startSortTransition] = useTransition();
+  // Sorting is applied SYNCHRONOUSLY. useTransition was tried here but on this
+  // stack (React 19 + react-window v2) a deferred sort could wedge the renderer
+  // for minutes with the "Sorting…" overlay up (stuck isPending / busy loop).
+  // For very large lists we paint a manual flash overlay first so the brief
+  // synchronous render is masked, then sort.
+  const [sortFlash, setSortFlash] = useState(false);
   const [pendingSortKey, setPendingSortKey] = useState(null);
+  // Rows at/above this threshold get the flash overlay before the sync sort.
+  const SORT_FLASH_MIN_ROWS = 1200;
 
   // ── TEMP profiling (sort / locate) ────────────────────────────────────────
   // Remove once the slow-sort report is chased down. Keeps per-step timings in
@@ -1461,11 +1463,12 @@ function MusicLibrary({
       offsetRef.current = full.length;
       hasMoreRef.current = false;
       setHasMore(false);
-      // Keep the UI responsive while the big list commits: the transition lets
-      // paint/media events through between chunks of the render.
-      startSortTransition(() => {
-        setTracks(full);
-      });
+      // Materialize in a macrotask so the "Locating track…" overlay paints
+      // first; the set itself is a plain (synchronous) state update.
+      const tokenAfterBump = resetTokenRef.current;
+      setTimeout(() => {
+        if (alive && tokenAfterBump === resetTokenRef.current) setTracks(full);
+      }, 60);
     })();
     return () => {
       alive = false;
@@ -1930,23 +1933,28 @@ function MusicLibrary({
 
   const handleSort = useCallback(
     (key) => {
-      // Set synchronously (high priority) so the clicked header can show a pending
-      // indicator immediately, even while the actual re-sort is deferred below.
       const t0 = performance.now();
       sortStartRef.current = t0;
       setPendingSortKey(key);
-      console.log(`[perf] sort.click key=${key} asc=... t0=${t0.toFixed(1)}`);
-      startSortTransition(() => {
-        const t1 = performance.now();
-        console.log(`[perf] sort.transition-started t+${(t1 - t0).toFixed(1)}ms`);
+      console.log(`[perf] sort.click key=${key} sync n=${tracks.length} t0=${t0.toFixed(1)}`);
+      const apply = () => {
         setSortBy((prev) => {
           const next = { key, asc: prev.key === key ? !prev.asc : true };
           if (isPlaylistView) setSortSaved(next.key === 'index');
           return next;
         });
-      });
+        setPendingSortKey(null);
+        setSortFlash(false);
+      };
+      if (tracks.length >= SORT_FLASH_MIN_ROWS) {
+        // Let the flash overlay paint, then sort synchronously in the next task.
+        setSortFlash(true);
+        setTimeout(apply, 60);
+      } else {
+        apply();
+      }
     },
-    [isPlaylistView]
+    [isPlaylistView, tracks.length]
   );
 
   // TEMP profiling: report the whole click→committed-sort timeline once the
@@ -1961,25 +1969,6 @@ function MusicLibrary({
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortBy]);
-
-  // Safety net: a deferred sort (useTransition) occasionally never commits
-  // (React keeps isPending true forever with an idle main thread). If the user
-  // is still waiting on a pending header sort after ~2.6s, apply it directly so
-  // the UI can never sit on the "Sorting…" overlay indefinitely.
-  useEffect(() => {
-    if (!isSorting || !pendingSortKey || pendingSortKey === sortBy.key) return;
-    const t = setTimeout(() => {
-      console.log(`[perf] sort.FORCE key=${pendingSortKey} (transition stuck >2.6s)`);
-      showPerf(`sort ${pendingSortKey} forced (transition stuck)`);
-      setSortBy((prev) => {
-        const next = { key: pendingSortKey, asc: prev.key === pendingSortKey ? !prev.asc : true };
-        if (isPlaylistView) setSortSaved(next.key === 'index');
-        return next;
-      });
-    }, 2600);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSorting, pendingSortKey, sortBy.key]);
 
   // ── Row (library view) — handled by LibraryRow above via itemData ─────────
 
@@ -2038,11 +2027,11 @@ function MusicLibrary({
         )}
 
         <div className="table-scroll-wrap library-mode">
-          {((isSorting && pendingSortKey !== sortBy.key) || queuePreparing || locating) && (
+          {(sortFlash || queuePreparing || locating) && (
             <div className="table-busy-overlay" role="status">
               <div className="table-busy-box">
                 <span className="table-busy-spinner" aria-hidden="true" />
-                {isSorting ? 'Sorting…' : locating ? 'Locating track…' : 'Building queue…'}
+                {sortFlash ? 'Sorting…' : locating ? 'Locating track…' : 'Building queue…'}
               </div>
             </div>
           )}
@@ -2073,7 +2062,7 @@ function MusicLibrary({
             gridTemplate={gridTemplate}
             minScrollWidth={minScrollWidth}
             visibleColumns={visibleColumns}
-            isSorting={isSorting}
+            isSorting={sortFlash}
             pendingSortKey={pendingSortKey}
             handleSort={handleSort}
             sortBy={sortBy}
