@@ -114,7 +114,7 @@ import {
   downloadUrl as ytDlpDownloadUrl,
   fetchPlaylistInfo as ytDlpFetchPlaylistInfo,
   searchYouTube,
-  getYouTubePreviewUrl,
+  bufferPreviewAudio,
 } from './audio/ytDlpManager.js';
 import {
   checkTidalSetup,
@@ -1494,8 +1494,16 @@ ipcMain.handle('cloud-search-preview', async (_event, { source, type, url }) => 
 
   try {
     if (source === 'youtube') {
-      const previewUrl = await getYouTubePreviewUrl(url);
-      return { ok: true, url: previewUrl };
+      // YouTube stream URLs resolved by yt-dlp (--get-url) are rejected by
+      // googlevideo with 403 for direct playback (PO-token / n-sig), and
+      // age-restricted tracks need browser cookies anyway. Buffer the audio
+      // through the same download path that works (cookies + default client)
+      // and play the local file over the media server.
+      const cookiesBrowser = getSetting('ytdlp_cookies_browser', '') || null;
+      const file = await bufferPreviewAudio(url, { cookiesBrowser });
+      const previewDir = path.join(app.getPath('temp'), 'djman-preview');
+      if (!explorerAllowedBases.includes(previewDir)) explorerAllowedBases.push(previewDir);
+      return { ok: true, url: `http://127.0.0.1:${mediaServerPort}${file}` };
     }
     if (source === 'tidal') {
       if (type !== 'track') {

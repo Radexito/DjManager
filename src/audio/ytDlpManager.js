@@ -437,18 +437,33 @@ export async function searchYouTube(query, options = {}) {
     }));
 }
 
-export async function getYouTubePreviewUrl(url) {
+export async function bufferPreviewAudio(url, options = {}) {
   const ytDlp = getYtDlpRuntimePath();
+  const previewDir = path.join(app.getPath('temp'), 'djman-preview');
+  await fs.promises.mkdir(previewDir, { recursive: true });
+
+  const FILE_MARKER = '__PREVIEW_FILE__:';
+  const outTemplate = path.join(previewDir, '%(id)s.%(ext)s');
+
   const args = [
-    '--no-playlist',
-    '--get-url',
-    '--format',
-    'bestaudio/best',
+    '-f',
+    'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio/best',
     '--no-warnings',
-    '--extractor-args',
-    'youtube:player_client=android_vr,web',
-    url,
+    '--newline',
+    '--no-colors',
+    // Sanity cap: previews are for checking a track, not archiving it.
+    '--max-filesize',
+    '25M',
+    '--print',
+    `after_move:${FILE_MARKER}%(filepath)s`,
+    '-o',
+    outTemplate,
   ];
+  if (options.cookiesBrowser) {
+    // Age-restricted / sign-in-only tracks REQUIRE the user's browser cookies.
+    args.push('--cookies-from-browser', resolveBrowser(options.cookiesBrowser));
+  }
+  args.push(url);
 
   return new Promise((resolve, reject) => {
     const proc = spawn(ytDlp, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -461,17 +476,20 @@ export async function getYouTubePreviewUrl(url) {
     proc.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
     });
-    proc.on('error', (err) => reject(err));
+    proc.on('error', reject);
     proc.on('close', (code) => {
-      const previewUrl = stdout
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .find(Boolean);
-      if (code === 0 && previewUrl) {
-        resolve(previewUrl);
+      const m = stdout.match(new RegExp(`${FILE_MARKER}(.+)$`, 'm'));
+      if (code === 0 && m) {
+        resolve(m[1].trim());
         return;
       }
-      reject(new Error(stderr.trim() || 'Unable to resolve YouTube preview stream'));
+      reject(
+        new Error(
+          stderr.trim() ||
+            stdout.trim() ||
+            'Unable to buffer YouTube preview (no cookies? age-restricted?)'
+        )
+      );
     });
   });
 }

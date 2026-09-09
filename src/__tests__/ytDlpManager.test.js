@@ -8,7 +8,10 @@ vi.mock('../deps.js', () => ({
 }));
 
 vi.mock('fs', () => ({
-  default: { existsSync: vi.fn().mockReturnValue(true) },
+  default: {
+    existsSync: vi.fn().mockReturnValue(true),
+    promises: { mkdir: vi.fn().mockResolvedValue(undefined) },
+  },
   existsSync: vi.fn().mockReturnValue(true),
 }));
 
@@ -73,7 +76,12 @@ function makeFakeProc() {
 }
 
 import fs from 'fs';
-import { detectPlatform, fetchPlaylistInfo, searchYouTube } from '../audio/ytDlpManager.js';
+import {
+  detectPlatform,
+  fetchPlaylistInfo,
+  searchYouTube,
+  bufferPreviewAudio,
+} from '../audio/ytDlpManager.js';
 
 describe('detectPlatform', () => {
   it('returns youtube for youtube.com URLs', () => {
@@ -223,5 +231,56 @@ describe('checkYouTubeAvailability (via fetchPlaylistInfo)', () => {
   it('does not flag a publicly-available entry as unavailable', async () => {
     const info = await fetchPlaylistInfo('https://www.youtube.com/playlist?list=xyz');
     expect(info.entries[0].unavailable).toBe(false);
+  });
+});
+
+// Cloud-search inline preview buffers the audio through the same download
+// path that works for age-restricted / sign-in-only videos: default client
+// plus the user's browser cookies (--get-url streams get 403 in a player).
+describe('bufferPreviewAudio', () => {
+  beforeEach(() => {
+    spawnCalls.length = 0;
+    fakeProc = makeFakeProc();
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+  });
+
+  it('downloads with cookies when cookiesBrowser is provided and resolves the local file', async () => {
+    const resultPromise = bufferPreviewAudio('https://www.youtube.com/watch?v=abc123', {
+      cookiesBrowser: 'librewolf',
+    });
+    // bufferPreviewAudio awaits fs.mkdir before spawning — wait for the spawn.
+    await vi.waitFor(() => expect(lastSpawnArgs).not.toBeNull());
+
+    fakeProc.stdout.emit('data', '__PREVIEW_FILE__:/tmp/djman-preview/abc123.m4a\n');
+    fakeProc.emit('close', 0);
+    const file = await resultPromise;
+
+    const cookieIdx = lastSpawnArgs.indexOf('--cookies-from-browser');
+    expect(cookieIdx).toBeGreaterThan(-1);
+    expect(lastSpawnArgs).toContain('--max-filesize');
+    expect(file).toBe('/tmp/djman-preview/abc123.m4a');
+  });
+
+  it('does NOT add --cookies-from-browser when cookiesBrowser is omitted', async () => {
+    const resultPromise = bufferPreviewAudio('https://www.youtube.com/watch?v=abc123');
+    await vi.waitFor(() => expect(lastSpawnArgs).not.toBeNull());
+
+    fakeProc.stdout.emit('data', '__PREVIEW_FILE__:/tmp/djman-preview/abc123.m4a\n');
+    fakeProc.emit('close', 0);
+    await resultPromise;
+
+    expect(lastSpawnArgs).not.toContain('--cookies-from-browser');
+  });
+
+  it('rejects with stderr when yt-dlp fails', async () => {
+    const resultPromise = bufferPreviewAudio('https://www.youtube.com/watch?v=abc123', {
+      cookiesBrowser: 'firefox',
+    });
+    await vi.waitFor(() => expect(lastSpawnArgs).not.toBeNull());
+
+    fakeProc.stderr.emit('data', 'ERROR: bot check failed\n');
+    fakeProc.emit('close', 1);
+
+    await expect(resultPromise).rejects.toThrow('bot check failed');
   });
 });

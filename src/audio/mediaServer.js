@@ -9,6 +9,8 @@ export const AUDIO_MIME = {
   '.ogg': 'audio/ogg',
   '.m4a': 'audio/mp4',
   '.aac': 'audio/aac',
+  '.webm': 'audio/webm',
+  '.opus': 'audio/ogg',
 };
 
 const IMAGE_MIME = {
