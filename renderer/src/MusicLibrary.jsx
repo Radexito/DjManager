@@ -1127,7 +1127,15 @@ function MusicLibrary({
     if (sortFollowCommittedRef.current === nonce) {
       sortFollowHandledRef.current = nonce;
       const idx = sortedTracksRef.current.findIndex((t) => t.id === id);
-      if (idx !== -1) scrollToRow(idx);
+      if (idx !== -1) {
+        // Scroll AFTER the reordered rows have painted. Scrolling synchronously
+        // in this effect forces layout of the whole (multi-thousand px) list
+        // while the just-committed reorder is still dirty — measured ~16s main
+        // thread stall in dev. Two rAFs = after the next frame's paint.
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => scrollToRow(idx));
+        });
+      }
       clearSortFlash();
       return;
     }
