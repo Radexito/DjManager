@@ -86,11 +86,15 @@ jobs:
 
       - name: Install Playwright system dependencies
         run: |
-          # GitHub-hosted ubuntu images ship a google-chrome apt source; Google's
-          # CDN intermittently serves hash-mismatched Packages.gz to runner IPs,
-          # breaking `apt-get update` for every job ("Hash Sum mismatch").
-          # Playwright's chromium needs none of it — drop the source first.
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          # GitHub-hosted ubuntu images ship a google-chrome apt repo in both
+          # .list and deb822 .sources forms; dl.google.com intermittently
+          # serves hash-mismatched Packages.gz to runner IPs, breaking
+          # `apt-get update` ("Hash Sum mismatch") for every job. Playwright's
+          # chromium needs none of it — drop any source pointing at dl.google
+          # (regardless of filename), then clear the apt lists so update runs
+          # from a clean slate.
+          sudo grep -rl 'dl.google.com' /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f
+          sudo rm -rf /var/lib/apt/lists/*
           npx playwright install-deps chromium
 
       - name: Run E2E tests
