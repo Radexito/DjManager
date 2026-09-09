@@ -995,32 +995,57 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
     setDetailsPinned((p) => !p);
   }, []);
 
-  // Follow row selection: when exactly one track is selected and it differs
-  // from the currently open (single-track) Details panel, either switch to it
-  // automatically, or — if there are unsaved edits — ask the user whether to
-  // discard them or pin the panel to the track they're editing.
+  // Follow row selection. Single selection: switch the open single-track
+  // panel to the newly selected row (or pin it when there are unsaved edits).
+  // Multi-selection: switch the panel to the bulk editor for the selected
+  // rows immediately - no context-menu action needed.
   useEffect(() => {
-    if (!detailsTrack || detailsBulkTracks) return;
-    if (selectedIds.size !== 1) return;
-    const [id] = selectedIds;
-    if (id === detailsTrack.id) return;
-    const track = sortedTracksRef.current.find((t) => t.id === id);
-    if (!track) return;
-    if (detailsPinned) return;
-    if (detailsDirty) {
-      const discard = window.confirm(
-        'The Details panel has unsaved changes.\n\n' +
-          'Click OK to discard them and follow the new selection, or Cancel to pin the panel and keep editing this track.'
-      );
-      if (discard) {
-        setDetailsTrack(track);
-        setDetailsDirty(false);
-      } else {
-        setDetailsPinned(true);
+    const ids = [...selectedIds];
+    if (ids.length === 0) return; // nothing selected
+    if (detailsTrack && detailsPinned) return; // pinned single-track panel ignores selection
+    if (ids.length === 1) {
+      // Bulk panel stays open until closed/saved; only single panels follow.
+      if (!detailsTrack || detailsBulkTracks) return;
+      const [id] = ids;
+      if (id === detailsTrack.id) return;
+      const track = sortedTracksRef.current.find((t) => t.id === id);
+      if (!track) return;
+      if (detailsDirty) {
+        const discard = window.confirm(
+          'The Details panel has unsaved changes.\n\n' +
+            'Click OK to discard them and follow the new selection, or Cancel to pin the panel and keep editing this track.'
+        );
+        if (discard) {
+          setDetailsTrack(track);
+          setDetailsDirty(false);
+        } else {
+          setDetailsPinned(true);
+        }
+        return;
       }
+      setDetailsTrack(track);
       return;
     }
-    setDetailsTrack(track);
+
+    // Multi-select: open (or refresh) the bulk editor for these tracks.
+    const bulk = sortedTracksRef.current.filter((t) => selectedIds.has(t.id));
+    if (bulk.length === 0) return;
+    const idsKey = [...selectedIds].map(String).sort().join(',');
+    const openKey = detailsBulkTracks
+      ?.map((t) => String(t.id))
+      .sort()
+      .join(',');
+    if (detailsBulkTracks && openKey === idsKey) return; // already showing these
+    if (detailsDirty && (detailsTrack || detailsBulkTracks)) {
+      const discard = window.confirm(
+        'The Details panel has unsaved changes.\n\n' +
+          'Click OK to discard them and edit the newly selected tracks, or Cancel to keep the current panel open.'
+      );
+      if (!discard) return;
+      setDetailsDirty(false);
+    }
+    setDetailsTrack(null);
+    setDetailsBulkTracks(bulk);
   }, [selectedIds, detailsTrack, detailsBulkTracks, detailsPinned, detailsDirty]);
 
   useEffect(() => {
