@@ -127,17 +127,17 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.62.0",
-    "@vitest/coverage-v8": "^4.1.6",
-    "concurrently": "^10.0.4",
+    "@vitest/coverage-v8": "^5.0.0",
+    "concurrently": "^10.0.5",
     "electron": "^42.5.0",
     "electron-builder": "^26.15.3",
     "electron-rebuild": "^3.2.9",
-    "eslint": "^10.8.0",
+    "eslint": "^10.10.0",
     "globals": "^17.8.0",
     "husky": "^9.1.7",
-    "lint-staged": "^17.2.0",
+    "lint-staged": "^17.5.0",
     "prettier": "^3.9.6",
-    "vitest": "^4.1.10",
+    "vitest": "^5.0.0",
     "wait-on": "^9.1.0"
   },
   "dependencies": {
