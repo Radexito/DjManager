@@ -11,14 +11,15 @@ import './HelpView.css';
 const SECTIONS = [
   {
     title: 'Library management',
-    keywords: 'import link move library files folders storage',
+    keywords: 'import link move library files folders storage bulk',
     items: [
-      'The Music view lists every track of your library. The picker above the list switches between libraries when you have more than one.',
-      'Import adds files into the library by copying them into the managed storage folder. Link references files in place instead of copying (handy for network or shared folders).',
-      'Right-click a track or a multi-selection for actions: Edit Details, Set BPM, Reset gain, add to playlist, Move to library (with multiple libraries) and more.',
-      'Click column headers to sort. Columns can be shown/hidden and reordered from the columns menu.',
-      'BPM can be overridden manually per track (Set BPM); overridden values and beat-grid shifts are marked with a dot in the BPM column.',
-      'Use the eye icon to hide unavailable tracks (e.g. linked files on a disconnected drive are grayed out instead).',
+      'The Music view lists the tracks of all your libraries (they are all active at once). With several libraries, right-click a track and choose Move to library to relocate it between them.',
+      'Add music from the Explorer view: open the folder with your audio, select it (or individual files) and choose Add to Library - the files are linked in place, kept where they are, and analyzed into the library.',
+      'Linked tracks on a disconnected drive are marked unavailable instead of disappearing; the hide-unavailable filter drops them from the list so only playable tracks remain.',
+      'Right-click a track or a multi-selection for actions: Edit Details, Set BPM, Reset gain, Add to playlist, Move to library and more.',
+      'Bulk editing: select several tracks (Ctrl/Cmd+click or Shift+click for ranges) and open Edit Details - only the fields you fill are saved, the rest stay untouched.',
+      'Click a column header to sort; the columns menu shows, hides and reorders columns.',
+      'Manually set BPM values (Set BPM) and beat-grid shifts get a small dot marker in the BPM column.',
     ],
   },
   {
@@ -60,7 +61,7 @@ const SECTIONS = [
       'The transport lives in the bottom bar: play/pause (Space also works), previous/next, shuffle and repeat (green = on).',
       'The volume icon opens a vertical slider on hover; clicking the icon mutes/unmutes. Output devices can be switched next to it.',
       'Click anywhere on the waveform to seek. The bar can be made taller by dragging its top edge; drag the thin separators to re-balance the zones.',
-      'The clock icon opens playback history. Clicking the track title jumps to the playlist the track belongs to; clicking the artist searches for that artist.',
+      'The clock icon opens playback history. Clicking the track title jumps to the playlist the track belongs to (when it has one).',
       'Media keys of your OS (play/pause/next/previous) control the player as well.',
     ],
   },
@@ -68,9 +69,9 @@ const SECTIONS = [
     title: 'Playlists',
     keywords: 'create rename color delete m3u export order drag',
     items: [
-      'Create a playlist with the + button above the playlist list; type the name and press Enter.',
-      'Right-click a playlist to rename, color-code, export (M3U/playlist file or Rekordbox USB) or delete it.',
-      'Drag library rows onto a playlist to add tracks; drag playlist rows to reorder them manually (auto order until you do).',
+      'Create a playlist with the + button above the playlist list; type a name and press Enter.',
+      'Right-click a playlist to rename, color-code, export or delete it. Export writes an M3U file, a Rekordbox USB copy of the playlist, or the full track set (ALL).',
+      'Drag library rows onto a playlist to add tracks; drag rows inside a playlist to reorder it.',
       'Playing from a playlist marks the current track there; the player bar title then jumps back to that playlist.',
     ],
   },
@@ -78,20 +79,18 @@ const SECTIONS = [
     title: 'Cloud search & downloads',
     keywords: 'youtube yt-dlp tidal tdn download cloud search cookies quality',
     items: [
-      'Cloud Search looks up tracks on YouTube and TIDAL. Pick the source and type, search, select results and download them into the library with per-track progress.',
-      'TIDAL downloads need one login: the TIDAL tab shows a device-link code to open in your browser (OAuth session is stored locally).',
-      'You can also paste a direct YouTube or TIDAL URL (track, album, playlist or mix) to download that whole item.',
-      'If YouTube downloads fail with 403/private errors, set the browser/profile for yt-dlp cookies in Settings and make sure the browser profile is logged in.',
-      'Downloads appear in the downloads view with status per track; already-downloaded items are skipped to avoid duplicates.',
+      'Cloud Search looks up tracks on YouTube and TIDAL: pick the source and type (track, album, playlist, ...), search, select the results and download them into the library - progress is shown for every entry.',
+      'TIDAL downloads need a one-time login: the TIDAL view starts a device-login flow (URL to open and confirm in your browser); the session is stored locally afterwards.',
+      'The Download view lists supported sites (YouTube, SoundCloud, Bandcamp, Mixcloud, Vimeo, Twitch): paste a link to download that video, album or playlist through yt-dlp into the library.',
+      'When a site requires a login or blocks downloads (403), set the yt-dlp cookies to your logged-in browser profile in Settings.',
     ],
   },
   {
     title: 'Explorer & linked files',
     keywords: 'filesystem drives usb folder link reference unavailable',
     items: [
-      'Explorer browses the filesystem: pick a folder with audio to link it, or select files/folders to add to the library (Ctrl+A selects all files in the folder).',
-      'Removable drives are listed separately, which makes USB workflow quick. Linked tracks on a disconnected drive show as unavailable rather than disappearing.',
-      'Tracks remember their source URL (YouTube/TIDAL) so a linked file can be re-downloaded or traced back to its origin.',
+      'Explorer browses the filesystem: select a folder or files with audio and Add to Library to link them (kept in place), or manage linked files and their availability.',
+      'Removable drives are listed separately, which keeps USB workflow quick. Linked tracks on a disconnected drive show as unavailable rather than disappearing.',
     ],
   },
   {
@@ -110,11 +109,11 @@ const SECTIONS = [
     keywords:
       'deps ffmpeg analyzer yt-dlp cookies browser normalize lufs gain libraries storage format zoom',
     items: [
-      'First launch downloads the needed tools (FFmpeg, analyzer, yt-dlp, tidal-dl-ng) - the overlay shows the steps and a readable log, then waits for you to close it.',
-      'Settings shows the real installed versions and can update all dependencies; "Clear all data" wipes the managed download area.',
-      'Normalization target (LUFS) sets the loudness used for gain analysis and export.',
+      'First launch installs the needed tools (FFmpeg, analyzer, yt-dlp, tidal-dl-ng) - the overlay lists every step with a readable log and waits for you to close it.',
+      'Settings shows the real installed versions and can update all dependencies. Clear-data actions (library data or user data) ask for confirmation first.',
+      'Normalization target (LUFS) sets the loudness used by gain analysis; normalization can also run automatically on import.',
       'Cookies for YouTube downloads: choose browser + profile (must be logged in) so private/age-restricted videos download.',
-      'Manage libraries here: add, rename, convert storage format (hashed paths vs plain) between libraries.',
+      'Manage libraries here: add, rename, move the folder, or convert the storage format (hashed paths vs plain files). New libraries pick their own format.',
       'Ctrl + scroll or Ctrl + +/- zooms the whole interface; Ctrl+0 resets to 100%.',
     ],
   },
@@ -154,18 +153,29 @@ export default function HelpView({ style, active = false, onClose }) {
   const SHORTCUT_TITLE_KEYS = 'keyboard shortcuts shortcut keys key';
   const { sections, shortcutRows, showShortcutHeading, totalHits } = useMemo(() => {
     const match = (text) => text.toLowerCase().includes(q);
-    const visible = (items, title, extra) =>
-      !q || match(title) || items.some(match) || (extra || '').toLowerCase().includes(q);
-    const sections = SECTIONS.map((s) => ({
-      ...s,
-      items: q ? s.items.filter(match) : s.items,
-    })).filter((s) => !q || visible(s.items, s.title, s.keywords));
-    const shortcutRows = q
-      ? SHORTCUTS.filter(
-          (s) => s.what.toLowerCase().includes(q) || s.keys.some((k) => k.toLowerCase().includes(q))
-        )
-      : SHORTCUTS;
+    const sections = SECTIONS.map((s) => {
+      const titleMatch = !q || match(s.title);
+      const keywordMatch = !q || (s.keywords || '').toLowerCase().includes(q);
+      const itemMatches = q ? s.items.filter(match) : s.items;
+      // A title/keyword hit shows the whole section, an item hit narrows it.
+      const items = !q || titleMatch || keywordMatch ? s.items : itemMatches;
+      return {
+        ...s,
+        items,
+        hidden: !q ? false : !(titleMatch || keywordMatch || itemMatches.length > 0),
+      };
+    }).filter((s) => !s.hidden);
+    // "keyboard"/"shortcuts"/"key" shows the full table; an item-level query
+    // (e.g. "ctrl", "beat") narrows the rows.
     const titleMatch = !q || SHORTCUT_TITLE_KEYS.includes(q);
+    const shortcutRows =
+      !q || titleMatch
+        ? SHORTCUTS
+        : SHORTCUTS.filter((s) => {
+            return (
+              s.what.toLowerCase().includes(q) || s.keys.some((k) => k.toLowerCase().includes(q))
+            );
+          });
     const showShortcutHeading = !q || titleMatch || shortcutRows.length > 0;
     return {
       sections,
