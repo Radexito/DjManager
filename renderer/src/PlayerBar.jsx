@@ -71,7 +71,12 @@ function ScrollText({ className = '', children, ...rest }) {
   );
 }
 
-export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch, onOpenTrackDetails }) {
+export default function PlayerBar({
+  onNavigateToPlaylist,
+  onArtistSearch,
+  onOpenTrackDetails,
+  onLocateTrack,
+}) {
   const {
     mediaPort,
     currentTrack,
@@ -710,16 +715,21 @@ export default function PlayerBar({ onNavigateToPlaylist, onArtistSearch, onOpen
         <div className="player-track-info">
           {currentTrack ? (
             <>
-              {/* Clicking the title navigates to the current playlist — the
-                  dedicated ☰ button was removed in favour of this. */}
+              {/* Clicking the title goes to the source list: the playlist the
+                  track belongs to, or (when playing from the Music list) the
+                  Music view scrolled to this track. */}
               <ScrollText
-                className={`player-title${currentPlaylistId ? ' player-title--clickable' : ''}`}
+                className={`player-title${currentTrack ? ' player-title--clickable' : ''}`}
                 title={
                   currentPlaylistId
                     ? `Go to playlist: ${currentPlaylistName || currentPlaylistId}`
-                    : currentTrack.title
+                    : 'Show track in Music list'
                 }
-                onClick={() => currentPlaylistId && onNavigateToPlaylist(String(currentPlaylistId))}
+                onClick={() =>
+                  currentPlaylistId
+                    ? onNavigateToPlaylist(String(currentPlaylistId))
+                    : onLocateTrack?.(currentTrack?.id)
+                }
               >
                 {currentTrack.title}
               </ScrollText>

@@ -707,7 +707,13 @@ function TrackTableBody({
   );
 }
 
-function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsRequest }) {
+function MusicLibrary({
+  selectedPlaylist,
+  search,
+  onSearchChange,
+  openDetailsRequest,
+  locateTrack,
+}) {
   const isPlaylistView = selectedPlaylist !== 'music';
   const {
     play,
@@ -878,6 +884,7 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
   // it (nor shrink it to the currently visible page).
   const appendedPageRef = useRef(false);
   const queueBusyRef = useRef(false);
+  const locateHandledRef = useRef(null); // last locateTrack nonce we fulfilled
   const [queuePreparing, setQueuePreparing] = useState(false);
 
   const fetchFullViewTracks = useCallback(async () => {
@@ -1358,6 +1365,58 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
       alive = false;
     };
   }, [openDetailsRequest]);
+
+  // "Show track in Music" (player-bar title click while playing from the Music
+  // list): scroll the Music view so the playing track is visible. If the track
+  // is beyond the lazy-loaded pages, materialize the full matching set once so
+  // scrollToIndex can jump straight to it.
+  useEffect(() => {
+    const req = locateTrack;
+    if (!req || req.nonce === locateHandledRef.current) return;
+    const trackId = req.trackId;
+    const idx = sortedTracksRef.current.findIndex((t) => t.id === trackId);
+    if (idx !== -1) {
+      locateHandledRef.current = req.nonce;
+      try {
+        listRef.current?.scrollToIndex?.(idx, { align: 'center' });
+      } catch {
+        // Out-of-range clamps are safe to ignore — the row may have just been
+        // replaced by a reload.
+      }
+      return;
+    }
+    if (loadingRef.current) return; // initial load in flight — retried on change
+    if (searchRef.current) {
+      // A filter hides the track: clear it, the reload re-runs this effect.
+      onSearchChange('');
+      return;
+    }
+    let alive = true;
+    (async () => {
+      const token = resetTokenRef.current;
+      const full = await fetchFullViewTracks();
+      if (!alive || token !== resetTokenRef.current) return; // view changed
+      if (selectedPlaylistRef.current !== 'music' || searchRef.current) {
+        locateHandledRef.current = req.nonce; // moved on — don't retry
+        return;
+      }
+      const fullIndex = full.findIndex((t) => t.id === trackId);
+      if (fullIndex === -1) {
+        locateHandledRef.current = req.nonce; // gone from the library — give up
+        return;
+      }
+      // Materialize the full set (matches the playing queue scope) and let the
+      // re-run below do the scroll once the new rows are committed.
+      resetTokenRef.current += 1; // invalidate any in-flight page load
+      offsetRef.current = full.length;
+      hasMoreRef.current = false;
+      setHasMore(false);
+      setTracks(full);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [locateTrack, search, tracks.length, onSearchChange, fetchFullViewTracks]);
 
   // ── Cue column click — open Prepare Track window ──────────────────────────
 
