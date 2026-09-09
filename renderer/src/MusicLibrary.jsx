@@ -592,6 +592,30 @@ function TrackTableBody({
   handleDragEnd,
   activeTrack,
 }) {
+  // Windowed plain list (library view): keep only the visible slice in the DOM.
+  // Big data changes (re-sort full-set materialization, lazy page appends) then
+  // commit only ~a screen of rows — a full 442-row DOM commit froze the main
+  // thread for ~20s in dev and swallowed transport input until it finished.
+  const [viewTop, setViewTop] = useState(0);
+  const [viewH, setViewH] = useState(800); // pre-layout default ≈ one viewport
+  const plainElRef = useRef(null);
+  const refreshView = useCallback(() => {
+    const el = plainElRef.current;
+    if (el) {
+      setViewTop(el.scrollTop);
+      setViewH(el.clientHeight || 800);
+    }
+  }, []);
+  useLayoutEffect(() => {
+    refreshView();
+    const el = plainElRef.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver(refreshView);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tracks.length, sortedTracks.length]);
+
   if (isPlaylistView) {
     if (tracks.length === 0) {
       return (
@@ -653,16 +677,29 @@ function TrackTableBody({
     );
   }
 
+  // Visible window: [startIdx, endIdx) of the full sorted list. Absolute
+  // positioning keeps row index math trivial (ROW_HEIGHT is fixed).
+  const OVERSCAN = 6;
+  const spacerH = (sortedTracks.length + (hasMore ? 1 : 0)) * ROW_HEIGHT;
+  const startIdx = Math.max(0, Math.floor(viewTop / ROW_HEIGHT) - OVERSCAN);
+  const endIdx = Math.min(
+    sortedTracks.length,
+    Math.max(startIdx + 1, Math.ceil((viewTop + viewH) / ROW_HEIGHT) + OVERSCAN)
+  );
+
   return (
     <div
       className="track-list track-list--plain"
+      style={{ position: 'relative' }}
       ref={(el) => {
         // Keep the same listRef contract react-window provided ({ element,
         // scrollToRow }) so locate/scroll sync code keeps working unchanged.
         if (!el) {
           listRef.current = null;
+          plainElRef.current = null;
           return;
         }
+        plainElRef.current = el;
         listRef.current = {
           get element() {
             return el;
@@ -683,40 +720,62 @@ function TrackTableBody({
         };
       }}
       onScroll={(e) => {
-        // Feed the existing lazy-load trigger with a synthesized visible range.
+        // Keep the lazy-load trigger fed with the visible range, and the
+        // windowed slice in sync with the scroll position.
         const el = e.currentTarget;
+        refreshView();
         handleItemsRendered({
           startIndex: Math.floor(el.scrollTop / ROW_HEIGHT),
           stopIndex: Math.floor((el.scrollTop + el.clientHeight) / ROW_HEIGHT),
         });
       }}
     >
-      {sortedTracks.map((t, index) => (
-        <LibraryRowMemo
-          key={t.id}
-          index={index}
-          style={ROW_STYLE}
-          track={t}
-          selectedIds={selectedIds}
-          currentTrackId={playingTrackId}
-          onRowClick={handleRowClick}
-          onDoubleClick={handleDoubleClick}
-          onContextMenu={handleContextMenu}
-          onRatingChange={handleRatingChange}
-          onCueClick={handleCueClick}
-          onDragStart={handleTrackDragStart}
-          visibleColumns={visibleColumns}
-          gridTemplate={gridTemplate}
-          minScrollWidth={minScrollWidth}
-          mediaPort={mediaPort}
-          newTrackIds={newTrackIds}
-          onAnimationEnd={handleRowAnimationEnd}
-          unavailableLinkedIds={unavailableLinkedIds}
-          libraryNames={libraryNames}
-        />
-      ))}
+      {/* In-flow spacer gives the scroller its full height (absolute rows don't) */}
+      <div style={{ height: spacerH }} aria-hidden="true" />
+      {sortedTracks.slice(startIdx, endIdx).map((t, i) => {
+        const index = startIdx + i;
+        return (
+          <LibraryRowMemo
+            key={t.id}
+            index={index}
+            style={{
+              ...ROW_STYLE,
+              position: 'absolute',
+              top: index * ROW_HEIGHT,
+              left: 0,
+              right: 0,
+            }}
+            track={t}
+            selectedIds={selectedIds}
+            currentTrackId={playingTrackId}
+            onRowClick={handleRowClick}
+            onDoubleClick={handleDoubleClick}
+            onContextMenu={handleContextMenu}
+            onRatingChange={handleRatingChange}
+            onCueClick={handleCueClick}
+            onDragStart={handleTrackDragStart}
+            visibleColumns={visibleColumns}
+            gridTemplate={gridTemplate}
+            minScrollWidth={minScrollWidth}
+            mediaPort={mediaPort}
+            newTrackIds={newTrackIds}
+            onAnimationEnd={handleRowAnimationEnd}
+            unavailableLinkedIds={unavailableLinkedIds}
+            libraryNames={libraryNames}
+          />
+        );
+      })}
       {hasMore && (
-        <div className="row row-loading" style={{ height: ROW_HEIGHT }}>
+        <div
+          className="row row-loading"
+          style={{
+            position: 'absolute',
+            top: sortedTracks.length * ROW_HEIGHT,
+            left: 0,
+            right: 0,
+            height: ROW_HEIGHT,
+          }}
+        >
           Loading more tracks...
         </div>
       )}
