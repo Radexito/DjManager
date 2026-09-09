@@ -712,6 +712,16 @@ export async function ensureDeps(onProgress) {
   ].filter(Boolean);
   const totalSteps = STEP_DEFS.length;
 
+  // Steps whose binary is already present. The overlay shows these as
+  // checked from the start ("already installed"), so a row never looks like
+  // it "finished instantly" without downloading anything.
+  const readyStepIds = [
+    ffmpegReady && 'ffmpeg',
+    analyzerReady && 'analyzer',
+    ytDlpReady && 'ytdlp',
+    tidalReady && 'tidal',
+  ].filter(Boolean);
+
   if (totalSteps === 0 && tidalReady) {
     onProgress?.({ msg: 'Dependencies up to date.', pct: 100, stepIndex: 0, stepTotal: 0 });
     return;
@@ -723,6 +733,9 @@ export async function ensureDeps(onProgress) {
   await fs.promises.mkdir(tmp, { recursive: true });
   let stepIndex = 0;
   let currentStep = null;
+  // How many REQUIRED steps have fully finished; lets the overlay keep the
+  // required rows checked while the optional (tidal) step is running.
+  let stepsCompleted = 0;
 
   // Per-step speed/ETA tracker — reset when step changes
   let _lastBytes = 0,
@@ -760,6 +773,8 @@ export async function ensureDeps(onProgress) {
       stepLabel: currentStep?.label ?? null,
       stepIndex,
       stepTotal: totalSteps,
+      stepsCompleted,
+      readyStepIds,
       stepPct: pct,
       bytesDownloaded: bytesReceived ?? 0,
       bytesTotal: bytesTotal ?? -1,
@@ -774,52 +789,75 @@ export async function ensureDeps(onProgress) {
       stepIndex++;
       resetTracker();
       await downloadFFmpeg(tmp, stepCb);
+      stepsCompleted++;
     }
     if (!analyzerReady) {
       currentStep = STEP_DEFS.find((s) => s.id === 'analyzer');
       stepIndex++;
       resetTracker();
       await downloadAnalyzer(tmp, stepCb);
+      stepsCompleted++;
     }
     if (!ytDlpReady) {
       currentStep = STEP_DEFS.find((s) => s.id === 'ytdlp');
       stepIndex++;
       resetTracker();
       await downloadYtDlp(tmp, stepCb);
+      stepsCompleted++;
     }
     if (!tidalReady) {
+      // Required steps are all done now - report them as completed so the
+      // overlay keeps them checked while the optional step runs.
+      stepsCompleted = totalSteps;
+      currentStep = { id: 'tidal', label: 'tidal-dl-ng' };
       onProgress?.({
-        msg: '[optional] Installing tidal-dl-ng…',
+        msg: 'Installing tidal-dl-ng…',
         pct: 0,
-        stepId: null,
+        stepId: 'tidal',
+        stepLabel: 'tidal-dl-ng',
+        optional: true,
         stepIndex,
         stepTotal: totalSteps,
+        stepsCompleted,
+        readyStepIds,
       });
       try {
         await installTidalDlNgDep((msg) =>
           onProgress?.({
-            msg: `[optional] ${msg}`,
+            msg,
             pct: -1,
-            stepId: null,
+            stepId: 'tidal',
+            stepLabel: 'tidal-dl-ng',
+            optional: true,
             stepIndex,
             stepTotal: totalSteps,
+            stepsCompleted,
+            readyStepIds,
           })
         );
         onProgress?.({
-          msg: '[optional] tidal-dl-ng installed.',
+          msg: 'tidal-dl-ng installed.',
           pct: 100,
-          stepId: null,
+          stepId: 'tidal',
+          stepLabel: 'tidal-dl-ng',
+          optional: true,
           stepIndex,
           stepTotal: totalSteps,
+          stepsCompleted,
+          readyStepIds,
         });
       } catch (err) {
         console.warn('[deps] tidal-dl-ng install failed (non-fatal):', err.message);
         onProgress?.({
-          msg: '[optional] tidal-dl-ng install failed — Python 3.12+ may not be available.',
+          msg: 'tidal-dl-ng install failed — Python 3.12+ may not be available.',
           pct: -1,
-          stepId: null,
+          stepId: 'tidal',
+          stepLabel: 'tidal-dl-ng',
+          optional: true,
           stepIndex,
           stepTotal: totalSteps,
+          stepsCompleted,
+          readyStepIds,
         });
       }
     }

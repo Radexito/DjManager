@@ -193,3 +193,40 @@
 .deps-btn--primary:hover {
   background: #25c85f;
 }
+
+/* ── Collapsible console ─────────────────────────────────────── */
+.deps-console {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.deps-log-toggle {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: #7f849c;
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.deps-log-toggle:hover {
+  color: #cdd6f4;
+  background: #313244;
+}
+
+.deps-bar-fill--indet {
+  width: 35%;
+  animation: deps-indet 1.2s ease-in-out infinite;
+}
+
+@keyframes deps-indet {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
