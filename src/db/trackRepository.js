@@ -274,15 +274,13 @@ export function updateTrack(id, data) {
   ).run({ id, ...safeData });
 }
 
-export function getTracks({
-  limit = 50,
-  offset = 0,
-  search = '',
-  filters = [],
-  playlistId,
-  libraryIds,
-  sort,
-} = {}) {
+/**
+ * Shared FROM/WHERE scope for one track-listing view (whole library or a
+ * playlist) plus its natural (unsorted) order. getTracks / countTracks /
+ * getTrackRank all build on this so page queries, the total count and the
+ * rank of a row always describe the SAME row set.
+ */
+function buildViewScope({ search = '', filters = [], libraryIds, playlistId } = {}) {
   const { clauses: filterClauses, params: filterParams } = buildFiltersSQL(filters);
 
   // Plain-text search (title / artist / album)
@@ -293,12 +291,42 @@ export function getTracks({
   // or restrict to a chosen set (library filter in the UI).
   const { clause: libClause, params: libParams } = buildLibraryIdsSQL(libraryIds);
 
-  const allClauses = [
+  const clauses = [
     ...filterClauses,
     ...(textClause ? [textClause] : []),
     ...(libClause ? [libClause] : []),
   ];
-  const allParams = { ...filterParams, ...textParams, ...libParams, limit, offset };
+  const params = { ...filterParams, ...textParams, ...libParams };
+
+  if (playlistId) {
+    return {
+      from: 'playlist_tracks pt\n      JOIN tracks t ON t.id = pt.track_id',
+      where: clauses.length
+        ? `pt.playlist_id = @playlistId AND ${clauses.join(' AND ')}`
+        : 'pt.playlist_id = @playlistId',
+      params: { playlistId, ...params },
+      defaultOrder: 'pt.position ASC',
+    };
+  }
+  return {
+    from: 'tracks t',
+    where: clauses.length ? clauses.join(' AND ') : null,
+    params,
+    defaultOrder: 't.created_at DESC',
+  };
+}
+
+export function getTracks({
+  limit = 50,
+  offset = 0,
+  search = '',
+  filters = [],
+  playlistId,
+  libraryIds,
+  sort,
+} = {}) {
+  const scope = buildViewScope({ search, filters, libraryIds, playlistId });
+  const whereSql = scope.where ? `WHERE ${scope.where}` : '';
 
   // Column sort lives HERE (not client-side): pagination pages must come back
   // in display order so lazy appends always land at the bottom of the list
@@ -306,38 +334,70 @@ export function getTracks({
   // (playlist position / newest first) and is never sent as a sort key.
   const orderBy = buildTrackOrderSQL(sort);
 
-  if (playlistId) {
-    const extra = allClauses.length ? `AND ${allClauses.join(' AND ')}` : '';
-    return db
-      .prepare(
-        `
-        SELECT t.*, COALESCE(cp.cnt, 0) AS cue_count
-        FROM playlist_tracks pt
-        JOIN tracks t ON t.id = pt.track_id
-        LEFT JOIN (SELECT track_id, COUNT(*) AS cnt FROM cue_points GROUP BY track_id) cp
-          ON cp.track_id = t.id
-        WHERE pt.playlist_id = @playlistId ${extra}
-        ${orderBy || 'ORDER BY pt.position ASC'}
-        LIMIT @limit OFFSET @offset
-      `
-      )
-      .all({ playlistId, ...allParams });
-  }
-
-  const where = allClauses.length ? `WHERE ${allClauses.join(' AND ')}` : '';
   return db
     .prepare(
       `
       SELECT t.*, COALESCE(cp.cnt, 0) AS cue_count
-      FROM tracks t
+      FROM ${scope.from}
       LEFT JOIN (SELECT track_id, COUNT(*) AS cnt FROM cue_points GROUP BY track_id) cp
         ON cp.track_id = t.id
-      ${where}
-      ${orderBy || 'ORDER BY t.created_at DESC'}
+      ${whereSql}
+      ${orderBy || `ORDER BY ${scope.defaultOrder}`}
       LIMIT @limit OFFSET @offset
     `
     )
-    .all(allParams);
+    .all({ ...scope.params, limit, offset });
+}
+
+/**
+ * How many rows the current view (search / filters / playlist) matches —
+ * identical row set to getTracks. Feeds the windowed list's spacer height so
+ * the scroller spans the FULL result set even while only a window is loaded.
+ */
+export function countTracks({ search = '', filters = [], playlistId, libraryIds } = {}) {
+  const scope = buildViewScope({ search, filters, libraryIds, playlistId });
+  const whereSql = scope.where ? `WHERE ${scope.where}` : '';
+  return db.prepare(`SELECT COUNT(*) AS c FROM ${scope.from} ${whereSql}`).get(scope.params).c;
+}
+
+/** ORDER BY column list (no prefix) for a sort, or the view's natural order. */
+function buildTrackOrderColumns(sort, defaultOrder) {
+  const orderBy = buildTrackOrderSQL(sort);
+  if (orderBy) return orderBy.replace(/^ORDER BY\s+/i, '');
+  return defaultOrder;
+}
+
+/**
+ * 0-based position of one track inside the SORTED view (same row set and the
+ * same ORDER BY as getTracks). Used by the library's "keep selection + scroll
+ * to it after re-sort" path so the renderer can jump straight to the row
+ * without materializing the whole result set over IPC (the old full-set
+ * refetch scaled with library size and stalled the main thread).
+ * Returns null when the track is not part of the view.
+ */
+export function getTrackRank({
+  trackId,
+  search = '',
+  filters = [],
+  playlistId,
+  libraryIds,
+  sort,
+} = {}) {
+  const scope = buildViewScope({ search, filters, libraryIds, playlistId });
+  const orderCols = buildTrackOrderColumns(sort, scope.defaultOrder);
+  const whereSql = scope.where ? `WHERE ${scope.where}` : '';
+  const row = db
+    .prepare(
+      `
+      SELECT rn FROM (
+        SELECT t.id, ROW_NUMBER() OVER (ORDER BY ${orderCols}) AS rn
+        FROM ${scope.from}
+        ${whereSql}
+      ) WHERE id = @trackId
+    `
+    )
+    .get({ trackId, ...scope.params });
+  return row ? row.rn - 1 : null;
 }
 
 // Whitelisted column sort for getTracks (values are never interpolated raw).

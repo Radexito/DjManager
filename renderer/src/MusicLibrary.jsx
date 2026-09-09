@@ -567,6 +567,8 @@ function TrackTableBody({
   isPlaylistView,
   tracks,
   sortedTracks,
+  windowStart,
+  totalRows,
   hasMore,
   gridTemplate,
   minScrollWidth,
@@ -620,6 +622,20 @@ function TrackTableBody({
     return undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tracks.length, sortedTracks.length]);
+
+  // Lazy-load trigger, driven by the VIEWPORT (not by scroll events): after
+  // every commit that changes the visible range or the loaded window, ask for
+  // the next/previous page when the viewport nears an edge of the loaded rows.
+  // loadPage() guards on loadingRef, so rapid scrolls coalesce into at most
+  // one in-flight fetch — the effect re-runs once the page commits.
+  const visibleStartIdx = Math.max(0, Math.floor(viewTop / ROW_HEIGHT));
+  const visibleStopIdx = Math.max(0, Math.floor((viewTop + viewH) / ROW_HEIGHT));
+  useEffect(() => {
+    handleItemsRendered({ startIndex: visibleStartIdx, stopIndex: visibleStopIdx });
+    // handleItemsRendered is stable (useCallback on loadPage); the visible
+    // indices + window geometry are the real deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleStartIdx, visibleStopIdx, sortedTracks.length, windowStart, hasMore]);
 
   if (isPlaylistView) {
     if (tracks.length === 0) {
@@ -682,15 +698,20 @@ function TrackTableBody({
     );
   }
 
-  // Visible window: [startIdx, endIdx) of the full sorted list. Absolute
-  // positioning keeps row index math trivial (ROW_HEIGHT is fixed).
+  // Visible window: [startIdx, endIdx) of the FULL sorted result set. Absolute
+  // positioning keeps row index math trivial (ROW_HEIGHT is fixed). The spacer
+  // spans the WHOLE result set (totalRows from SQL), so the scroller can jump
+  // deep into unloaded territory; `sortedTracks` only holds a loaded window
+  // starting at global index `windowStart`, so rows outside it render nothing
+  // until lazy loads (append downward / prepend upward) bring them in.
   const OVERSCAN = 6;
-  const spacerH = (sortedTracks.length + (hasMore ? 1 : 0)) * ROW_HEIGHT;
+  const spacerRows = Math.max(totalRows || 0, windowStart + sortedTracks.length);
+  const spacerH = spacerRows * ROW_HEIGHT;
   const startIdx = Math.max(0, Math.floor(viewTop / ROW_HEIGHT) - OVERSCAN);
-  const endIdx = Math.min(
-    sortedTracks.length,
-    Math.max(startIdx + 1, Math.ceil((viewTop + viewH) / ROW_HEIGHT) + OVERSCAN)
-  );
+  const endIdx = Math.max(startIdx + 1, Math.ceil((viewTop + viewH) / ROW_HEIGHT) + OVERSCAN);
+  const localStart = Math.max(0, Math.min(sortedTracks.length, startIdx - windowStart));
+  const localEnd = Math.min(sortedTracks.length, endIdx - windowStart);
+  const localRows = localEnd > localStart ? sortedTracks.slice(localStart, localEnd) : [];
 
   return (
     <div
@@ -724,21 +745,18 @@ function TrackTableBody({
           },
         };
       }}
-      onScroll={(e) => {
-        // Keep the lazy-load trigger fed with the visible range, and the
-        // windowed slice in sync with the scroll position.
-        const el = e.currentTarget;
+      onScroll={() => {
+        // Keep the windowed slice in sync with the scroll position. Lazy
+        // loads (append/prepend) are NOT triggered here — they run from the
+        // viewport effect below, after the render commits, so a scroll storm
+        // can never interleave multiple in-flight page fetches.
         refreshView();
-        handleItemsRendered({
-          startIndex: Math.floor(el.scrollTop / ROW_HEIGHT),
-          stopIndex: Math.floor((el.scrollTop + el.clientHeight) / ROW_HEIGHT),
-        });
       }}
     >
       {/* In-flow spacer gives the scroller its full height (absolute rows don't) */}
       <div style={{ height: spacerH }} aria-hidden="true" />
-      {sortedTracks.slice(startIdx, endIdx).map((t, i) => {
-        const index = startIdx + i;
+      {localRows.map((t, i) => {
+        const index = windowStart + localStart + i;
         return (
           <LibraryRowMemo
             key={t.id}
@@ -775,7 +793,7 @@ function TrackTableBody({
           className="row row-loading"
           style={{
             position: 'absolute',
-            top: sortedTracks.length * ROW_HEIGHT,
+            top: (windowStart + sortedTracks.length) * ROW_HEIGHT,
             left: 0,
             right: 0,
             height: ROW_HEIGHT,
@@ -872,9 +890,11 @@ function MusicLibrary({
   const [bpmEditValue, setBpmEditValue] = useState(''); // value for inline Set BPM input
 
   const offsetRef = useRef(0);
+  const windowStartRef = useRef(0); // global index of tracks[0] (windowed list)
   const loadingRef = useRef(false);
   const hasMoreRef = useRef(true); // ref copy of hasMore — avoids stale closures in loadTracks
   const resetTokenRef = useRef(0); // incremented on every reset; stale fetches compare and discard
+  const [totalRows, setTotalRows] = useState(0); // full result-set size (SQL COUNT) — drives the windowed spacer
   const listRef = useRef();
   const sortedTracksRef = useRef([]);
   const lastSelectedIndexRef = useRef(null);
@@ -1008,57 +1028,76 @@ function MusicLibrary({
     return base;
   }, []);
 
-  const loadTracks = useCallback(async () => {
-    if (loadingRef.current || !hasMoreRef.current) return;
+  // Core page loader for the windowed list. Fetches one PAGE_SIZE page at a
+  // global offset and folds it into the loaded window:
+  //  - reset:   clear the window, start at `at` (view reloads, no-selection re-sorts)
+  //  - jump:    clear the window, start at `at` (rank-follow lands mid-list)
+  //  - append:  extend the window downward (scroll near the bottom)
+  //  - prepend: extend the window upward (scroll back above a jump point)
+  // Pages arrive pre-sorted from SQL, so folding never re-sorts client-side.
+  const loadPage = useCallback(
+    async ({ at, mode }) => {
+      if (loadingRef.current) return;
+      if (mode === 'append' && !hasMoreRef.current) return;
 
-    loadingRef.current = true;
-    const token = resetTokenRef.current;
+      loadingRef.current = true;
+      const token = resetTokenRef.current;
 
-    try {
-      const { filters, remaining } = parseQuery(search);
-      const structuredFilters = filters.filter((f) => f.field !== '_text');
-      const textSearch = remaining || filters.find((f) => f.field === '_text')?.value || '';
-      const sb = sortByRef.current;
+      try {
+        const { filters, remaining } = parseQuery(searchRef.current);
+        const structuredFilters = filters.filter((f) => f.field !== '_text');
+        const textSearch = remaining || filters.find((f) => f.field === '_text')?.value || '';
+        const sb = sortByRef.current;
 
-      const rows = await window.api.getTracks({
-        limit: PAGE_SIZE,
-        offset: offsetRef.current,
-        search: textSearch,
-        filters: structuredFilters,
-        playlistId: selectedPlaylist !== 'music' ? selectedPlaylist : undefined,
-        // Pages come back in display order, so lazy appends land at the bottom
-        // instead of being spliced into the middle of the sorted view.
-        sort: sb.key === 'index' ? undefined : { key: sb.key, asc: sb.asc },
-      });
+        const rows = await window.api.getTracks({
+          limit: PAGE_SIZE,
+          offset: at,
+          search: textSearch,
+          filters: structuredFilters,
+          playlistId:
+            selectedPlaylistRef.current !== 'music' ? selectedPlaylistRef.current : undefined,
+          // Pages come back in display order, so lazy appends land at the bottom
+          // instead of being spliced into the middle of the sorted view.
+          sort: sb.key === 'index' ? undefined : { key: sb.key, asc: sb.asc },
+        });
 
-      if (token !== resetTokenRef.current) return; // stale — reset happened mid-flight
+        if (token !== resetTokenRef.current) return; // stale — reset happened mid-flight
 
-      // On first page: replace all tracks atomically (no flash from empty-list state)
-      if (offsetRef.current === 0) {
-        // Animate only rows that weren't already in the list before reload
-        if (animateNextLoadRef.current) {
+        // reset / jump — replace the whole window atomically; append/prepend
+        // extend it. Only reset/jump/append advance the next-append offset —
+        // a prepend must NOT move it (the window's bottom edge is unchanged).
+        if (mode === 'reset' && animateNextLoadRef.current) {
           animateNextLoadRef.current = false;
           const truly = new Set(
             rows.filter((r) => !preReloadIdsRef.current.has(r.id)).map((r) => r.id)
           );
           if (truly.size > 0) setNewTrackIds((prev) => new Set([...prev, ...truly]));
         }
-        setTracks(rows);
-        clearSortFlash();
-      } else {
-        appendedPageRef.current = true; // queue-sync effects must skip lazy pages
-        setTracks((prev) => [...prev, ...rows]);
-      }
-      offsetRef.current += rows.length;
+        if (mode === 'append') {
+          appendedPageRef.current = true;
+          setTracks((prev) => [...prev, ...rows]);
+          offsetRef.current = at + rows.length; // next append offset
+        } else if (mode === 'prepend') {
+          appendedPageRef.current = true;
+          windowStartRef.current = at;
+          setTracks((prev) => [...rows, ...prev]);
+        } else {
+          windowStartRef.current = at;
+          setTracks(rows);
+          offsetRef.current = at + rows.length; // next append offset
+          clearSortFlash();
+        }
 
-      if (rows.length < PAGE_SIZE) {
-        hasMoreRef.current = false;
-        setHasMore(false);
+        if (rows.length < PAGE_SIZE) {
+          hasMoreRef.current = false;
+          setHasMore(false);
+        }
+      } finally {
+        if (token === resetTokenRef.current) loadingRef.current = false;
       }
-    } finally {
-      if (token === resetTokenRef.current) loadingRef.current = false;
-    }
-  }, [search, selectedPlaylist, clearSortFlash]); // no hasMore in deps — we use hasMoreRef
+    },
+    [clearSortFlash]
+  );
 
   const sortedTracks = useMemo(() => {
     const base = hideUnavailable
@@ -1095,16 +1134,76 @@ function MusicLibrary({
     if (prev.key === sortBy.key && prev.asc === sortBy.asc) return;
     prevSortRef.current = sortBy;
     const singleSel = selectedIds.size === 1 ? [...selectedIds][0] : null;
+    // Rank-follow is only valid when the row set on screen is EXACTLY the SQL
+    // result set. hide-unavailable filters rows client-side (its unavailable
+    // set comes from per-drive fs checks), and playlist view renders a plain
+    // (non-windowed) list — both keep the full-set follow path.
+    const canRank = !isPlaylistView && !hideUnavailable;
     if (singleSel == null) {
       // Reload pages from offset 0 in the new order.
-      offsetRef.current = 0;
       loadingRef.current = false;
       hasMoreRef.current = true;
       resetTokenRef.current += 1;
       appendedPageRef.current = false;
       setHasMore(true);
-      const t = setTimeout(loadTracks, 0);
+      const t = setTimeout(() => loadPage({ at: 0, mode: 'reset' }), 0);
       return () => clearTimeout(t);
+    }
+    if (canRank) {
+      // Keep the selection WITHOUT materializing the result set: SQL reports
+      // the row's 0-based position under the new ORDER BY, we jump the loaded
+      // window to that page and scroll the row into view. Cost is O(1) in
+      // library size (rank + one page over IPC), unlike the old full-set fetch.
+      const id = singleSel;
+      loadingRef.current = false;
+      hasMoreRef.current = true;
+      resetTokenRef.current += 1;
+      appendedPageRef.current = false;
+      setHasMore(true);
+      const { filters, remaining } = parseQuery(search);
+      const structuredFilters = filters.filter((f) => f.field !== '_text');
+      const textSearch = remaining || filters.find((f) => f.field === '_text')?.value || '';
+      const token = resetTokenRef.current;
+      let cancelled = false;
+      (async () => {
+        const rank = await window.api.getTrackRank({
+          trackId: id,
+          search: textSearch,
+          filters: structuredFilters,
+          playlistId: selectedPlaylist !== 'music' ? selectedPlaylist : undefined,
+          sort: sortBy.key === 'index' ? undefined : { key: sortBy.key, asc: sortBy.asc },
+        });
+        if (cancelled || token !== resetTokenRef.current) return;
+        if (rank == null) {
+          clearSortFlash(); // track is not in this view — nothing to follow
+          return;
+        }
+        const pageStart = Math.max(0, Math.floor(rank / PAGE_SIZE) * PAGE_SIZE);
+        await loadPage({ at: pageStart, mode: 'jump' });
+        if (cancelled || token !== resetTokenRef.current) return;
+        const el = listRef.current?.element;
+        if (el) {
+          // Scroll AFTER the reordered rows have painted (double rAF): scrolling
+          // synchronously forces layout of the whole list while the commit is
+          // still dirty — measured ~16s main-thread stalls in dev.
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              const top = rank * ROW_HEIGHT;
+              const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+              const centered = Math.min(
+                maxTop,
+                Math.max(0, top - (el.clientHeight - ROW_HEIGHT) / 2)
+              );
+              // Never scroll above the loaded window — rows above it aren't
+              // rendered until a prepend brings them in.
+              el.scrollTop = Math.max(centered, pageStart * ROW_HEIGHT);
+            });
+          });
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
     }
     // Keep the single selection: cancel any in-flight page load, then hand the
     // row to the follow effect, which fetches the full set in the new order
@@ -1114,7 +1213,7 @@ function MusicLibrary({
     sortFollowNonceRef.current += 1;
     setSortFollow({ id: singleSel, nonce: sortFollowNonceRef.current });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortBy.key, sortBy.asc, selectedIds]);
+  }, [sortBy.key, sortBy.asc, selectedIds, isPlaylistView, hideUnavailable, search, loadPage]);
 
   useEffect(() => {
     if (!sortFollow || sortFollow.nonce === sortFollowHandledRef.current) return;
@@ -1161,9 +1260,11 @@ function MusicLibrary({
         sortFollowHandledRef.current = nonce; // gone from the view — give up
         return;
       }
+      windowStartRef.current = 0; // materialized full set starts at index 0
       offsetRef.current = full.length;
       hasMoreRef.current = false;
       setHasMore(false);
+      setTotalRows(full.length); // spacer now spans exactly the materialized set
       sortFollowCommittedRef.current = nonce;
       const commitToken = resetTokenRef.current;
       setTimeout(() => {
@@ -1196,6 +1297,7 @@ function MusicLibrary({
     prevSearchRef.current = search;
 
     offsetRef.current = 0;
+    windowStartRef.current = 0;
     loadingRef.current = false;
     hasMoreRef.current = true;
     resetTokenRef.current += 1;
@@ -1208,18 +1310,37 @@ function MusicLibrary({
       setSortSaved(true);
     }
 
+    // Full result-set size for the windowed spacer (the scroller must span the
+    // whole list even while only one page is loaded). Same row set as the
+    // pages, so the spacer never overshoots by more than the page rounding.
+    const { filters: vf, remaining: vr } = parseQuery(search);
+    const vStructured = vf.filter((f) => f.field !== '_text');
+    const vText = vr || vf.find((f) => f.field === '_text')?.value || '';
+    let countAlive = true;
+    window.api
+      .countTracks({
+        search: vText,
+        filters: vStructured,
+        playlistId: selectedPlaylist !== 'music' ? selectedPlaylist : undefined,
+      })
+      .then((c) => {
+        if (countAlive) setTotalRows(c);
+      })
+      .catch(() => {});
+
     // Use setTimeout so the state updates above are committed before we load.
     // The cleanup cancels the timer — in StrictMode this means the first
     // invocation's timer is always cancelled, leaving only one load per reset.
     let cancelled = false;
     const timer = setTimeout(() => {
-      if (!cancelled) loadTracks();
+      if (!cancelled) loadPage({ at: 0, mode: 'reset' });
     }, 0);
     return () => {
       cancelled = true;
+      countAlive = false;
       clearTimeout(timer);
     };
-  }, [search, selectedPlaylist, loadKey, loadTracks]);
+  }, [search, selectedPlaylist, loadKey, loadPage]);
 
   // Listen for background analysis updates
   useEffect(() => {
@@ -1297,6 +1418,11 @@ function MusicLibrary({
               hasMoreRef.current = false;
               setHasMore(false);
             }
+            // New rows arrived — refresh the full-set size the spacer spans.
+            window.api
+              .countTracks()
+              .then(setTotalRows)
+              .catch(() => {});
           }
         }
       } else {
@@ -1646,9 +1772,11 @@ function MusicLibrary({
       // re-run below do the scroll once the new rows are committed.
       resetTokenRef.current += 1; // invalidate any in-flight page load
       loadingRef.current = false; // ...and make sure that load can never get stuck
+      windowStartRef.current = 0; // the full set starts at global index 0
       offsetRef.current = full.length;
       hasMoreRef.current = false;
       setHasMore(false);
+      setTotalRows(full.length); // spacer now spans exactly the materialized set
       // Materialize in a macrotask so the "Locating track…" overlay paints
       // first; the set itself is a plain (synchronous) state update.
       const tokenAfterBump = resetTokenRef.current;
@@ -2115,12 +2243,19 @@ function MusicLibrary({
   // ── Misc ───────────────────────────────────────────────────────────────────
 
   const handleItemsRendered = useCallback(
-    ({ stopIndex }) => {
-      if (stopIndex >= sortedTracksRef.current.length - PRELOAD_TRIGGER) {
-        loadTracks(); // loadTracks checks hasMoreRef and loadingRef internally
+    ({ startIndex, stopIndex }) => {
+      // Keep the loaded window covering the visible range: append downward when
+      // the viewport nears the bottom of the loaded rows, prepend upward when it
+      // climbs back above a mid-list jump point.
+      const winStart = windowStartRef.current;
+      const loadedEnd = winStart + sortedTracksRef.current.length;
+      if (stopIndex >= loadedEnd - PRELOAD_TRIGGER) {
+        loadPage({ at: offsetRef.current, mode: 'append' });
+      } else if (startIndex <= winStart + PRELOAD_TRIGGER && winStart > 0) {
+        loadPage({ at: Math.max(0, winStart - PAGE_SIZE), mode: 'prepend' });
       }
     },
-    [loadTracks]
+    [loadPage]
   );
 
   const handleSort = useCallback(
@@ -2259,6 +2394,8 @@ function MusicLibrary({
             isPlaylistView={isPlaylistView}
             tracks={tracks}
             sortedTracks={sortedTracks}
+            windowStart={windowStartRef.current}
+            totalRows={totalRows}
             hasMore={hasMore}
             gridTemplate={gridTemplate}
             minScrollWidth={minScrollWidth}
