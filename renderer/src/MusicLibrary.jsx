@@ -1962,6 +1962,25 @@ function MusicLibrary({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortBy]);
 
+  // Safety net: a deferred sort (useTransition) occasionally never commits
+  // (React keeps isPending true forever with an idle main thread). If the user
+  // is still waiting on a pending header sort after ~2.6s, apply it directly so
+  // the UI can never sit on the "Sorting…" overlay indefinitely.
+  useEffect(() => {
+    if (!isSorting || !pendingSortKey || pendingSortKey === sortBy.key) return;
+    const t = setTimeout(() => {
+      console.log(`[perf] sort.FORCE key=${pendingSortKey} (transition stuck >2.6s)`);
+      showPerf(`sort ${pendingSortKey} forced (transition stuck)`);
+      setSortBy((prev) => {
+        const next = { key: pendingSortKey, asc: prev.key === pendingSortKey ? !prev.asc : true };
+        if (isPlaylistView) setSortSaved(next.key === 'index');
+        return next;
+      });
+    }, 2600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSorting, pendingSortKey, sortBy.key]);
+
   // ── Row (library view) — handled by LibraryRow above via itemData ─────────
 
   const selectionLabel =
@@ -2019,7 +2038,7 @@ function MusicLibrary({
         )}
 
         <div className="table-scroll-wrap library-mode">
-          {(isSorting || queuePreparing || locating) && (
+          {((isSorting && pendingSortKey !== sortBy.key) || queuePreparing || locating) && (
             <div className="table-busy-overlay" role="status">
               <div className="table-busy-box">
                 <span className="table-busy-spinner" aria-hidden="true" />
