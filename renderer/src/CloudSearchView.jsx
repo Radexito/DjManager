@@ -215,6 +215,7 @@ export default function CloudSearchView({
     const handlePause = () => setPreviewPlaying(false);
     const handlePlay = () => {
       suppressPreviewError.current = false;
+      setPreviewLoadingKey(null); // stream started — hide the loading state
       setPreviewPlaying(true);
     };
     const handleError = () => {
@@ -223,6 +224,7 @@ export default function CloudSearchView({
         return;
       }
       setPreviewError('Inline preview playback failed');
+      setPreviewLoadingKey(null);
       setPreviewPlaying(false);
       setPreviewTrackKey(null);
     };
@@ -410,10 +412,12 @@ export default function CloudSearchView({
       } catch (err) {
         suppressPreviewError.current = false;
         setPreviewError(err.message ?? 'Inline preview playback failed');
+        setPreviewLoadingKey(null);
         setPreviewTrackKey(null);
         setPreviewPlaying(false);
       } finally {
-        setPreviewLoadingKey(null);
+        // loading state clears when playback actually starts (handlePlay) or
+        // on error — NOT here, since a live stream buffers before 'play'.
       }
     },
     [

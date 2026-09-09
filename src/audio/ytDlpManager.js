@@ -437,61 +437,28 @@ export async function searchYouTube(query, options = {}) {
     }));
 }
 
-export async function bufferPreviewAudio(url, options = {}) {
+/**
+ * Spawn yt-dlp streaming a single audio track to stdout (-o -). The caller
+ * pipes stdout to an HTTP response / file. Default client only: pinned
+ * clients (ios/android_vr/tv) fail age-restricted tracks with "Requested
+ * format is not available", and only the default client + cookies can solve
+ * PO tokens for direct playback.
+ * @returns {import('child_process').ChildProcessWithoutNullStreams}
+ */
+export function createPreviewAudioStream(url, options = {}) {
   const ytDlp = getYtDlpRuntimePath();
-  const previewDir = path.join(app.getPath('temp'), 'djman-preview');
-  await fs.promises.mkdir(previewDir, { recursive: true });
-
-  const FILE_MARKER = '__PREVIEW_FILE__:';
-  const outTemplate = path.join(previewDir, '%(id)s.%(ext)s');
-
   const args = [
     '-f',
     'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio/best',
     '--no-warnings',
-    '--newline',
-    '--no-colors',
-    // Sanity cap: previews are for checking a track, not archiving it.
-    '--max-filesize',
-    '25M',
-    '--print',
-    `after_move:${FILE_MARKER}%(filepath)s`,
     '-o',
-    outTemplate,
+    '-',
   ];
   if (options.cookiesBrowser) {
-    // Age-restricted / sign-in-only tracks REQUIRE the user's browser cookies.
     args.push('--cookies-from-browser', resolveBrowser(options.cookiesBrowser));
   }
   args.push(url);
-
-  return new Promise((resolve, reject) => {
-    const proc = spawn(ytDlp, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-
-    proc.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
-    });
-    proc.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-    proc.on('error', reject);
-    proc.on('close', (code) => {
-      const m = stdout.match(new RegExp(`${FILE_MARKER}(.+)$`, 'm'));
-      if (code === 0 && m) {
-        resolve(m[1].trim());
-        return;
-      }
-      reject(
-        new Error(
-          stderr.trim() ||
-            stdout.trim() ||
-            'Unable to buffer YouTube preview (no cookies? age-restricted?)'
-        )
-      );
-    });
-  });
+  return spawn(ytDlp, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 /**

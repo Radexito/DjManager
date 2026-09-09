@@ -114,7 +114,7 @@ import {
   downloadUrl as ytDlpDownloadUrl,
   fetchPlaylistInfo as ytDlpFetchPlaylistInfo,
   searchYouTube,
-  bufferPreviewAudio,
+  createPreviewAudioStream,
 } from './audio/ytDlpManager.js';
 import {
   checkTidalSetup,
@@ -176,6 +176,78 @@ let mediaServerPort = null;
 // will serve files from that directory tree.
 const explorerAllowedBases = [];
 
+// Live YouTube preview streams: token -> entry(req, res, corsHeaders).
+// The entry streams yt-dlp output to the response while tee-ing it to a temp
+// file; once the stream completes the same token serves the buffered file.
+const ytPreviewStreams = new Map();
+
+/**
+ * Register a live yt-dlp preview stream for a YouTube URL. Returns the token
+ * used in http://127.0.0.1:<port>/djman-yt-preview/<token>.
+ * First request on a token: 200 chunked stream of yt-dlp stdout (play as data
+ * arrives); the same bytes are written to previewDir/<token>.m4a. When the
+ * stream finishes cleanly the entry redirects to the buffered file so replays
+ * are instant and seekable. Streams die on error with a 503/aborted response.
+ */
+function registerYtPreviewStream(url, cookiesBrowser, previewDir) {
+  const previewToken = crypto.randomUUID();
+  const filePath = path.join(previewDir, `${previewToken}.m4a`);
+  let streaming = false;
+  let fileDone = false;
+
+  const entry = (req, res, corsHeaders) => {
+    if (fileDone && fs.existsSync(filePath)) {
+      res.writeHead(302, {
+        ...corsHeaders,
+        Location: `http://127.0.0.1:${mediaServerPort}${encodeURI(filePath)}`,
+      });
+      res.end();
+      return;
+    }
+    if (streaming) {
+      res.writeHead(503, corsHeaders);
+      res.end('still buffering');
+      return;
+    }
+    streaming = true;
+    res.writeHead(200, {
+      ...corsHeaders,
+      'Content-Type': 'audio/mp4', // previews resolve to m4a in practice
+      'Cache-Control': 'no-store',
+    });
+    const proc = createPreviewAudioStream(url, { cookiesBrowser });
+    let gotData = false;
+    const stallTimer = setTimeout(() => {
+      if (!gotData) proc.kill(); // never started producing — don't hang the audio
+    }, 45000);
+    proc.stdout.on('data', () => {
+      gotData = true;
+    });
+    proc.stderr.on('data', () => {}); // drain — errors surface via exit code
+    const fileStream = fs.createWriteStream(filePath);
+    proc.stdout.pipe(fileStream);
+    proc.stdout.pipe(res);
+    const finish = (code) => {
+      clearTimeout(stallTimer);
+      streaming = false;
+      if (code === 0 && fs.existsSync(filePath) && fs.statSync(filePath).size > 0) {
+        fileDone = true;
+      } else {
+        try {
+          fs.unlinkSync(filePath);
+        } catch {
+          /* already gone */
+        }
+      }
+    };
+    proc.on('close', finish);
+    proc.on('error', () => finish(-1));
+  };
+
+  ytPreviewStreams.set(previewToken, entry);
+  return previewToken;
+}
+
 function startMediaServer() {
   // With multiple libraries live at once (#390), there's no single implicit
   // "the" library any more — the oldest one keeps the primary audioBase slot
@@ -191,9 +263,11 @@ function startMediaServer() {
       if (!explorerAllowedBases.includes(base)) explorerAllowedBases.push(base);
     }
   }
-  return _startMediaServer(audioBase, artworkBase, explorerAllowedBases).then(({ port }) => {
-    mediaServerPort = port;
-  });
+  return _startMediaServer(audioBase, artworkBase, explorerAllowedBases, ytPreviewStreams).then(
+    ({ port }) => {
+      mediaServerPort = port;
+    }
+  );
 }
 
 function createWindow() {
@@ -1496,14 +1570,16 @@ ipcMain.handle('cloud-search-preview', async (_event, { source, type, url }) => 
     if (source === 'youtube') {
       // YouTube stream URLs resolved by yt-dlp (--get-url) are rejected by
       // googlevideo with 403 for direct playback (PO-token / n-sig), and
-      // age-restricted tracks need browser cookies anyway. Buffer the audio
-      // through the same download path that works (cookies + default client)
-      // and play the local file over the media server.
+      // age-restricted tracks need browser cookies anyway. Stream yt-dlp
+      // output live (play as soon as data arrives) while tee-ing it into a
+      // temp file — once the stream finishes, replays are served from the
+      // buffered file over the media server (instant + seekable).
       const cookiesBrowser = getSetting('ytdlp_cookies_browser', '') || null;
-      const file = await bufferPreviewAudio(url, { cookiesBrowser });
       const previewDir = path.join(app.getPath('temp'), 'djman-preview');
+      await fs.promises.mkdir(previewDir, { recursive: true });
       if (!explorerAllowedBases.includes(previewDir)) explorerAllowedBases.push(previewDir);
-      return { ok: true, url: `http://127.0.0.1:${mediaServerPort}${file}` };
+      const token = registerYtPreviewStream(url, cookiesBrowser, previewDir);
+      return { ok: true, url: `http://127.0.0.1:${mediaServerPort}/djman-yt-preview/${token}` };
     }
     if (source === 'tidal') {
       if (type !== 'track') {
