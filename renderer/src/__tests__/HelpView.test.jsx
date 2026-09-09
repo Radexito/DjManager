@@ -38,6 +38,22 @@ describe('HelpView', () => {
     expect(screen.queryByText('Library management')).not.toBeInTheDocument();
   });
 
+  it('searching "Short" surfaces the keyboard shortcuts section', () => {
+    render(<HelpView />);
+    fireEvent.change(screen.getByLabelText('Search the manual'), {
+      target: { value: 'short' },
+    });
+    expect(screen.getByText('Keyboard shortcuts')).toBeInTheDocument();
+  });
+
+  it('matches a section by its title', () => {
+    render(<HelpView />);
+    fireEvent.change(screen.getByLabelText('Search the manual'), {
+      target: { value: 'player' },
+    });
+    expect(screen.getByText('Player')).toBeInTheDocument();
+  });
+
   it('shows a no-results message when nothing matches', () => {
     render(<HelpView />);
     fireEvent.change(screen.getByLabelText('Search the manual'), {

@@ -149,23 +149,31 @@ export default function HelpView({ style, active = false, onClose }) {
   }, [active, onClose]);
 
   const q = query.trim().toLowerCase();
-  const { sections, shortcutCount, totalHits } = useMemo(() => {
-    const visible = (items, extra) =>
-      !q ||
-      items.some((i) => i.toLowerCase().includes(q)) ||
-      (extra || '').toLowerCase().includes(q);
+  // Keywords that should surface the shortcuts block itself (it is rendered
+  // separately from SECTIONS, so it needs its own match rule).
+  const SHORTCUT_TITLE_KEYS = 'keyboard shortcuts shortcut keys key';
+  const { sections, shortcutRows, showShortcutHeading, totalHits } = useMemo(() => {
+    const match = (text) => text.toLowerCase().includes(q);
+    const visible = (items, title, extra) =>
+      !q || match(title) || items.some(match) || (extra || '').toLowerCase().includes(q);
     const sections = SECTIONS.map((s) => ({
       ...s,
-      items: q ? s.items.filter((i) => i.toLowerCase().includes(q)) : s.items,
-    })).filter((s) => !q || visible(s.items, s.keywords));
-    const shortcuts = q ? SHORTCUTS.filter((s) => s.what.toLowerCase().includes(q)) : SHORTCUTS;
+      items: q ? s.items.filter(match) : s.items,
+    })).filter((s) => !q || visible(s.items, s.title, s.keywords));
+    const shortcutRows = q
+      ? SHORTCUTS.filter(
+          (s) => s.what.toLowerCase().includes(q) || s.keys.some((k) => k.toLowerCase().includes(q))
+        )
+      : SHORTCUTS;
+    const titleMatch = !q || SHORTCUT_TITLE_KEYS.includes(q);
+    const showShortcutHeading = !q || titleMatch || shortcutRows.length > 0;
     return {
       sections,
-      shortcutCount: shortcuts.length,
+      shortcutRows,
+      showShortcutHeading,
       totalHits:
         sections.reduce((n, s) => n + s.items.length, 0) +
-        shortcuts.length +
-        (sections.length ? 1 : 0),
+        (showShortcutHeading ? shortcutRows.length : 0),
     };
   }, [q]);
 
@@ -225,25 +233,23 @@ export default function HelpView({ style, active = false, onClose }) {
           </section>
         ))}
 
-        {(!q || shortcutCount > 0) && (
+        {showShortcutHeading && (
           <section className="help-view__section help-view__shortcuts">
             <h2 className="help-view__section-title">Keyboard shortcuts</h2>
             <table className="help-view__keys">
               <tbody>
-                {(q ? SHORTCUTS.filter((s) => s.what.toLowerCase().includes(q)) : SHORTCUTS).map(
-                  (s, i) => (
-                    <tr key={i}>
-                      <td className="help-view__keys-keys">
-                        {s.keys.map((k) => (
-                          <kbd key={k} className="help-view__kbd">
-                            {k}
-                          </kbd>
-                        ))}
-                      </td>
-                      <td className="help-view__keys-what">{s.what}</td>
-                    </tr>
-                  )
-                )}
+                {shortcutRows.map((s, i) => (
+                  <tr key={i}>
+                    <td className="help-view__keys-keys">
+                      {s.keys.map((k) => (
+                        <kbd key={k} className="help-view__kbd">
+                          {k}
+                        </kbd>
+                      ))}
+                    </td>
+                    <td className="help-view__keys-what">{s.what}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </section>
