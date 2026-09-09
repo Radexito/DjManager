@@ -5,10 +5,10 @@ import {
   useRef,
   useCallback,
   useMemo,
+  memo,
   createContext,
   useContext,
 } from 'react';
-import { List } from 'react-window';
 import {
   DndContext,
   closestCenter,
@@ -59,6 +59,7 @@ function sortTrackRows(base, sortBy) {
   });
 }
 const ROW_HEIGHT = 50;
+const ROW_STYLE = { height: ROW_HEIGHT }; // stable identity so memoized rows skip re-render
 const PRELOAD_TRIGGER = 3;
 const RIGHT_ALIGNED_COLUMNS = new Set([
   'bpm',
@@ -256,11 +257,11 @@ function SubItem({ id, label, children, wide, scrollable }) {
   );
 }
 
-// ── LibraryRow — outside MusicLibrary so react-virtualized doesn't remount on re-render ──
+// ── LibraryRow — memoized so lazy page appends only render the NEW rows ────
 function LibraryRow({
   index,
   style,
-  tracks,
+  track,
   selectedIds,
   currentTrackId,
   onRowClick,
@@ -278,17 +279,7 @@ function LibraryRow({
   libraryNames,
   unavailableLinkedIds,
 }) {
-  const t = tracks[index];
-  if (!t) {
-    return (
-      <div
-        style={{ ...style, gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
-        className="row row-loading"
-      >
-        Loading more tracks...
-      </div>
-    );
-  }
+  const t = track;
   const isSelected = selectedIds.has(t.id);
   const isPlaying = currentTrackId === t.id;
   const isNew = newTrackIds?.has(t.id);
@@ -394,6 +385,10 @@ function LibraryRow({
     </div>
   );
 }
+
+// Memoized variant: on lazy page appends only the newly added rows re-render
+// (existing rows keep identical props: same track/index/callbacks/style).
+const LibraryRowMemo = memo(LibraryRow);
 
 // ── SortableRow — must be defined outside MusicLibrary to avoid remount ────
 function SortableRow({
@@ -672,38 +667,73 @@ function TrackTableBody({
   }
 
   return (
-    <List
-      key={gridTemplate}
-      listRef={listRef}
-      defaultHeight={600}
-      rowCount={sortedTracks.length + (hasMore ? 1 : 0)}
-      rowHeight={ROW_HEIGHT}
-      width="100%"
-      style={{}}
-      overscanCount={6}
-      onRowsRendered={handleItemsRendered}
-      className="track-list"
-      rowComponent={LibraryRow}
-      rowProps={{
-        tracks: sortedTracks,
-        selectedIds,
-        currentTrackId: playingTrackId,
-        onRowClick: handleRowClick,
-        onDoubleClick: handleDoubleClick,
-        onContextMenu: handleContextMenu,
-        onRatingChange: handleRatingChange,
-        onCueClick: handleCueClick,
-        onDragStart: handleTrackDragStart,
-        visibleColumns,
-        gridTemplate,
-        minScrollWidth,
-        mediaPort,
-        newTrackIds,
-        onAnimationEnd: handleRowAnimationEnd,
-        unavailableLinkedIds,
-        libraryNames,
+    <div
+      className="track-list track-list--plain"
+      ref={(el) => {
+        // Keep the same listRef contract react-window provided ({ element,
+        // scrollToRow }) so locate/scroll sync code keeps working unchanged.
+        if (!el) {
+          listRef.current = null;
+          return;
+        }
+        listRef.current = {
+          get element() {
+            return el;
+          },
+          scrollToRow: ({ index, align = 'auto', behavior = 'auto' }) => {
+            const top = index * ROW_HEIGHT;
+            const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+            let target;
+            if (align === 'center') {
+              target = Math.min(maxTop, Math.max(0, top - (el.clientHeight - ROW_HEIGHT) / 2));
+            } else if (align === 'end') {
+              target = Math.min(maxTop, top + ROW_HEIGHT - el.clientHeight);
+            } else {
+              target = Math.min(maxTop, top);
+            }
+            el.scrollTo({ top: target, behavior });
+          },
+        };
       }}
-    />
+      onScroll={(e) => {
+        // Feed the existing lazy-load trigger with a synthesized visible range.
+        const el = e.currentTarget;
+        handleItemsRendered({
+          startIndex: Math.floor(el.scrollTop / ROW_HEIGHT),
+          stopIndex: Math.floor((el.scrollTop + el.clientHeight) / ROW_HEIGHT),
+        });
+      }}
+    >
+      {sortedTracks.map((t, index) => (
+        <LibraryRowMemo
+          key={t.id}
+          index={index}
+          style={ROW_STYLE}
+          track={t}
+          selectedIds={selectedIds}
+          currentTrackId={playingTrackId}
+          onRowClick={handleRowClick}
+          onDoubleClick={handleDoubleClick}
+          onContextMenu={handleContextMenu}
+          onRatingChange={handleRatingChange}
+          onCueClick={handleCueClick}
+          onDragStart={handleTrackDragStart}
+          visibleColumns={visibleColumns}
+          gridTemplate={gridTemplate}
+          minScrollWidth={minScrollWidth}
+          mediaPort={mediaPort}
+          newTrackIds={newTrackIds}
+          onAnimationEnd={handleRowAnimationEnd}
+          unavailableLinkedIds={unavailableLinkedIds}
+          libraryNames={libraryNames}
+        />
+      ))}
+      {hasMore && (
+        <div className="row row-loading" style={{ height: ROW_HEIGHT }}>
+          Loading more tracks...
+        </div>
+      )}
+    </div>
   );
 }
 

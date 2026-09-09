@@ -269,10 +269,20 @@
   }
 }
 
-/* react-window */
+/* react-window (kept for FileExplorer) — Music view uses plain rows now */
 .track-list {
   flex: 1;
   background-color: #1a1a1a;
+}
+
+/* Plain (non-virtualized) music list: native scroll, rows in normal flow */
+.track-list--plain {
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+.track-list--plain .row {
+  position: static;
 }
 
 /* Context Menu */
