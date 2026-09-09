@@ -2039,7 +2039,7 @@ function MusicLibrary({
                 background: '#1a1206',
                 border: '1px solid #b8860b',
                 color: '#ffd479',
-                font: '13px monospace',
+                font: 'bold 15px monospace',
                 padding: '3px 10px',
                 borderRadius: 5,
                 pointerEvents: 'none',
