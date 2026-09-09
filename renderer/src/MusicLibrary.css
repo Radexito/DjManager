@@ -16,6 +16,10 @@
   position: relative;
 }
 
+.music-library__search {
+  flex-shrink: 0;
+}
+
 /* Search */
 .search-input {
   padding: 8px;

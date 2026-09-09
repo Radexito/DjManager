@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import './DepsOverlay.css';
 
 const KNOWN_STEPS = [
@@ -24,52 +25,86 @@ function fmtEta(sec) {
   return `~${Math.ceil(sec / 60)}m`;
 }
 
-export function DepsOverlay({ progress, onRetry }) {
-  if (!progress) return null;
+/**
+ * First-time setup overlay, installer-console style.
+ *
+ * - Required dependency steps render as a checklist (done/active/pending).
+ * - The optional tidal-dl-ng step renders as a normal step row too (marked
+ *   "optional"), with the required rows staying checked while it runs.
+ * - The raw log console is COLLAPSED by default; "Show log" expands it.
+ * - When a run finishes the overlay STAYS open with a Close button; it never
+ *   auto-dismisses after real work.
+ *
+ * props:
+ *   progress - live progress event ({ stepId, stepTotal, pct, error, ... })
+ *   log      - accumulated console lines [{ text, kind: 'log' | 'error' }]
+ *   done     - true when the run finished successfully (progress was cleared)
+ *   onRetry  - re-run dependency install
+ *   onClose  - dismiss the overlay (only offered once done / on error)
+ */
+export function DepsOverlay({ progress, log = [], done = false, onRetry, onClose }) {
+  const logRef = useRef(null);
+  const [showLog, setShowLog] = useState(false);
+
+  // Keep the newest line visible while the log grows (console behaviour).
+  useEffect(() => {
+    if (!showLog) return;
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [log.length, showLog]);
+
+  if (!progress && !done) return null;
 
   const {
     stepId,
-    stepIndex,
-    stepTotal,
     stepPct,
     bytesDownloaded,
     bytesTotal,
     bytesPerSec,
     etaSec,
-    msg,
     pct,
     error,
-  } = progress;
+    stepsCompleted,
+    readyStepIds,
+  } = progress ?? {};
 
-  // Build step list from known steps filtered to stepTotal count.
-  // If stepId is unknown (e.g. old-format payload), fall back to simple view.
-  const hasSteps = stepTotal > 0 && stepId !== undefined;
+  const isError = !!error;
+  const running = !done && !isError;
 
-  // Derive which known steps are active in this run (stepTotal of them)
-  const activeSteps = KNOWN_STEPS.filter((s) => {
-    // Show step if it matches a step we've seen or will see
-    const idx = KNOWN_STEPS.indexOf(s);
-    return idx < stepTotal || s.id === stepId;
-  }).slice(0, stepTotal);
-
-  const currentIdx = activeSteps.findIndex((s) => s.id === stepId);
-  const isError = pct === -1 || !!error;
-  const isDone = pct === 100 && !error;
+  // Step checklist. Show the FULL list (FFmpeg, mixxx-analyzer, yt-dlp,
+  // tidal-dl-ng) up front, installer style: pending rows stay visible until
+  // they run. Required rows flip to done as stepsCompleted advances; the
+  // auto-installed tidal row activates after them.
+  const hasSteps = running;
+  const activeSteps = hasSteps ? KNOWN_STEPS : [];
+  const doneCount =
+    stepsCompleted ??
+    Math.max(
+      0,
+      activeSteps.findIndex((s) => s.id === stepId)
+    );
 
   const speed = fmtSpeed(bytesPerSec);
   const eta = fmtEta(etaSec);
   const hasBytes = bytesTotal > 0 && bytesDownloaded > 0;
+  const showBar = running && (stepPct >= 0 || pct >= 0);
+  // Optional step streams log lines without a percentage: show an animated
+  // indeterminate bar instead of nothing.
+  const indeterminate = running && !!stepId && pct != null && pct < 0;
 
   return (
     <div className="deps-overlay">
-      <div className="deps-box">
-        <div className="deps-title">First-time setup</div>
+      <div className="deps-box deps-box--wide">
+        <div className="deps-title">
+          {isError ? 'Setup failed' : done ? 'Setup complete' : 'First-time setup'}
+        </div>
 
         {hasSteps && (
           <div className="deps-steps">
             {activeSteps.map((s, i) => {
-              const isActive = s.id === stepId && !isDone;
-              const isDoneStep = i < currentIdx || isDone;
+              const wasReady = Array.isArray(readyStepIds) && readyStepIds.includes(s.id);
+              const isDoneStep = i < doneCount || wasReady;
+              const isActive = s.id === stepId && running && !isDoneStep;
               return (
                 <div
                   key={s.id}
@@ -90,30 +125,61 @@ export function DepsOverlay({ progress, onRetry }) {
           </div>
         )}
 
-        <div className="deps-msg">{msg}</div>
-
-        {!isError && (stepPct >= 0 || pct >= 0) && (
+        {showBar && !indeterminate && (
           <div className="deps-bar-track">
             <div className="deps-bar-fill" style={{ width: `${stepPct >= 0 ? stepPct : pct}%` }} />
           </div>
         )}
 
-        {hasSteps && stepTotal > 1 && !isDone && !isError && (
-          <div className="deps-overall">
-            Step {stepIndex} of {stepTotal}
+        {indeterminate && (
+          <div className="deps-bar-track">
+            <div className="deps-bar-fill deps-bar-fill--indet" />
           </div>
         )}
 
-        {isError && (
-          <div className="deps-error">
-            <span>{error || msg}</span>
-            {onRetry && (
-              <button className="deps-retry-btn" onClick={onRetry}>
-                Retry
-              </button>
+        {log.length > 0 && (
+          <div className="deps-console">
+            <button type="button" className="deps-log-toggle" onClick={() => setShowLog((s) => !s)}>
+              {showLog ? 'Hide log ▴' : `Show log (${log.length}) ▾`}
+            </button>
+            {showLog && (
+              <div className="deps-log" ref={logRef}>
+                {log.map((l, i) => (
+                  <div
+                    key={i}
+                    className={`deps-log-line${l.kind === 'error' ? ' deps-log-line--err' : ''}`}
+                  >
+                    {l.text}
+                  </div>
+                ))}
+                {running && <div className="deps-log-cursor">▌</div>}
+              </div>
             )}
           </div>
         )}
+
+        {done && !isError && (
+          <div className="deps-done-note">All done. You can close this window.</div>
+        )}
+
+        {isError && !done && (
+          <div className="deps-error">
+            <span>{error || 'Something went wrong during setup.'}</span>
+          </div>
+        )}
+
+        <div className="deps-actions">
+          {isError && !done && onRetry && (
+            <button className="deps-btn" onClick={onRetry}>
+              Retry
+            </button>
+          )}
+          {onClose && (done || isError) && (
+            <button className="deps-btn deps-btn--primary" onClick={onClose}>
+              Close
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

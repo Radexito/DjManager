@@ -362,3 +362,27 @@ describe('context menu — playlist view shows both remove options', () => {
     expect(screen.getByText(/🗑️ Remove from library/)).toBeInTheDocument();
   });
 });
+
+// ── Search bar — now rendered inside MusicLibrary itself ────────────────────
+
+describe('search bar', () => {
+  it('renders the search input inside MusicLibrary content and forwards typed text via onSearchChange', async () => {
+    const onSearchChange = vi.fn();
+    render(<MusicLibrary selectedPlaylist="music" search="" onSearchChange={onSearchChange} />);
+    await screen.findByText('Track One');
+
+    const input = screen.getByPlaceholderText(/Search…/);
+    expect(input).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: 'Techno' } });
+    expect(onSearchChange).toHaveBeenCalled();
+  });
+
+  it('reflects the current search value passed in via props', async () => {
+    render(
+      <MusicLibrary selectedPlaylist="music" search="ARTIST is Foo" onSearchChange={() => {}} />
+    );
+    await screen.findByText('Track One');
+    expect(screen.getByText('ARTIST')).toBeInTheDocument();
+  });
+});

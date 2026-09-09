@@ -10,7 +10,6 @@ import { createWriteStream } from 'fs';
 import { app } from 'electron';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
-import { findTidalDlPath } from './audio/tidalDlManager.js';
 const execAsync = promisify(exec);
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
@@ -49,16 +48,34 @@ export function getUvRuntimePath() {
   return path.join(getBinDir(), process.platform === 'win32' ? 'uv.exe' : 'uv');
 }
 
-function versionFile(name) {
-  return path.join(getBinDir(), `${name}.version`);
+export function getTidalBinPath() {
+  return path.join(getBinDir(), process.platform === 'win32' ? 'tdn.exe' : 'tdn');
 }
 
-function readVersion(name) {
-  try {
-    return JSON.parse(fs.readFileSync(versionFile(name), 'utf8'));
-  } catch {
-    return null;
+// uv installs the tool shim under the package's own name (`tidal-dl-ng`,
+// plus `tidal-dl-ng-gui`), not the legacy `tdn` name. Probe both so a fresh
+// install is recognised and first-run does not re-run on every launch.
+function getTidalBin() {
+  const ext = process.platform === 'win32' ? '.exe' : '';
+  for (const name of ['tidal-dl-ng', 'tdn']) {
+    const p = path.join(getBinDir(), name + ext);
+    if (fs.existsSync(p)) return p;
   }
+  return null;
+}
+
+// env vars that pin uv tool install/list to DjManager's own bin dir
+function uvToolEnv() {
+  const binDir = getBinDir();
+  return {
+    ...process.env,
+    UV_TOOL_DIR: path.join(binDir, 'uv-tools'),
+    UV_TOOL_BIN_DIR: binDir,
+  };
+}
+
+function versionFile(name) {
+  return path.join(getBinDir(), `${name}.version`);
 }
 
 function writeVersion(name, data) {
@@ -66,20 +83,60 @@ function writeVersion(name, data) {
   fs.writeFileSync(versionFile(name), JSON.stringify(data, null, 2));
 }
 
-export function getInstalledVersions() {
-  return {
-    ffmpeg: readVersion('ffmpeg'),
-    analyzer: readVersion('analyzer'),
-    ytDlp: readVersion('yt-dlp'),
-    tidalDlNg: readVersion('tidal-dl-ng'),
-  };
+export async function getInstalledVersions() {
+  const [ffmpeg, analyzer, ytDlp, tidalDlNg] = await Promise.all([
+    probeFfmpegVersion(),
+    probeAnalyzerVersion(),
+    probeYtDlpVersion(),
+    probeTidalVersion(),
+  ]);
+  return { ffmpeg, analyzer, ytDlp, tidalDlNg };
+}
+
+async function probeFfmpegVersion() {
+  const binPath = getFfmpegRuntimePath();
+  if (!fs.existsSync(binPath)) return null;
+  try {
+    const { stdout } = await execAsync(`"${binPath}" -version`);
+    const match = stdout.match(/ffmpeg version (\S+)/);
+    return { version: match ? match[1] : 'installed' };
+  } catch {
+    return { version: 'installed' };
+  }
+}
+
+async function probeAnalyzerVersion() {
+  const binPath = getAnalyzerRuntimePath();
+  if (!fs.existsSync(binPath)) return null;
+  try {
+    const { stdout } = await execAsync(`"${binPath}" --version`);
+    return { version: stdout.trim() || 'installed' };
+  } catch {
+    return { version: 'installed' };
+  }
+}
+
+async function probeYtDlpVersion() {
+  const binPath = getYtDlpRuntimePath();
+  if (!fs.existsSync(binPath)) return null;
+  try {
+    const { stdout } = await execAsync(`"${binPath}" --version`);
+    return { version: stdout.trim() || 'installed' };
+  } catch {
+    return { version: 'installed' };
+  }
+}
+
+async function probeTidalVersion() {
+  if (!getTidalBin()) return null;
+  return { version: await getTidalDlNgVersion() };
 }
 
 async function getTidalDlNgVersion() {
   const uvPath = getUvRuntimePath();
   if (fs.existsSync(uvPath)) {
     try {
-      const { stdout } = await execAsync(`"${uvPath}" tool list`);
+      const { stdout } = await execAsync(`"${uvPath}" tool list`, { env: uvToolEnv() });
       const match = stdout.match(/tidal-dl-ng(?:-for-dj)?\s+v?([\d.]+)/i);
       if (match) return match[1];
     } catch {
@@ -160,7 +217,7 @@ async function installTidalDlNgDep(onProgress) {
       uvPath,
       ['tool', 'install', '--reinstall', 'git+https://github.com/Radexito/tidal-dl-ng-For-DJ.git'],
       {
-        env: { ...process.env },
+        env: uvToolEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
       }
     );
@@ -201,7 +258,7 @@ async function upgradeTidalDlNgDep(onProgress) {
           'git+https://github.com/Radexito/tidal-dl-ng-For-DJ.git',
         ],
         {
-          env: { ...process.env },
+          env: uvToolEnv(),
           stdio: ['ignore', 'pipe', 'pipe'],
         }
       );
@@ -645,23 +702,40 @@ export async function ensureDeps(onProgress) {
     fs.existsSync(getFfmpegRuntimePath()) && fs.existsSync(getFfprobeRuntimePath());
   const analyzerReady = fs.existsSync(getAnalyzerRuntimePath());
   const ytDlpReady = fs.existsSync(getYtDlpRuntimePath());
-  const tidalReady = Boolean(findTidalDlPath());
-  if (ffmpegReady && analyzerReady && ytDlpReady && tidalReady) return;
+  const tidalReady = getTidalBin() != null;
+
+  // Tidal is optional — not a required step, handled separately after required deps
+  const STEP_DEFS = [
+    !ffmpegReady && { id: 'ffmpeg', label: 'FFmpeg' },
+    !analyzerReady && { id: 'analyzer', label: 'mixxx-analyzer' },
+    !ytDlpReady && { id: 'ytdlp', label: 'yt-dlp' },
+  ].filter(Boolean);
+  const totalSteps = STEP_DEFS.length;
+
+  // Steps whose binary is already present. The overlay shows these as
+  // checked from the start ("already installed"), so a row never looks like
+  // it "finished instantly" without downloading anything.
+  const readyStepIds = [
+    ffmpegReady && 'ffmpeg',
+    analyzerReady && 'analyzer',
+    ytDlpReady && 'ytdlp',
+    tidalReady && 'tidal',
+  ].filter(Boolean);
+
+  if (totalSteps === 0 && tidalReady) {
+    onProgress?.({ msg: 'Dependencies up to date.', pct: 100, stepIndex: 0, stepTotal: 0 });
+    return;
+  }
 
   const binDir = getBinDir();
   await fs.promises.mkdir(binDir, { recursive: true });
   const tmp = path.join(app.getPath('temp'), 'djman-deps');
   await fs.promises.mkdir(tmp, { recursive: true });
-
-  const STEP_DEFS = [
-    !ffmpegReady && { id: 'ffmpeg', label: 'FFmpeg' },
-    !analyzerReady && { id: 'analyzer', label: 'mixxx-analyzer' },
-    !ytDlpReady && { id: 'ytdlp', label: 'yt-dlp' },
-    !tidalReady && { id: 'tidal', label: 'tidal-dl-ng' },
-  ].filter(Boolean);
-  const totalSteps = STEP_DEFS.length;
   let stepIndex = 0;
   let currentStep = null;
+  // How many REQUIRED steps have fully finished; lets the overlay keep the
+  // required rows checked while the optional (tidal) step is running.
+  let stepsCompleted = 0;
 
   // Per-step speed/ETA tracker — reset when step changes
   let _lastBytes = 0,
@@ -699,6 +773,8 @@ export async function ensureDeps(onProgress) {
       stepLabel: currentStep?.label ?? null,
       stepIndex,
       stepTotal: totalSteps,
+      stepsCompleted,
+      readyStepIds,
       stepPct: pct,
       bytesDownloaded: bytesReceived ?? 0,
       bytesTotal: bytesTotal ?? -1,
@@ -713,34 +789,80 @@ export async function ensureDeps(onProgress) {
       stepIndex++;
       resetTracker();
       await downloadFFmpeg(tmp, stepCb);
+      stepsCompleted++;
     }
     if (!analyzerReady) {
       currentStep = STEP_DEFS.find((s) => s.id === 'analyzer');
       stepIndex++;
       resetTracker();
       await downloadAnalyzer(tmp, stepCb);
+      stepsCompleted++;
     }
     if (!ytDlpReady) {
       currentStep = STEP_DEFS.find((s) => s.id === 'ytdlp');
       stepIndex++;
       resetTracker();
       await downloadYtDlp(tmp, stepCb);
+      stepsCompleted++;
     }
     if (!tidalReady) {
-      currentStep = STEP_DEFS.find((s) => s.id === 'tidal');
-      stepIndex++;
-      resetTracker();
-      stepCb('Installing tidal-dl-ng…', 0);
+      // Required steps are all done now - report them as completed so the
+      // overlay keeps them checked while the optional step runs.
+      stepsCompleted = totalSteps;
+      currentStep = { id: 'tidal', label: 'tidal-dl-ng' };
+      onProgress?.({
+        msg: 'Installing tidal-dl-ng…',
+        pct: 0,
+        stepId: 'tidal',
+        stepLabel: 'tidal-dl-ng',
+        optional: true,
+        stepIndex,
+        stepTotal: totalSteps,
+        stepsCompleted,
+        readyStepIds,
+      });
       try {
-        await installTidalDlNgDep((msg) => stepCb(msg, -1));
-        stepCb('tidal-dl-ng installed.', 100);
+        await installTidalDlNgDep((msg) =>
+          onProgress?.({
+            msg,
+            pct: -1,
+            stepId: 'tidal',
+            stepLabel: 'tidal-dl-ng',
+            optional: true,
+            stepIndex,
+            stepTotal: totalSteps,
+            stepsCompleted,
+            readyStepIds,
+          })
+        );
+        onProgress?.({
+          msg: 'tidal-dl-ng installed.',
+          pct: 100,
+          stepId: 'tidal',
+          stepLabel: 'tidal-dl-ng',
+          optional: true,
+          stepIndex,
+          stepTotal: totalSteps,
+          stepsCompleted,
+          readyStepIds,
+        });
       } catch (err) {
         console.warn('[deps] tidal-dl-ng install failed (non-fatal):', err.message);
-        stepCb('tidal-dl-ng install failed — Python 3.12+ may not be available.', -1);
+        onProgress?.({
+          msg: 'tidal-dl-ng install failed — Python 3.12+ may not be available.',
+          pct: -1,
+          stepId: 'tidal',
+          stepLabel: 'tidal-dl-ng',
+          optional: true,
+          stepIndex,
+          stepTotal: totalSteps,
+          stepsCompleted,
+          readyStepIds,
+        });
       }
     }
     onProgress?.({
-      msg: 'Setup complete.',
+      msg: totalSteps > 0 ? 'Setup complete.' : 'Dependencies up to date.',
       pct: 100,
       stepIndex: totalSteps,
       stepTotal: totalSteps,
@@ -751,7 +873,7 @@ export async function ensureDeps(onProgress) {
 }
 
 export async function checkForUpdates() {
-  const installed = getInstalledVersions();
+  const installed = await getInstalledVersions();
   const result = { analyzer: null, ytDlp: null };
 
   try {

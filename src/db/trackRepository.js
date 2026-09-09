@@ -522,6 +522,21 @@ export function getTrackWaveform(trackId) {
 }
 
 /**
+ * High-resolution (600 cols/sec) detail waveform for the Beat Grid Editor
+ * zoom view (#262). Separate from `detail` (150 cols/sec), which stays at
+ * the Pioneer CDJ export resolution and is generated on demand rather than
+ * stored.
+ */
+export function updateTrackDetailHires(trackId, buf) {
+  db.prepare('UPDATE tracks SET waveform_detail_hires = ? WHERE id = ?').run(buf, trackId);
+}
+
+export function getTrackDetailHires(trackId) {
+  const row = db.prepare('SELECT waveform_detail_hires FROM tracks WHERE id = ?').get(trackId);
+  return row?.waveform_detail_hires ?? null;
+}
+
+/**
  * Returns all tracks in a playlist with their source URL fields,
  * used to determine "already in playlist" status on the selection screen.
  */

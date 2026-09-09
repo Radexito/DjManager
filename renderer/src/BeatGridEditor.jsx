@@ -3,8 +3,28 @@ import { usePlayer } from './PlayerContext.jsx';
 import CuePointsEditor from './CuePointsEditor.jsx';
 import './BeatGridEditor.css';
 
-const COLS_PER_SEC = 150; // must match waveformGenerator.js
+// Fallback assumed resolution (cols/sec) only used when the real track
+// duration isn't known yet — normally cols/sec is derived from the detail
+// buffer itself (numCols / totalMs * 1000, #262) so this works whether the
+// buffer is the 600 cols/sec hires version, the legacy 150 cols/sec version,
+// or (during the lazy-regen transition period) a track that only has the
+// legacy buffer.
+const FALLBACK_COLS_PER_SEC = 150;
 const ZOOM_LEVELS = [1000, 2000, 4000, 8000, 16000, 32000]; // ms visible in detail canvas
+
+function getDetailMsPerCol(detail, trackDurationMs) {
+  if (!detail || detail.length < 3) return null;
+  const numCols = Math.floor(detail.length / 3);
+  if (numCols <= 0) return null;
+  const totalMs = trackDurationMs > 0 ? trackDurationMs : (numCols / FALLBACK_COLS_PER_SEC) * 1000;
+  return totalMs / numCols;
+}
+
+function snapToDetailGrid(ms, detail, trackDurationMs) {
+  const msPerCol = getDetailMsPerCol(detail, trackDurationMs);
+  if (!msPerCol) return ms;
+  return Math.round(ms / msPerCol) * msPerCol;
+}
 
 /** Compute beat array from beatgrid JSON + bpm + offset (ms). */
 function computeBeats(beatgridJson, bpm, offsetMs = 0) {
@@ -40,9 +60,14 @@ function computeBeats(beatgridJson, bpm, offsetMs = 0) {
 
 /**
  * Draw the scrollable detail waveform.
- * viewMs     — milliseconds visible in the canvas (zoom level)
+ * viewMs         — milliseconds visible in the canvas (zoom level)
+ * trackDurationMs — real track duration (ms), used to derive the buffer's
+ *                    actual cols/sec so this renders correctly whether
+ *                    `detail` is the 600 cols/sec hires buffer, the legacy
+ *                    150 cols/sec buffer, or a mix during the lazy-regen
+ *                    transition period (#262)
  */
-function drawDetail(canvas, detail, viewCenter, beats, cuePoints, viewMs) {
+function drawDetail(canvas, detail, viewCenter, beats, cuePoints, viewMs, trackDurationMs) {
   const ctx = canvas.getContext('2d');
   const W = canvas.width;
   const H = canvas.height;
@@ -58,7 +83,8 @@ function drawDetail(canvas, detail, viewCenter, beats, cuePoints, viewMs) {
   // ── Waveform ───────────────────────────────────────────────────────────────
   if (detail && detail.length >= 3) {
     const numCols = Math.floor(detail.length / 3);
-    const totalMs = (numCols / COLS_PER_SEC) * 1000;
+    const totalMs =
+      trackDurationMs > 0 ? trackDurationMs : (numCols / FALLBACK_COLS_PER_SEC) * 1000;
 
     for (let px = 0; px < W; px++) {
       const msAtPx = viewCenter - viewMs / 2 + (px / W) * viewMs;
@@ -375,6 +401,23 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
     };
   }, [track.id]);
 
+  // ── Pick up hires waveform once background regeneration finishes ──────────
+  // (#262): a track opened before its 600 cols/sec detail buffer existed gets
+  // the legacy 150 cols/sec buffer immediately, plus a background regen job.
+  // `waveform-ready` (already used for overview waveform completion) fires
+  // once that job persists the hires buffer — re-fetch to swap it in.
+  useEffect(() => {
+    const unsub = window.api.onWaveformReady(({ trackId }) => {
+      if (trackId !== track.id) return;
+      window.api.getEditorWaveform(track.id).then((result) => {
+        if (!result) return;
+        waveformDetailRef.current = result.detail ? new Uint8Array(result.detail) : null;
+        waveformOverviewRef.current = result.overview ? new Uint8Array(result.overview) : null;
+      });
+    });
+    return unsub;
+  }, [track.id]);
+
   // ── Load cue points ───────────────────────────────────────────────────────
   useEffect(() => {
     let alive = true;
@@ -401,17 +444,17 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
       const vms = viewMsRef.current;
 
       // Auto-scroll: keep the playhead centred — no Min clamp so it works from t=0
+      const dur = trackDurationMsRef.current;
       if (isThisTrackRef.current && isPlayingRef.current && !userScrollingRef.current) {
-        viewCenterRef.current = playheadMs;
+        viewCenterRef.current = snapToDetailGrid(playheadMs, waveformDetailRef.current, dur);
       }
 
       const vc = viewCenterRef.current;
-      const dur = trackDurationMsRef.current;
       const ph = isThisTrackRef.current ? playheadMs : null;
       const cues = cuePointsRef.current;
 
       const dc = detailCanvasRef.current;
-      if (dc) drawDetail(dc, waveformDetailRef.current, vc, beatsRef.current, cues, vms);
+      if (dc) drawDetail(dc, waveformDetailRef.current, vc, beatsRef.current, cues, vms, dur);
 
       const oc = overviewCanvasRef.current;
       if (oc) drawOverview(oc, waveformOverviewRef.current, vc, dur, ph, cues, vms);
@@ -554,6 +597,18 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
       });
     }
   }, []);
+
+  // React attaches onWheel as a PASSIVE listener at the root, so preventDefault()
+  // in the synthetic handler is ignored and logs "Unable to preventDefault inside
+  // passive event listener invocation" on every wheel tick. Attach natively with
+  // { passive: false } so zoom actually blocks page scroll and the console stays clean.
+  const bgeWrapRef = useRef(null);
+  useEffect(() => {
+    const el = bgeWrapRef.current;
+    if (!el) return;
+    el.addEventListener('wheel', onDetailWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onDetailWheel);
+  }, [onDetailWheel]);
 
   // ── Overview click-to-jump ────────────────────────────────────────────────
   const onOverviewClick = useCallback(
@@ -765,7 +820,7 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
         </div>
 
         {/* Detail waveform */}
-        <div className="bge-canvas-wrap" onWheel={onDetailWheel}>
+        <div className="bge-canvas-wrap" ref={bgeWrapRef}>
           {waveformLoading && <div className="bge-loading">Loading waveform…</div>}
           <button
             className={`bge-play-overlay${isThisTrack && isPlaying ? ' bge-play-overlay--playing' : ''}`}

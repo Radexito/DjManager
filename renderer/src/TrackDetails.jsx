@@ -24,6 +24,14 @@ function formatDuration(secs) {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+function formatCoverArtDownloadError(error) {
+  const message = error?.trim?.() || '';
+  if (!message || message === 'unknown error' || message === 'fetch failed') {
+    return 'Failed to download cover art. The selected image could not be fetched.';
+  }
+  return `Failed to download cover art: ${message}`;
+}
+
 function trackToForm(track) {
   return {
     title: track.title ?? '',
@@ -460,7 +468,8 @@ export default function TrackDetails({
             setSaving(true);
             setError(null);
             try {
-              // Auto-tag applies straight to the DB — no separate Save step needed.
+              // Auto-tag applies straight to the DB - no separate Save step
+              // needed. (Text fields are now consistent with cover art.)
               const data = {};
               if (update.title != null) data.title = update.title;
               if (update.artist != null) data.artist = update.artist;
@@ -468,11 +477,6 @@ export default function TrackDetails({
               if (update.label != null) data.label = update.label;
               if (update.year != null) data.year = update.year;
               if (update.genres != null) data.genres = update.genres;
-
-              if (Object.keys(data).length > 0) {
-                await window.api.updateTrack(track.id, data);
-                onSave({ ...track, ...data });
-              }
 
               // Merge result into form fields (convert genres array → comma string)
               const merged = { ...form };
@@ -490,19 +494,29 @@ export default function TrackDetails({
               }
               setForm(merged);
 
+              if (Object.keys(data).length > 0) {
+                await window.api.updateTrack(track.id, data);
+                // Push the saved values into MusicLibrary's track state.
+                onSave({ ...track, ...data });
+              }
+
               // Download and save cover art if selected
               if (update.coverUrl && track?.id) {
-                const res = await window.api.fetchArtworkUrl({
-                  trackId: track.id,
-                  url: update.coverUrl,
-                });
-                if (res.ok) {
-                  setArtworkPath(res.artwork_path);
-                  // Push the new artwork into MusicLibrary's track state so the
-                  // list thumbnail refreshes without waiting for a reload.
-                  onSave({ ...track, ...data, artwork_path: res.artwork_path, has_artwork: 1 });
-                } else {
-                  setError(`Failed to download cover art: ${res.error ?? 'unknown error'}`);
+                try {
+                  const res = await window.api.fetchArtworkUrl({
+                    trackId: track.id,
+                    url: update.coverUrl,
+                  });
+                  if (res.ok) {
+                    setArtworkPath(res.artwork_path);
+                    // Push the new artwork into MusicLibrary's track state so
+                    // the list thumbnail refreshes without waiting for reload.
+                    onSave({ ...track, ...data, artwork_path: res.artwork_path, has_artwork: 1 });
+                  } else {
+                    setError(formatCoverArtDownloadError(res.error));
+                  }
+                } catch (err) {
+                  setError(formatCoverArtDownloadError(err?.message));
                 }
               }
             } catch (e) {
