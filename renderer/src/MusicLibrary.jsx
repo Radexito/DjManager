@@ -610,9 +610,14 @@ function TrackTableBody({
     refreshView();
     const el = plainElRef.current;
     if (!el) return undefined;
-    const ro = new ResizeObserver(refreshView);
-    ro.observe(el);
-    return () => ro.disconnect();
+    // jsdom (unit tests) has no ResizeObserver — guard so mounting never
+    // throws there; the scroll handler still keeps the window fresh in tests.
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(refreshView);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+    return undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tracks.length, sortedTracks.length]);
 
