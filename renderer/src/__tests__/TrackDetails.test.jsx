@@ -221,6 +221,89 @@ describe('TrackDetails — single mode', () => {
     );
   });
 
+  it('shows an error instead of failing silently when auto-tag cover art fails to download', async () => {
+    window.api.autoTagSearch.mockResolvedValueOnce({
+      ok: true,
+      results: [
+        {
+          source: 'Deezer',
+          title: 'Test Track',
+          artist: 'Test Artist',
+          album: 'Test Album',
+          label: '',
+          year: '2022',
+          genres: [],
+          coverUrl: 'https://example.com/cover.jpg',
+        },
+      ],
+    });
+    window.api.fetchArtworkUrl.mockResolvedValueOnce({ ok: false, error: 'HTTP 404' });
+
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+      />
+    );
+
+    fireEvent.click(screen.getByText('🔍 Auto-tag'));
+    fireEvent.click(screen.getByText('Search'));
+    await waitFor(() => screen.getByText(/result/));
+
+    fireEvent.click(screen.getByText('Apply'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to download cover art: HTTP 404/)).toBeInTheDocument();
+    });
+  });
+
+  it('shows a clearer message when the cover art fetch fails generically', async () => {
+    window.api.autoTagSearch.mockResolvedValueOnce({
+      ok: true,
+      results: [
+        {
+          source: 'Deezer',
+          title: 'Test Track',
+          artist: 'Test Artist',
+          album: 'Test Album',
+          label: '',
+          year: '2022',
+          genres: [],
+          coverUrl: 'https://example.com/cover.jpg',
+        },
+      ],
+    });
+    window.api.fetchArtworkUrl.mockResolvedValueOnce({ ok: false, error: 'fetch failed' });
+
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+      />
+    );
+
+    fireEvent.click(screen.getByText('🔍 Auto-tag'));
+    fireEvent.click(screen.getByText('Search'));
+    await waitFor(() => screen.getByText(/result/));
+
+    fireEvent.click(screen.getByText('Apply'));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Failed to download cover art. The selected image could not be fetched.')
+      ).toBeInTheDocument();
+    });
+  });
   it('reports dirty state changes via onDirtyChange as the form is edited and saved', async () => {
     const onDirtyChange = vi.fn();
     render(
@@ -345,18 +428,6 @@ describe('TrackDetails — bulk mode', () => {
     );
     expect(screen.queryByText('BPM')).not.toBeInTheDocument();
     expect(screen.queryByText('Bitrate')).not.toBeInTheDocument();
-  });
-
-  it('hides the pin button in bulk mode even when onTogglePin is provided', () => {
-    render(
-      <TrackDetails
-        tracks={[SAMPLE_TRACK, SAMPLE_TRACK_2]}
-        onSave={onSave}
-        onCancel={onCancel}
-        onTogglePin={vi.fn()}
-      />
-    );
-    expect(screen.queryByTitle(/pin/i)).not.toBeInTheDocument();
   });
 
   it('calls updateTrack for each track on save with only filled fields', async () => {

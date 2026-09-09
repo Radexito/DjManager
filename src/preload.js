@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('api', {
   // Track library
   getTracks: (params) => ipcRenderer.invoke('get-tracks', params),
   getTrackIds: (params) => ipcRenderer.invoke('get-track-ids', params),
+  getTrackById: (trackId) => ipcRenderer.invoke('get-track-by-id', trackId),
   getUnavailableLinkedTracks: () => ipcRenderer.invoke('get-unavailable-linked-tracks'),
   getTrackWaveform: (trackId) => ipcRenderer.invoke('get-track-waveform', trackId),
   onWaveformReady: (cb) => {
@@ -92,6 +93,10 @@ contextBridge.exposeInMainWorld('api', {
   setSetting: (key, value) => ipcRenderer.invoke('set-setting', key, value),
   getLibraryPath: (libraryId) => ipcRenderer.invoke('get-library-path', libraryId),
   moveLibrary: (newDir, libraryId) => ipcRenderer.invoke('move-library', newDir, libraryId),
+  onSettingsUpdated: (cb) => {
+    ipcRenderer.on('settings-updated', (_, data) => cb(data));
+    return () => ipcRenderer.removeAllListeners('settings-updated');
+  },
   openDirDialog: () => ipcRenderer.invoke('open-dir-dialog'),
   onMoveLibraryProgress: (cb) => {
     ipcRenderer.on('move-library-progress', (_, data) => cb(data));

@@ -26,21 +26,10 @@
   object-fit: contain;
 }
 
-/* ── Search ── */
-.top-bar__search {
+/* ── Spacer ── */
+.top-bar__spacer {
   flex: 1;
   min-width: 0;
-  display: flex;
-  align-items: center;
-}
-
-.top-bar__search .search-bar {
-  width: 100%;
-  margin: 0 !important;
-}
-
-.top-bar__search .search-bar__input-row {
-  position: relative;
 }
 
 /* ── Actions ── */

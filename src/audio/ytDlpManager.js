@@ -17,9 +17,12 @@ const AUDIO_EXTS = new Set(['.mp3', '.flac', '.m4a', '.aac', '.wav', '.ogg', '.o
 // profile path, then pass it explicitly to avoid yt-dlp searching Firefox locations.
 
 const LIBREWOLF_BASE_DIRS = [
+  // Config-based install (active profile for most native/AUR builds)
+  `${process.env.HOME}/.config/librewolf`,
+  `${process.env.HOME}/.config/librewolf/librewolf`,
   // Native / AUR install
   `${process.env.HOME}/.librewolf`,
-  // Flatpak (most common on Linux desktops)
+  // Flatpak (most common on Linux desktops) — often an older/stale profile
   `${process.env.HOME}/.var/app/io.gitlab.librewolf-community/.librewolf`,
 ];
 
@@ -79,6 +82,7 @@ function resolveBrowser(name) {
     console.warn('[ytdlp] LibreWolf profile not found, falling back to firefox');
     return 'firefox';
   }
+  console.log('[ytdlp] resolveBrowser:', name, '->', name);
   return name;
 }
 
@@ -131,7 +135,13 @@ function extractTitleFromFilename(filePath) {
  */
 /** Returns true when yt-dlp fails because no format matched (EJS/cookie issue). */
 function isFormatUnavailableError(err) {
-  return err?.message?.includes('Requested format is not available');
+  const msg = err?.message ?? '';
+  // "Requested format is not available" is a WARNING emitted when the preferred
+  // player_client (android_vr) lacks a format; yt-dlp falls back automatically.
+  // It is NOT a real failure, so it must not trigger a cookies-less retry (which
+  // would then hit YouTube's 403 bot-block). Only genuine format errors retry.
+  if (/requested format is not available/i.test(msg)) return false;
+  return /format.*not available/i.test(msg);
 }
 
 export async function fetchPlaylistInfo(url, options = {}) {
@@ -141,7 +151,12 @@ export async function fetchPlaylistInfo(url, options = {}) {
     // unavailable/private/deleted videos are flagged before the selection screen.
     if (detectPlatform(url) === 'youtube' && info.type === 'playlist') {
       options.onBeforeCheck?.(info.entries);
-      await checkYouTubeAvailability(info.entries, options.onCheckProgress, options.onEntryChecked);
+      await checkYouTubeAvailability(
+        info.entries,
+        options.onCheckProgress,
+        options.onEntryChecked,
+        options
+      );
     }
     return info;
   } catch (err) {
@@ -165,12 +180,20 @@ const UNAVAILABLE_STATUSES = new Set(['private', 'premium_only', 'subscriber_onl
  * for each entry. This is the most reliable approach since it uses the exact same
  * mechanism as the actual download. Mutates entries in-place.
  */
-async function checkYouTubeAvailability(entries, onProgress, onEntryChecked) {
+async function checkYouTubeAvailability(entries, onProgress, onEntryChecked, options = {}) {
   const toCheck = entries.filter((e) => !e.unavailable && e.id);
   if (toCheck.length === 0) return;
 
   const ytDlp = getYtDlpRuntimePath();
   if (!fs.existsSync(ytDlp)) return; // binary not ready yet — skip check
+
+  // Resolve cookies so the availability check authenticates the same way the
+  // actual fetch does. Without cookies YouTube can return "Requested format is
+  // not available" for tracks that are in fact public -> false unavailable.
+  const cookiesArg = options.cookiesBrowser ? resolveBrowser(options.cookiesBrowser) : null;
+  if (cookiesArg) {
+    console.log('[ytdlp] availability check using cookies from:', cookiesArg);
+  }
 
   console.log(`[ytdlp] availability check for ${toCheck.length} entries via yt-dlp…`);
 
@@ -183,8 +206,11 @@ async function checkYouTubeAvailability(entries, onProgress, onEntryChecked) {
         '--no-warnings',
         '--extractor-args',
         'youtube:player_client=android_vr,web',
-        `https://www.youtube.com/watch?v=${entry.id}`,
       ];
+      if (cookiesArg) {
+        args.push('--cookies-from-browser', cookiesArg);
+      }
+      args.push(`https://www.youtube.com/watch?v=${entry.id}`);
       const proc = spawn(ytDlp, args);
       let stdout = '';
       let timedOut = false;
@@ -200,10 +226,15 @@ async function checkYouTubeAvailability(entries, onProgress, onEntryChecked) {
         if (timedOut) return;
         const availability = stdout.trim().toLowerCase();
         console.log(`[ytdlp] ${entry.id} availability=${availability || '(exit ' + code + ')'}`);
+        // Only treat as unavailable when yt-dlp explicitly reports an unavailable
+        // status. A non-zero exit with no availability text (e.g. crash in
+        // --print availability mode with cookies) must NOT be treated as
+        // unavailable — assume available to avoid false negatives that block
+        // downloads of perfectly public tracks.
         if (
-          code !== 0 ||
           UNAVAILABLE_STATUSES.has(availability) ||
-          availability === 'unavailable'
+          availability === 'unavailable' ||
+          availability === 'private'
         ) {
           entry.unavailable = true;
           entry.unavailableReason =
@@ -282,15 +313,35 @@ function _fetchPlaylistInfoOnce(url, options = {}) {
   const args = ['--flat-playlist', '--dump-single-json', '--no-warnings'];
 
   if (platform === 'youtube') {
-    args.push('--extractor-args', 'youtube:player_client=android_vr,web');
+    // No --extractor-args player_client pin. With valid cookies the default
+    // (tv-downgraded) client returns real audio formats; pinning android_vr/tv/web
+    // makes YouTube return only storyboard images -> "Requested format is not available".
   }
   if (options.cookiesBrowser) {
-    args.push('--cookies-from-browser', resolveBrowser(options.cookiesBrowser));
+    const resolved = resolveBrowser(options.cookiesBrowser);
+    console.log(
+      '[fetchPlaylistInfo] cookiesBrowser:',
+      options.cookiesBrowser,
+      '-> resolved:',
+      resolved
+    );
+    if (resolved) {
+      args.push('--cookies-from-browser', resolved);
+    } else {
+      console.warn(
+        '[fetchPlaylistInfo] cookiesBrowser set but resolveBrowser returned empty — yt-dlp will run WITHOUT cookies'
+      );
+    }
+  } else {
+    console.log(
+      '[fetchPlaylistInfo] no cookiesBrowser set — yt-dlp will run WITHOUT cookies (expect 403 bot-block from YouTube)'
+    );
   }
   args.push(url);
 
   return new Promise((resolve, reject) => {
-    console.log('[fetchPlaylistInfo] spawning yt-dlp with args:', args.join(' '));
+    console.log('[fetchPlaylistInfo] yt-dlp binary:', ytDlp, 'exists:', fs.existsSync(ytDlp));
+    console.log('[fetchPlaylistInfo] spawning yt-dlp with args:', JSON.stringify(args));
     let stdout = '';
     let stderr = '';
     const proc = spawn(ytDlp, args);
@@ -309,7 +360,8 @@ function _fetchPlaylistInfoOnce(url, options = {}) {
     proc.on('close', (code) => {
       console.log(`[fetchPlaylistInfo] process closed code=${code} stdout_len=${stdout.length}`);
       if (code !== 0) {
-        reject(new Error(`yt-dlp exited with code ${code}: ${stderr.trim().slice(0, 300)}`));
+        console.error('[fetchPlaylistInfo] FAILED. Full stderr:\n' + stderr.trim());
+        reject(new Error(`yt-dlp exited with code ${code}: ${stderr.trim().slice(0, 600)}`));
         return;
       }
       try {
@@ -366,7 +418,10 @@ function _fetchPlaylistInfoOnce(url, options = {}) {
  */
 export async function searchYouTube(query, options = {}) {
   const limit = options.limit ?? 20;
-  const info = await fetchPlaylistInfo(`ytsearch${limit}:${query}`);
+  // Pass cookiesBrowser (and any other options) through so YouTube searches
+  // authenticate the same way fetch-info / download do. Without it, YouTube
+  // returns "Sign in to confirm you're not a bot" on search (#466).
+  const info = await fetchPlaylistInfo(`ytsearch${limit}:${query}`, options);
   return info.entries
     .filter((e) => !e.unavailable)
     .map((e) => ({
@@ -460,7 +515,8 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
   args.push('--ffmpeg-location', path.dirname(getFfmpegRuntimePath()));
 
   if (platform === 'youtube') {
-    args.push('--extractor-args', 'youtube:player_client=android_vr,web');
+    // No player_client pin — see fetchPlaylistInfo rationale. Default client
+    // returns real audio formats with valid cookies.
   }
   if (options.cookiesBrowser) {
     args.push('--cookies-from-browser', resolveBrowser(options.cookiesBrowser));
@@ -682,13 +738,19 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
       while ((match = unavailablePattern.exec(stderr)) !== null) {
         const videoId = match[1].trim();
         const reason = match[2].trim();
+        // Ignore format-selection warnings: "Requested format is not available"
+        // is emitted by yt-dlp when a preferred player_client (e.g. android_vr)
+        // lacks a format; yt-dlp then falls back automatically. It is NOT a
+        // video-unavailability error, so it must not block the track.
+        const isFormatSelectionWarning = /requested format is not available/i.test(reason);
         // Only fire for actual unavailability reasons, not generic yt-dlp messages
         if (
-          reason.toLowerCase().includes('unavailable') ||
-          reason.toLowerCase().includes('private') ||
-          reason.toLowerCase().includes('deleted') ||
-          reason.toLowerCase().includes('removed') ||
-          reason.toLowerCase().includes('not available')
+          !isFormatSelectionWarning &&
+          (reason.toLowerCase().includes('unavailable') ||
+            reason.toLowerCase().includes('private') ||
+            reason.toLowerCase().includes('deleted') ||
+            reason.toLowerCase().includes('removed') ||
+            reason.toLowerCase().includes('not available'))
         ) {
           console.warn(`[ytdlp] unavailable: ${videoId} — ${reason}`);
           options.onTrackUnavailable?.({ videoId, reason });

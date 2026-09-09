@@ -178,6 +178,27 @@ describe('searchYouTube', () => {
 
     expect(lastSpawnArgs).toContain('ytsearch20:some query');
   });
+
+  it('passes cookiesBrowser through to yt-dlp so YouTube search authenticates (#466)', async () => {
+    const resultPromise = searchYouTube('daft punk', { limit: 5, cookiesBrowser: 'firefox' });
+
+    fakeProc.stdout.emit('data', JSON.stringify({ entries: [] }));
+    fakeProc.emit('close', 0);
+    await resultPromise;
+
+    const cookieIdx = lastSpawnArgs.indexOf('--cookies-from-browser');
+    expect(cookieIdx).toBeGreaterThan(-1);
+    expect(lastSpawnArgs[cookieIdx + 1]).toBe('firefox');
+  });
+
+  it('does NOT add --cookies-from-browser when cookiesBrowser is omitted', async () => {
+    const resultPromise = searchYouTube('daft punk', { limit: 5 });
+    fakeProc.stdout.emit('data', JSON.stringify({ entries: [] }));
+    fakeProc.emit('close', 0);
+    await resultPromise;
+
+    expect(lastSpawnArgs).not.toContain('--cookies-from-browser');
+  });
 });
 
 // Regression for #404: the per-entry availability check used player_client=web

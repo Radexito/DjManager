@@ -24,6 +24,14 @@ function formatDuration(secs) {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+function formatCoverArtDownloadError(error) {
+  const message = error?.trim?.() || '';
+  if (!message || message === 'unknown error' || message === 'fetch failed') {
+    return 'Failed to download cover art. The selected image could not be fetched.';
+  }
+  return `Failed to download cover art: ${message}`;
+}
+
 function trackToForm(track) {
   return {
     title: track.title ?? '',
@@ -497,15 +505,21 @@ export default function TrackDetails({
             setShowAutoTagger(false);
             // Download and save cover art if selected
             if (update.coverUrl && track?.id) {
-              const res = await window.api.fetchArtworkUrl({
-                trackId: track.id,
-                url: update.coverUrl,
-              });
-              if (res.ok) {
-                setArtworkPath(res.artwork_path);
-                // Push the new artwork into MusicLibrary's track state so the
-                // list thumbnail refreshes without waiting for handleSave/reload.
-                onSave({ ...track, artwork_path: res.artwork_path, has_artwork: 1 });
+              try {
+                const res = await window.api.fetchArtworkUrl({
+                  trackId: track.id,
+                  url: update.coverUrl,
+                });
+                if (res.ok) {
+                  setArtworkPath(res.artwork_path);
+                  // Push the new artwork into MusicLibrary's track state so the
+                  // list thumbnail refreshes without waiting for handleSave/reload.
+                  onSave({ ...track, artwork_path: res.artwork_path, has_artwork: 1 });
+                } else {
+                  setError(formatCoverArtDownloadError(res.error));
+                }
+              } catch (err) {
+                setError(formatCoverArtDownloadError(err?.message));
               }
             }
           }}

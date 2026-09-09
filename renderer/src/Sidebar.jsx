@@ -44,7 +44,7 @@ function Sidebar({
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
   const [createError, setCreateError] = useState('');
   const [renameError, setRenameError] = useState('');
-  const [playlistMenu, setPlaylistMenu] = useState(null); // { id, x, y }
+  const [playlistMenu, setPlaylistMenu] = useState(null); // { id, x, y, flipLeft, flipUp }
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState('');
   const [dragOverPlaylistId, setDragOverPlaylistId] = useState(null);
@@ -377,7 +377,11 @@ function Sidebar({
                 onClick={() => onMenuSelect(String(pl.id))}
                 onContextMenu={(e) => {
                   e.preventDefault();
-                  setPlaylistMenu({ id: pl.id, x: e.clientX, y: e.clientY });
+                  // Flip the Color submenu to the opposite side/edge when it would
+                  // otherwise overflow the viewport (see issue #428).
+                  const flipLeft = e.clientX > window.innerWidth / 2;
+                  const flipUp = e.clientY > window.innerHeight / 2;
+                  setPlaylistMenu({ id: pl.id, x: e.clientX, y: e.clientY, flipLeft, flipUp });
                 }}
                 onDragOver={handleDragOver}
                 onDragEnter={(e) => handleDragEnter(e, pl.id)}
@@ -610,7 +614,7 @@ function Sidebar({
       {/* Playlist context menu */}
       {playlistMenu && (
         <div
-          className="context-menu"
+          className={`context-menu${playlistMenu.flipLeft ? ' context-menu--flip-left' : ''}${playlistMenu.flipUp ? ' context-menu--flip-up' : ''}`}
           style={{ top: playlistMenu.y, left: playlistMenu.x }}
           onMouseDown={(e) => e.stopPropagation()}
         >
@@ -627,7 +631,7 @@ function Sidebar({
           </div>
           <div className="context-menu-item context-menu-item--has-submenu">
             🎨 Color
-            <div className="context-submenu">
+            <div className="context-submenu context-submenu--colors">
               {PRESET_COLORS.map((c) => (
                 <div
                   key={c}

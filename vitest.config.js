@@ -38,6 +38,7 @@ export default defineConfig({
           include: [
             'src/__tests__/importManager.test.js',
             'src/__tests__/dbLocation.test.js',
+            'src/__tests__/autoTagger.test.js',
             'src/__tests__/ytDlpManager.test.js',
             'src/__tests__/tidalDlManager.test.js',
             'src/__tests__/mediaServer.test.js',
@@ -48,7 +49,9 @@ export default defineConfig({
             'src/__tests__/settingWriter.test.js',
             'src/__tests__/pdbWriter.test.js',
             'src/__tests__/deviceFormats.test.js',
+            'src/__tests__/drives.test.js',
             'src/__tests__/ffmpegConvert.test.js',
+            'src/__tests__/exportReuse.test.js',
           ],
         },
       },
