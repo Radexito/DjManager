@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import Database from 'better-sqlite3';
+import { getDbPath } from './dbLocation.js';
 
 let dbPath;
 
@@ -11,7 +12,7 @@ if (process.env.DB_PATH) {
   // Try to use Electron's app.getPath('userData') if available
   try {
     const { app } = await import('electron');
-    dbPath = path.join(app.getPath('userData'), 'library.db');
+    dbPath = getDbPath(app.getPath('userData'));
   } catch {
     // Node test mode: put database in project folder
     dbPath = path.join(process.cwd(), 'library.db');

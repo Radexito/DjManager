@@ -233,6 +233,84 @@ describe('context menu — submenu CSS classes', () => {
   });
 });
 
+// ── Move to library ───────────────────────────────────────────────────────────
+
+describe('context menu — move to library', () => {
+  it('does not show "Move to library" when only one library exists', async () => {
+    renderLibrary();
+    await openContextMenu('Track One');
+    await waitFor(() => expect(window.api.listLibrariesWithFreeSpace).toHaveBeenCalled());
+    expect(getSubmenuParent('📚 Move to library')).toBeNull();
+  });
+
+  it('shows each library with its free disk space when multiple libraries exist', async () => {
+    window.api.listLibrariesWithFreeSpace.mockResolvedValue([
+      { id: 1, name: 'Default', free_bytes: 5 * 1024 ** 3 },
+      { id: 2, name: 'Backup', free_bytes: 2 * 1024 ** 2 },
+    ]);
+    renderLibrary();
+    await openContextMenu('Track One');
+    await waitFor(() => expect(getSubmenuParent('📚 Move to library')).toBeTruthy());
+
+    fireEvent.mouseEnter(getSubmenuParent('📚 Move to library'));
+    expect(await screen.findByText('Backup')).toBeInTheDocument();
+    expect(screen.getByText('5.0 GB free')).toBeInTheDocument();
+    expect(screen.getByText('2.0 MB free')).toBeInTheDocument();
+  });
+
+  it('clicking a library calls moveTracksToLibrary with the track id and target library', async () => {
+    window.api.listLibrariesWithFreeSpace.mockResolvedValue([
+      { id: 1, name: 'Default', free_bytes: 5 * 1024 ** 3 },
+      { id: 2, name: 'Backup', free_bytes: 2 * 1024 ** 3 },
+    ]);
+    renderLibrary();
+    await openContextMenu('Track One');
+    await waitFor(() => expect(getSubmenuParent('📚 Move to library')).toBeTruthy());
+    fireEvent.mouseEnter(getSubmenuParent('📚 Move to library'));
+
+    fireEvent.click(await screen.findByText('Backup'));
+    await waitFor(() => expect(window.api.moveTracksToLibrary).toHaveBeenCalledWith([1], 2));
+  });
+
+  it('updates an already-open Edit Details panel in place after moving that same track', async () => {
+    window.api.moveTracksToLibrary.mockResolvedValue({
+      moved: [{ trackId: 1, newPath: '/tmp/userData/audio/2/newpath.mp3' }],
+      failed: [],
+    });
+    window.api.listLibraries.mockResolvedValue([
+      { id: 1, name: 'Default', storage_format: 'hashed', root_path: null },
+      { id: 2, name: 'Backup', storage_format: 'hashed', root_path: null },
+    ]);
+    window.api.listLibrariesWithFreeSpace.mockResolvedValue([
+      { id: 1, name: 'Default', free_bytes: 5 * 1024 ** 3 },
+      { id: 2, name: 'Backup', free_bytes: 2 * 1024 ** 3 },
+    ]);
+    renderLibrary();
+
+    // Open the Edit Details panel for "Track One" — it has no library_id, so shows '—'.
+    await openContextMenu('Track One');
+    fireEvent.click(screen.getByText(/✏️ Edit Details/));
+    await waitFor(() => expect(screen.getByText('Track Details')).toBeInTheDocument());
+    expect(screen.getByText('Library').nextSibling).toHaveTextContent('—');
+
+    // Move that same track via the context menu, without closing the panel.
+    await openContextMenu('Track One');
+    await waitFor(() => expect(getSubmenuParent('📚 Move to library')).toBeTruthy());
+    fireEvent.mouseEnter(getSubmenuParent('📚 Move to library'));
+    await waitFor(() => expect(document.querySelector('.context-menu-item--library')).toBeTruthy());
+    const backupItem = [...document.querySelectorAll('.context-menu-item--library')].find((el) =>
+      el.textContent.includes('Backup')
+    );
+    fireEvent.click(backupItem);
+    await waitFor(() => expect(window.api.moveTracksToLibrary).toHaveBeenCalledWith([1], 2));
+
+    // The still-open panel should reflect the new library without being reopened.
+    await waitFor(() =>
+      expect(screen.getByText('Library').nextSibling).toHaveTextContent('Backup')
+    );
+  });
+});
+
 // ── Remove confirmation ───────────────────────────────────────────────────────
 
 describe('context menu — remove from library with confirmation', () => {
@@ -245,20 +323,20 @@ describe('context menu — remove from library with confirmation', () => {
     expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Remove'));
   });
 
-  it('if window.confirm returns false, removeTrack is NOT called', async () => {
+  it('if window.confirm returns false, removeTracks is NOT called', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     renderLibrary();
     await openContextMenu('Track One');
     fireEvent.click(screen.getByText(/🗑️ Remove from library/));
-    expect(window.api.removeTrack).not.toHaveBeenCalled();
+    expect(window.api.removeTracks).not.toHaveBeenCalled();
   });
 
-  it('if window.confirm returns true, removeTrack IS called with the track ID', async () => {
+  it('if window.confirm returns true, removeTracks IS called with the track ID', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     renderLibrary();
     await openContextMenu('Track One');
     fireEvent.click(screen.getByText(/🗑️ Remove from library/));
-    await waitFor(() => expect(window.api.removeTrack).toHaveBeenCalledWith(1));
+    await waitFor(() => expect(window.api.removeTracks).toHaveBeenCalledWith([1]));
   });
 });
 
@@ -282,5 +360,29 @@ describe('context menu — playlist view shows both remove options', () => {
     await openContextMenu('Track One');
     expect(screen.getByText(/➖ Remove from playlist/)).toBeInTheDocument();
     expect(screen.getByText(/🗑️ Remove from library/)).toBeInTheDocument();
+  });
+});
+
+// ── Search bar — now rendered inside MusicLibrary itself ────────────────────
+
+describe('search bar', () => {
+  it('renders the search input inside MusicLibrary content and forwards typed text via onSearchChange', async () => {
+    const onSearchChange = vi.fn();
+    render(<MusicLibrary selectedPlaylist="music" search="" onSearchChange={onSearchChange} />);
+    await screen.findByText('Track One');
+
+    const input = screen.getByPlaceholderText(/Search…/);
+    expect(input).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: 'Techno' } });
+    expect(onSearchChange).toHaveBeenCalled();
+  });
+
+  it('reflects the current search value passed in via props', async () => {
+    render(
+      <MusicLibrary selectedPlaylist="music" search="ARTIST is Foo" onSearchChange={() => {}} />
+    );
+    await screen.findByText('Track One');
+    expect(screen.getByText('ARTIST')).toBeInTheDocument();
   });
 });

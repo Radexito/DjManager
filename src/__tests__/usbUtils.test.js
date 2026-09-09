@@ -15,7 +15,7 @@ vi.mock('child_process', () => {
 });
 
 // Import after mocks
-import { detectFilesystem, describeFilesystem } from '../usb/usbUtils.js';
+import { detectFilesystem, describeFilesystem, formatDrive } from '../usb/usbUtils.js';
 
 // ── Platform stub — force Linux branch regardless of host OS ─────────────────
 // usbUtils reads process.platform at call time, so stubbing the global works.
@@ -146,6 +146,116 @@ describe('detectFilesystem — Linux', () => {
 
     expect(result.needsFormat).toBe(false);
     expect(result.fs).toBe('unknown');
+  });
+});
+
+// ── detectFilesystem — removable-media detection ──────────────────────────────
+
+describe('detectFilesystem — removable detection (Linux)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('flags a device with rm:true as removable', async () => {
+    mockExecOutput(
+      makeLsblkJson([{ name: 'sdb1', fstype: 'fat32', mountpoint: '/mnt/usb', rm: true }])
+    );
+
+    const result = await detectFilesystem('/mnt/usb');
+
+    expect(result.removable).toBe(true);
+  });
+
+  it('flags a device with tran:"usb" as removable even if rm is unset', async () => {
+    mockExecOutput(
+      makeLsblkJson([{ name: 'sdb1', fstype: 'fat32', mountpoint: '/mnt/usb', tran: 'usb' }])
+    );
+
+    const result = await detectFilesystem('/mnt/usb');
+
+    expect(result.removable).toBe(true);
+  });
+
+  it('does NOT flag a fixed internal drive (rm:false, tran:"nvme") as removable', async () => {
+    mockExecOutput(
+      makeLsblkJson([
+        { name: 'nvme0n1p1', fstype: 'ext4', mountpoint: '/', rm: false, tran: 'nvme' },
+      ])
+    );
+
+    const result = await detectFilesystem('/');
+
+    expect(result.removable).toBe(false);
+  });
+
+  it('does NOT flag as removable when rm/tran are absent', async () => {
+    mockExecOutput(makeLsblkJson([{ name: 'sda1', fstype: 'ext4', mountpoint: '/mnt/data' }]));
+
+    const result = await detectFilesystem('/mnt/data');
+
+    expect(result.removable).toBe(false);
+  });
+
+  it('inherits parent rm/tran onto a matched child partition', async () => {
+    const json = makeLsblkJson([
+      {
+        name: 'sdb',
+        fstype: null,
+        mountpoint: null,
+        rm: true,
+        tran: 'usb',
+        children: [{ name: 'sdb1', fstype: 'fat32', mountpoint: '/mnt/usb' }],
+      },
+    ]);
+    mockExecOutput(json);
+
+    const result = await detectFilesystem('/mnt/usb');
+
+    expect(result.removable).toBe(true);
+  });
+
+  it('defaults to removable: false when detection fails entirely', async () => {
+    mockExecError(new Error('lsblk not found'));
+
+    const result = await detectFilesystem('/mnt/usb');
+
+    expect(result.removable).toBe(false);
+  });
+});
+
+// ── formatDrive — refuses to format non-removable media ────────────────────────
+
+describe('formatDrive — removable-media safety gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('throws and never runs the format command when the target is not removable', async () => {
+    // detectFilesystem() re-check inside formatDrive resolves via this lsblk call
+    mockExecOutput(
+      makeLsblkJson([{ name: 'sda1', fstype: 'ext4', mountpoint: '/', rm: false, tran: 'sata' }])
+    );
+
+    const onProgress = vi.fn();
+    await expect(formatDrive('/dev/sda1', '/', onProgress)).rejects.toThrow(/removable/i);
+
+    // Only the removable-check lsblk call should have happened — no mkfs/format call.
+    expect(mockExecAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it('proceeds to format when the target is confirmed removable', async () => {
+    mockExecOutput(
+      makeLsblkJson([{ name: 'sdb1', fstype: 'fat32', mountpoint: '/mnt/usb', rm: true }])
+    );
+    // umount call inside formatLinux
+    mockExecOutput('');
+    // mkfs.fat call (pkexec attempt succeeds)
+    mockExecOutput('');
+
+    const onProgress = vi.fn();
+    await expect(formatDrive('/dev/sdb1', '/mnt/usb', onProgress)).resolves.toBeUndefined();
+
+    expect(onProgress).toHaveBeenCalledWith('Format complete.');
   });
 });
 

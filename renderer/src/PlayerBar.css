@@ -2,13 +2,35 @@
   position: relative;
   height: 88px;
   flex-shrink: 0;
+  min-width: 600px; /* zones never crush below their icon floors */
   background: #111;
   border-top: 1px solid #2a2a2a;
   display: flex;
   align-items: center;
-  padding: 0 20px;
-  gap: 16px;
+  padding: 0 20px 0 12px;
+  gap: 4px;
   user-select: none;
+}
+
+/* Drag handle on the top edge — resize the bar vertically */
+.player-resize-handle {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 8px;
+  cursor: ns-resize;
+  z-index: 10;
+}
+
+.player-resize-handle:hover::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.25);
 }
 
 .player-bar-toast {
@@ -34,21 +56,161 @@
 }
 
 /* ── Left ─────────────────────────────── */
-.player-left {
-  flex: 0 0 240px;
+/* Transport cluster zone (width user-resizable via splitter 0) */
+.pz-controls {
+  position: relative; /* anchor for the history popup */
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  flex: 0 1 auto; /* shrink when the window gets very small */
+  min-width: 80px; /* 3×2 layout's minimum content (~73px) fits without clipping */
+}
+
+/* Portrait (2×3) hugs the left edge — no dead margin from the window border */
+.pz-layout--port.pz-controls,
+.pz-layout--port .player-controls-grid {
+  justify-content: flex-start;
+}
+
+/* When the user pins a width, the zone becomes a size container so the
+   transport icons can shrink BELOW their natural size to fit it. */
+.pz-controls--fixed {
+  container-type: inline-size;
+}
+
+/* The grid keeps TIGHT auto columns — icons grow (font-size from the pinned
+   zone width) instead of the columns stretching apart. */
+.pz-controls .player-controls-grid {
+  width: 100%;
+}
+
+/* Pinned-zone icons fill the assigned width — 2 columns (play col is the
+   1.15em big one): real width ≈ 2.7fs + 24px. Bounded by the bar height:
+   3 rows must fit. */
+.pz-controls--fixed .player-controls-grid {
+  font-size: clamp(9px, calc((100cqw - 24px) / 2.7), calc((var(--pb-h, 88px) - 24px) / 3.85));
+  justify-content: center;
+}
+
+/* ── Wide zone (width ≥ portrait saturation): 3 columns × 2 rows ───────────
+   row1: shuffle | play/pause | repeat
+   row2: previous | (gap) | next                                  */
+.pz-layout--land .player-controls-grid {
+  grid-template-areas:
+    'shuffle play repeat'
+    'prev history next';
+  grid-template-columns: auto auto auto;
+}
+
+.pz-controls--fixed.pz-layout--land .player-controls-grid {
+  /* 3 columns, real width ≈ 4.1fs + 36px (incl. two em column gaps) — the
+     icons track the zone width until the 2-row height cap binds, so nothing
+     overflows or gets clipped at intermediate widths. */
+  font-size: clamp(9px, calc((100cqw - 36px) / 4.1), calc((var(--pb-h, 88px) - 16px) / 2.5));
+  justify-content: center;
+}
+
+.pz-controls--fixed .player-btn {
+  font-size: 1em;
+}
+
+.pz-controls--fixed .player-btn--play {
+  font-size: 1.15em;
+}
+
+/* Album-art zone — own splitter, foldable to 0 or full square (100%) */
+.pz-art {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
 }
 
+/* Art + track-info zone (width user-resizable via splitters 0/1) */
+.pz-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 1 auto;
+  min-width: 80px;
+  overflow: hidden;
+}
+
+/* Draggable vertical splitters between the four zones */
+.player-splitter {
+  flex: 0 0 8px;
+  align-self: stretch;
+  cursor: col-resize;
+  position: relative;
+}
+
+.player-splitter::after {
+  content: '';
+  position: absolute;
+  top: 12%;
+  bottom: 12%;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.player-splitter:hover::after,
+.player-splitter:active::after {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* Left-aligned old container kept for CSS history only (unused) */
+.player-left {
+  display: none;
+}
+
+.player-controls-grid {
+  display: grid;
+  /* Compact 2-column × 3-row control matrix:
+     row1: play/pause | next
+     row2: shuffle     | previous
+     row3: repeat      | (empty) */
+  grid-template-areas:
+    'play next'
+    'shuffle prev'
+    'repeat history';
+  grid-template-columns: auto auto;
+  gap: 0.35em 0.55em;
+  flex: 0 0 auto;
+  justify-items: center;
+  align-items: center;
+  justify-content: center;
+}
+
 .player-art {
-  width: 52px;
-  height: 52px;
+  width: min(calc(var(--pb-h, 88px) * 0.56), 140px);
+  height: min(calc(var(--pb-h, 88px) * 0.56), 140px);
   border-radius: 4px;
   object-fit: cover;
   flex-shrink: 0;
   background: #2a2a2a;
+}
+
+.player-art-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  flex-shrink: 0;
+  border-radius: 4px;
+}
+
+.player-art-btn--enabled {
+  cursor: pointer;
+}
+
+.player-art-btn--enabled:hover .player-art,
+.player-art-btn--enabled:focus-visible .player-art {
+  outline: 1px solid #3d3d3d;
+  outline-offset: 2px;
 }
 
 .player-art--placeholder {
@@ -62,6 +224,42 @@
 .player-track-info {
   overflow: hidden;
   flex: 1;
+  min-width: 0;
+}
+
+/* ── Scrolling (marquee) text — full title/artist always visible ───────── */
+.player-scroll {
+  overflow: hidden;
+  min-width: 0;
+}
+
+.player-scroll-text {
+  white-space: nowrap;
+}
+
+.player-scroll--on .player-scroll-track {
+  display: inline-flex;
+  white-space: nowrap;
+  will-change: transform;
+  animation: player-scroll-marquee linear infinite;
+}
+
+.player-scroll--on .player-scroll-text {
+  display: inline-block;
+  padding-right: 28px;
+}
+
+.player-scroll--on:hover .player-scroll-track {
+  animation-play-state: paused;
+}
+
+@keyframes player-scroll-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
 }
 
 .player-title {
@@ -114,38 +312,29 @@
   font-size: 12px;
 }
 
-/* ── Center ───────────────────────────── */
-.player-center {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.player-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
+/* ── Transport / player buttons ────────────────────────────────
+   Icon-only buttons. Hover feedback is purely the icon color going
+   brighter — no ring, outline or background, so nothing in the tight
+   grid ever shifts. Only the ON-state toggles (shuffle/repeat) are
+   green: darker green at rest, lightening on hover. */
 .player-btn {
   background: none;
   border: none;
   color: #ccc;
-  font-size: 16px;
+  /* Icons scale with the (resizable) bar height, capped so they never
+     overflow the bar or force the layout to jump. */
+  font-size: min(calc(var(--pb-h, 88px) * 0.2), 22px);
   cursor: pointer;
   padding: 4px 6px;
   border-radius: 4px;
-  transition:
-    color 0.15s,
-    background 0.15s;
+  transition: color 0.15s;
   line-height: 1;
 }
 
-.player-btn:hover {
+.player-btn:hover,
+.player-btn:focus-visible {
   color: #fff;
-  background: #2a2a2a;
+  outline: none;
 }
 
 .player-btn:disabled {
@@ -154,31 +343,212 @@
   background: none;
 }
 
-.player-btn--play {
-  font-size: 20px;
-  padding: 4px 10px;
-}
-
+/* ON-state (green icons only): darker green by default, lighten on hover.
+   Applies to active shuffle/repeat — history/others never get green. */
 .player-btn--active {
-  color: #1db954;
+  color: #159c47;
 }
 
+.player-btn--active:hover,
+.player-btn--active:focus-visible {
+  color: #2fd97a;
+}
+
+.player-btn--shuffle {
+  grid-area: shuffle;
+}
+
+.player-btn--play {
+  grid-area: play;
+  /* Only marginally larger than the rest — stays a constant ratio, so it can
+     never change the grid metrics or shift the other buttons. */
+  font-size: min(calc(var(--pb-h, 88px) * 0.2 * 1.15), 25px);
+}
+
+.player-btn--repeat {
+  grid-area: repeat;
+}
+
+.player-btn--prev {
+  grid-area: prev;
+}
+
+.player-btn--next {
+  grid-area: next;
+}
+
+.player-btn--history {
+  grid-area: history;
+}
+
+/* Monochrome clock matches the other text-presentation glyphs (the color
+   clock emoji was oversized and visually inconsistent in the grid). */
+.player-btn--history .player-ico,
+.player-ico {
+  display: block;
+  line-height: 0;
+  stroke-width: 1.8;
+}
+
+.player-btn--history:hover .player-ico,
+.player-btn--history:focus-visible .player-ico {
+  color: inherit; /* no glow — hover color handled by .player-btn */
+}
+
+.player-title--clickable {
+  cursor: pointer;
+}
+
+.player-title--clickable:hover {
+  color: #9be29b;
+}
+
+/* Toggles idle: dimmer gray than plain buttons, so OFF is distinguishable
+   from the ON green at a glance. */
 .player-btn--toggle {
-  color: #555;
-  font-size: 18px;
+  color: #666;
 }
 
+.player-btn--toggle:hover,
+.player-btn--toggle:focus-visible {
+  color: #fff;
+}
+
+/* Active toggles (shuffle/repeat ON) must WIN over the dim --toggle color.
+   Rule order matters. */
 .player-btn--toggle.player-btn--active {
+  color: #159c47;
+}
+
+.player-btn--toggle.player-btn--active:hover,
+.player-btn--toggle.player-btn--active:focus-visible {
+  color: #2fd97a;
+}
+
+/* Repeat: constant-width glyph + absolutely positioned "1" badge — the icon
+   never changes width, so cycling repeat can't shift the layout. */
+.player-btn--repeat {
+  position: relative;
+}
+
+.rep-glyph {
+  line-height: 1;
+}
+
+.rep-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  font-size: 0.5em;
+  line-height: 1;
   color: #1db954;
 }
 
-/* ── Seekbar ──────────────────────────── */
+/* History clock: slightly smaller than the other transport glyphs */
+.player-btn--history svg {
+  width: 0.88em;
+  height: 0.88em;
+}
+
+/* ── Volume: icon button + hover vertical slider popup ──────────────────── */
+.player-volume-wrap {
+  position: relative;
+}
+
+.player-volume-pop {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 8px 6px;
+  z-index: 1500;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
+/* Invisible bridge down to the icon: lets the mouse travel from the button
+   into the popup without the wrapper's mouseleave firing in the gap. */
+.player-volume-pop::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -10px;
+  height: 10px;
+}
+
+/* Custom vertical slider — fully centered thumb & track (native Chromium
+   slider-vertical couldn't center reliably). */
+.vol-vert {
+  position: relative;
+  width: 22px;
+  height: 96px;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.vol-vert-track {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  border-radius: 2px;
+  background: #444;
+}
+
+.vol-vert-fill {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  border-radius: 2px;
+  background: #1db954;
+}
+
+.vol-vert-thumb {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.vol-vert:hover .vol-vert-thumb {
+  background: #1db954;
+}
+
+/* ── History moved into the transport grid ──────────────────────────────── */
+.player-history-wrap {
+  position: static;
+}
+
+.pz-controls .player-history-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: auto;
+  top: auto;
+  z-index: 1500;
+}
+
+/* ── Seekbar / waveform — spans the full width freed up by the ────
+   transport controls, which moved to the top bar. ──────────────── */
 .player-seek {
+  flex: 1;
+  min-width: 60px;
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  max-width: 500px;
 }
 
 .player-time {
@@ -216,7 +586,9 @@
 
 /* ── Right ────────────────────────────── */
 .player-right {
-  flex: 0 0 240px;
+  flex: 0 1 auto;
+  min-width: 96px;
+  /* overflow must stay VISIBLE: the volume hover-popup rises above the bar */
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -231,7 +603,7 @@
 }
 
 .player-volume-icon {
-  font-size: 14px;
+  font-size: min(calc(var(--pb-h, 88px) * 0.16), 18px);
   cursor: default;
   line-height: 1;
 }
@@ -363,188 +735,4 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* ── Left ─────────────────────────────── */
-.player-left {
-  flex: 0 0 220px;
-  overflow: hidden;
-}
-
-.player-title {
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.player-artist {
-  color: #888;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-top: 2px;
-}
-
-.player-idle {
-  color: #555;
-  font-size: 12px;
-}
-
-/* ── Center ───────────────────────────── */
-.player-center {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.player-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.player-btn {
-  background: none;
-  border: none;
-  color: #ccc;
-  font-size: 16px;
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 4px;
-  transition:
-    color 0.15s,
-    background 0.15s;
-  line-height: 1;
-}
-
-.player-btn:hover {
-  color: #fff;
-  background: #2a2a2a;
-}
-
-.player-btn:disabled {
-  color: #444;
-  cursor: default;
-  background: none;
-}
-
-.player-btn--play {
-  font-size: 20px;
-  padding: 4px 10px;
-}
-
-.player-btn--active {
-  color: #1db954;
-}
-
-.player-btn--toggle {
-  color: #555;
-  font-size: 18px;
-}
-
-.player-btn--toggle.player-btn--active {
-  color: #1db954;
-}
-
-/* ── Seekbar ──────────────────────────── */
-.player-seek {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  max-width: 500px;
-}
-
-.player-time {
-  color: #888;
-  font-size: 11px;
-  min-width: 32px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-
-.player-seekbar {
-  flex: 1;
-  -webkit-appearance: none;
-  appearance: none;
-  height: 4px;
-  border-radius: 2px;
-  background: #333;
-  cursor: pointer;
-  outline: none;
-}
-
-.player-seekbar::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: #fff;
-  cursor: pointer;
-}
-
-.player-seekbar:hover::-webkit-slider-thumb {
-  background: #1db954;
-}
-
-/* ── Right ────────────────────────────── */
-.player-right {
-  flex: 0 0 220px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-}
-
-.player-device-wrap {
-  position: relative;
-}
-
-.player-device-menu {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  right: 0;
-  background: #1e1e1e;
-  border: 1px solid #333;
-  border-radius: 6px;
-  min-width: 220px;
-  max-width: 320px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-  z-index: 200;
-  overflow: hidden;
-}
-
-.player-device-item {
-  padding: 9px 14px;
-  font-size: 12px;
-  color: #ccc;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.player-device-item:hover {
-  background: #2a2a2a;
-  color: #fff;
-}
-
-.player-device-item--active {
-  color: #1db954;
-}
-
-.player-device-item--empty {
-  color: #555;
-  cursor: default;
-}
-.player-device-item--empty:hover {
-  background: none;
-  color: #555;
 }

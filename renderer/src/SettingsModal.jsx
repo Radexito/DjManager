@@ -3,6 +3,20 @@ import './SettingsModal.css';
 
 const DEFAULT_TARGET = -9;
 
+// MB and up — sub-megabyte sizes just round down to "0.0 MB" rather than
+// switching to bytes/KB, since libraries are never meaningfully that small.
+const SIZE_UNITS = ['MB', 'GB', 'TB'];
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB';
+  const mb = bytes / 1024 ** 2;
+  const exp = Math.max(
+    0,
+    Math.min(Math.floor(Math.log(mb) / Math.log(1024)), SIZE_UNITS.length - 1)
+  );
+  const value = mb / 1024 ** exp;
+  return `${value.toFixed(1)} ${SIZE_UNITS[exp]}`;
+}
+
 const COOKIE_BROWSERS = [
   { value: '', label: 'None (not logged in)' },
   { value: 'chrome', label: 'Chrome' },
@@ -41,10 +55,40 @@ function SettingsModal({ onClose }) {
   const [waveformGenProgress, setWaveformGenProgress] = useState(null);
   const [waveformGenResult, setWaveformGenResult] = useState(null);
 
-  // Library location
-  const [libraryPath, setLibraryPath] = useState('');
+  // Multiple libraries — all active at once (#390). Each library has its own
+  // root folder and storage format; "current" only controls where new
+  // imports land.
+  const [libraries, setLibraries] = useState([]);
+  const [currentLibraryId, setCurrentLibraryId] = useState(null);
+  const [newLibraryName, setNewLibraryName] = useState('');
+  const [newLibraryFormat, setNewLibraryFormat] = useState('hashed');
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameInput, setRenameInput] = useState('');
+  const [moveTargetId, setMoveTargetId] = useState(null); // library whose folder is being changed
   const [moveProgress, setMoveProgress] = useState(null); // { moved, total, pct } | null
   const [confirmMove, setConfirmMove] = useState(null); // pending new dir path
+  const [confirmFormat, setConfirmFormat] = useState(null); // { libraryId, newFormat } | null
+  const [convertTargetId, setConvertTargetId] = useState(null);
+  const [convertProgress, setConvertProgress] = useState(null); // { moved, total, pct } | null
+
+  // Database location — a single file shared by all libraries
+  const [dbPath, setDbPath] = useState('');
+  const [dbSize, setDbSize] = useState(0);
+  const [confirmMoveDb, setConfirmMoveDb] = useState(null); // pending new dir path
+
+  // Disk usage per library, keyed by library id — fetched alongside the
+  // library list itself since both change together (move/convert/create).
+  const [librarySizes, setLibrarySizes] = useState({});
+
+  const refreshLibraries = useCallback(() => {
+    window.api.listLibraries().then((libs) => {
+      setLibraries(libs);
+      Promise.all(
+        libs.map((l) => window.api.getLibrarySize(l.id).then((size) => [l.id, size]))
+      ).then((pairs) => setLibrarySizes(Object.fromEntries(pairs)));
+    });
+    window.api.getCurrentLibraryId().then(setCurrentLibraryId);
+  }, []);
 
   // Escape key closes dialog
   const handleKeyDown = useCallback(
@@ -74,7 +118,9 @@ function SettingsModal({ onClose }) {
 
   useEffect(() => {
     if (activeSection === 'library') {
-      window.api.getLibraryPath().then(setLibraryPath);
+      refreshLibraries();
+      window.api.getDbPath().then(setDbPath);
+      window.api.getDbSize().then(setDbSize);
     }
     if (activeSection === 'updates') {
       window.api.getDepVersions().then(setDepVersions);
@@ -82,7 +128,7 @@ function SettingsModal({ onClose }) {
     if (activeSection === 'downloads') {
       window.api.getSetting('ytdlp_cookies_browser', '').then(setCookiesBrowser);
     }
-  }, [activeSection]);
+  }, [activeSection, refreshLibraries]);
 
   const handleUpdateAll = async () => {
     setUpdatingAll(true);
@@ -223,23 +269,81 @@ function SettingsModal({ onClose }) {
     await window.api.openDevTools();
   };
 
-  const handleBrowseLibrary = async () => {
+  const handleBrowseLibrary = async (libraryId) => {
     const dir = await window.api.openDirDialog();
-    if (dir) setConfirmMove(dir);
+    if (dir) {
+      setMoveTargetId(libraryId);
+      setConfirmMove(dir);
+    }
   };
 
   const handleConfirmMove = async () => {
     const newDir = confirmMove;
+    const libraryId = moveTargetId;
     setConfirmMove(null);
     setMoveProgress({ moved: 0, total: 0, pct: 0 });
     const unsub = window.api.onMoveLibraryProgress((data) => setMoveProgress(data));
     try {
-      await window.api.moveLibrary(newDir);
-      setLibraryPath(newDir);
+      await window.api.moveLibrary(newDir, libraryId);
+      refreshLibraries();
       setMoveProgress(null);
     } finally {
       unsub?.();
+      setMoveTargetId(null);
     }
+  };
+
+  const handleConfirmFormatChange = async () => {
+    const { libraryId, newFormat } = confirmFormat;
+    setConfirmFormat(null);
+    setConvertTargetId(libraryId);
+    setConvertProgress({ moved: 0, total: 0, pct: 0 });
+    const unsub = window.api.onConvertStorageFormatProgress((data) => setConvertProgress(data));
+    try {
+      await window.api.convertStorageFormat(libraryId, newFormat);
+      refreshLibraries();
+      setConvertProgress(null);
+    } finally {
+      unsub?.();
+      setConvertTargetId(null);
+    }
+  };
+
+  const handleCreateLibrary = async () => {
+    if (!newLibraryName.trim()) return;
+    await window.api.createLibrary({
+      name: newLibraryName.trim(),
+      storageFormat: newLibraryFormat,
+    });
+    setNewLibraryName('');
+    setNewLibraryFormat('hashed');
+    refreshLibraries();
+  };
+
+  const handleConfirmRename = async () => {
+    if (!renameInput.trim()) {
+      setRenamingId(null);
+      return;
+    }
+    await window.api.renameLibrary(renamingId, renameInput.trim());
+    setRenamingId(null);
+    refreshLibraries();
+  };
+
+  const handleSetCurrentLibrary = async (id) => {
+    await window.api.setCurrentLibraryId(id);
+    setCurrentLibraryId(id);
+  };
+
+  const handleBrowseDatabase = async () => {
+    const dir = await window.api.openDirDialog();
+    if (dir) setConfirmMoveDb(dir);
+  };
+
+  const handleConfirmMoveDb = async () => {
+    const newDir = confirmMoveDb;
+    setConfirmMoveDb(null);
+    await window.api.moveDatabase(newDir); // restarts the app
   };
 
   const sections = [
@@ -272,43 +376,226 @@ function SettingsModal({ onClose }) {
           {activeSection === 'library' && (
             <>
               <h3>Library</h3>
+
               <div className="settings-group">
-                <div className="settings-group-title">Library Location</div>
+                <div className="settings-group-title">Libraries</div>
                 <p className="settings-group-desc">
-                  Where imported audio files are stored. Moving the library copies all files to the
-                  new location and updates the database.
+                  All libraries are active at once — tracks from every library show up together in
+                  your Music Library. "Current" only controls which library new imports land in.
+                </p>
+
+                <div className="library-list">
+                  {libraries.map((lib) => (
+                    <div key={lib.id} className="library-card">
+                      <div className="library-card-header">
+                        {renamingId === lib.id ? (
+                          <input
+                            autoFocus
+                            className="library-rename-input"
+                            value={renameInput}
+                            onChange={(e) => setRenameInput(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleConfirmRename()}
+                            onBlur={handleConfirmRename}
+                          />
+                        ) : (
+                          <span className="library-card-name">
+                            <button
+                              className="library-rename-btn"
+                              title="Rename"
+                              aria-label="Rename library"
+                              onClick={() => {
+                                setRenamingId(lib.id);
+                                setRenameInput(lib.name);
+                              }}
+                            >
+                              ✎
+                            </button>
+                            {lib.name}
+                            {lib.id === currentLibraryId && (
+                              <span className="library-active-badge">current</span>
+                            )}
+                            <span className="library-size-badge">
+                              {formatBytes(librarySizes[lib.id])}
+                            </span>
+                          </span>
+                        )}
+                        <div className="library-card-actions">
+                          {lib.id !== currentLibraryId && (
+                            <button
+                              className="btn-secondary"
+                              onClick={() => handleSetCurrentLibrary(lib.id)}
+                            >
+                              Set as current
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="settings-row settings-row-action">
+                        <div
+                          className="settings-path-display"
+                          title={lib.effective_root_path ?? lib.root_path}
+                        >
+                          {lib.effective_root_path ?? lib.root_path}
+                        </div>
+                        <button
+                          className="btn-secondary"
+                          onClick={() => handleBrowseLibrary(lib.id)}
+                          disabled={!!moveProgress}
+                        >
+                          Change…
+                        </button>
+                      </div>
+                      {moveProgress && moveTargetId === lib.id && (
+                        <div className="move-progress">
+                          <div className="move-progress-label">
+                            Moving files… {moveProgress.moved}/{moveProgress.total} (
+                            {moveProgress.pct}%)
+                          </div>
+                          <div className="deps-bar-track">
+                            <div
+                              className="deps-bar-fill"
+                              style={{ width: `${moveProgress.pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      {confirmMove && moveTargetId === lib.id && (
+                        <div className="settings-confirm-row" style={{ marginTop: '0.75rem' }}>
+                          <span>
+                            Move "{lib.name}" to <b>{confirmMove}</b>?
+                          </span>
+                          <button className="btn-primary" onClick={handleConfirmMove}>
+                            Move
+                          </button>
+                          <button
+                            className="btn-secondary"
+                            onClick={() => {
+                              setConfirmMove(null);
+                              setMoveTargetId(null);
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="settings-row" style={{ marginTop: '0.75rem' }}>
+                        <label className="settings-radio">
+                          <input
+                            type="radio"
+                            checked={lib.storage_format === 'hashed'}
+                            disabled={!!convertProgress}
+                            onChange={() =>
+                              lib.storage_format !== 'hashed' &&
+                              setConfirmFormat({ libraryId: lib.id, newFormat: 'hashed' })
+                            }
+                          />
+                          Hashed
+                        </label>
+                        <label className="settings-radio">
+                          <input
+                            type="radio"
+                            checked={lib.storage_format === 'readable'}
+                            disabled={!!convertProgress}
+                            onChange={() =>
+                              lib.storage_format !== 'readable' &&
+                              setConfirmFormat({ libraryId: lib.id, newFormat: 'readable' })
+                            }
+                          />
+                          Readable
+                        </label>
+                      </div>
+                      {convertProgress && convertTargetId === lib.id && (
+                        <div className="move-progress">
+                          <div className="move-progress-label">
+                            Reorganizing files… {convertProgress.moved}/{convertProgress.total} (
+                            {convertProgress.pct}%)
+                          </div>
+                          <div className="deps-bar-track">
+                            <div
+                              className="deps-bar-fill"
+                              style={{ width: `${convertProgress.pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      {confirmFormat?.libraryId === lib.id && (
+                        <div className="settings-confirm-row" style={{ marginTop: '0.75rem' }}>
+                          <span>
+                            Convert "{lib.name}" to <b>{confirmFormat.newFormat}</b> layout?
+                          </span>
+                          <button className="btn-primary" onClick={handleConfirmFormatChange}>
+                            Convert
+                          </button>
+                          <button className="btn-secondary" onClick={() => setConfirmFormat(null)}>
+                            Cancel
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="library-card library-card--new">
+                  <div className="settings-row settings-row-action">
+                    <input
+                      className="library-rename-input"
+                      placeholder="New library name…"
+                      value={newLibraryName}
+                      onChange={(e) => setNewLibraryName(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleCreateLibrary()}
+                    />
+                    <div className="settings-row">
+                      <label className="settings-radio">
+                        <input
+                          type="radio"
+                          checked={newLibraryFormat === 'hashed'}
+                          onChange={() => setNewLibraryFormat('hashed')}
+                        />
+                        Hashed
+                      </label>
+                      <label className="settings-radio">
+                        <input
+                          type="radio"
+                          checked={newLibraryFormat === 'readable'}
+                          onChange={() => setNewLibraryFormat('readable')}
+                        />
+                        Readable
+                      </label>
+                    </div>
+                    <button className="btn-secondary" onClick={handleCreateLibrary}>
+                      + New Library
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="settings-group">
+                <div className="settings-group-title">Database Location</div>
+                <p className="settings-group-desc">
+                  The metadata database — track info, playlists, cue points, and settings for every
+                  library. This is not where your audio files are stored; see each library's own
+                  folder above. Moving it closes and restarts the app.
                 </p>
                 <div className="settings-row settings-row-action">
-                  <div className="settings-path-display" title={libraryPath}>
-                    {libraryPath || '…'}
+                  <div className="settings-path-display" title={dbPath}>
+                    {dbPath || '…'}
                   </div>
-                  <button
-                    className="btn-secondary"
-                    onClick={handleBrowseLibrary}
-                    disabled={!!moveProgress}
-                  >
+                  <span className="settings-size-display">{formatBytes(dbSize)}</span>
+                  <button className="btn-secondary" onClick={handleBrowseDatabase}>
                     Change…
                   </button>
                 </div>
-                {moveProgress && (
-                  <div className="move-progress">
-                    <div className="move-progress-label">
-                      Moving files… {moveProgress.moved}/{moveProgress.total} ({moveProgress.pct}%)
-                    </div>
-                    <div className="deps-bar-track">
-                      <div className="deps-bar-fill" style={{ width: `${moveProgress.pct}%` }} />
-                    </div>
-                  </div>
-                )}
-                {confirmMove && (
+                {confirmMoveDb && (
                   <div className="settings-confirm-row" style={{ marginTop: '0.75rem' }}>
                     <span>
-                      Move library to <b>{confirmMove}</b>?
+                      Move database to <b>{confirmMoveDb}</b>? The app will restart.
                     </span>
-                    <button className="btn-primary" onClick={handleConfirmMove}>
-                      Move
+                    <button className="btn-primary" onClick={handleConfirmMoveDb}>
+                      Move &amp; Restart
                     </button>
-                    <button className="btn-secondary" onClick={() => setConfirmMove(null)}>
+                    <button className="btn-secondary" onClick={() => setConfirmMoveDb(null)}>
                       Cancel
                     </button>
                   </div>
@@ -870,7 +1157,9 @@ function SettingsModal({ onClose }) {
                   <div>
                     <div className="settings-action-label">Clear Library</div>
                     <div className="settings-action-desc">
-                      Removes all tracks and audio files. Your playlists will also be cleared.
+                      Removes all tracks and audio files from the current library only (see Library
+                      settings for which one that is). Other libraries and your playlists are left
+                      alone — a playlist may still reference tracks from other libraries.
                     </div>
                   </div>
                   {confirmClear === 'library' ? (

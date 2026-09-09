@@ -22,20 +22,39 @@ export async function detectFilesystem(mountPath) {
       return await detectFilesystemLinux(mountPath);
     }
   } catch {
-    // If detection fails, assume we can't check — let user proceed with warning
-    return { fs: 'unknown', device: null, mountPoint: mountPath, needsFormat: false };
+    // If detection fails, we cannot confirm the device is removable — default to
+    // "not removable" so a failed detection can never accidentally permit formatting.
+    return {
+      fs: 'unknown',
+      device: null,
+      mountPoint: mountPath,
+      needsFormat: false,
+      removable: false,
+    };
   }
 }
 
 async function detectFilesystemWindows(mountPath) {
   // mountPath is like "E:\" or "E:"
   const drive = mountPath.replace(/[/\\]/g, '').replace(/:$/, '');
-  const { stdout } = await execAsync(`fsutil fsinfo volumeinfo ${drive}: 2>&1`, {
-    windowsHide: true,
-  });
-  console.log(`[diag] fsutil volumeinfo ${drive}: stdout:\n${stdout.trim()}`);
-  const fsMatch = stdout.match(/File System Name\s*:\s*(\S+)/i);
-  const fsName = fsMatch ? fsMatch[1].toLowerCase() : 'unknown';
+
+  // Querying the system/boot volume's volumeinfo requires elevation and throws
+  // "Access is denied" for non-admin users. Catch that locally (like the diskfree
+  // and drivetype calls below) instead of letting it propagate to the outer catch
+  // in detectFilesystem() — that outer catch forces needsFormat:false, which would
+  // silently skip the format-safety UI entirely. Falling back to fsName 'unknown'
+  // here still correctly triggers needsFormat below, so the removable check still runs.
+  let fsName = 'unknown';
+  try {
+    const { stdout } = await execAsync(`fsutil fsinfo volumeinfo ${drive}: 2>&1`, {
+      windowsHide: true,
+    });
+    console.log(`[diag] fsutil volumeinfo ${drive}: stdout:\n${stdout.trim()}`);
+    const fsMatch = stdout.match(/File System Name\s*:\s*(\S+)/i);
+    fsName = fsMatch ? fsMatch[1].toLowerCase() : 'unknown';
+  } catch (e) {
+    console.log(`[diag] volumeinfo check failed: ${e.message}`);
+  }
 
   // Log drive size so we can tell if FAT32 format will be rejected (> 32 GB limit)
   try {
@@ -55,11 +74,25 @@ async function detectFilesystemWindows(mountPath) {
     console.log(`[diag] drive size check failed: ${e.message}`);
   }
 
+  // Only a drive fsutil positively reports as "Removable Drive" is treated as removable —
+  // internal/fixed drives (including the system drive) must never be formattable.
+  let removable = false;
+  try {
+    const { stdout: driveTypeOut } = await execAsync(`fsutil fsinfo drivetype ${drive}: 2>&1`, {
+      windowsHide: true,
+    });
+    console.log(`[diag] fsutil drivetype ${drive}: ${driveTypeOut.trim()}`);
+    removable = /removable drive/i.test(driveTypeOut);
+  } catch (e) {
+    console.log(`[diag] drivetype check failed: ${e.message}`);
+  }
+
   return {
     fs: fsName,
     device: `${drive}:`,
     mountPoint: mountPath,
     needsFormat: !FAT_FILESYSTEMS.has(fsName),
+    removable,
   };
 }
 
@@ -70,59 +103,103 @@ async function detectFilesystemMac(mountPath) {
   const deviceMatch = stdout.match(/Device Node\s*:\s*(\S+)/i);
   const fsName = fsMatch ? fsMatch[1].toLowerCase().replace('msdos', 'fat32') : 'unknown';
   const device = deviceMatch ? deviceMatch[1] : null;
+
+  // Require positive confirmation of external/removable media. "Device Location: External"
+  // and/or "Removable Media: Removable" are how diskutil reports USB/external drives;
+  // an internal disk (the boot drive included) must never be treated as removable.
+  const locationMatch = stdout.match(/Device Location\s*:\s*(\S+)/i);
+  const removableMatch = stdout.match(/Removable Media\s*:\s*(\S+)/i);
+  const removable =
+    (!!locationMatch && /external/i.test(locationMatch[1])) ||
+    (!!removableMatch && /removable/i.test(removableMatch[1]));
+
   return {
     fs: fsName,
     device,
     mountPoint: mountPath,
     needsFormat: !FAT_FILESYSTEMS.has(fsName),
+    removable,
   };
 }
 
 async function detectFilesystemLinux(mountPath) {
-  // Try lsblk first
+  // Try lsblk first — RM (removable flag) and TRAN (transport, e.g. "usb") let us
+  // positively confirm the device is removable media before it's ever eligible to format.
   try {
-    const { stdout: lsblkOut } = await execAsync(`lsblk -o MOUNTPOINT,FSTYPE,NAME -J 2>/dev/null`);
+    const { stdout: lsblkOut } = await execAsync(
+      `lsblk -o MOUNTPOINT,FSTYPE,NAME,RM,TRAN -J 2>/dev/null`
+    );
     const data = JSON.parse(lsblkOut);
     const device = findLinuxDevice(data.blockdevices, mountPath);
     if (device) {
       const fsName = (device.fstype || 'unknown').toLowerCase();
+      const removable = isRemovableLinuxDevice(device);
       return {
         fs: fsName,
         device: `/dev/${device.name}`,
         mountPoint: mountPath,
         needsFormat: !FAT_FILESYSTEMS.has(fsName),
+        removable,
       };
     }
   } catch {}
 
-  // Fallback: df -T
+  // Fallback: df -T, then check /sys/block/<disk>/removable for the resolved device.
   const { stdout } = await execAsync(`df -T "${mountPath}" 2>&1`);
   const lines = stdout.trim().split('\n');
   if (lines.length >= 2) {
     const parts = lines[1].trim().split(/\s+/);
     const fsName = (parts[1] || 'unknown').toLowerCase();
     const device = parts[0] || null;
+    const removable = await isRemovableLinuxDeviceNode(device);
     return {
       fs: fsName,
       device,
       mountPoint: mountPath,
       needsFormat: !FAT_FILESYSTEMS.has(fsName),
+      removable,
     };
   }
 
-  return { fs: 'unknown', device: null, mountPoint: mountPath, needsFormat: false };
+  return {
+    fs: 'unknown',
+    device: null,
+    mountPoint: mountPath,
+    needsFormat: false,
+    removable: false,
+  };
 }
 
-function findLinuxDevice(devices, mountPath, prefix = '') {
+function findLinuxDevice(devices, mountPath, parentInfo = {}) {
   for (const d of devices || []) {
-    const fullName = prefix ? `${prefix}${d.name}` : d.name;
-    if (d.mountpoint === mountPath) return { ...d, name: fullName };
+    const info = { rm: d.rm ?? parentInfo.rm, tran: d.tran ?? parentInfo.tran };
+    if (d.mountpoint === mountPath) return { ...d, ...info };
     if (d.children) {
-      const found = findLinuxDevice(d.children, mountPath, '');
+      const found = findLinuxDevice(d.children, mountPath, info);
       if (found) return found;
     }
   }
   return null;
+}
+
+function isRemovableLinuxDevice(device) {
+  const rm = device.rm;
+  const isRemovableFlag = rm === true || rm === 1 || rm === '1';
+  const isUsbTransport = typeof device.tran === 'string' && device.tran.toLowerCase() === 'usb';
+  return isRemovableFlag || isUsbTransport;
+}
+
+async function isRemovableLinuxDeviceNode(devicePath) {
+  if (!devicePath) return false;
+  // e.g. /dev/sdb1 -> sdb
+  const base = devicePath.replace(/^\/dev\//, '').replace(/[0-9]+$/, '');
+  if (!base) return false;
+  try {
+    const val = fs.readFileSync(`/sys/block/${base}/removable`, 'utf8').trim();
+    return val === '1';
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -131,6 +208,18 @@ function findLinuxDevice(devices, mountPath, prefix = '') {
  */
 export async function formatDrive(device, mountPoint, onProgress) {
   const platform = process.platform;
+
+  // Re-verify removability right before the destructive command runs. This is the
+  // single choke point every format call goes through, so it can't be bypassed by
+  // a stale or forged renderer-supplied device/mountPoint pair.
+  const info = await detectFilesystem(mountPoint);
+  if (!info.removable) {
+    throw new Error(
+      `Refusing to format ${device}: it was not confirmed to be removable media. ` +
+        `Internal/fixed drives cannot be formatted.`
+    );
+  }
+
   onProgress('Starting format…');
 
   if (platform === 'win32') {

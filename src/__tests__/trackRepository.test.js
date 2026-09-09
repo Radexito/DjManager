@@ -6,6 +6,8 @@ import {
   getTrackByHash,
   updateTrack,
   removeTrack,
+  removeTracks,
+  getTrackCountByFilePath,
   getTrackIds,
   normalizeLibrary,
   clearTracks,
@@ -15,6 +17,7 @@ import {
   clearLegacyNormalizedPaths,
   resetNormalization,
 } from '../db/trackRepository.js';
+import { createLibrary } from '../db/libraryRepository.js';
 
 const SAMPLE = {
   title: 'Test Track',
@@ -310,6 +313,20 @@ describe('trackRepository', () => {
       expect(track.key_raw).toBe('Am');
       expect(track.title).toBe('Test Track'); // unchanged
     });
+
+    it('persists library_id and is_linked (used by moveTrackToLibrary)', () => {
+      const id = addTrack(SAMPLE);
+      const targetLibrary = createLibrary({ name: 'Backup' });
+      updateTrack(id, {
+        library_id: targetLibrary.id,
+        is_linked: 0,
+        file_path: '/tmp/new/location.mp3',
+      });
+      const track = getTrackById(id);
+      expect(track.library_id).toBe(targetLibrary.id);
+      expect(track.is_linked).toBe(0);
+      expect(track.file_path).toBe('/tmp/new/location.mp3');
+    });
   });
 
   describe('removeTrack', () => {
@@ -324,6 +341,38 @@ describe('trackRepository', () => {
       const id2 = addTrack({ ...SAMPLE, file_hash: 'other', file_path: '/tmp/other.mp3' });
       removeTrack(id1);
       expect(getTrackById(id2)).toBeDefined();
+    });
+  });
+
+  describe('removeTracks', () => {
+    it('deletes all given tracks in one transaction', () => {
+      const id1 = addTrack(SAMPLE);
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'b', file_path: '/tmp/b.mp3' });
+      const id3 = addTrack({ ...SAMPLE, file_hash: 'c', file_path: '/tmp/c.mp3' });
+      removeTracks([id1, id2]);
+      expect(getTrackById(id1)).toBeUndefined();
+      expect(getTrackById(id2)).toBeUndefined();
+      expect(getTrackById(id3)).toBeDefined();
+    });
+
+    it('handles an empty array without error', () => {
+      expect(() => removeTracks([])).not.toThrow();
+    });
+  });
+
+  describe('getTrackCountByFilePath', () => {
+    it('returns 0 when no track references the path', () => {
+      expect(getTrackCountByFilePath('/tmp/nope.mp3')).toBe(0);
+    });
+
+    it('counts tracks sharing the same file_path', () => {
+      const id1 = addTrack(SAMPLE);
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'dup', file_path: SAMPLE.file_path });
+      expect(getTrackCountByFilePath(SAMPLE.file_path)).toBe(2);
+      removeTrack(id1);
+      expect(getTrackCountByFilePath(SAMPLE.file_path)).toBe(1);
+      removeTrack(id2);
+      expect(getTrackCountByFilePath(SAMPLE.file_path)).toBe(0);
     });
   });
 

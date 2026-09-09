@@ -18,6 +18,11 @@ import { app, BrowserWindow, ipcMain, dialog, Menu, MenuItem, shell } from 'elec
 app.name = 'Dj Manager';
 
 if (process.platform === 'linux') {
+  // Must match `desktopName` in package.json / the packaged .desktop file's basename —
+  // this is what Wayland/X11 use to associate the running window with its .desktop
+  // entry (and therefore its icon). Without it, desktop environments show a generic
+  // icon since they can't resolve the app_id/WM_CLASS Electron picks by default.
+  app.setDesktopName('dj_manager.desktop');
   app.disableHardwareAcceleration();
   if (process.env.WAYLAND_DISPLAY) {
     app.commandLine.appendSwitch('ozone-platform', 'wayland');
@@ -44,7 +49,6 @@ import {
   reorderPlaylistTracks,
   getPlaylistsForTrack,
   getPlaylistTracks,
-  clearPlaylists,
 } from './db/playlistRepository.js';
 import {
   addTrack,
@@ -56,9 +60,11 @@ import {
   getLinkedTracksBasic,
   remapTracksByPrefix,
   removeTrack,
+  removeTracks,
+  getTrackCountByFilePath,
   updateTrack,
   resetNormalization,
-  clearTracks,
+  clearTracksForLibrary,
   getTrackIdsNeedingNormalization,
   getNormalizedTrackCount,
   getLegacyNormalizedTracks,
@@ -69,6 +75,7 @@ import {
   getPlaylistSourceUrls,
   getTrackWaveform,
   updateTrackWaveform,
+  updateTrackDetailHires,
 } from './db/trackRepository.js';
 import { getSetting, setSetting } from './db/settingsRepository.js';
 import {
@@ -77,7 +84,22 @@ import {
   spawnAnalysis,
   cancelAnalysis,
   getLibraryBase,
+  getStorageFormat,
+  convertStorageFormat,
+  moveTrackToLibrary,
+  getLibraryDiskUsage,
+  getLibraryFreeSpace,
 } from './audio/importManager.js';
+import {
+  listLibraries,
+  createLibrary,
+  renameLibrary,
+  getCurrentLibraryId,
+  setCurrentLibraryId,
+  getDefaultLibraryId,
+  setLibraryRootPath,
+} from './db/libraryRepository.js';
+import { getDbPath, setDbPath } from './db/dbLocation.js';
 import { convertAudio } from './audio/ffmpeg.js';
 
 import {
@@ -98,9 +120,8 @@ import {
   fetchTidalInfo,
   searchTidal,
 } from './audio/tidalDlManager.js';
-import { generateWaveformOverview } from './audio/waveformGenerator.js';
+import { generateWaveformOverview, generateEditorWaveform } from './audio/waveformGenerator.js';
 import { ensureDeps, getFfmpegRuntimePath } from './deps.js';
-import { generateEditorWaveform } from './audio/waveformGenerator.js';
 import {
   getInstalledVersions,
   checkForUpdates,
@@ -112,15 +133,19 @@ import {
 } from './deps.js';
 import { initLogger, getLogDir, initRendererLogger, logRendererMessage } from './logger.js';
 import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
+import { detectWindowsDrives } from './explorer/drives.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
 import { resolveExportFormat } from './usb/deviceFormats.js';
+import { reuseExistingUsbTrack } from './usb/exportReuse.js';
 import { getResetCleanupTargets, startResetCleanup } from './resetCleanup.js';
 import {
   getCuePoints,
+  getCuePointById,
   addCuePoint,
   updateCuePoint,
+  renumberSequentialCuesAfter,
   deleteCuePoint,
   deleteAllCuePoints,
   deleteAllCuePointsLibrary,
@@ -133,6 +158,7 @@ const __dirname = path.dirname(__filename);
 let mainWindow;
 
 import { startMediaServer as _startMediaServer } from './audio/mediaServer.js';
+import { moveFileSafe } from './utils/fsMove.js';
 import { getArtworkBase } from './audio/importManager.js';
 import { writeId3Tags } from './audio/id3Writer.js';
 
@@ -147,11 +173,20 @@ let mediaServerPort = null;
 const explorerAllowedBases = [];
 
 function startMediaServer() {
-  // Respect a relocated library (Settings → move library / external drive):
-  // getLibraryBase() falls back to userData/audio only when no custom
-  // library_path setting is stored.
-  const audioBase = getLibraryBase();
-  const artworkBase = getArtworkBase();
+  // With multiple libraries live at once (#390), there's no single implicit
+  // "the" library any more — the oldest one keeps the primary audioBase slot
+  // (matches pre-#390 behavior for upgrading installs) and every other
+  // library's folder is added to the allow-list so playback works for all of
+  // them without needing per-library server instances.
+  const defaultId = getDefaultLibraryId();
+  const audioBase = getLibraryBase(defaultId);
+  const artworkBase = getArtworkBase(defaultId);
+  for (const lib of listLibraries()) {
+    if (lib.id === defaultId) continue;
+    for (const base of [getLibraryBase(lib.id), getArtworkBase(lib.id)]) {
+      if (!explorerAllowedBases.includes(base)) explorerAllowedBases.push(base);
+    }
+  }
   return _startMediaServer(audioBase, artworkBase, explorerAllowedBases).then(({ port }) => {
     mediaServerPort = port;
   });
@@ -392,6 +427,7 @@ ipcMain.handle('retry-deps', () => {
 });
 ipcMain.handle('get-tracks', (_, params) => getTracks(params));
 ipcMain.handle('get-track-ids', (_, params) => getTrackIds(params));
+ipcMain.handle('get-track-by-id', (_, trackId) => getTrackById(trackId) ?? null);
 // Linked (Explorer-referenced) tracks point at arbitrary, often removable paths
 // (USB drives, etc.) — check which ones are currently unreachable so the UI can
 // gray them out instead of failing playback with no explanation.
@@ -405,10 +441,20 @@ ipcMain.handle('get-track-waveform', (_, trackId) => {
   return buf ? new Uint8Array(buf) : null;
 });
 ipcMain.handle('get-setting', (_, key, def) => getSetting(key, def));
-ipcMain.handle('set-setting', (_, key, value) => setSetting(key, value));
-ipcMain.handle('get-library-path', () => getLibraryBase());
-ipcMain.handle('move-library', async (event, newDir) => {
-  const oldBase = getLibraryBase();
+ipcMain.handle('set-setting', (_, key, value) => {
+  setSetting(key, value);
+  // Let the renderer react to settings changes live (e.g. hide the cue
+  // indicator column when auto-cue generation is toggled, #263).
+  global.mainWindow?.webContents.send('settings-updated', { key, value });
+});
+// `libraryId` defaults to the current "import target" library when omitted —
+// most existing call sites predate multi-library support and don't pass one.
+ipcMain.handle('get-library-path', (_, libraryId) =>
+  getLibraryBase(libraryId ?? getCurrentLibraryId())
+);
+ipcMain.handle('move-library', async (event, newDir, libraryId) => {
+  const id = libraryId ?? getCurrentLibraryId();
+  const oldBase = getLibraryBase(id);
 
   if (!newDir || newDir === oldBase) throw new Error('Same directory selected.');
 
@@ -418,8 +464,8 @@ ipcMain.handle('move-library', async (event, newDir) => {
   // doesn't help when the user picks a drive root as the new library folder.
   if (!fs.existsSync(newDir)) fs.mkdirSync(newDir, { recursive: true });
 
-  // Gather all tracks
-  const tracks = getTracks({ limit: 999999 });
+  // Gather this library's tracks only — other libraries' files are untouched.
+  const tracks = getTracks({ limit: 999999, libraryIds: [id] });
   const total = tracks.length;
   let moved = 0;
 
@@ -434,22 +480,21 @@ ipcMain.handle('move-library', async (event, newDir) => {
     const rel = path.relative(oldBase, oldPath);
     const newPath = path.join(newDir, rel);
     fs.mkdirSync(path.dirname(newPath), { recursive: true });
-    try {
-      fs.renameSync(oldPath, newPath);
-    } catch (err) {
-      // rename() is a same-filesystem metadata op — it can't cross drive
-      // letters (e.g. moving the library to an external drive), so fall
-      // back to copy + delete whenever the destination is a different volume.
-      if (err.code !== 'EXDEV') throw err;
-      fs.copyFileSync(oldPath, newPath);
-      fs.unlinkSync(oldPath);
-    }
+    moveFileSafe(oldPath, newPath);
     updateTrack(track.id, { file_path: newPath });
     moved++;
 
     const pct = Math.round((moved / total) * 100);
-    if (global.mainWindow)
+    if (global.mainWindow) {
       global.mainWindow.webContents.send('move-library-progress', { moved, total, pct });
+      // Keep the track list and any open Edit Details panel in sync — pass
+      // through the existing `analyzed` flag so this doesn't masquerade as
+      // a completed analysis for not-yet-analyzed tracks.
+      global.mainWindow.webContents.send('track-updated', {
+        trackId: track.id,
+        analysis: { file_path: newPath, analyzed: track.analyzed },
+      });
+    }
   }
 
   // Remove old empty shard dirs (best-effort)
@@ -463,11 +508,80 @@ ipcMain.handle('move-library', async (event, newDir) => {
     /* ignore */
   }
 
-  setSetting('library_path', newDir);
+  setLibraryRootPath(id, newDir);
   // The running media server's audioBase was fixed at startup — allow the new
   // location immediately so playback doesn't require an app restart.
   if (!explorerAllowedBases.includes(newDir)) explorerAllowedBases.push(newDir);
   return { moved, total };
+});
+
+// ── Multiple libraries ───────────────────────────────────────────────────────
+// All libraries live in one database (see libraryRepository.js) and are
+// active/visible at the same time — no restart to "switch" between them.
+// "Current library" only affects where new imports land.
+
+ipcMain.handle('list-libraries', () =>
+  // root_path is null for a library on its (unscoped-by-user) default path —
+  // resolve it so the renderer always has a real path to display.
+  listLibraries().map((lib) => ({ ...lib, effective_root_path: getLibraryBase(lib.id) }))
+);
+ipcMain.handle('get-library-size', (_, libraryId) =>
+  getLibraryDiskUsage(libraryId ?? getCurrentLibraryId())
+);
+ipcMain.handle('list-libraries-with-free-space', () =>
+  listLibraries().map((lib) => ({
+    ...lib,
+    effective_root_path: getLibraryBase(lib.id),
+    free_bytes: getLibraryFreeSpace(lib.id),
+  }))
+);
+ipcMain.handle('get-current-library-id', () => getCurrentLibraryId());
+ipcMain.handle('set-current-library-id', (_, id) => setCurrentLibraryId(id));
+ipcMain.handle('create-library', (_, opts) => {
+  const lib = createLibrary(opts);
+  // Newly created library's folder must be servable immediately, same as an
+  // Explorer-linked directory — no restart required.
+  for (const base of [getLibraryBase(lib.id), getArtworkBase(lib.id)]) {
+    if (!explorerAllowedBases.includes(base)) explorerAllowedBases.push(base);
+  }
+  return lib;
+});
+ipcMain.handle('rename-library', (_, id, name) => renameLibrary(id, name));
+
+ipcMain.handle('get-library-storage-format', (_, libraryId) =>
+  getStorageFormat(libraryId ?? getCurrentLibraryId())
+);
+ipcMain.handle('convert-storage-format', (_, libraryId, newFormat) =>
+  convertStorageFormat(libraryId ?? getCurrentLibraryId(), newFormat)
+);
+
+// ── Move database ────────────────────────────────────────────────────────────
+// Unlike move-library (which relocates audio files while the DB stays open),
+// the database file itself can't be relocated while better-sqlite3 has it
+// open — close it, move it, record the new location, then restart.
+ipcMain.handle('get-db-path', () => getDbPath(app.getPath('userData')));
+ipcMain.handle('get-db-size', () => {
+  try {
+    return fs.statSync(getDbPath(app.getPath('userData'))).size;
+  } catch {
+    return 0;
+  }
+});
+ipcMain.handle('move-database', async (_, newDir) => {
+  const oldPath = getDbPath(app.getPath('userData'));
+  const newPath = path.join(newDir, path.basename(oldPath));
+  if (newPath === oldPath) throw new Error('Same location selected.');
+  if (!fs.existsSync(newDir)) fs.mkdirSync(newDir, { recursive: true });
+
+  closeDB();
+  // WAL/SHM sidecar files must move with the main db file, if present.
+  for (const suffix of ['', '-wal', '-shm']) {
+    const src = oldPath + suffix;
+    if (fs.existsSync(src)) moveFileSafe(src, newPath + suffix);
+  }
+  setDbPath(app.getPath('userData'), newPath);
+  app.relaunch();
+  app.exit(0);
 });
 
 ipcMain.handle('normalize-library', () => {
@@ -545,9 +659,44 @@ ipcMain.handle('cancel-analysis', (_, trackId) => {
   return { cancelled };
 });
 ipcMain.handle('remove-track', (_, trackId) => {
+  const track = getTrackById(trackId);
   removeTrack(trackId); // ON DELETE CASCADE removes playlist_tracks rows
+  // Imported tracks own their copy in userData/audio — delete it too, unless another
+  // track row still references the same path (SHA-1 import dedup isn't transactional,
+  // so two rows can share one file_path).
+  if (track && !track.is_linked && track.file_path) {
+    if (getTrackCountByFilePath(track.file_path) === 0) {
+      try {
+        fs.unlinkSync(track.file_path);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
   if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
   return { ok: true };
+});
+ipcMain.handle('remove-tracks', (_, trackIds) => {
+  const total = trackIds.length;
+  const tracks = trackIds.map((id) => getTrackById(id)).filter(Boolean);
+
+  removeTracks(trackIds); // single transaction — ON DELETE CASCADE removes playlist_tracks rows
+
+  for (let i = 0; i < tracks.length; i++) {
+    const track = tracks[i];
+    if (!track.is_linked && track.file_path && getTrackCountByFilePath(track.file_path) === 0) {
+      try {
+        fs.unlinkSync(track.file_path);
+      } catch {
+        /* already gone */
+      }
+    }
+    send('remove-tracks-progress', { completed: i + 1, total });
+  }
+
+  if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+  send('remove-tracks-progress', { completed: total, total, done: true });
+  return { ok: true, total };
 });
 ipcMain.handle('remove-linked-file', async (_, trackId) => {
   const track = getTrackById(trackId);
@@ -578,12 +727,50 @@ ipcMain.handle('update-track', (_, { id, data }) => {
   }
   return { ok: true };
 });
+// #262: fire-and-forget background regeneration of just the hires (600 cols/sec)
+// detail buffer for a track that was analyzed before this feature shipped.
+// Persists the result to `waveform_detail_hires` and notifies the renderer via
+// the existing `waveform-ready` event (same event used for overview waveform
+// completion) so the Beat Grid Editor can pick up the sharper buffer in place.
+function regenerateHiresWaveform(trackId, filePath) {
+  generateEditorWaveform(filePath, getFfmpegRuntimePath())
+    .then(({ detailHires }) => {
+      updateTrackDetailHires(trackId, detailHires);
+      if (global.mainWindow) {
+        global.mainWindow.webContents.send('waveform-ready', { trackId });
+      }
+    })
+    .catch((err) =>
+      console.warn(`[waveform] hires detail regen failed for track ${trackId}:`, err.message)
+    );
+}
+
 ipcMain.handle('get-editor-waveform', async (_, trackId) => {
   const track = getTrackById(trackId);
   if (!track?.file_path) return null;
+
+  // Fast path: hires (600 cols/sec) buffer already generated and cached —
+  // no ffmpeg decode needed on every editor open.
+  if (track.waveform_detail_hires != null) {
+    return {
+      detail: track.waveform_detail_hires,
+      overview: track.waveform_overview ?? null,
+      numCols: Math.floor(track.waveform_detail_hires.length / 3),
+    };
+  }
+
+  // Legacy track (analyzed before #262): no hires buffer stored yet. Return
+  // the 150 cols/sec buffer synchronously so the editor still renders
+  // something immediately, and kick off background regeneration of the
+  // hires buffer for next time — do NOT block this response on it.
   try {
     const result = await generateEditorWaveform(track.file_path, getFfmpegRuntimePath());
-    return result;
+    regenerateHiresWaveform(trackId, track.file_path);
+    return {
+      detail: result.detail,
+      overview: result.overview,
+      numCols: result.numCols,
+    };
   } catch (e) {
     console.error('[get-editor-waveform]', e.message);
     return null;
@@ -612,11 +799,20 @@ ipcMain.handle('get-cue-points', (_, trackId) => getCuePoints(trackId));
 
 ipcMain.handle('add-cue-point', (_, { trackId, positionMs, label, color, hotCueIndex }) => {
   const id = addCuePoint({ trackId, positionMs, label, color, hotCueIndex });
+  // Adding a sequentially-named cue shifts the positional order — renumber the
+  // following auto-named cues so names stay unique (#253).
+  renumberSequentialCuesAfter(trackId, id);
   return { id };
 });
 
 ipcMain.handle('update-cue-point', (_, { id, label, color, hotCueIndex, enabled }) => {
+  const before = getCuePointById(id);
   updateCuePoint(id, { label, color, hotCueIndex, enabled });
+  // Renaming a cue to a sequential name (e.g. the newly inserted "Cue 2")
+  // must cascade a renumber onto the following auto-named cues (#253).
+  if (before && typeof label === 'string') {
+    renumberSequentialCuesAfter(before.track_id, id);
+  }
   return { ok: true };
 });
 
@@ -838,14 +1034,14 @@ ipcMain.handle('open-dir-dialog', async () => {
   const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
   return result.canceled ? null : result.filePaths[0];
 });
-ipcMain.handle('import-audio-files', async (event, filePaths, playlistId) => {
+ipcMain.handle('import-audio-files', async (event, filePaths, playlistId, libraryId) => {
   console.log('Importing audio files:', filePaths);
   const trackIds = [];
   const total = filePaths.length;
 
   for (let i = 0; i < total; i++) {
     try {
-      const trackId = await importAudioFile(filePaths[i]);
+      const trackId = await importAudioFile(filePaths[i], {}, libraryId);
       trackIds.push(trackId);
     } catch (err) {
       console.error('Import failed:', filePaths[i], err);
@@ -866,10 +1062,14 @@ ipcMain.handle('import-audio-files', async (event, filePaths, playlistId) => {
   return trackIds;
 });
 
-ipcMain.handle('clear-library', async () => {
-  const audioBase = path.join(app.getPath('userData'), 'audio');
-  clearTracks();
-  clearPlaylists();
+ipcMain.handle('clear-library', async (_, libraryId) => {
+  // Clears only the specified library's tracks and its audio folder — other
+  // libraries are untouched. Playlists are left alone: they may reference
+  // tracks from other libraries too, and cascade delete already removes this
+  // library's (now-deleted) tracks from any playlist_tracks rows.
+  const id = libraryId ?? getCurrentLibraryId();
+  const audioBase = getLibraryBase(id);
+  clearTracksForLibrary(id);
   if (fs.existsSync(audioBase)) fs.rmSync(audioBase, { recursive: true, force: true });
   if (global.mainWindow) {
     global.mainWindow.webContents.send('library-updated');
@@ -961,7 +1161,8 @@ ipcMain.handle('auto-tag-search', async (_, { query }) => {
 
 ipcMain.handle('fetch-artwork-url', async (_, { trackId, url }) => {
   try {
-    const artworkBase = getArtworkBase();
+    const track = getTrackById(trackId);
+    const artworkBase = getArtworkBase(track?.library_id ?? getCurrentLibraryId());
     fs.mkdirSync(artworkBase, { recursive: true });
 
     const res = await fetch(url);
@@ -1252,7 +1453,8 @@ ipcMain.handle('cloud-search', async (_event, { source, query, types, limit }) =
   if (!query?.trim()) return { ok: false, error: 'Empty query' };
   try {
     if (source === 'youtube') {
-      const results = await searchYouTube(query, { limit });
+      const cookiesBrowser = getSetting('ytdlp_cookies_browser', '') || null;
+      const results = await searchYouTube(query, { limit, cookiesBrowser });
       return { ok: true, results };
     }
     if (source === 'tidal') {
@@ -1268,6 +1470,7 @@ ipcMain.handle('cloud-search', async (_event, { source, query, types, limit }) =
           artist: r.artist,
           album: r.album,
           durationSec: r.duration,
+          numTracks: r.numTracks,
           quality: r.quality,
           url: r.url,
         })),
@@ -1659,12 +1862,17 @@ ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlis
 ipcMain.handle('get-computer-root', () => {
   const home = os.homedir();
   let root;
+  let drives = [];
   if (process.platform === 'win32') {
     root = path.parse(home).root || 'C:\\';
+    // #473: enumerate ALL present drives so the Explorer can switch from C:
+    // to any other volume (D:, E:, ...).
+    drives = detectWindowsDrives();
+    if (!drives.includes(root)) drives.unshift(root);
   } else {
     root = '/';
   }
-  return { root, home };
+  return { root, home, drives };
 });
 
 ipcMain.handle('get-tracks-by-paths', (_, filePaths) => {
@@ -1784,7 +1992,7 @@ ipcMain.handle('link-directory', async (_, { dirPath, recursive, playlistId }) =
 
   send('library-updated');
   if (playlistId) send('playlists-updated');
-  return { ok: true, linked, total: filePaths.length };
+  return { ok: true, linked, total: filePaths.length, filePaths };
 });
 
 ipcMain.handle('remap-track', async (_, { trackId, newPath }) => {
@@ -1818,6 +2026,34 @@ ipcMain.handle('remap-folder', async (_, { oldDir }) => {
   const count = remapTracksByPrefix(oldSep, newSep);
   if (!explorerAllowedBases.includes(newDir)) explorerAllowedBases.push(newDir);
   return { ok: true, count, newDir };
+});
+
+ipcMain.handle('move-track-to-library', async (_, { trackId, targetLibraryId }) => {
+  const result = await moveTrackToLibrary(trackId, targetLibraryId);
+  send('library-updated');
+  return result;
+});
+
+ipcMain.handle('move-tracks-to-library', async (_, { trackIds, targetLibraryId }) => {
+  const total = trackIds.length;
+  const moved = [];
+  const failed = [];
+
+  for (let i = 0; i < total; i++) {
+    const trackId = trackIds[i];
+    try {
+      const result = await moveTrackToLibrary(trackId, targetLibraryId);
+      moved.push({ trackId, newPath: result.newPath ?? null });
+    } catch (err) {
+      console.error('moveTrackToLibrary failed:', trackId, err);
+      failed.push(trackId);
+    }
+    send('move-tracks-to-library-progress', { completed: i + 1, total });
+  }
+
+  if (moved.length > 0) send('library-updated');
+  send('move-tracks-to-library-progress', { completed: total, total, done: true });
+  return { moved, failed };
 });
 
 ipcMain.handle('check-linked-track-status', (_, trackIds) => {
@@ -1982,12 +2218,13 @@ ipcMain.handle(
 
       // Load existing manifest so we can merge with previously exported tracks/playlists
       const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
-      const existingCount = existingTracks.size;
+      const copyTargets = tracks.filter(
+        (t) => !reuseExistingUsbTrack(existingTracks, t.id, new Map())
+      );
+      const copyTotal = copyTargets.length;
 
       send('export-rekordbox-progress', {
-        msg: existingCount
-          ? `Merging ${total} tracks into existing export (${existingCount} tracks already on USB)…`
-          : `Exporting ${total} tracks…`,
+        msg: `Exporting ${total} tracks…`,
         pct: 0,
       });
 
@@ -2001,18 +2238,29 @@ ipcMain.handle(
       // 2. Copy files to USB, build USB path map
       const usbPaths = new Map(); // trackId → USB path
       const usbMeta = new Map(); // trackId → { fileSize, bitrate } override, only set on re-encode
+      let copiedCount = 0;
       for (let i = 0; i < tracks.length; i++) {
         const t = tracks[i];
-        const { path: usbPath, meta } = await copyTrackToUsb(t, usbRoot, usedNames, {
-          useNormalized,
-          targetLufs,
-          targetDevice,
-          forceMp3,
-        });
-        usbPaths.set(t.id, usbPath);
-        if (meta) usbMeta.set(t.id, meta);
+        const reused = reuseExistingUsbTrack(existingTracks, t.id, usedNames);
+        if (reused) {
+          usbPaths.set(t.id, reused.path);
+          if (reused.meta) usbMeta.set(t.id, reused.meta);
+        } else {
+          const { path: usbPath, meta } = await copyTrackToUsb(t, usbRoot, usedNames, {
+            useNormalized,
+            targetLufs,
+            targetDevice,
+            forceMp3,
+          });
+          usbPaths.set(t.id, usbPath);
+          if (meta) usbMeta.set(t.id, meta);
+          copiedCount += 1;
+        }
+        const copyMsg = copyTotal
+          ? `Copying files… ${copiedCount}/${copyTotal}`
+          : 'Copying files… all tracks already on USB';
         send('export-rekordbox-progress', {
-          msg: `Copying files… ${i + 1}/${total}`,
+          msg: copyMsg,
           pct: Math.round(((i + 1) / total) * 40),
         });
       }
@@ -2134,12 +2382,13 @@ ipcMain.handle(
 
       // Load existing manifest for merging
       const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
-      const existingCount = existingTracks.size;
+      const copyTargets = allTracks.filter(
+        (t) => !reuseExistingUsbTrack(existingTracks, t.id, new Map())
+      );
+      const copyTotal = copyTargets.length;
 
       send('export-all-progress', {
-        msg: existingCount
-          ? `Merging ${total} tracks into existing export (${existingCount} tracks already on USB)…`
-          : `Exporting ${total} tracks…`,
+        msg: `Exporting ${total} tracks…`,
         pct: 0,
       });
 
@@ -2153,18 +2402,29 @@ ipcMain.handle(
       // Copy files once
       const usbPaths = new Map();
       const usbMeta = new Map(); // trackId → { fileSize, bitrate } override, only set on re-encode
+      let copiedCount = 0;
       for (let i = 0; i < allTracks.length; i++) {
         const t = allTracks[i];
-        const { path: usbPath, meta } = await copyTrackToUsb(t, usbRoot, usedNames, {
-          useNormalized,
-          targetLufs,
-          targetDevice,
-          forceMp3,
-        });
-        usbPaths.set(t.id, usbPath);
-        if (meta) usbMeta.set(t.id, meta);
+        const reused = reuseExistingUsbTrack(existingTracks, t.id, usedNames);
+        if (reused) {
+          usbPaths.set(t.id, reused.path);
+          if (reused.meta) usbMeta.set(t.id, reused.meta);
+        } else {
+          const { path: usbPath, meta } = await copyTrackToUsb(t, usbRoot, usedNames, {
+            useNormalized,
+            targetLufs,
+            targetDevice,
+            forceMp3,
+          });
+          usbPaths.set(t.id, usbPath);
+          if (meta) usbMeta.set(t.id, meta);
+          copiedCount += 1;
+        }
+        const copyMsg = copyTotal
+          ? `Copying files… ${copiedCount}/${copyTotal}`
+          : 'Copying files… all tracks already on USB';
         send('export-all-progress', {
-          msg: `Copying files… ${i + 1}/${total}`,
+          msg: copyMsg,
           pct: Math.round(((i + 1) / total) * 35),
         });
       }

@@ -131,6 +131,7 @@ describe('ExportModal', () => {
     window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
     window.api.checkUsbFormat.mockResolvedValueOnce({
       needsFormat: true,
+      removable: true,
       fs: 'btrfs',
       fsLabel: 'btrfs',
       device: '/dev/sdb1',
@@ -149,6 +150,7 @@ describe('ExportModal', () => {
     window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
     window.api.checkUsbFormat.mockResolvedValueOnce({
       needsFormat: true,
+      removable: true,
       fs: 'btrfs',
       fsLabel: 'btrfs',
       device: '/dev/sdb1',
@@ -168,6 +170,7 @@ describe('ExportModal', () => {
     window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
     window.api.checkUsbFormat.mockResolvedValueOnce({
       needsFormat: true,
+      removable: true,
       fs: 'btrfs',
       fsLabel: 'btrfs',
       device: '/dev/sdb1',
@@ -194,6 +197,7 @@ describe('ExportModal', () => {
     window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
     window.api.checkUsbFormat.mockResolvedValueOnce({
       needsFormat: true,
+      removable: true,
       fs: 'btrfs',
       fsLabel: 'btrfs',
       device: '/dev/sdb1',
