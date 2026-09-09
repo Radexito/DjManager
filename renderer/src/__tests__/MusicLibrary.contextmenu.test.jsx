@@ -323,20 +323,20 @@ describe('context menu — remove from library with confirmation', () => {
     expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Remove'));
   });
 
-  it('if window.confirm returns false, removeTrack is NOT called', async () => {
+  it('if window.confirm returns false, removeTracks is NOT called', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     renderLibrary();
     await openContextMenu('Track One');
     fireEvent.click(screen.getByText(/🗑️ Remove from library/));
-    expect(window.api.removeTrack).not.toHaveBeenCalled();
+    expect(window.api.removeTracks).not.toHaveBeenCalled();
   });
 
-  it('if window.confirm returns true, removeTrack IS called with the track ID', async () => {
+  it('if window.confirm returns true, removeTracks IS called with the track ID', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     renderLibrary();
     await openContextMenu('Track One');
     fireEvent.click(screen.getByText(/🗑️ Remove from library/));
-    await waitFor(() => expect(window.api.removeTrack).toHaveBeenCalledWith(1));
+    await waitFor(() => expect(window.api.removeTracks).toHaveBeenCalledWith([1]));
   });
 });
 
@@ -360,5 +360,29 @@ describe('context menu — playlist view shows both remove options', () => {
     await openContextMenu('Track One');
     expect(screen.getByText(/➖ Remove from playlist/)).toBeInTheDocument();
     expect(screen.getByText(/🗑️ Remove from library/)).toBeInTheDocument();
+  });
+});
+
+// ── Search bar — now rendered inside MusicLibrary itself ────────────────────
+
+describe('search bar', () => {
+  it('renders the search input inside MusicLibrary content and forwards typed text via onSearchChange', async () => {
+    const onSearchChange = vi.fn();
+    render(<MusicLibrary selectedPlaylist="music" search="" onSearchChange={onSearchChange} />);
+    await screen.findByText('Track One');
+
+    const input = screen.getByPlaceholderText(/Search…/);
+    expect(input).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: 'Techno' } });
+    expect(onSearchChange).toHaveBeenCalled();
+  });
+
+  it('reflects the current search value passed in via props', async () => {
+    render(
+      <MusicLibrary selectedPlaylist="music" search="ARTIST is Foo" onSearchChange={() => {}} />
+    );
+    await screen.findByText('Track One');
+    expect(screen.getByText('ARTIST')).toBeInTheDocument();
   });
 });

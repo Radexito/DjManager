@@ -274,14 +274,13 @@ export function updateTrack(id, data) {
   ).run({ id, ...safeData });
 }
 
-export function getTracks({
-  limit = 50,
-  offset = 0,
-  search = '',
-  filters = [],
-  playlistId,
-  libraryIds,
-} = {}) {
+/**
+ * Shared FROM/WHERE scope for one track-listing view (whole library or a
+ * playlist) plus its natural (unsorted) order. getTracks / countTracks /
+ * getTrackRank all build on this so page queries, the total count and the
+ * rank of a row always describe the SAME row set.
+ */
+function buildViewScope({ search = '', filters = [], libraryIds, playlistId } = {}) {
   const { clauses: filterClauses, params: filterParams } = buildFiltersSQL(filters);
 
   // Plain-text search (title / artist / album)
@@ -292,45 +291,147 @@ export function getTracks({
   // or restrict to a chosen set (library filter in the UI).
   const { clause: libClause, params: libParams } = buildLibraryIdsSQL(libraryIds);
 
-  const allClauses = [
+  const clauses = [
     ...filterClauses,
     ...(textClause ? [textClause] : []),
     ...(libClause ? [libClause] : []),
   ];
-  const allParams = { ...filterParams, ...textParams, ...libParams, limit, offset };
+  const params = { ...filterParams, ...textParams, ...libParams };
 
   if (playlistId) {
-    const extra = allClauses.length ? `AND ${allClauses.join(' AND ')}` : '';
-    return db
-      .prepare(
-        `
-        SELECT t.*, COALESCE(cp.cnt, 0) AS cue_count
-        FROM playlist_tracks pt
-        JOIN tracks t ON t.id = pt.track_id
-        LEFT JOIN (SELECT track_id, COUNT(*) AS cnt FROM cue_points GROUP BY track_id) cp
-          ON cp.track_id = t.id
-        WHERE pt.playlist_id = @playlistId ${extra}
-        ORDER BY pt.position ASC
-        LIMIT @limit OFFSET @offset
-      `
-      )
-      .all({ playlistId, ...allParams });
+    return {
+      from: 'playlist_tracks pt\n      JOIN tracks t ON t.id = pt.track_id',
+      where: clauses.length
+        ? `pt.playlist_id = @playlistId AND ${clauses.join(' AND ')}`
+        : 'pt.playlist_id = @playlistId',
+      params: { playlistId, ...params },
+      defaultOrder: 'pt.position ASC',
+    };
   }
+  return {
+    from: 'tracks t',
+    where: clauses.length ? clauses.join(' AND ') : null,
+    params,
+    defaultOrder: 't.created_at DESC',
+  };
+}
 
-  const where = allClauses.length ? `WHERE ${allClauses.join(' AND ')}` : '';
+export function getTracks({
+  limit = 50,
+  offset = 0,
+  search = '',
+  filters = [],
+  playlistId,
+  libraryIds,
+  sort,
+} = {}) {
+  const scope = buildViewScope({ search, filters, libraryIds, playlistId });
+  const whereSql = scope.where ? `WHERE ${scope.where}` : '';
+
+  // Column sort lives HERE (not client-side): pagination pages must come back
+  // in display order so lazy appends always land at the bottom of the list
+  // instead of reshuffling the loaded rows. 'index' keeps the natural order
+  // (playlist position / newest first) and is never sent as a sort key.
+  const orderBy = buildTrackOrderSQL(sort);
+
   return db
     .prepare(
       `
       SELECT t.*, COALESCE(cp.cnt, 0) AS cue_count
-      FROM tracks t
+      FROM ${scope.from}
       LEFT JOIN (SELECT track_id, COUNT(*) AS cnt FROM cue_points GROUP BY track_id) cp
         ON cp.track_id = t.id
-      ${where}
-      ORDER BY t.created_at DESC
+      ${whereSql}
+      ${orderBy || `ORDER BY ${scope.defaultOrder}`}
       LIMIT @limit OFFSET @offset
     `
     )
-    .all(allParams);
+    .all({ ...scope.params, limit, offset });
+}
+
+/**
+ * How many rows the current view (search / filters / playlist) matches —
+ * identical row set to getTracks. Feeds the windowed list's spacer height so
+ * the scroller spans the FULL result set even while only a window is loaded.
+ */
+export function countTracks({ search = '', filters = [], playlistId, libraryIds } = {}) {
+  const scope = buildViewScope({ search, filters, libraryIds, playlistId });
+  const whereSql = scope.where ? `WHERE ${scope.where}` : '';
+  return db.prepare(`SELECT COUNT(*) AS c FROM ${scope.from} ${whereSql}`).get(scope.params).c;
+}
+
+/** ORDER BY column list (no prefix) for a sort, or the view's natural order. */
+function buildTrackOrderColumns(sort, defaultOrder) {
+  const orderBy = buildTrackOrderSQL(sort);
+  if (orderBy) return orderBy.replace(/^ORDER BY\s+/i, '');
+  return defaultOrder;
+}
+
+/**
+ * 0-based position of one track inside the SORTED view (same row set and the
+ * same ORDER BY as getTracks). Used by the library's "keep selection + scroll
+ * to it after re-sort" path so the renderer can jump straight to the row
+ * without materializing the whole result set over IPC (the old full-set
+ * refetch scaled with library size and stalled the main thread).
+ * Returns null when the track is not part of the view.
+ */
+export function getTrackRank({
+  trackId,
+  search = '',
+  filters = [],
+  playlistId,
+  libraryIds,
+  sort,
+} = {}) {
+  const scope = buildViewScope({ search, filters, libraryIds, playlistId });
+  const orderCols = buildTrackOrderColumns(sort, scope.defaultOrder);
+  const whereSql = scope.where ? `WHERE ${scope.where}` : '';
+  const row = db
+    .prepare(
+      `
+      SELECT rn FROM (
+        SELECT t.id, ROW_NUMBER() OVER (ORDER BY ${orderCols}) AS rn
+        FROM ${scope.from}
+        ${whereSql}
+      ) WHERE id = @trackId
+    `
+    )
+    .get({ trackId, ...scope.params });
+  return row ? row.rn - 1 : null;
+}
+
+// Whitelisted column sort for getTracks (values are never interpolated raw).
+// NULL/empty values sort last in BOTH directions; ties break by id for stable
+// pagination boundaries.
+const SORT_TEXT_COLS = new Set([
+  'title',
+  'artist',
+  'album',
+  'label',
+  'genres',
+  'format',
+  'key_camelot',
+  'key_raw',
+]);
+const SORT_NUM_COLS = new Set(['rating', 'year', 'duration', 'bitrate', 'loudness']);
+
+export function buildTrackOrderSQL(sort) {
+  if (!sort || !sort.key || sort.key === 'index') return '';
+  const dir = sort.asc ? 'ASC' : 'DESC';
+  let expr;
+  if (sort.key === 'bpm') {
+    expr = 'COALESCE(t.bpm_override, t.bpm)';
+  } else if (SORT_NUM_COLS.has(sort.key)) {
+    expr = `t.${sort.key}`;
+  } else if (SORT_TEXT_COLS.has(sort.key)) {
+    expr = `t.${sort.key}`;
+  } else {
+    return ''; // unknown column — fall back to natural order
+  }
+  const isText = SORT_TEXT_COLS.has(sort.key);
+  const nullsLast = `(${expr} IS NULL OR (${isText ? ` ${expr} = ''` : '0'})) ASC`;
+  const collate = isText ? ' COLLATE NOCASE' : '';
+  return `ORDER BY ${nullsLast}, ${expr}${collate} ${dir}, t.id ASC`;
 }
 
 export function getTrackIds({ search = '', filters = [], playlistId, libraryIds } = {}) {
@@ -408,6 +509,19 @@ export function clearLegacyNormalizedPaths() {
 
 export function removeTrack(id) {
   db.prepare('DELETE FROM tracks WHERE id = ?').run(id);
+}
+
+/** Deletes many track rows in a single transaction (bulk remove — DB write only, no filesystem I/O). */
+export function removeTracks(trackIds) {
+  const del = db.prepare('DELETE FROM tracks WHERE id = ?');
+  db.transaction(() => {
+    for (const id of trackIds) del.run(id);
+  })();
+}
+
+/** Counts tracks still referencing this file_path — used to avoid deleting a file that another track row still points at. */
+export function getTrackCountByFilePath(filePath) {
+  return db.prepare('SELECT COUNT(*) AS n FROM tracks WHERE file_path = ?').get(filePath).n;
 }
 
 export function normalizeLibrary(targetLufs) {
@@ -506,6 +620,21 @@ export function updateTrackWaveform(trackId, buf) {
 export function getTrackWaveform(trackId) {
   const row = db.prepare('SELECT waveform_overview FROM tracks WHERE id = ?').get(trackId);
   return row?.waveform_overview ?? null;
+}
+
+/**
+ * High-resolution (600 cols/sec) detail waveform for the Beat Grid Editor
+ * zoom view (#262). Separate from `detail` (150 cols/sec), which stays at
+ * the Pioneer CDJ export resolution and is generated on demand rather than
+ * stored.
+ */
+export function updateTrackDetailHires(trackId, buf) {
+  db.prepare('UPDATE tracks SET waveform_detail_hires = ? WHERE id = ?').run(buf, trackId);
+}
+
+export function getTrackDetailHires(trackId) {
+  const row = db.prepare('SELECT waveform_detail_hires FROM tracks WHERE id = ?').get(trackId);
+  return row?.waveform_detail_hires ?? null;
 }
 
 /**
