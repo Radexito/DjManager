@@ -588,6 +588,8 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
   const [beatGridEditorTrack, setBeatGridEditorTrack] = useState(null);
   const [detailsTrack, setDetailsTrack] = useState(null);
   const [detailsBulkTracks, setDetailsBulkTracks] = useState(null); // array | null
+  const [detailsPinned, setDetailsPinned] = useState(false); // when true, panel ignores row selection
+  const [detailsDirty, setDetailsDirty] = useState(false); // mirrors TrackDetails' own dirty state
   const [bpmEditValue, setBpmEditValue] = useState(''); // value for inline Set BPM input
 
   const offsetRef = useRef(0);
@@ -912,7 +914,10 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
           if (prev.size === 1) {
             const id = [...prev][0];
             const track = sortedTracksRef.current.find((t) => t.id === id);
-            if (track) setDetailsTrack(track);
+            if (track) {
+              setDetailsTrack(track);
+              setDetailsPinned(false);
+            }
           }
           return prev;
         });
@@ -982,7 +987,71 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
   const handleDetailsClose = useCallback(() => {
     setDetailsTrack(null);
     setDetailsBulkTracks(null);
+    setDetailsPinned(false);
+    setDetailsDirty(false);
   }, []);
+
+  const handleDetailsTogglePin = useCallback(() => {
+    setDetailsPinned((p) => !p);
+  }, []);
+
+  // Follow row selection. Single selection: switch the open panel back to the
+  // single-track editor for that row (closing bulk mode if needed). Bulk
+  // multi-selection: open/refresh the bulk editor for the selected rows.
+  // Unsaved edits trigger a discard/keep prompt in both directions.
+  useEffect(() => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return; // nothing selected
+    // Selection only DRIVES an already-open panel; it never opens one.
+    if (!detailsTrack && !detailsBulkTracks) return;
+    if (detailsTrack && detailsPinned) return; // pinned single-track panel ignores selection
+    if (ids.length === 1) {
+      const [id] = ids;
+      const track = sortedTracksRef.current.find((t) => t.id === id);
+      if (!track) return;
+      const inSingle = !!detailsTrack && !detailsBulkTracks;
+      if (inSingle && detailsTrack.id === id) return; // already showing this track
+      if (detailsDirty) {
+        const discard = inSingle
+          ? window.confirm(
+              'The Details panel has unsaved changes.\n\n' +
+                'Click OK to discard them and follow the new selection, or Cancel to pin the panel and keep editing this track.'
+            )
+          : window.confirm(
+              'The Details panel has unsaved changes.\n\n' +
+                'Click OK to discard them and show the selected track in single edit mode, or Cancel to keep the bulk panel open.'
+            );
+        if (!discard) {
+          if (inSingle) setDetailsPinned(true);
+          return;
+        }
+        setDetailsDirty(false);
+      }
+      setDetailsBulkTracks(null);
+      setDetailsTrack(track);
+      return;
+    }
+
+    // Multi-select: open (or refresh) the bulk editor for these tracks.
+    const bulk = sortedTracksRef.current.filter((t) => selectedIds.has(t.id));
+    if (bulk.length === 0) return;
+    const idsKey = [...selectedIds].map(String).sort().join(',');
+    const openKey = detailsBulkTracks
+      ?.map((t) => String(t.id))
+      .sort()
+      .join(',');
+    if (detailsBulkTracks && openKey === idsKey) return; // already showing these
+    if (detailsDirty && (detailsTrack || detailsBulkTracks)) {
+      const discard = window.confirm(
+        'The Details panel has unsaved changes.\n\n' +
+          'Click OK to discard them and edit the newly selected tracks, or Cancel to keep the current panel open.'
+      );
+      if (!discard) return;
+      setDetailsDirty(false);
+    }
+    setDetailsTrack(null);
+    setDetailsBulkTracks(bulk);
+  }, [selectedIds, detailsTrack, detailsBulkTracks, detailsPinned, detailsDirty]);
 
   useEffect(() => {
     const trackId = openDetailsRequest?.trackId;
@@ -2127,10 +2196,12 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
                         if (targetTracks.length === 1) {
                           setDetailsBulkTracks(null);
                           setDetailsTrack(targetTracks[0]);
+                          setDetailsPinned(false);
                           setSelectedIds(new Set([targetTracks[0].id]));
                         } else if (targetTracks.length > 1) {
                           setDetailsTrack(null);
                           setDetailsBulkTracks(targetTracks);
+                          setDetailsPinned(false);
                         }
                       }}
                     >
@@ -2259,6 +2330,9 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
               onNext={handleDetailsNext}
               hasPrev={idx > 0}
               hasNext={idx >= 0 && idx < sortedTracksRef.current.length - 1}
+              pinned={detailsPinned}
+              onTogglePin={handleDetailsTogglePin}
+              onDirtyChange={setDetailsDirty}
             />
           );
         })()}

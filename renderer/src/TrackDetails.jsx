@@ -68,6 +68,9 @@ export default function TrackDetails({
   onNext,
   hasPrev,
   hasNext,
+  pinned,
+  onTogglePin,
+  onDirtyChange,
 }) {
   const isBulk = Array.isArray(tracks) && tracks.length > 1;
   const { mediaPort } = usePlayer() ?? {};
@@ -143,6 +146,12 @@ export default function TrackDetails({
     ? null
     : (libraries.find((l) => l.id === track?.library_id)?.name ?? (track?.library_id ? '—' : null));
   const otherLibraries = libraries.filter((l) => l.id !== track?.library_id);
+
+  // Let the parent know whenever unsaved-changes state flips, so it can decide
+  // whether to auto-follow row selection or prompt before switching tracks.
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   const handleChange = useCallback((key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -226,6 +235,19 @@ export default function TrackDetails({
         <span className="track-details__title">
           {isBulk ? `Edit ${tracks.length} Tracks` : 'Track Details'}
         </span>
+        {!isBulk && onTogglePin && (
+          <button
+            className={`track-details__pin${pinned ? ' track-details__pin--active' : ''}`}
+            onClick={onTogglePin}
+            title={
+              pinned
+                ? 'Unpin — resume following the row selection'
+                : 'Pin — keep this track open regardless of selection'
+            }
+          >
+            {pinned ? '📌 Pinned' : '📌'}
+          </button>
+        )}
         <button className="track-details__close" onClick={onCancel} title="Close (Esc)">
           ✕
         </button>

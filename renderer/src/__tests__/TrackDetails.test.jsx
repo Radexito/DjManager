@@ -352,6 +352,84 @@ describe('TrackDetails — single mode', () => {
       ).toBeInTheDocument();
     });
   });
+  it('reports dirty state changes via onDirtyChange as the form is edited and saved', async () => {
+    const onDirtyChange = vi.fn();
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+        onDirtyChange={onDirtyChange}
+      />
+    );
+    // Initial mount reports clean.
+    expect(onDirtyChange).toHaveBeenCalledWith(false);
+    onDirtyChange.mockClear();
+
+    fireEvent.change(screen.getByDisplayValue('Test Artist'), { target: { value: 'New Artist' } });
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
+  });
+
+  it('does not render a pin button when onTogglePin is not provided', () => {
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+      />
+    );
+    expect(screen.queryByTitle(/pin/i)).not.toBeInTheDocument();
+  });
+
+  it('renders a pin toggle button and calls onTogglePin when clicked', () => {
+    const onTogglePin = vi.fn();
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+        pinned={false}
+        onTogglePin={onTogglePin}
+      />
+    );
+    const pinBtn = screen.getByTitle('Pin — keep this track open regardless of selection');
+    fireEvent.click(pinBtn);
+    expect(onTogglePin).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the pinned state and unpin label when pinned=true', () => {
+    const onTogglePin = vi.fn();
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+        pinned={true}
+        onTogglePin={onTogglePin}
+      />
+    );
+    expect(screen.getByTitle('Unpin — resume following the row selection')).toBeInTheDocument();
+    expect(screen.getByText('📌 Pinned')).toBeInTheDocument();
+  });
 });
 
 describe('TrackDetails — bulk mode', () => {
