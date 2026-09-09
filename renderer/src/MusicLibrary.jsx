@@ -792,6 +792,7 @@ function MusicLibrary({
 
   const offsetRef = useRef(0);
   const loadingRef = useRef(false);
+  const pageLoadEndRef = useRef(0); // TEMP perf: timestamp when loadTracks appended
   const hasMoreRef = useRef(true); // ref copy of hasMore — avoids stale closures in loadTracks
   const resetTokenRef = useRef(0); // incremented on every reset; stale fetches compare and discard
   const listRef = useRef();
@@ -962,6 +963,8 @@ function MusicLibrary({
         setTracks((prev) => [...prev, ...rows]);
       }
       offsetRef.current += rows.length;
+      pageLoadEndRef.current = performance.now();
+      console.log(`[perf] page.loaded offset=${offsetRef.current} rows=${rows.length}`);
 
       if (rows.length < PAGE_SIZE) {
         hasMoreRef.current = false;
@@ -971,6 +974,17 @@ function MusicLibrary({
       if (token === resetTokenRef.current) loadingRef.current = false;
     }
   }, [search, selectedPlaylist]); // no hasMore in deps — we use hasMoreRef
+
+  // TEMP perf: how long a page append takes to commit (render+paint) once loaded
+  useEffect(() => {
+    if (pageLoadEndRef.current === 0) return;
+    const d = performance.now() - pageLoadEndRef.current;
+    if (d >= 0) {
+      console.log(`[perf] page.render n=${tracks.length} commitMs=${d.toFixed(0)}`);
+    }
+    pageLoadEndRef.current = 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tracks.length]);
 
   const sortedTracks = useMemo(() => {
     const ts = performance.now();
@@ -982,7 +996,7 @@ function MusicLibrary({
     sortedTracksRef.current = sorted;
     if (sortBy.key !== 'index') {
       console.log(
-        `[perf] sort.compute key=${sortBy.key} n=${base.length} computeMs=${(performance.now() - ts).toFixed(1)}`
+        `[perf] sort.compute key=${sortBy.key} n=${base.length} computeMs=${(performance.now() - ts).toFixed(1)} at=${performance.now().toFixed(0)}`
       );
     }
     return sorted;
@@ -1938,6 +1952,7 @@ function MusicLibrary({
       setPendingSortKey(key);
       console.log(`[perf] sort.click key=${key} sync n=${tracks.length} t0=${t0.toFixed(1)}`);
       const apply = () => {
+        console.log(`[perf] sort.apply key=${key} t+${(performance.now() - t0).toFixed(0)}`);
         setSortBy((prev) => {
           const next = { key, asc: prev.key === key ? !prev.asc : true };
           if (isPlaylistView) setSortSaved(next.key === 'index');
@@ -1962,10 +1977,19 @@ function MusicLibrary({
   useEffect(() => {
     if (sortStartRef.current === 0 || sortBy.key === 'index') return;
     const total = performance.now() - sortStartRef.current;
+    console.log(`[perf] sort.commitEffect key=${sortBy.key} t+${total.toFixed(0)}`);
     sortStartRef.current = 0;
     showPerf(
       `sort ${sortBy.key} ${sortBy.asc ? 'asc' : 'desc'} total=${total.toFixed(0)}ms`,
       `compute=${lastSortMsRef.current.toFixed(1)}ms rows=${tracks.length}`
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortBy]);
+
+  useLayoutEffect(() => {
+    if (sortStartRef.current === 0 || sortBy.key === 'index') return;
+    console.log(
+      `[perf] sort.layoutCommit key=${sortBy.key} t+${(performance.now() - sortStartRef.current).toFixed(0)}`
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortBy]);
