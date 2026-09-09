@@ -39,25 +39,11 @@ const PAGE_SIZE = 50;
 const FULL_RESULT_LIMIT = 999999;
 
 /**
- * Shared comparator for column sorting. Both the visible (lazy) list and the
- * full queue snapshot use it so the playback order always matches what the
- * table shows for the same sortBy.
+ * Sorting reference (kept as documentation): display order now comes from the
+ * SQL query (buildTrackOrderSQL in src/db/trackRepository.js) so pagination
+ * pages arrive pre-sorted and lazy appends land at the bottom. NULL/empty
+ * values sort last, ties break by id.
  */
-function sortTrackRows(base, sortBy) {
-  return [...base].sort((a, b) => {
-    if (sortBy.key === 'index') return 0;
-    // For BPM, prefer the override value
-    const va = sortBy.key === 'bpm' ? (a.bpm_override ?? a.bpm ?? '') : (a[sortBy.key] ?? '');
-    const vb = sortBy.key === 'bpm' ? (b.bpm_override ?? b.bpm ?? '') : (b[sortBy.key] ?? '');
-    if (typeof va === 'string' || typeof vb === 'string') {
-      const sa = String(va ?? '');
-      const sb = String(vb ?? '');
-      return sortBy.asc ? sa.localeCompare(sb) : sb.localeCompare(sa);
-    }
-    if (typeof va === 'number') return sortBy.asc ? va - vb : vb - va;
-    return 0;
-  });
-}
 const ROW_HEIGHT = 50;
 const ROW_STYLE = { height: ROW_HEIGHT }; // stable identity so memoized rows skip re-render
 const PRELOAD_TRIGGER = 3;
@@ -927,16 +913,19 @@ function MusicLibrary({
     const textSearch = remaining || filters.find((f) => f.field === '_text')?.value || '';
     const playlistId =
       selectedPlaylistRef.current !== 'music' ? selectedPlaylistRef.current : undefined;
+    const sb = sortByRef.current;
     const rows = await window.api.getTracks({
       limit: FULL_RESULT_LIMIT,
       search: textSearch,
       filters: structuredFilters,
       playlistId,
+      sort: sb.key === 'index' ? undefined : { key: sb.key, asc: sb.asc },
     });
     const base = hideUnavailableRef.current
       ? rows.filter((r) => !(r.is_linked && unavailableLinkedIdsRef.current.has(r.id)))
       : rows;
-    return sortTrackRows(base, sortByRef.current);
+    // Rows already come back in the exact SQL order the pages use.
+    return base;
   }, []);
 
   const loadTracks = useCallback(async () => {
@@ -949,6 +938,7 @@ function MusicLibrary({
       const { filters, remaining } = parseQuery(search);
       const structuredFilters = filters.filter((f) => f.field !== '_text');
       const textSearch = remaining || filters.find((f) => f.field === '_text')?.value || '';
+      const sb = sortByRef.current;
 
       const rows = await window.api.getTracks({
         limit: PAGE_SIZE,
@@ -956,6 +946,9 @@ function MusicLibrary({
         search: textSearch,
         filters: structuredFilters,
         playlistId: selectedPlaylist !== 'music' ? selectedPlaylist : undefined,
+        // Pages come back in display order, so lazy appends land at the bottom
+        // instead of being spliced into the middle of the sorted view.
+        sort: sb.key === 'index' ? undefined : { key: sb.key, asc: sb.asc },
       });
 
       if (token !== resetTokenRef.current) return; // stale — reset happened mid-flight
@@ -990,10 +983,94 @@ function MusicLibrary({
     const base = hideUnavailable
       ? tracks.filter((t) => !(t.is_linked && unavailableLinkedIds.has(t.id)))
       : tracks;
-    const sorted = sortTrackRows(base, sortBy);
-    sortedTracksRef.current = sorted;
-    return sorted;
-  }, [tracks, sortBy, hideUnavailable, unavailableLinkedIds]);
+    // Rows arrive from SQL already in display order (column sort is applied in
+    // the query, index = natural order), so no client-side re-sort happens here.
+    sortedTracksRef.current = base;
+    return base;
+  }, [tracks, hideUnavailable, unavailableLinkedIds]);
+
+  // When the sort key/direction changes, pages must be refetched from scratch
+  // under the new ORDER BY (otherwise lazy pages would mix two orders).
+  const suppressSortReloadRef = useRef(false);
+  const prevSortRef = useRef(sortBy);
+  useEffect(() => {
+    if (suppressSortReloadRef.current) {
+      // A DnD / save / view-reset flow already handles the reload (or must not
+      // be disturbed); consume the one-shot suppression and keep the baseline.
+      suppressSortReloadRef.current = false;
+      prevSortRef.current = sortBy;
+      return;
+    }
+    const prev = prevSortRef.current;
+    if (prev.key === sortBy.key && prev.asc === sortBy.asc) return;
+    prevSortRef.current = sortBy;
+    const singleSel = selectedIds.size === 1 ? [...selectedIds][0] : null;
+    // Reload pages from offset 0 in the new order; keep the selection.
+    offsetRef.current = 0;
+    loadingRef.current = false;
+    hasMoreRef.current = true;
+    resetTokenRef.current += 1;
+    appendedPageRef.current = false;
+    setHasMore(true);
+    const t = setTimeout(() => {
+      loadTracks();
+      if (singleSel != null) {
+        sortFocusNonceRef.current += 1;
+        setSortFocus({ id: singleSel, nonce: sortFocusNonceRef.current });
+      }
+    }, 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortBy.key, sortBy.asc, selectedIds]);
+
+  // Keep the previously selected single track selected and scroll it into view
+  // after a column sort (selection survives; the list repositions to it).
+  const [sortFocus, setSortFocus] = useState(null);
+  const sortFocusNonceRef = useRef(0);
+  const sortFocusHandledRef = useRef(null);
+  useEffect(() => {
+    if (!sortFocus || sortFocus.nonce === sortFocusHandledRef.current) return;
+    const { id } = sortFocus;
+    const scrollToRow = (idx) => {
+      const container = isPlaylistView ? dndScrollRef.current : listRef.current?.element;
+      if (!container) return;
+      const top = idx * ROW_HEIGHT;
+      const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+      const target = Math.min(maxTop, Math.max(0, top - (container.clientHeight - ROW_HEIGHT) / 2));
+      container.scrollTop = target;
+    };
+    const idx = sortedTracksRef.current.findIndex((t) => t.id === id);
+    if (idx !== -1) {
+      sortFocusHandledRef.current = sortFocus.nonce;
+      scrollToRow(idx);
+      return;
+    }
+    if (loadingRef.current) return; // page reload in flight — retried on change
+    let alive = true;
+    (async () => {
+      const token = resetTokenRef.current;
+      const full = await fetchFullViewTracks();
+      if (!alive || token !== resetTokenRef.current) return;
+      const fullIdx = full.findIndex((t) => t.id === id);
+      if (fullIdx === -1) {
+        sortFocusHandledRef.current = sortFocus.nonce; // gone — give up
+        return;
+      }
+      resetTokenRef.current += 1;
+      loadingRef.current = false;
+      offsetRef.current = full.length;
+      hasMoreRef.current = false;
+      setHasMore(false);
+      setTimeout(() => {
+        if (alive) setTracks(full);
+        // re-run below (tracks.length change) finds the row and scrolls
+      }, 60);
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortFocus, tracks.length, isPlaylistView]);
 
   useEffect(() => {
     // Snapshot IDs currently visible so loadTracks can diff truly-new rows
@@ -1876,6 +1953,7 @@ function MusicLibrary({
     ({ active, over }) => {
       setActiveId(null);
       if (!over || active.id === over.id) return;
+      suppressSortReloadRef.current = true; // DnD manages the list itself
       setSortBy({ key: 'index', asc: true }); // reset sort so DnD operates on position order
       const prev = sortedTracksRef.current;
       const oldIndex = prev.findIndex((t) => t.id === active.id);
@@ -1914,6 +1992,7 @@ function MusicLibrary({
       Number(selectedPlaylist),
       sortedTracksRef.current.map((t) => t.id)
     );
+    suppressSortReloadRef.current = true; // DB already has the saved order
     setSortBy({ key: 'index', asc: true }); // revert to position order after saving
     setSortSaved(true);
   }, [selectedPlaylist]);

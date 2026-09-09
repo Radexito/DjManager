@@ -281,6 +281,7 @@ export function getTracks({
   filters = [],
   playlistId,
   libraryIds,
+  sort,
 } = {}) {
   const { clauses: filterClauses, params: filterParams } = buildFiltersSQL(filters);
 
@@ -299,6 +300,12 @@ export function getTracks({
   ];
   const allParams = { ...filterParams, ...textParams, ...libParams, limit, offset };
 
+  // Column sort lives HERE (not client-side): pagination pages must come back
+  // in display order so lazy appends always land at the bottom of the list
+  // instead of reshuffling the loaded rows. 'index' keeps the natural order
+  // (playlist position / newest first) and is never sent as a sort key.
+  const orderBy = buildTrackOrderSQL(sort);
+
   if (playlistId) {
     const extra = allClauses.length ? `AND ${allClauses.join(' AND ')}` : '';
     return db
@@ -310,7 +317,7 @@ export function getTracks({
         LEFT JOIN (SELECT track_id, COUNT(*) AS cnt FROM cue_points GROUP BY track_id) cp
           ON cp.track_id = t.id
         WHERE pt.playlist_id = @playlistId ${extra}
-        ORDER BY pt.position ASC
+        ${orderBy || 'ORDER BY pt.position ASC'}
         LIMIT @limit OFFSET @offset
       `
       )
@@ -326,11 +333,45 @@ export function getTracks({
       LEFT JOIN (SELECT track_id, COUNT(*) AS cnt FROM cue_points GROUP BY track_id) cp
         ON cp.track_id = t.id
       ${where}
-      ORDER BY t.created_at DESC
+      ${orderBy || 'ORDER BY t.created_at DESC'}
       LIMIT @limit OFFSET @offset
     `
     )
     .all(allParams);
+}
+
+// Whitelisted column sort for getTracks (values are never interpolated raw).
+// NULL/empty values sort last in BOTH directions; ties break by id for stable
+// pagination boundaries.
+const SORT_TEXT_COLS = new Set([
+  'title',
+  'artist',
+  'album',
+  'label',
+  'genres',
+  'format',
+  'key_camelot',
+  'key_raw',
+]);
+const SORT_NUM_COLS = new Set(['rating', 'year', 'duration', 'bitrate', 'loudness']);
+
+export function buildTrackOrderSQL(sort) {
+  if (!sort || !sort.key || sort.key === 'index') return '';
+  const dir = sort.asc ? 'ASC' : 'DESC';
+  let expr;
+  if (sort.key === 'bpm') {
+    expr = 'COALESCE(t.bpm_override, t.bpm)';
+  } else if (SORT_NUM_COLS.has(sort.key)) {
+    expr = `t.${sort.key}`;
+  } else if (SORT_TEXT_COLS.has(sort.key)) {
+    expr = `t.${sort.key}`;
+  } else {
+    return ''; // unknown column — fall back to natural order
+  }
+  const isText = SORT_TEXT_COLS.has(sort.key);
+  const nullsLast = `(${expr} IS NULL OR (${isText ? ` ${expr} = ''` : '0'})) ASC`;
+  const collate = isText ? ' COLLATE NOCASE' : '';
+  return `ORDER BY ${nullsLast}, ${expr}${collate} ${dir}, t.id ASC`;
 }
 
 export function getTrackIds({ search = '', filters = [], playlistId, libraryIds } = {}) {
