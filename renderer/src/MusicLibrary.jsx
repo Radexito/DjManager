@@ -875,8 +875,23 @@ function MusicLibrary({
   // synchronous render is masked, then sort.
   const [sortFlash, setSortFlash] = useState(false);
   const [pendingSortKey, setPendingSortKey] = useState(null);
-  // Rows at/above this threshold get the flash overlay before the sync sort.
+  // The flash overlay accompanies every column re-sort until the new rows
+  // commit; the threshold below only decides whether the click itself is
+  // deferred by a frame.
   const SORT_FLASH_MIN_ROWS = 1200;
+  const flashStartRef = useRef(0); // performance.now() when the flash went up
+  const flashActiveRef = useRef(false); // guards the min-display timer
+  const clearSortFlash = useCallback(() => {
+    if (!flashActiveRef.current) return;
+    const wait = Math.max(0, 160 - (performance.now() - flashStartRef.current));
+    const finish = () => {
+      flashActiveRef.current = false;
+      setSortFlash(false);
+      setPendingSortKey(null);
+    };
+    if (wait > 0) setTimeout(finish, wait);
+    else finish();
+  }, []);
 
   // ── Full-set queue snapshots ───────────────────────────────────────────────
   // Playback (and therefore shuffle/next) must operate on the FULL set matching
@@ -964,6 +979,7 @@ function MusicLibrary({
           if (truly.size > 0) setNewTrackIds((prev) => new Set([...prev, ...truly]));
         }
         setTracks(rows);
+        clearSortFlash();
       } else {
         appendedPageRef.current = true; // queue-sync effects must skip lazy pages
         setTracks((prev) => [...prev, ...rows]);
@@ -977,7 +993,7 @@ function MusicLibrary({
     } finally {
       if (token === resetTokenRef.current) loadingRef.current = false;
     }
-  }, [search, selectedPlaylist]); // no hasMore in deps — we use hasMoreRef
+  }, [search, selectedPlaylist, clearSortFlash]); // no hasMore in deps — we use hasMoreRef
 
   const sortedTracks = useMemo(() => {
     const base = hideUnavailable
@@ -1052,6 +1068,7 @@ function MusicLibrary({
       sortFollowHandledRef.current = nonce;
       const idx = sortedTracksRef.current.findIndex((t) => t.id === id);
       if (idx !== -1) scrollToRow(idx);
+      clearSortFlash();
       return;
     }
     if (loadingRef.current) return; // page load mid-flight — retried on commit
@@ -2026,24 +2043,26 @@ function MusicLibrary({
   const handleSort = useCallback(
     (key) => {
       setPendingSortKey(key);
+      flashStartRef.current = performance.now();
+      flashActiveRef.current = true;
+      setSortFlash(true);
       const apply = () => {
         setSortBy((prev) => {
           const next = { key, asc: prev.key === key ? !prev.asc : true };
           if (isPlaylistView) setSortSaved(next.key === 'index');
           return next;
         });
-        setPendingSortKey(null);
-        setSortFlash(false);
       };
       if (tracks.length >= SORT_FLASH_MIN_ROWS) {
-        // Let the flash overlay paint, then sort synchronously in the next task.
-        setSortFlash(true);
+        // Let the flash overlay paint, then sort in the next task.
         setTimeout(apply, 60);
       } else {
         apply();
       }
+      // Safety net: never leave the overlay stuck if no commit ever lands.
+      setTimeout(clearSortFlash, 3500);
     },
-    [isPlaylistView, tracks.length]
+    [isPlaylistView, tracks.length, clearSortFlash]
   );
 
   // ── Row (library view) — handled by LibraryRow above via itemData ─────────
