@@ -6,6 +6,7 @@ import DownloadView from './DownloadView.jsx';
 import TidalDownloadView from './TidalDownloadView.jsx';
 import CloudSearchView from './CloudSearchView.jsx';
 import FileExplorerView from './FileExplorerView.jsx';
+import HelpView from './HelpView.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import ExportModal from './ExportModal.jsx';
 import PlayerBar from './PlayerBar.jsx';
@@ -173,7 +174,11 @@ function App() {
       <DownloadProvider>
         <TidalDownloadProvider>
           <div className="app-body">
-            <TopBar onOpenSettings={() => setShowSettings(true)} onLogoClick={handleLogoClick} />
+            <TopBar
+              onOpenHelp={() => setSelectedPlaylistId('help')}
+              onOpenSettings={() => setShowSettings(true)}
+              onLogoClick={handleLogoClick}
+            />
             <div className="app-main">
               <Sidebar
                 selectedMenuItemId={selectedPlaylistId}
@@ -203,10 +208,16 @@ function App() {
               <FileExplorerView
                 style={{ display: selectedPlaylistId === 'explorer' ? '' : 'none' }}
               />
+              <HelpView
+                style={{ display: selectedPlaylistId === 'help' ? '' : 'none' }}
+                active={selectedPlaylistId === 'help'}
+                onClose={() => setSelectedPlaylistId('music')}
+              />
               {selectedPlaylistId !== 'download' &&
                 selectedPlaylistId !== 'tidal' &&
                 selectedPlaylistId !== 'cloud-search' &&
-                selectedPlaylistId !== 'explorer' && (
+                selectedPlaylistId !== 'explorer' &&
+                selectedPlaylistId !== 'help' && (
                   <MusicLibrary
                     selectedPlaylist={selectedPlaylistId}
                     search={search}

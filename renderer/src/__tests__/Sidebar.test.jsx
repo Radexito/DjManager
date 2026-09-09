@@ -59,6 +59,11 @@ describe('Sidebar', () => {
     expect(onMenuSelect).toHaveBeenCalledWith('music');
   });
 
+  it('does not render Help in the sidebar', () => {
+    renderSidebar({ ...defaultProps });
+    expect(screen.queryByText('Help')).not.toBeInTheDocument();
+  });
+
   it('gives the Import button a title, like the Link button', () => {
     renderSidebar({ ...defaultProps });
     expect(screen.getByText('Import')).toHaveAttribute('title');
