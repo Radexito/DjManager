@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import './DepsOverlay.css';
 
 const KNOWN_STEPS = [
@@ -24,8 +25,30 @@ function fmtEta(sec) {
   return `~${Math.ceil(sec / 60)}m`;
 }
 
-export function DepsOverlay({ progress, onRetry }) {
-  if (!progress) return null;
+/**
+ * First-time setup overlay.
+ *
+ * Behaves like a classic Windows installer console: every step streams into a
+ * scrollable log the user can read, and when the run finishes the window STAYS
+ * open with a Close button. It never auto-dismisses after real work.
+ *
+ * props:
+ *   progress - live progress event ({ stepId, pct, msg, error, ... }) or null
+ *   log      - accumulated console lines [{ text, kind: 'log' | 'error' }]
+ *   done     - true when the run finished successfully (progress was cleared)
+ *   onRetry  - re-run dependency install
+ *   onClose  - dismiss the overlay (only offered once done / on error)
+ */
+export function DepsOverlay({ progress, log = [], done = false, onRetry, onClose }) {
+  const logRef = useRef(null);
+
+  // Keep the newest line visible while the log grows (console behaviour).
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [log.length]);
+
+  if (!progress && !done) return null;
 
   const {
     stepId,
@@ -36,40 +59,40 @@ export function DepsOverlay({ progress, onRetry }) {
     bytesTotal,
     bytesPerSec,
     etaSec,
-    msg,
     pct,
     error,
-  } = progress;
+  } = progress ?? {};
 
-  // Build step list from known steps filtered to stepTotal count.
-  // If stepId is unknown (e.g. old-format payload), fall back to simple view.
-  const hasSteps = stepTotal > 0 && stepId !== undefined;
+  const isError = !!error;
+  const running = !done && !isError;
 
-  // Derive which known steps are active in this run (stepTotal of them)
-  const activeSteps = KNOWN_STEPS.filter((s) => {
-    // Show step if it matches a step we've seen or will see
-    const idx = KNOWN_STEPS.indexOf(s);
-    return idx < stepTotal || s.id === stepId;
-  }).slice(0, stepTotal);
-
+  // Step list (only meaningful while a multi-step run is live).
+  const hasSteps = running && stepTotal > 0 && stepId !== undefined;
+  const activeSteps = hasSteps
+    ? KNOWN_STEPS.filter((s) => KNOWN_STEPS.indexOf(s) < stepTotal || s.id === stepId).slice(
+        0,
+        stepTotal
+      )
+    : [];
   const currentIdx = activeSteps.findIndex((s) => s.id === stepId);
-  const isError = pct === -1 || !!error;
-  const isDone = pct === 100 && !error;
 
   const speed = fmtSpeed(bytesPerSec);
   const eta = fmtEta(etaSec);
   const hasBytes = bytesTotal > 0 && bytesDownloaded > 0;
+  const showBar = running && (stepPct >= 0 || pct >= 0);
 
   return (
     <div className="deps-overlay">
-      <div className="deps-box">
-        <div className="deps-title">First-time setup</div>
+      <div className="deps-box deps-box--wide">
+        <div className="deps-title">
+          {isError ? 'Setup failed' : done ? 'Setup complete' : 'First-time setup'}
+        </div>
 
         {hasSteps && (
           <div className="deps-steps">
             {activeSteps.map((s, i) => {
-              const isActive = s.id === stepId && !isDone;
-              const isDoneStep = i < currentIdx || isDone;
+              const isActive = s.id === stepId && !isError;
+              const isDoneStep = i < currentIdx;
               return (
                 <div
                   key={s.id}
@@ -90,30 +113,54 @@ export function DepsOverlay({ progress, onRetry }) {
           </div>
         )}
 
-        <div className="deps-msg">{msg}</div>
-
-        {!isError && (stepPct >= 0 || pct >= 0) && (
+        {showBar && (
           <div className="deps-bar-track">
             <div className="deps-bar-fill" style={{ width: `${stepPct >= 0 ? stepPct : pct}%` }} />
           </div>
         )}
 
-        {hasSteps && stepTotal > 1 && !isDone && !isError && (
+        {running && stepTotal > 1 && (
           <div className="deps-overall">
             Step {stepIndex} of {stepTotal}
           </div>
         )}
 
-        {isError && (
-          <div className="deps-error">
-            <span>{error || msg}</span>
-            {onRetry && (
-              <button className="deps-retry-btn" onClick={onRetry}>
-                Retry
-              </button>
-            )}
+        {log.length > 0 && (
+          <div className="deps-log" ref={logRef}>
+            {log.map((l, i) => (
+              <div
+                key={i}
+                className={`deps-log-line${l.kind === 'error' ? ' deps-log-line--err' : ''}`}
+              >
+                {l.text}
+              </div>
+            ))}
+            {running && <div className="deps-log-cursor">▌</div>}
           </div>
         )}
+
+        {done && !isError && (
+          <div className="deps-done-note">All done. You can close this window.</div>
+        )}
+
+        {isError && !done && (
+          <div className="deps-error">
+            <span>{error || 'Something went wrong during setup.'}</span>
+          </div>
+        )}
+
+        <div className="deps-actions">
+          {isError && !done && onRetry && (
+            <button className="deps-btn" onClick={onRetry}>
+              Retry
+            </button>
+          )}
+          {onClose && (done || isError) && (
+            <button className="deps-btn deps-btn--primary" onClick={onClose}>
+              Close
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
