@@ -396,6 +396,7 @@ function SortableRow({
   onAnimationEnd,
   libraryNames,
   isUnavailable,
+  windowStyle,
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: t.id,
@@ -406,6 +407,7 @@ function SortableRow({
     opacity: isDragging ? 0.4 : 1,
     gridTemplateColumns: gridTemplate,
     minWidth: minScrollWidth,
+    ...windowStyle,
   };
   return (
     <div
@@ -602,15 +604,17 @@ function TrackTableBody({
   const [viewH, setViewH] = useState(800); // pre-layout default ≈ one viewport
   const plainElRef = useRef(null);
   const refreshView = useCallback(() => {
-    const el = plainElRef.current;
+    // Playlist (DnD) list and the windowed library list share this viewport
+    // state so the lazy-load trigger below serves both.
+    const el = isPlaylistView ? dndScrollRef?.current : plainElRef.current;
     if (el) {
       setViewTop(el.scrollTop);
       setViewH(el.clientHeight || 800);
     }
-  }, []);
+  }, [isPlaylistView, dndScrollRef]);
   useLayoutEffect(() => {
     refreshView();
-    const el = plainElRef.current;
+    const el = isPlaylistView ? dndScrollRef?.current : plainElRef.current;
     if (!el) return undefined;
     // jsdom (unit tests) has no ResizeObserver — guard so mounting never
     // throws there; the scroll handler still keeps the window fresh in tests.
@@ -637,6 +641,19 @@ function TrackTableBody({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleStartIdx, visibleStopIdx, sortedTracks.length, windowStart, hasMore]);
 
+  // ── Windowed geometry — SHARED by the library list and the playlist list ──
+  // The spacer spans the WHOLE result set (totalRows from SQL) while
+  // `sortedTracks` only holds a loaded window starting at `windowStart`;
+  // rows outside it render nothing until lazy loads bring them in.
+  const OVERSCAN = 6;
+  const spacerRows = Math.max(totalRows || 0, windowStart + sortedTracks.length);
+  const spacerH = spacerRows * ROW_HEIGHT;
+  const startIdx = Math.max(0, Math.floor(viewTop / ROW_HEIGHT) - OVERSCAN);
+  const endIdx = Math.max(startIdx + 1, Math.ceil((viewTop + viewH) / ROW_HEIGHT) + OVERSCAN);
+  const localStart = Math.max(0, Math.min(sortedTracks.length, startIdx - windowStart));
+  const localEnd = Math.min(sortedTracks.length, endIdx - windowStart);
+  const localRows = localEnd > localStart ? sortedTracks.slice(localStart, localEnd) : [];
+
   if (isPlaylistView) {
     if (tracks.length === 0) {
       return (
@@ -648,6 +665,39 @@ function TrackTableBody({
       );
     }
 
+    const rows = localRows.map((t, i) => {
+      const index = windowStart + localStart + i;
+      return (
+        <SortableRow
+          key={t.id}
+          t={t}
+          index={index}
+          isSelected={selectedIds.has(t.id)}
+          isPlaying={playingTrackId === t.id}
+          onRowClick={handleRowClick}
+          onDoubleClick={handleDoubleClick}
+          onContextMenu={handleContextMenu}
+          onRatingChange={handleRatingChange}
+          onCueClick={handleCueClick}
+          visibleColumns={visibleColumns}
+          gridTemplate={gridTemplate}
+          minScrollWidth={minScrollWidth}
+          mediaPort={mediaPort}
+          isNew={newTrackIds.has(t.id)}
+          onAnimationEnd={handleRowAnimationEnd}
+          isUnavailable={t.is_linked && unavailableLinkedIds.has(t.id)}
+          libraryNames={libraryNames}
+          windowStyle={{
+            ...ROW_STYLE,
+            position: 'absolute',
+            top: index * ROW_HEIGHT,
+            left: 0,
+            right: 0,
+          }}
+        />
+      );
+    });
+
     return (
       <DndContext
         sensors={sensors}
@@ -655,34 +705,61 @@ function TrackTableBody({
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        <SortableContext
-          items={sortedTracks.map((t) => t.id)}
-          strategy={verticalListSortingStrategy}
-        >
-          <div ref={dndScrollRef} className="playlist-dnd-list">
-            {sortedTracks.map((t, index) => (
-              <SortableRow
-                key={t.id}
-                t={t}
-                index={index}
-                isSelected={selectedIds.has(t.id)}
-                isPlaying={playingTrackId === t.id}
-                onRowClick={handleRowClick}
-                onDoubleClick={handleDoubleClick}
-                onContextMenu={handleContextMenu}
-                onRatingChange={handleRatingChange}
-                onCueClick={handleCueClick}
-                onDragStart={handleTrackDragStart}
-                visibleColumns={visibleColumns}
-                gridTemplate={gridTemplate}
-                minScrollWidth={minScrollWidth}
-                mediaPort={mediaPort}
-                isNew={newTrackIds.has(t.id)}
-                onAnimationEnd={handleRowAnimationEnd}
-                isUnavailable={t.is_linked && unavailableLinkedIds.has(t.id)}
-                libraryNames={libraryNames}
-              />
-            ))}
+        <SortableContext items={localRows.map((t) => t.id)} strategy={verticalListSortingStrategy}>
+          <div
+            ref={(el) => {
+              // Playlist view shares the windowed scroller contract (listRef /
+              // dndScrollRef) so locate/follow/rank scrolls work unchanged.
+              if (!el) {
+                listRef.current = null;
+                plainElRef.current = null;
+                dndScrollRef.current = null;
+                return;
+              }
+              plainElRef.current = el;
+              dndScrollRef.current = el;
+              listRef.current = {
+                get element() {
+                  return el;
+                },
+                scrollToRow: ({ index, align = 'auto', behavior = 'auto' }) => {
+                  const top = index * ROW_HEIGHT;
+                  const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+                  let target;
+                  if (align === 'center') {
+                    target = Math.min(
+                      maxTop,
+                      Math.max(0, top - (el.clientHeight - ROW_HEIGHT) / 2)
+                    );
+                  } else if (align === 'end') {
+                    target = Math.min(maxTop, top + ROW_HEIGHT - el.clientHeight);
+                  } else {
+                    target = Math.min(maxTop, top);
+                  }
+                  el.scrollTo({ top: target, behavior });
+                },
+              };
+            }}
+            className="track-list track-list--plain playlist-dnd-list"
+            style={{ position: 'relative' }}
+            onScroll={refreshView}
+          >
+            <div style={{ height: spacerH }} aria-hidden="true" />
+            {rows}
+            {hasMore && (
+              <div
+                className="row row-loading"
+                style={{
+                  position: 'absolute',
+                  top: (windowStart + sortedTracks.length) * ROW_HEIGHT,
+                  left: 0,
+                  right: 0,
+                  height: ROW_HEIGHT,
+                }}
+              >
+                Loading more tracks...
+              </div>
+            )}
           </div>
         </SortableContext>
         <DragOverlay>
@@ -698,21 +775,7 @@ function TrackTableBody({
     );
   }
 
-  // Visible window: [startIdx, endIdx) of the FULL sorted result set. Absolute
-  // positioning keeps row index math trivial (ROW_HEIGHT is fixed). The spacer
-  // spans the WHOLE result set (totalRows from SQL), so the scroller can jump
-  // deep into unloaded territory; `sortedTracks` only holds a loaded window
-  // starting at global index `windowStart`, so rows outside it render nothing
-  // until lazy loads (append downward / prepend upward) bring them in.
-  const OVERSCAN = 6;
-  const spacerRows = Math.max(totalRows || 0, windowStart + sortedTracks.length);
-  const spacerH = spacerRows * ROW_HEIGHT;
-  const startIdx = Math.max(0, Math.floor(viewTop / ROW_HEIGHT) - OVERSCAN);
-  const endIdx = Math.max(startIdx + 1, Math.ceil((viewTop + viewH) / ROW_HEIGHT) + OVERSCAN);
-  const localStart = Math.max(0, Math.min(sortedTracks.length, startIdx - windowStart));
-  const localEnd = Math.min(sortedTracks.length, endIdx - windowStart);
-  const localRows = localEnd > localStart ? sortedTracks.slice(localStart, localEnd) : [];
-
+  // Library rows render over the shared geometry computed above.
   return (
     <div
       className="track-list track-list--plain"
@@ -891,6 +954,9 @@ function MusicLibrary({
 
   const offsetRef = useRef(0);
   const windowStartRef = useRef(0); // global index of tracks[0] (windowed list)
+  // Full natural-order track ids of the OPEN playlist (position order from SQL)
+  // — DnD reorder needs the WHOLE order, not just the loaded window.
+  const playlistOrderRef = useRef([]);
   const loadingRef = useRef(false);
   // Scroll lazy-loads may overlap: a NEW request in the same direction
   // supersedes the in-flight one (its result is DROPPED on arrival), so a fast
@@ -1162,10 +1228,10 @@ function MusicLibrary({
     prevSortRef.current = sortBy;
     const singleSel = selectedIds.size === 1 ? [...selectedIds][0] : null;
     // Rank-follow is only valid when the row set on screen is EXACTLY the SQL
-    // result set. hide-unavailable filters rows client-side (its unavailable
-    // set comes from per-drive fs checks), and playlist view renders a plain
-    // (non-windowed) list — both keep the full-set follow path.
-    const canRank = !isPlaylistView && !hideUnavailable;
+    // selection jumps straight to its rank position (no full materialization).
+    // hide-unavailable still filters rows client-side (its unavailable set
+    // comes from per-drive fs checks) — that keeps the full-set follow path.
+    const canRank = !hideUnavailable;
     if (singleSel == null) {
       // Reload pages from offset 0 in the new order.
       loadingRef.current = false;
@@ -1354,6 +1420,16 @@ function MusicLibrary({
         if (countAlive) setTotalRows(c);
       })
       .catch(() => {});
+    // Playlist view: keep the FULL natural order handy for DnD reorders (the
+    // loaded window alone cannot describe a move that touches rows outside it).
+    if (selectedPlaylist !== 'music') {
+      window.api
+        .getTrackIds({ playlistId: selectedPlaylist })
+        .then((ids) => {
+          if (countAlive) playlistOrderRef.current = ids;
+        })
+        .catch(() => {});
+    }
 
     // Use setTimeout so the state updates above are committed before we load.
     // The cleanup cancels the timer — in StrictMode this means the first
@@ -2224,19 +2300,37 @@ function MusicLibrary({
       setActiveId(null);
       if (!over || active.id === over.id) return;
       suppressSortReloadRef.current = true; // DnD manages the list itself
-      setSortBy({ key: 'index', asc: true }); // reset sort so DnD operates on position order
-      const prev = sortedTracksRef.current;
-      const oldIndex = prev.findIndex((t) => t.id === active.id);
-      const newIndex = prev.findIndex((t) => t.id === over.id);
-      const reordered = arrayMove(prev, oldIndex, newIndex);
-      setTracks(reordered);
-      window.api.reorderPlaylist(
-        Number(selectedPlaylist),
-        reordered.map((t) => t.id)
-      );
+      const sb = sortByRef.current;
+      if (sb.key !== 'index') {
+        // Reordering only makes sense in natural (position) order; a column
+        // sort defines its own order, so just drop back to position order.
+        setSortBy({ key: 'index', asc: true });
+        setSortSaved(true);
+        return;
+      }
+      // The windowed view only holds a slice; DnD must persist the WHOLE new
+      // order. playlistOrderRef caches the full position-order id list (loaded
+      // on view entry), so map the move onto it, persist it, then mirror the
+      // slice locally so the UI follows immediately.
+      const full = playlistOrderRef.current;
+      const fullOld = full.findIndex((id) => id === active.id);
+      const fullNew = full.findIndex((id) => id === over.id);
+      if (fullOld === -1 || fullNew === -1) {
+        // Ref is stale (e.g. ids changed since entry) — reload from scratch.
+        loadPage({ at: 0, mode: 'reset' });
+        return;
+      }
+      playlistOrderRef.current = arrayMove(full, fullOld, fullNew);
+      const win = sortedTracksRef.current;
+      const wOld = win.findIndex((t) => t.id === active.id);
+      const wNew = win.findIndex((t) => t.id === over.id);
+      if (wOld !== -1 && wNew !== -1) {
+        setTracks(arrayMove(win, wOld, wNew));
+      }
+      window.api.reorderPlaylist(Number(selectedPlaylist), playlistOrderRef.current);
       setSortSaved(true);
     },
-    [selectedPlaylist]
+    [selectedPlaylist, loadPage]
   );
 
   const handleTrackDragStart = useCallback(
@@ -2258,14 +2352,18 @@ function MusicLibrary({
   }, []);
 
   const handleSaveOrder = useCallback(async () => {
+    // Windowed view can't see the whole sorted set; materialize it once and
+    // persist that order as the playlist's new natural order.
+    const full = await fetchFullViewTracks();
+    if (!full || full.length === 0) return;
     await window.api.reorderPlaylist(
       Number(selectedPlaylist),
-      sortedTracksRef.current.map((t) => t.id)
+      full.map((t) => t.id)
     );
     suppressSortReloadRef.current = true; // DB already has the saved order
     setSortBy({ key: 'index', asc: true }); // revert to position order after saving
     setSortSaved(true);
-  }, [selectedPlaylist]);
+  }, [fetchFullViewTracks, selectedPlaylist]);
 
   // ── Misc ───────────────────────────────────────────────────────────────────
 
