@@ -1,7 +1,7 @@
 import logo from './assets/logo.png';
 import './TopBar.css';
 
-export default function TopBar({ onOpenSettings, onLogoClick }) {
+export default function TopBar({ onOpenHelp, onOpenSettings, onLogoClick }) {
   return (
     <div className="top-bar">
       <div
@@ -22,7 +22,22 @@ export default function TopBar({ onOpenSettings, onLogoClick }) {
       <div className="top-bar__spacer" />
 
       <div className="top-bar__actions">
-        <button className="top-bar__settings-btn" onClick={onOpenSettings} title="Settings">
+        <button
+          type="button"
+          className="top-bar__link-btn"
+          onClick={onOpenHelp}
+          title="Help"
+          aria-label="Help"
+        >
+          ❓
+        </button>
+        <button
+          type="button"
+          className="top-bar__settings-btn"
+          onClick={onOpenSettings}
+          title="Settings"
+          aria-label="Settings"
+        >
           ⚙
         </button>
       </div>

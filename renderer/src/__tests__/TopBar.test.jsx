@@ -33,6 +33,14 @@ describe('TopBar actions', () => {
     vi.clearAllMocks();
   });
 
+  it('calls onOpenHelp when Help is clicked', () => {
+    const onOpenHelp = vi.fn();
+    render(<TopBar onOpenHelp={onOpenHelp} onOpenSettings={() => {}} onLogoClick={() => {}} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Help' }));
+    expect(onOpenHelp).toHaveBeenCalledTimes(1);
+  });
+
   it('calls onOpenSettings when the settings button is clicked', () => {
     const onOpenSettings = vi.fn();
     render(<TopBar onOpenSettings={onOpenSettings} onLogoClick={() => {}} />);

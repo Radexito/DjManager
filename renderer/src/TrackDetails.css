@@ -71,6 +71,33 @@
   color: #eee;
 }
 
+.track-details__pin {
+  background: none;
+  border: none;
+  color: #666;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  line-height: 1.4;
+  margin-left: auto;
+  margin-right: 8px;
+}
+
+.track-details__pin:hover {
+  background: #333;
+  color: #eee;
+}
+
+.track-details__pin--active {
+  color: #f7c07e;
+}
+
+.track-details__pin--active:hover {
+  background: #3a2f1e;
+  color: #f7c07e;
+}
+
 .track-details__fields {
   flex: 1;
   overflow-y: auto;

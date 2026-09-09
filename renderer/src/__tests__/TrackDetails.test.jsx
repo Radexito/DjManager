@@ -221,23 +221,22 @@ describe('TrackDetails — single mode', () => {
     );
   });
 
-  it('shows an error instead of failing silently when auto-tag cover art fails to download', async () => {
+  it('applying an auto-tag result saves directly to the DB without a separate Save step', async () => {
     window.api.autoTagSearch.mockResolvedValueOnce({
       ok: true,
       results: [
         {
           source: 'Deezer',
           title: 'Test Track',
-          artist: 'Test Artist',
-          album: 'Test Album',
+          artist: 'New Artist',
+          album: 'New Album',
           label: '',
-          year: '2022',
-          genres: [],
-          coverUrl: 'https://example.com/cover.jpg',
+          year: '2023',
+          genres: ['House'],
+          coverUrl: '',
         },
       ],
     });
-    window.api.fetchArtworkUrl.mockResolvedValueOnce({ ok: false, error: 'HTTP 404' });
 
     render(
       <TrackDetails
@@ -256,6 +255,55 @@ describe('TrackDetails — single mode', () => {
     await waitFor(() => screen.getByText(/result/));
 
     fireEvent.click(screen.getByText('Apply'));
+
+    await waitFor(() =>
+      expect(window.api.updateTrack).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ artist: 'New Artist', album: 'New Album' })
+      )
+    );
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, artist: 'New Artist', album: 'New Album' })
+    );
+    // Nothing left to confirm — Save stays disabled since there's no unsaved local change.
+    expect(screen.getByText('Save')).toBeDisabled();
+  });
+
+  it('shows an error instead of failing silently when auto-tag cover art fails to download', async () => {
+    window.api.autoTagSearch.mockResolvedValueOnce({
+      ok: true,
+      results: [
+        {
+          source: 'Deezer',
+          title: 'Test Track',
+          artist: 'Test Artist',
+          album: 'Test Album',
+          label: '',
+          year: '2022',
+          genres: [],
+          coverUrl: 'https://example.com/cover.jpg',
+        },
+      ],
+    });
+
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+      />
+    );
+
+    fireEvent.click(screen.getByText('🔍 Auto-tag'));
+    fireEvent.click(screen.getByText('Search'));
+    await waitFor(() => screen.getByText(/result/));
+
+    fireEvent.click(screen.getByText('Apply'));
+    window.api.fetchArtworkUrl.mockResolvedValueOnce({ ok: false, error: 'HTTP 404' });
 
     await waitFor(() => {
       expect(screen.getByText(/Failed to download cover art: HTTP 404/)).toBeInTheDocument();
@@ -278,7 +326,6 @@ describe('TrackDetails — single mode', () => {
         },
       ],
     });
-    window.api.fetchArtworkUrl.mockResolvedValueOnce({ ok: false, error: 'fetch failed' });
 
     render(
       <TrackDetails
@@ -297,12 +344,91 @@ describe('TrackDetails — single mode', () => {
     await waitFor(() => screen.getByText(/result/));
 
     fireEvent.click(screen.getByText('Apply'));
+    window.api.fetchArtworkUrl.mockResolvedValueOnce({ ok: false, error: 'fetch failed' });
 
     await waitFor(() => {
       expect(
         screen.getByText('Failed to download cover art. The selected image could not be fetched.')
       ).toBeInTheDocument();
     });
+  });
+  it('reports dirty state changes via onDirtyChange as the form is edited and saved', async () => {
+    const onDirtyChange = vi.fn();
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+        onDirtyChange={onDirtyChange}
+      />
+    );
+    // Initial mount reports clean.
+    expect(onDirtyChange).toHaveBeenCalledWith(false);
+    onDirtyChange.mockClear();
+
+    fireEvent.change(screen.getByDisplayValue('Test Artist'), { target: { value: 'New Artist' } });
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
+  });
+
+  it('does not render a pin button when onTogglePin is not provided', () => {
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+      />
+    );
+    expect(screen.queryByTitle(/pin/i)).not.toBeInTheDocument();
+  });
+
+  it('renders a pin toggle button and calls onTogglePin when clicked', () => {
+    const onTogglePin = vi.fn();
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+        pinned={false}
+        onTogglePin={onTogglePin}
+      />
+    );
+    const pinBtn = screen.getByTitle('Pin — keep this track open regardless of selection');
+    fireEvent.click(pinBtn);
+    expect(onTogglePin).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the pinned state and unpin label when pinned=true', () => {
+    const onTogglePin = vi.fn();
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+        pinned={true}
+        onTogglePin={onTogglePin}
+      />
+    );
+    expect(screen.getByTitle('Unpin — resume following the row selection')).toBeInTheDocument();
+    expect(screen.getByText('📌 Pinned')).toBeInTheDocument();
   });
 });
 

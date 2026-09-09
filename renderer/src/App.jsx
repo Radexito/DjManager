@@ -6,6 +6,7 @@ import DownloadView from './DownloadView.jsx';
 import TidalDownloadView from './TidalDownloadView.jsx';
 import CloudSearchView from './CloudSearchView.jsx';
 import FileExplorerView from './FileExplorerView.jsx';
+import HelpView from './HelpView.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import ExportModal from './ExportModal.jsx';
 import PlayerBar from './PlayerBar.jsx';
@@ -30,10 +31,21 @@ function App() {
   const ZOOM_HIDE_DELAY = 3000;
   const [search, setSearch] = useState('');
   const [openDetailsRequest, setOpenDetailsRequest] = useState(null);
+  // "Show track in Music" — the player-bar title while playing from the
+  // all-tracks view asks the library to jump to that track.
+  const [locateTrackRequest, setLocateTrackRequest] = useState(null);
 
   const handleArtistSearch = (artist) => {
     setSelectedPlaylistId('music');
     setSearch(`ARTIST is ${artist}`);
+  };
+
+  const handleLocateTrack = (trackId) => {
+    if (!trackId) return;
+    // MusicLibrary clears the search itself only when a filter hides the track;
+    // leaving it untouched preserves the current sort/filter otherwise.
+    setSelectedPlaylistId('music');
+    setLocateTrackRequest({ trackId, nonce: Date.now() });
   };
 
   const handleLogoClick = () => {
@@ -173,7 +185,11 @@ function App() {
       <DownloadProvider>
         <TidalDownloadProvider>
           <div className="app-body">
-            <TopBar onOpenSettings={() => setShowSettings(true)} onLogoClick={handleLogoClick} />
+            <TopBar
+              onOpenHelp={() => setSelectedPlaylistId('help')}
+              onOpenSettings={() => setShowSettings(true)}
+              onLogoClick={handleLogoClick}
+            />
             <div className="app-main">
               <Sidebar
                 selectedMenuItemId={selectedPlaylistId}
@@ -203,15 +219,22 @@ function App() {
               <FileExplorerView
                 style={{ display: selectedPlaylistId === 'explorer' ? '' : 'none' }}
               />
+              <HelpView
+                style={{ display: selectedPlaylistId === 'help' ? '' : 'none' }}
+                active={selectedPlaylistId === 'help'}
+                onClose={() => setSelectedPlaylistId('music')}
+              />
               {selectedPlaylistId !== 'download' &&
                 selectedPlaylistId !== 'tidal' &&
                 selectedPlaylistId !== 'cloud-search' &&
-                selectedPlaylistId !== 'explorer' && (
+                selectedPlaylistId !== 'explorer' &&
+                selectedPlaylistId !== 'help' && (
                   <MusicLibrary
                     selectedPlaylist={selectedPlaylistId}
                     search={search}
                     onSearchChange={setSearch}
                     openDetailsRequest={openDetailsRequest}
+                    locateTrack={locateTrackRequest}
                   />
                 )}
             </div>
@@ -220,6 +243,7 @@ function App() {
             onNavigateToPlaylist={setSelectedPlaylistId}
             onArtistSearch={handleArtistSearch}
             onOpenTrackDetails={handlePlayerOpenDetails}
+            onLocateTrack={handleLocateTrack}
           />
           {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
           {exportState != null && (

@@ -81,4 +81,42 @@ describe('PlayerBar', () => {
     expect(player.prev).toHaveBeenCalledTimes(1);
     expect(player.next).toHaveBeenCalledTimes(1);
   });
+
+  it('clicking the title while playing from a playlist navigates to that playlist', async () => {
+    player.currentPlaylistId = 42;
+    player.currentPlaylistName = 'My Playlist';
+    const onNavigateToPlaylist = vi.fn();
+    const onLocateTrack = vi.fn();
+    render(
+      <PlayerBar
+        onNavigateToPlaylist={onNavigateToPlaylist}
+        onArtistSearch={vi.fn()}
+        onOpenTrackDetails={vi.fn()}
+        onLocateTrack={onLocateTrack}
+      />
+    );
+
+    // The playlist chip below also carries the same tooltip — the title is the
+    // first match in DOM order.
+    fireEvent.click((await screen.findAllByTitle('Go to playlist: My Playlist'))[0]);
+    expect(onNavigateToPlaylist).toHaveBeenCalledWith('42');
+    expect(onLocateTrack).not.toHaveBeenCalled();
+  });
+
+  it('clicking the title while playing from Music asks to show the track in the Music list', async () => {
+    player.currentPlaylistId = null;
+    player.currentPlaylistName = null;
+    const onLocateTrack = vi.fn();
+    render(
+      <PlayerBar
+        onNavigateToPlaylist={vi.fn()}
+        onArtistSearch={vi.fn()}
+        onOpenTrackDetails={vi.fn()}
+        onLocateTrack={onLocateTrack}
+      />
+    );
+
+    fireEvent.click(await screen.findByTitle('Show track in Music list'));
+    expect(onLocateTrack).toHaveBeenCalledWith(7);
+  });
 });

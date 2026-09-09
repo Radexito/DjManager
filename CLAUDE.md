@@ -153,13 +153,14 @@ IPC channels: `tidal-check`, `tidal-login`, `tidal-download-url`. Events pushed 
 
 ### Top-level navigation
 
-`Sidebar.jsx` has a `MENU_ITEMS` array that drives the top nav. Each item has an `id` string. `App.jsx` receives `selectedPlaylistId` and branches on it:
+`Sidebar.jsx` has a `MENU_ITEMS` array that drives the main left-side navigation. `App.jsx` receives `selectedPlaylistId` and branches on it:
 
 - `'download'` → `<DownloadView>` (yt-dlp)
 - `'tidal'` → `<TidalDownloadView>`
+- `'help'` → `<HelpView>` (opened from the header, next to Settings)
 - anything else → `<MusicLibrary selectedPlaylist={id}>` (handles both `'music'` and playlist UUIDs)
 
-**Adding a new top-level view**: add entry to `MENU_ITEMS`, add a branch in `App.jsx`, create the view component.
+**Adding a new top-level view**: add entry to `MENU_ITEMS` when it belongs in the sidebar, or wire a header action in `TopBar.jsx` when it belongs there; in both cases add a branch in `App.jsx` and create the view component.
 
 ### Renderer / UI
 
@@ -191,6 +192,7 @@ Handled client-side by `renderer/src/searchParser.js`. Supports field-qualified 
 - **Renderer test mocks**: `renderer/src/__tests__/setup.js` defines the full `window.api` mock. When adding a new IPC method, add a corresponding `vi.fn()` entry there or renderer tests that mount components will fail.
 - **Platform-specific test stubs**: `usbUtils.test.js` stubs `process.platform` via `vi.stubGlobal` so Linux-branch tests run correctly on Windows. Use the same pattern for any test that branches on `process.platform`.
 - **Windows path in tests**: when constructing HTTP URLs from OS file paths in tests, convert with `'/' + filePath.replace(/\\/g, '/')` so paths are valid on Windows (e.g. `/C:/path/to/file`).
+- **Help content must stay current**: whenever user-facing features, navigation, or workflows change, update `renderer/src/HelpView.jsx` in the same change so the in-app Help screen does not drift out of date.
 
 ## GitHub API
 
