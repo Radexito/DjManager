@@ -85,7 +85,13 @@ jobs:
         run: npm run build-renderer
 
       - name: Install Playwright system dependencies
-        run: npx playwright install-deps chromium
+        run: |
+          # GitHub-hosted ubuntu images ship a google-chrome apt source; Google's
+          # CDN intermittently serves hash-mismatched Packages.gz to runner IPs,
+          # breaking `apt-get update` for every job ("Hash Sum mismatch").
+          # Playwright's chromium needs none of it — drop the source first.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          npx playwright install-deps chromium
 
       - name: Run E2E tests
         run: xvfb-run --auto-servernum npm run test:e2e
