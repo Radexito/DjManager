@@ -995,34 +995,37 @@ function MusicLibrary({ selectedPlaylist, search, onSearchChange, openDetailsReq
     setDetailsPinned((p) => !p);
   }, []);
 
-  // Follow row selection. Single selection: switch the open single-track
-  // panel to the newly selected row (or pin it when there are unsaved edits).
-  // Multi-selection: switch the panel to the bulk editor for the selected
-  // rows immediately - no context-menu action needed.
+  // Follow row selection. Single selection: switch the open panel back to the
+  // single-track editor for that row (closing bulk mode if needed). Bulk
+  // multi-selection: open/refresh the bulk editor for the selected rows.
+  // Unsaved edits trigger a discard/keep prompt in both directions.
   useEffect(() => {
     const ids = [...selectedIds];
     if (ids.length === 0) return; // nothing selected
     if (detailsTrack && detailsPinned) return; // pinned single-track panel ignores selection
     if (ids.length === 1) {
-      // Bulk panel stays open until closed/saved; only single panels follow.
-      if (!detailsTrack || detailsBulkTracks) return;
       const [id] = ids;
-      if (id === detailsTrack.id) return;
       const track = sortedTracksRef.current.find((t) => t.id === id);
       if (!track) return;
+      const inSingle = !!detailsTrack && !detailsBulkTracks;
+      if (inSingle && detailsTrack.id === id) return; // already showing this track
       if (detailsDirty) {
-        const discard = window.confirm(
-          'The Details panel has unsaved changes.\n\n' +
-            'Click OK to discard them and follow the new selection, or Cancel to pin the panel and keep editing this track.'
-        );
-        if (discard) {
-          setDetailsTrack(track);
-          setDetailsDirty(false);
-        } else {
-          setDetailsPinned(true);
+        const discard = inSingle
+          ? window.confirm(
+              'The Details panel has unsaved changes.\n\n' +
+                'Click OK to discard them and follow the new selection, or Cancel to pin the panel and keep editing this track.'
+            )
+          : window.confirm(
+              'The Details panel has unsaved changes.\n\n' +
+                'Click OK to discard them and show the selected track in single edit mode, or Cancel to keep the bulk panel open.'
+            );
+        if (!discard) {
+          if (inSingle) setDetailsPinned(true);
+          return;
         }
-        return;
+        setDetailsDirty(false);
       }
+      setDetailsBulkTracks(null);
       setDetailsTrack(track);
       return;
     }
