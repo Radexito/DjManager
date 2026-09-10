@@ -91,6 +91,7 @@ import {
   moveTrackToLibrary,
   getLibraryDiskUsage,
   getLibraryFreeSpace,
+  writeBpmKeyTagsForTrack,
 } from './audio/importManager.js';
 import {
   listLibraries,
@@ -519,6 +520,22 @@ ipcMain.handle('get-unavailable-linked-tracks', () =>
 ipcMain.handle('get-track-waveform', (_, trackId) => {
   const buf = getTrackWaveform(trackId);
   return buf ? new Uint8Array(buf) : null;
+});
+// #474 — write the analyzed BPM/key into the tracks' own file tags (manual
+// action from the library context menu). Respects the metadata settings:
+// `metadata_overwrite_tags` decides whether differing tags are overwritten,
+// otherwise only missing tags are filled.
+ipcMain.handle('write-bpm-key-tags', async (_event, { trackIds = [] } = {}) => {
+  const results = [];
+  for (const id of trackIds) {
+    try {
+      results.push(await writeBpmKeyTagsForTrack(id));
+    } catch (err) {
+      results.push({ trackId: id, ok: false, reason: 'error', error: err.message });
+    }
+  }
+  const written = results.filter((r) => r.ok && (r.wrote?.length ?? 0) > 0).length;
+  return { ok: true, written, skipped: results.length - written, results };
 });
 ipcMain.handle('get-setting', (_, key, def) => getSetting(key, def));
 ipcMain.handle('set-setting', (_, key, value) => {

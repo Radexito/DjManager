@@ -36,6 +36,10 @@ function SettingsModal({ onClose }) {
   const [activeSection, setActiveSection] = useState('library');
   const [targetInput, setTargetInput] = useState(String(DEFAULT_TARGET));
   const [autoNormalizeOnImport, setAutoNormalizeOnImport] = useState(false);
+  // #474 — write analyzed BPM & key into the file's own tags
+  const [autoWriteLibrary, setAutoWriteLibrary] = useState(false);
+  const [autoWriteLinked, setAutoWriteLinked] = useState(false);
+  const [overwriteTags, setOverwriteTags] = useState(false);
   const [autoCueOnImport, setAutoCueOnImport] = useState(false);
   const [generatingCues, setGeneratingCues] = useState(false);
   const [cueGenProgress, setCueGenProgress] = useState(null); // { completed, total } | null
@@ -123,6 +127,16 @@ function SettingsModal({ onClose }) {
       .getSetting('cloud_preview_playback_mode', 'overlay')
       .then((v) => setCloudPreviewPlaybackMode(v || 'overlay'));
     window.api.getSetting('waveform_color_mode', 'rgb').then((v) => setWaveformColorMode(v));
+    // #474 — BPM/key tag writing
+    window.api
+      .getSetting('metadata_autowrite_library', 'false')
+      .then((v) => setAutoWriteLibrary(v === 'true'));
+    window.api
+      .getSetting('metadata_autowrite_linked', 'false')
+      .then((v) => setAutoWriteLinked(v === 'true'));
+    window.api
+      .getSetting('metadata_overwrite_tags', 'false')
+      .then((v) => setOverwriteTags(v === 'true'));
   }, []);
 
   useEffect(() => {
@@ -199,6 +213,22 @@ function SettingsModal({ onClose }) {
   const handleAutoNormalizeToggle = (checked) => {
     setAutoNormalizeOnImport(checked);
     window.api.setSetting('auto_normalize_on_import', String(checked));
+  };
+
+  // #474 — BPM/key tag writing settings
+  const handleAutoWriteLibraryToggle = (checked) => {
+    setAutoWriteLibrary(checked);
+    window.api.setSetting('metadata_autowrite_library', String(checked));
+  };
+
+  const handleAutoWriteLinkedToggle = (checked) => {
+    setAutoWriteLinked(checked);
+    window.api.setSetting('metadata_autowrite_linked', String(checked));
+  };
+
+  const handleOverwriteTagsToggle = (checked) => {
+    setOverwriteTags(checked);
+    window.api.setSetting('metadata_overwrite_tags', String(checked));
   };
 
   const handleGenerateCueLibrary = async (overwrite) => {
@@ -362,6 +392,7 @@ function SettingsModal({ onClose }) {
 
   const sections = [
     { id: 'library', label: 'Library' },
+    { id: 'metadata', label: 'Metadata' },
     { id: 'normalization', label: 'Normalization' },
     { id: 'cuepoints', label: 'Cue Points' },
     { id: 'waveform', label: 'Waveform' },
@@ -615,6 +646,72 @@ function SettingsModal({ onClose }) {
                     </button>
                   </div>
                 )}
+              </div>
+            </>
+          )}
+
+          {activeSection === 'metadata' && (
+            <>
+              <h3>Metadata</h3>
+              <div className="settings-group">
+                <div className="settings-group-title">Write BPM &amp; Key to file tags</div>
+                <p className="settings-group-desc">
+                  DjManager analyses BPM and musical key and keeps them in its own database. These
+                  options additionally write the analysed values into the files themselves, so other
+                  applications can read them. Supported: MP3 (ID3 TBPM/TKEY) and FLAC/OGG/Opus
+                  (Vorbis BPM/KEY). M4A/WAV/AIFF are skipped — they have no interoperable tag slot.
+                  Files are rewritten through a temporary copy, so a failure can never corrupt the
+                  original.
+                </p>
+
+                <div className="settings-row">
+                  <label htmlFor="meta-autowrite-library">Auto-write for library tracks</label>
+                  <div className="settings-toggle-row">
+                    <input
+                      id="meta-autowrite-library"
+                      type="checkbox"
+                      checked={autoWriteLibrary}
+                      onChange={(e) => handleAutoWriteLibraryToggle(e.target.checked)}
+                    />
+                    <span className="settings-toggle-desc">
+                      After a library track is analysed, write its BPM &amp; Key into the file.
+                      Imported files are DjManager&apos;s own managed copies. Off by default.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="settings-row">
+                  <label htmlFor="meta-autowrite-linked">Auto-write for linked files</label>
+                  <div className="settings-toggle-row">
+                    <input
+                      id="meta-autowrite-linked"
+                      type="checkbox"
+                      checked={autoWriteLinked}
+                      onChange={(e) => handleAutoWriteLinkedToggle(e.target.checked)}
+                    />
+                    <span className="settings-toggle-desc">
+                      Same, but for linked files — those are your own originals on disk, so this
+                      edits files outside the library folder. Off by default.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="settings-row">
+                  <label htmlFor="meta-overwrite-tags">Overwrite existing BPM/Key tags</label>
+                  <div className="settings-toggle-row">
+                    <input
+                      id="meta-overwrite-tags"
+                      type="checkbox"
+                      checked={overwriteTags}
+                      onChange={(e) => handleOverwriteTagsToggle(e.target.checked)}
+                    />
+                    <span className="settings-toggle-desc">
+                      On: a tag that differs from the analysed value is replaced. Off (default):
+                      only missing tags are filled, existing values are left untouched. Applies to
+                      both auto-write and the manual “Save BPM &amp; Key” action.
+                    </span>
+                  </div>
+                </div>
               </div>
             </>
           )}
