@@ -318,3 +318,25 @@ function getValueHints(fieldKey, op, base, partialValue = '') {
   if (!hint) return [];
   return [{ type: 'hint', text: hint, insertText: base + hint, description: `e.g. ${hint}` }];
 }
+
+// ─── Query builders (clickable UI affordances) ────────────────────────────────
+
+/** The search bar splits clauses on " AND ", so those separators are unsafe. */
+const AND_SEPARATOR_RE = /\s+AND\s+/i;
+
+/**
+ * Query that searches the library for one artist, used by the clickable artist
+ * cells (Music/playlist tables) and the player bar. Uppercase label matches how
+ * the search bar renders a committed chip, and multi-word names work because a
+ * text field consumes the rest of the clause.
+ *
+ * A name containing " AND " cannot be expressed as a field clause (the query
+ * would split into two clauses), so it degrades to free text - which still
+ * matches the artist column, because `_text` searches artist names too.
+ */
+export function buildArtistQuery(artist) {
+  const name = String(artist ?? '').trim();
+  if (!name) return '';
+  if (AND_SEPARATOR_RE.test(name)) return name;
+  return `ARTIST is ${name}`;
+}

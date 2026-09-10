@@ -198,6 +198,17 @@
   color: #e0e0e0;
 }
 
+/* #505 — the artist cell is clickable: it searches the library by that artist.
+   Same affordance as the artist in the player bar. */
+.cell-artist--clickable {
+  cursor: pointer;
+}
+
+.cell-artist--clickable:hover {
+  color: #bbb;
+  text-decoration: underline;
+}
+
 .cell.numeric {
   text-align: right;
   color: #aaa;
