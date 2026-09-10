@@ -28,6 +28,7 @@ import {
 import { generateCuePoints } from './cueGen.js';
 import { getCuePoints, addCuePoint } from '../db/cuePointRepository.js';
 import { generateWaveformOverview } from './waveformGenerator.js';
+import { listAudioFiles } from '../library/libraryWatcher.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -562,6 +563,43 @@ export async function importAudioFile(filePath, sourceMeta = {}, libraryId = nul
 
   spawnAnalysis(trackId, dest);
   return trackId;
+}
+
+/**
+ * #256 — scan the configured ingest folders and import anything new.
+ * Files already in the database (matched by path) are skipped without hashing;
+ * `importAudioFile` additionally de-duplicates by content hash, so a re-scan is
+ * always safe. Importing triggers analysis (and, if enabled, the #474 tag write).
+ *
+ * @param {string[]} folders
+ * @param {{ libraryId?: number|null, onProgress?: (p: {done:number,total:number}) => void }} [opts]
+ * @returns {Promise<{ found: number, imported: number, skipped: number, failed: number }>}
+ */
+export async function scanFoldersForNewTracks(folders = [], { libraryId = null, onProgress } = {}) {
+  const files = await listAudioFiles(folders);
+  if (files.length === 0) return { found: 0, imported: 0, skipped: 0, failed: 0 };
+
+  const knownPaths = new Set(getTracksByPaths(files).map((t) => t.file_path));
+  const pending = files.filter((f) => !knownPaths.has(f));
+
+  let imported = 0;
+  let failed = 0;
+  for (const file of pending) {
+    try {
+      const id = await importAudioFile(file, {}, libraryId);
+      if (id) imported++;
+    } catch (err) {
+      failed++;
+      console.warn(`[scan] import failed for ${file}:`, err.message);
+    }
+    onProgress?.({ done: imported + failed, total: pending.length });
+  }
+
+  console.log(
+    `[scan] ${folders.length} folder(s): ${files.length} audio file(s), ${pending.length} new, ` +
+      `${imported} imported, ${failed} failed`
+  );
+  return { found: files.length, imported, skipped: files.length - pending.length, failed };
 }
 
 export async function linkAudioFile(filePath, libraryId = null) {

@@ -91,7 +91,9 @@ import {
   moveTrackToLibrary,
   getLibraryDiskUsage,
   getLibraryFreeSpace,
+  scanFoldersForNewTracks,
 } from './audio/importManager.js';
+import { createLibraryWatcher } from './library/libraryWatcher.js';
 import {
   listLibraries,
   createLibrary,
@@ -480,6 +482,15 @@ async function initApp() {
       sendDepsProgress(null);
       // Auto-generate waveforms for any analyzed tracks missing overview data
       autoGenerateMissingWaveforms();
+      // #256 — start watching the ingest folders, and optionally scan them once
+      // now. Runs after deps so freshly discovered tracks can be analysed
+      // immediately (analysis needs the bundled analyzer binary).
+      restartLibraryWatcher();
+      if (getSetting('autoscan_on_startup', 'false') === 'true') {
+        scanWatchFolders().catch((err) =>
+          console.error('[watcher] startup scan failed:', err.message)
+        );
+      }
     })
     .catch((err) => {
       console.error('[deps] Failed to download FFmpeg:', err.message);
@@ -523,10 +534,19 @@ ipcMain.handle('get-track-waveform', (_, trackId) => {
 ipcMain.handle('get-setting', (_, key, def) => getSetting(key, def));
 ipcMain.handle('set-setting', (_, key, value) => {
   setSetting(key, value);
+  // #256 — folder-watch settings rebuild the watcher immediately.
+  if (key === 'watch_folders' || key === 'watch_enabled') restartLibraryWatcher();
   // Let the renderer react to settings changes live (e.g. hide the cue
   // indicator column when auto-cue generation is toggled, #263).
   global.mainWindow?.webContents.send('settings-updated', { key, value });
 });
+// #256 — manual "scan now" for the watched folders + state for the settings UI.
+ipcMain.handle('scan-watch-folders', () => scanWatchFolders());
+ipcMain.handle('get-watch-state', () => ({
+  folders: getWatchFolders(),
+  enabled: watchFoldersEnabled(),
+  scanning: watchScanRunning,
+}));
 // `libraryId` defaults to the current "import target" library when omitted —
 // most existing call sites predate multi-library support and don't pass one.
 ipcMain.handle('get-library-path', (_, libraryId) =>
@@ -1752,6 +1772,75 @@ function trackToFilename(track, ext) {
   );
 }
 
+// ── #256: ingest folder watchdog ──────────────────────────────────────────────
+// A configurable list of folders is watched for new audio files; anything new
+// is imported (and therefore analysed). Optionally the same folders are scanned
+// once on startup. Settings: watch_enabled, watch_folders (JSON array),
+// autoscan_on_startup.
+
+let libraryWatcher = null;
+let watchScanRunning = false;
+
+function getWatchFolders() {
+  try {
+    const parsed = JSON.parse(getSetting('watch_folders', '[]') || '[]');
+    return Array.isArray(parsed) ? parsed.filter((p) => typeof p === 'string' && p) : [];
+  } catch {
+    return [];
+  }
+}
+
+function watchFoldersEnabled() {
+  return getSetting('watch_enabled', 'false') === 'true';
+}
+
+/** (Re)build the watcher from current settings — safe to call any time. */
+function restartLibraryWatcher() {
+  libraryWatcher?.close();
+  libraryWatcher = null;
+
+  if (!watchFoldersEnabled()) return;
+  const folders = getWatchFolders();
+  if (folders.length === 0) return;
+
+  libraryWatcher = createLibraryWatcher({
+    folders,
+    onNewFile: async (filePath) => {
+      const id = await importAudioFile(filePath, {});
+      if (id) {
+        send('library-updated');
+        send('watch-status', { event: 'imported', filePath });
+      }
+    },
+    onError: (err, folder) => console.warn(`[watcher] ${folder ?? ''} ${err.message}`),
+  });
+  console.log(`[watcher] watching ${folders.length} folder(s): ${folders.join(', ')}`);
+}
+
+/** Scan the watched folders now (startup auto-scan + manual action). */
+async function scanWatchFolders() {
+  const folders = getWatchFolders();
+  if (folders.length === 0 || watchScanRunning) {
+    return { found: 0, imported: 0, skipped: 0, failed: 0 };
+  }
+  watchScanRunning = true;
+  send('watch-status', { event: 'scan-started', folders: folders.length });
+  try {
+    const res = await scanFoldersForNewTracks(folders, {
+      onProgress: (p) => send('watch-status', { event: 'scan-progress', ...p }),
+    });
+    if (res.imported > 0) send('library-updated');
+    send('watch-status', { event: 'scan-done', ...res });
+    return res;
+  } catch (err) {
+    console.error('[watcher] scan failed:', err.message);
+    send('watch-status', { event: 'scan-failed', error: err.message });
+    return { found: 0, imported: 0, skipped: 0, failed: 0, error: err.message };
+  } finally {
+    watchScanRunning = false;
+  }
+}
+
 // ── File Explorer IPC ──────────────────────────────────────────────────────────
 
 const AUDIO_EXTENSIONS = new Set([
@@ -2657,6 +2746,11 @@ app.on('ready', initApp);
 app.on('window-all-closed', () => {
   console.log('All windows closed.');
   if (process.platform !== 'darwin') app.quit();
+});
+// Stop the ingest-folder watcher so no handle keeps the process alive.
+app.on('will-quit', () => {
+  libraryWatcher?.close();
+  libraryWatcher = null;
 });
 
 // Log child process crashes (network service, GPU process, etc.) for diagnostics

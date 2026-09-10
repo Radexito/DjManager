@@ -36,6 +36,12 @@ function SettingsModal({ onClose }) {
   const [activeSection, setActiveSection] = useState('library');
   const [targetInput, setTargetInput] = useState(String(DEFAULT_TARGET));
   const [autoNormalizeOnImport, setAutoNormalizeOnImport] = useState(false);
+  // #256 — ingest folder watchdog
+  const [watchEnabled, setWatchEnabled] = useState(false);
+  const [scanOnStartup, setScanOnStartup] = useState(false);
+  const [watchFolders, setWatchFolders] = useState([]);
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState(null);
   const [autoCueOnImport, setAutoCueOnImport] = useState(false);
   const [generatingCues, setGeneratingCues] = useState(false);
   const [cueGenProgress, setCueGenProgress] = useState(null); // { completed, total } | null
@@ -123,6 +129,29 @@ function SettingsModal({ onClose }) {
       .getSetting('cloud_preview_playback_mode', 'overlay')
       .then((v) => setCloudPreviewPlaybackMode(v || 'overlay'));
     window.api.getSetting('waveform_color_mode', 'rgb').then((v) => setWaveformColorMode(v));
+    // #256 — folder watch
+    window.api.getSetting('watch_enabled', 'false').then((v) => setWatchEnabled(v === 'true'));
+    window.api
+      .getSetting('autoscan_on_startup', 'false')
+      .then((v) => setScanOnStartup(v === 'true'));
+    window.api.getSetting('watch_folders', '[]').then((v) => {
+      try {
+        const parsed = JSON.parse(v || '[]');
+        setWatchFolders(Array.isArray(parsed) ? parsed : []);
+      } catch {
+        setWatchFolders([]);
+      }
+    });
+  }, []);
+  // #256 — live scan/import status for the Folder Watch section
+  useEffect(() => {
+    const unsub = window.api.onWatchStatus((data) => {
+      if (data?.event === 'scan-started') setScanResult({ running: true });
+      else if (data?.event === 'scan-progress') setScanResult({ running: true, ...data });
+      else if (data?.event === 'scan-done' || data?.event === 'scan-failed')
+        setScanResult({ running: false, ...data });
+    });
+    return unsub;
   }, []);
 
   useEffect(() => {
@@ -201,6 +230,42 @@ function SettingsModal({ onClose }) {
     window.api.setSetting('auto_normalize_on_import', String(checked));
   };
 
+  // #256 — folder watch
+  const persistWatchFolders = (next) => {
+    setWatchFolders(next);
+    window.api.setSetting('watch_folders', JSON.stringify(next));
+  };
+
+  const handleWatchEnabledToggle = (checked) => {
+    setWatchEnabled(checked);
+    window.api.setSetting('watch_enabled', String(checked));
+  };
+
+  const handleScanOnStartupToggle = (checked) => {
+    setScanOnStartup(checked);
+    window.api.setSetting('autoscan_on_startup', String(checked));
+  };
+
+  const handleAddWatchFolder = async () => {
+    const dir = await window.api.openDirDialog();
+    if (!dir || watchFolders.includes(dir)) return;
+    persistWatchFolders([...watchFolders, dir]);
+  };
+
+  const handleRemoveWatchFolder = (dir) => {
+    persistWatchFolders(watchFolders.filter((f) => f !== dir));
+  };
+
+  const handleScanNow = async () => {
+    setScanning(true);
+    setScanResult({ running: true });
+    try {
+      const res = await window.api.scanWatchFolders();
+      setScanResult({ running: false, event: 'scan-done', ...res });
+    } finally {
+      setScanning(false);
+    }
+  };
   const handleGenerateCueLibrary = async (overwrite) => {
     setConfirmCueGen(false);
     setGeneratingCues(true);
@@ -362,6 +427,7 @@ function SettingsModal({ onClose }) {
 
   const sections = [
     { id: 'library', label: 'Library' },
+    { id: 'ingest', label: 'Folder Watch' },
     { id: 'normalization', label: 'Normalization' },
     { id: 'cuepoints', label: 'Cue Points' },
     { id: 'waveform', label: 'Waveform' },
@@ -619,6 +685,113 @@ function SettingsModal({ onClose }) {
             </>
           )}
 
+          {activeSection === 'ingest' && (
+            <>
+              <h3>Folder Watch</h3>
+              <div className="settings-group">
+                <div className="settings-group-title">Ingest folders</div>
+                <p className="settings-group-desc">
+                  DjManager can watch folders for new audio files — anything dropped into a watched
+                  folder is imported and analysed automatically, with no manual import step. Use it
+                  for a downloads or staging folder (network and removable drives work while they
+                  are mounted).
+                </p>
+
+                <div className="settings-row">
+                  <label htmlFor="watch-enabled">Watch folders for new tracks</label>
+                  <div className="settings-toggle-row">
+                    <input
+                      id="watch-enabled"
+                      type="checkbox"
+                      checked={watchEnabled}
+                      onChange={(e) => handleWatchEnabledToggle(e.target.checked)}
+                    />
+                    <span className="settings-toggle-desc">
+                      Imports new audio files as soon as they appear. Off by default.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="settings-row">
+                  <label htmlFor="watch-autoscan">Scan watched folders on startup</label>
+                  <div className="settings-toggle-row">
+                    <input
+                      id="watch-autoscan"
+                      type="checkbox"
+                      checked={scanOnStartup}
+                      onChange={(e) => handleScanOnStartupToggle(e.target.checked)}
+                    />
+                    <span className="settings-toggle-desc">
+                      Catches files that were added while DjManager was closed. Off by default.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="settings-group-title" style={{ marginTop: '1rem' }}>
+                  Watched folders
+                </div>
+                {watchFolders.length === 0 ? (
+                  <p className="settings-group-desc">
+                    No folders yet — add one below, then turn watching on.
+                  </p>
+                ) : (
+                  <div className="library-list">
+                    {watchFolders.map((dir) => (
+                      <div key={dir} className="settings-row">
+                        <span className="settings-action-label" title={dir}>
+                          {dir}
+                        </span>
+                        <button
+                          className="btn-secondary"
+                          onClick={() => handleRemoveWatchFolder(dir)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="settings-row settings-row-action">
+                  <div>
+                    <div className="settings-action-label">Add folder…</div>
+                    <div className="settings-action-desc">
+                      Pick a folder to watch for new audio files.
+                    </div>
+                  </div>
+                  <button className="btn-secondary" onClick={handleAddWatchFolder}>
+                    Add folder
+                  </button>
+                </div>
+
+                <div className="settings-row settings-row-action">
+                  <div>
+                    <div className="settings-action-label">Scan now</div>
+                    <div className="settings-action-desc">
+                      Imports anything new in the watched folders immediately.
+                    </div>
+                  </div>
+                  <button
+                    className="btn-primary"
+                    onClick={handleScanNow}
+                    disabled={scanning || watchFolders.length === 0}
+                  >
+                    {scanning ? 'Scanning…' : 'Scan now'}
+                  </button>
+                </div>
+
+                {scanResult && (
+                  <p className="settings-group-desc">
+                    {scanResult.running
+                      ? `Scanning… ${scanResult.done ?? 0}/${scanResult.total ?? '?'}`
+                      : scanResult.event === 'scan-failed'
+                        ? `Scan failed: ${scanResult.error}`
+                        : `Found ${scanResult.found ?? 0} file(s) — imported ${scanResult.imported ?? 0}, skipped ${scanResult.skipped ?? 0}, failed ${scanResult.failed ?? 0}`}
+                  </p>
+                )}
+              </div>
+            </>
+          )}
           {activeSection === 'normalization' && (
             <>
               <h3>Normalization</h3>
