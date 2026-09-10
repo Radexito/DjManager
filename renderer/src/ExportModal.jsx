@@ -33,7 +33,14 @@ const DEVICE_OPTIONS = [
   { key: 'xdj-700', label: 'XDJ-700' },
 ];
 
-function ExportFormatOptions({ targetDevice, setTargetDevice, forceMp3, setForceMp3 }) {
+function ExportFormatOptions({
+  targetDevice,
+  setTargetDevice,
+  forceMp3,
+  setForceMp3,
+  blindMode,
+  setBlindMode,
+}) {
   return (
     <div className="export-format-options">
       <label className="export-device-option">
@@ -51,6 +58,17 @@ function ExportFormatOptions({ targetDevice, setTargetDevice, forceMp3, setForce
         <input type="checkbox" checked={forceMp3} onChange={(e) => setForceMp3(e.target.checked)} />
         <span>Re-encode all tracks to MP3</span>
       </label>
+      <label
+        className="export-normalized-option"
+        title="Export without waveforms and BPM — the standalone player shows nothing to sync to"
+      >
+        <input
+          type="checkbox"
+          checked={blindMode}
+          onChange={(e) => setBlindMode(e.target.checked)}
+        />
+        <span>Real DJ mode — no waveforms / no BPM (mix blind)</span>
+      </label>
     </div>
   );
 }
@@ -67,6 +85,18 @@ function ExportModal({ onClose, playlistId, initialMode }) {
   const [useNormalized, setUseNormalized] = useState(true);
   const [targetDevice, setTargetDevice] = useState('');
   const [forceMp3, setForceMp3] = useState(false);
+  // #258 — "Real DJ mode": exported USB carries no waveforms/BPM. Persisted as
+  // a setting so explorer exports (which have no toggle) honour it too.
+  const [blindMode, setBlindModeState] = useState(false);
+  useEffect(() => {
+    window.api
+      .getSetting('export_blind_mode', 'false')
+      .then((v) => setBlindModeState(v === 'true'));
+  }, []);
+  const setBlindMode = useCallback((checked) => {
+    setBlindModeState(checked);
+    window.api.setSetting('export_blind_mode', String(checked));
+  }, []);
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -132,6 +162,7 @@ function ExportModal({ onClose, playlistId, initialMode }) {
         useNormalized,
         targetDevice: targetDevice || null,
         forceMp3,
+        blindMode,
       });
     } else {
       res = await window.api.exportAll({
@@ -140,6 +171,7 @@ function ExportModal({ onClose, playlistId, initialMode }) {
         useNormalized,
         targetDevice: targetDevice || null,
         forceMp3,
+        blindMode,
       });
     }
     if (res.ok) {
@@ -191,6 +223,8 @@ function ExportModal({ onClose, playlistId, initialMode }) {
               setTargetDevice={setTargetDevice}
               forceMp3={forceMp3}
               setForceMp3={setForceMp3}
+              blindMode={blindMode}
+              setBlindMode={setBlindMode}
             />
             <div className="export-options">
               <button className="export-option-btn" onClick={() => pickFolder('rekordbox')}>
@@ -235,6 +269,8 @@ function ExportModal({ onClose, playlistId, initialMode }) {
               setTargetDevice={setTargetDevice}
               forceMp3={forceMp3}
               setForceMp3={setForceMp3}
+              blindMode={blindMode}
+              setBlindMode={setBlindMode}
             />
             <div className="export-confirm-actions">
               <button className="export-option-btn" onClick={() => pickFolder(mode)}>
