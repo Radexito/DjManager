@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTidalDownload } from './TidalDownloadContext.jsx';
+import TidalCollectionsPanel from './TidalCollectionsPanel.jsx';
 import './DownloadView.css';
 import './TidalDownloadView.css';
 
@@ -56,6 +57,7 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
     loading,
     setLoading,
     trackStatuses,
+    setTrackStatuses,
     result,
     setResult,
     resetToUrl,
@@ -69,6 +71,7 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
   const [installing, setInstalling] = useState(false);
   const [installLog, setInstallLog] = useState([]);
   const [installError, setInstallError] = useState(null);
+  const [collectionBusy, setCollectionBusy] = useState(null); // `${type}:${id}` being downloaded
 
   const inputRef = useRef(null);
 
@@ -353,6 +356,53 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
     }
   }
 
+  // ── collection download (account playlists / mixes / favorites) ────────────
+  // Resolution and download happen in main (tidal-download-collection); the UI
+  // only mirrors the progress events into the regular download step.
+  const handleDownloadCollection = useCallback(
+    async (col) => {
+      if (collectionBusy) return;
+      const key = `${col.type}:${col.id}`;
+      setCollectionBusy(key);
+      setFetchError(null);
+      setResult(null);
+      setTrackStatuses([]);
+      setPlaylistInfo({ type: col.type, title: col.title, entries: [] });
+      setStep('download');
+      setLoading(true);
+
+      try {
+        const res = await window.api.tidalDownloadCollection({
+          type: col.type,
+          id: col.id,
+          title: col.title,
+        });
+        setResult(res);
+        if (res?.ok) {
+          await window.api
+            .getPlaylists()
+            .then(setPlaylists)
+            .catch(() => {});
+        }
+      } catch (err) {
+        setResult({ ok: false, error: err?.message ?? 'Collection download failed' });
+      } finally {
+        setLoading(false);
+        setCollectionBusy(null);
+      }
+    },
+    [
+      collectionBusy,
+      setFetchError,
+      setLoading,
+      setPlaylistInfo,
+      setPlaylists,
+      setResult,
+      setStep,
+      setTrackStatuses,
+    ]
+  );
+
   // ── toggle selection ────────────────────────────────────────────────────────
   const handleToggleEntry = useCallback(
     (index, entry) => {
@@ -552,65 +602,81 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
           <p className="dl-subtitle">Paste a TIDAL URL to import tracks into your library.</p>
         </div>
 
-        <form className="dl-form" onSubmit={handleLoad}>
-          <div className="dl-input-row">
-            <input
-              ref={inputRef}
-              className="dl-input"
-              type="url"
-              placeholder="https://tidal.com/browse/album/…"
-              value={url}
-              onChange={(e) => {
-                setUrl(e.target.value);
-                setFetchError(null);
-              }}
-              onPaste={(e) => {
-                const text = e.clipboardData?.getData('text')?.trim();
-                if (text) {
-                  e.preventDefault();
-                  setUrl(text);
-                  setFetchError(null);
-                }
-              }}
-              disabled={fetching}
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <button className="dl-btn" type="submit" disabled={fetching || !url.trim()}>
-              {fetching ? (
-                <span className="dl-fetch-spinner">
-                  <svg className="dl-spinner-svg" viewBox="0 0 16 16" fill="none">
-                    <circle cx="8" cy="8" r="6" stroke="rgba(255,255,255,0.3)" strokeWidth="2" />
-                    <path
-                      d="M8 2a6 6 0 0 1 6 6"
-                      stroke="#fff"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                  Fetching…
-                </span>
-              ) : (
-                'Get tracks →'
-              )}
-            </button>
-          </div>
-          {fetchError && (
-            <div className="dl-fetch-error" style={{ marginTop: 8 }}>
-              ✗ {fetchError}
-            </div>
-          )}
-        </form>
+        <div className="tidal-browse-layout">
+          <TidalCollectionsPanel
+            onDownload={handleDownloadCollection}
+            busyKey={collectionBusy}
+            disabled={collectionBusy !== null}
+          />
 
-        <div className="dl-sources" style={{ marginTop: 32 }}>
-          <div className="dl-sources-title">Supported URL types</div>
-          <div className="dl-sources-grid">
-            {TIDAL_URL_TYPES.map((t) => (
-              <div key={t.label} className="dl-source-chip">
-                <span className="dl-source-icon">♫</span>
-                <span>{t.label}</span>
+          <div className="tidal-url-main">
+            <form className="dl-form" onSubmit={handleLoad}>
+              <div className="dl-input-row">
+                <input
+                  ref={inputRef}
+                  className="dl-input"
+                  type="url"
+                  placeholder="https://tidal.com/browse/album/…"
+                  value={url}
+                  onChange={(e) => {
+                    setUrl(e.target.value);
+                    setFetchError(null);
+                  }}
+                  onPaste={(e) => {
+                    const text = e.clipboardData?.getData('text')?.trim();
+                    if (text) {
+                      e.preventDefault();
+                      setUrl(text);
+                      setFetchError(null);
+                    }
+                  }}
+                  disabled={fetching}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <button className="dl-btn" type="submit" disabled={fetching || !url.trim()}>
+                  {fetching ? (
+                    <span className="dl-fetch-spinner">
+                      <svg className="dl-spinner-svg" viewBox="0 0 16 16" fill="none">
+                        <circle
+                          cx="8"
+                          cy="8"
+                          r="6"
+                          stroke="rgba(255,255,255,0.3)"
+                          strokeWidth="2"
+                        />
+                        <path
+                          d="M8 2a6 6 0 0 1 6 6"
+                          stroke="#fff"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      Fetching…
+                    </span>
+                  ) : (
+                    'Get tracks →'
+                  )}
+                </button>
               </div>
-            ))}
+              {fetchError && (
+                <div className="dl-fetch-error" style={{ marginTop: 8 }}>
+                  ✗ {fetchError}
+                </div>
+              )}
+            </form>
+
+            <div className="dl-sources" style={{ marginTop: 32 }}>
+              <div className="dl-sources-title">Supported URL types</div>
+              <div className="dl-sources-grid">
+                {TIDAL_URL_TYPES.map((t) => (
+                  <div key={t.label} className="dl-source-chip">
+                    <span className="dl-source-icon">♫</span>
+                    <span>{t.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -813,6 +879,14 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Video items of a collection are skipped by the audio importer */}
+      {result?.videoCount > 0 && (
+        <div className="tidal-skip-note">
+          Skipped {result.videoCount} video item{result.videoCount !== 1 ? 's' : ''} - DjManager
+          imports audio tracks only.
         </div>
       )}
 

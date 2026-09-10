@@ -120,6 +120,8 @@ window.api = {
   tidalInstall: vi.fn().mockResolvedValue({ ok: true }),
   tidalFetchInfo: vi.fn().mockResolvedValue({ ok: false, error: 'not configured' }),
   tidalLogin: vi.fn().mockResolvedValue({ ok: true }),
+  tidalListCollections: vi.fn().mockResolvedValue({ ok: true, collections: [], warnings: [] }),
+  tidalDownloadCollection: vi.fn().mockResolvedValue({ ok: true, trackIds: [], playlistId: null }),
   tidalDownloadUrl: vi.fn().mockResolvedValue({ ok: true, trackIds: [], playlistId: null }),
   cloudSearch: vi.fn().mockResolvedValue({ ok: true, results: [] }),
   cloudSearchPreview: vi
