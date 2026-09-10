@@ -4,6 +4,7 @@ import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
 import TrackDetails from './TrackDetails.jsx';
 import BeatGridEditor from './BeatGridEditor.jsx';
+import { buildExplorerContextMenu } from './explorerContextMenu.js';
 import './MusicLibrary.css';
 import './FileExplorerView.css';
 
@@ -363,23 +364,29 @@ export default function FileExplorerView({ style }) {
     return unsub;
   }, []);
 
-  const addFavourite = useCallback((path) => {
-    const name = basename(path) || path;
+  // Single write path for favourites so a multi-selection update persists once
+  // (one setSetting) instead of once per folder.
+  const updateFavourites = useCallback((paths, add) => {
     setFavourites((prev) => {
-      if (prev.some((f) => f.path === path)) return prev;
-      const next = [...prev, { path, name }];
+      const current = new Set(prev.map((f) => f.path));
+      const next = add
+        ? [
+            ...prev,
+            ...paths
+              .filter((p) => !current.has(p))
+              .map((p) => ({ path: p, name: basename(p) || p })),
+          ]
+        : prev.filter((f) => !paths.includes(f.path));
+      if (next.length === prev.length) return prev;
       window.api.setSetting('explorer_favourites', JSON.stringify(next));
       return next;
     });
   }, []);
 
-  const removeFavourite = useCallback((path) => {
-    setFavourites((prev) => {
-      const next = prev.filter((f) => f.path !== path);
-      window.api.setSetting('explorer_favourites', JSON.stringify(next));
-      return next;
-    });
-  }, []);
+  const removeFavourite = useCallback(
+    (path) => updateFavourites([path], false),
+    [updateFavourites]
+  );
 
   // ── Background broken-link scan ──────────────────────────────────────────
 
@@ -639,10 +646,12 @@ export default function FileExplorerView({ style }) {
     });
   }, []);
 
+  // `silent` lets batch callers suppress the per-folder toast and report one
+  // aggregate result instead; it always returns the raw IPC result.
   const linkDir = useCallback(
-    async (dirPath, recursive, playlistId = null) => {
+    async (dirPath, recursive, playlistId = null, silent = false) => {
       const res = await window.api.linkDirectory(dirPath, recursive, playlistId);
-      showToast(`Linked ${res.linked}/${res.total} tracks`);
+      if (!silent) showToast(`Linked ${res.linked}/${res.total} tracks`);
       if (res.filePaths?.length) {
         const tracks = await window.api.getTracksByPaths(res.filePaths);
         setTracksMap((prev) => {
@@ -651,8 +660,111 @@ export default function FileExplorerView({ style }) {
           return next;
         });
       }
+      return res;
     },
     [showToast]
+  );
+
+  // Import every selected folder. Import, create-playlist and remap all apply
+  // per folder, so a multi-selection runs the action for each of them.
+  const importFolders = useCallback(
+    async (dirPaths, recursive) => {
+      if (dirPaths.length === 1) return linkDir(dirPaths[0], recursive);
+      let linked = 0;
+      let total = 0;
+      for (const dirPath of dirPaths) {
+        const res = await linkDir(dirPath, recursive, null, true);
+        linked += res?.linked ?? 0;
+        total += res?.total ?? 0;
+      }
+      showToast(`Linked ${linked}/${total} tracks`);
+    },
+    [linkDir, showToast]
+  );
+
+  const createPlaylistsForFolders = useCallback(
+    async (dirPaths, recursive) => {
+      const silent = dirPaths.length > 1;
+      let created = 0;
+      let linked = 0;
+      let total = 0;
+      for (const dirPath of dirPaths) {
+        const pl = await window.api.createPlaylist(basename(dirPath) || dirPath);
+        const res = await linkDir(dirPath, recursive, pl.id, silent);
+        linked += res?.linked ?? 0;
+        total += res?.total ?? 0;
+        created += 1;
+      }
+      if (silent) showToast(`Created ${created} playlists, linked ${linked}/${total} tracks`);
+    },
+    [linkDir, showToast]
+  );
+
+  const remapFolders = useCallback(
+    async (dirPaths) => {
+      let count = 0;
+      let failed = 0;
+      for (const dirPath of dirPaths) {
+        const res = await window.api.remapFolder(dirPath);
+        if (res?.ok) count += res.count ?? 0;
+        else failed += 1;
+      }
+      if (failed) showToast(`Remap failed for ${failed} folder(s)`, false);
+      else showToast(`Remapped ${count} track(s)`);
+    },
+    [showToast]
+  );
+
+  // Add every selected file to a playlist: unlinked files are linked first
+  // (one call), then all resulting track ids are added in a single request.
+  const addFilesToPlaylist = useCallback(
+    async (filePaths, playlist) => {
+      const isLinkedTrack = (p) => {
+        const t = tracksMap.get(p);
+        return t?.is_linked === 1 && typeof t.id === 'number';
+      };
+      const trackIds = filePaths.filter(isLinkedTrack).map((p) => tracksMap.get(p).id);
+      const toLink = filePaths.filter((p) => !isLinkedTrack(p));
+      if (toLink.length) {
+        const results = await linkFiles(toLink);
+        for (const r of results) if (typeof r.id === 'number') trackIds.push(r.id);
+      }
+      if (trackIds.length) await window.api.addTracksToPlaylist(playlist.id, trackIds);
+      showToast(`Added ${trackIds.length} track(s) to "${playlist.name}"`);
+    },
+    [tracksMap, linkFiles, showToast]
+  );
+
+  // Delete every selected linked file, behind one confirmation listing them all.
+  const removeFiles = useCallback(
+    (filePaths) => {
+      const items = filePaths
+        .map((p) => ({ path: p, id: tracksMap.get(p)?.id }))
+        .filter((x) => typeof x.id === 'number');
+      if (!items.length) return;
+      const names = items.map((x) => basename(x.path));
+      const many = items.length > 1;
+      const listed = `${names.slice(0, 3).join(', ')}${names.length > 3 ? ', …' : ''}`;
+      setConfirmDialog({
+        title: many ? `🗑️ Delete ${items.length} files?` : '🗑️ Delete file?',
+        body: `${
+          many ? `${items.length} files (${listed})` : `"${names[0]}"`
+        } will be permanently deleted from your disk and removed from the library.\n\nThis cannot be undone.`,
+        confirmLabel: many ? `Delete ${items.length} files` : 'Delete file',
+        onConfirm: async () => {
+          setConfirmDialog(null);
+          for (const it of items) await window.api.removeLinkedFile(it.id);
+          setTracksMap((prev) => {
+            const next = new Map(prev);
+            for (const it of items) next.delete(it.path);
+            return next;
+          });
+          if (many) showToast(`Deleted ${items.length} files`);
+          else showToast(`Deleted: ${names[0]}`);
+        },
+      });
+    },
+    [tracksMap, showToast]
   );
 
   const analyzeFolder = useCallback(
@@ -792,9 +904,167 @@ export default function FileExplorerView({ style }) {
   const menuFilename = menuItem ? basename(menuItem.path) : '';
   const menuBrokenMatch =
     menuItem && !menuIsLinked && !menuIsDir ? (brokenByFilename.get(menuFilename) ?? null) : null;
-  const menuLinkedBroken = menuIsLinked
-    ? (brokenTracks.find((b) => b.id === menuTrack?.id) ?? null)
-    : null;
+
+  // ── Context menu model ────────────────────────────────────────────────────
+  // Built from the whole selection (see explorerContextMenu.js): per-item
+  // actions target every selected folder/file with count-aware wording, while
+  // single-item-only actions stay visible but disabled behind a "<N> selected"
+  // header. Nothing below treats the clicked row specially - only its kind
+  // (folder vs file) decides which menu is shown.
+  const menuModel = useMemo(() => {
+    if (!contextMenu?.item) return null;
+    const clicked = contextMenu.item;
+    const isDir = clicked.type === 'dir';
+    const clickedTrack = tracksMap.get(clicked.path) ?? null;
+    const clickedLinked = clickedTrack?.is_linked === 1;
+    const selection = displayItems.filter((x) => selectedPaths.has(x.path));
+    const selectionPaths = selection.map((x) => x.path);
+    return buildExplorerContextMenu({
+      selection,
+      clickedItem: clicked,
+      favourites,
+      playlists: isDir ? [] : playlists,
+      linkedPaths: isDir ? [] : selectionPaths.filter((p) => tracksMap.get(p)?.is_linked === 1),
+      brokenDirPaths: isDir
+        ? selectionPaths.filter((p) => brokenTracks.some((b) => b.file_path.startsWith(p)))
+        : [],
+      brokenFileMatch:
+        !isDir && !clickedLinked ? (brokenByFilename.get(basename(clicked.path)) ?? null) : null,
+      clickedTrackMissing:
+        !isDir && clickedLinked && brokenTracks.some((b) => b.id === clickedTrack?.id),
+    });
+  }, [
+    contextMenu,
+    displayItems,
+    selectedPaths,
+    tracksMap,
+    favourites,
+    playlists,
+    brokenTracks,
+    brokenByFilename,
+  ]);
+
+  // Create a playlist named after the clicked file and link every target into it.
+  const createPlaylistAndLink = async (filePaths) => {
+    const pl = await window.api.createPlaylist(menuFilename);
+    await linkFiles(filePaths, pl.id);
+  };
+
+  const remapClickedFile = async (broken, filePath) => {
+    const r = await window.api.remapTrack(broken.id, filePath);
+    if (r.ok) {
+      setBrokenTracks((p) => p.filter((b) => b.id !== broken.id));
+      showToast(`Remapped: ${broken.title}`);
+    } else showToast('Remap failed', false);
+  };
+
+  // Every action reads its targets from the entry's `paths`, so a menu entry can
+  // never silently fall back to the clicked row.
+  const runMenuAction = (entry) => {
+    const paths = entry.paths ?? [];
+    closeMenu();
+    switch (entry.id) {
+      case 'favourite-add':
+        updateFavourites(paths, true);
+        if (paths.length > 1) showToast(`Added ${paths.length} folders to Favourites`);
+        break;
+      case 'favourite-remove':
+        updateFavourites(paths, false);
+        if (paths.length > 1) showToast(`Removed ${paths.length} folders from Favourites`);
+        break;
+      case 'import-flat':
+        importFolders(paths, false);
+        break;
+      case 'import-recursive':
+        importFolders(paths, true);
+        break;
+      case 'create-playlist-flat':
+        createPlaylistsForFolders(paths, false);
+        break;
+      case 'create-playlist-recursive':
+        createPlaylistsForFolders(paths, true);
+        break;
+      case 'remap-folders':
+        remapFolders(paths);
+        break;
+      case 'add-to-library':
+        linkFiles(paths);
+        break;
+      case 'playlist-new':
+        createPlaylistAndLink(paths);
+        break;
+      case 'playlist-existing':
+        addFilesToPlaylist(paths, { id: entry.playlistId, name: entry.label });
+        break;
+      case 'play':
+        if (menuItem) handleDoubleClick(menuItem);
+        break;
+      case 'edit-details':
+        if (menuTrack) setDetailsTrack(menuTrack);
+        break;
+      case 'prepare-track':
+        if (menuTrack) setBeatGridTrack(menuTrack);
+        break;
+      case 'reanalyze':
+        if (menuTrack) {
+          window.api.reanalyzeTrack(menuTrack.id);
+          showToast('Re-analysis started');
+        }
+        break;
+      case 'normalize':
+        if (menuTrack) {
+          window.api.normalizeTracksAudio({ trackIds: [menuTrack.id] });
+          showToast('Normalization started');
+        }
+        break;
+      case 'remap-track':
+        if (menuBrokenMatch && menuItem) remapClickedFile(menuBrokenMatch, menuItem.path);
+        break;
+      case 'remove-files':
+        removeFiles(paths);
+        break;
+      default:
+        break;
+    }
+  };
+
+  const renderMenuEntry = (entry, key) => {
+    if (entry.type === 'separator') return <div key={key} className="context-menu-separator" />;
+    if (entry.type === 'header')
+      return (
+        <div key={key} className="context-menu-header">
+          {entry.label}
+        </div>
+      );
+    // A submenu parent only hosts children - clicking it must not close the menu.
+    const clickable = Boolean(entry.id) && !entry.submenu && !entry.disabled;
+    const classes = [
+      'context-menu-item',
+      entry.submenu ? 'context-menu-item--has-submenu' : '',
+      entry.disabled ? 'context-menu-item--disabled' : '',
+      entry.danger ? 'context-menu-item--danger' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    return (
+      <div
+        key={key}
+        className={classes}
+        title={entry.disabled ? entry.disabledReason : entry.title}
+        onClick={clickable ? () => runMenuAction(entry) : undefined}
+      >
+        {entry.color && <span style={{ color: entry.color }}>● </span>}
+        {entry.label}
+        {entry.submenu && !entry.disabled && (
+          <div
+            className={`context-submenu${entry.id === 'add-to-playlist' ? ' context-submenu--scrollable' : ''}`}
+          >
+            {entry.submenu.map((sub, i) => renderMenuEntry(sub, `${key}-${i}`))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div
@@ -1009,274 +1279,7 @@ export default function FileExplorerView({ style }) {
               style={{ top: contextMenu.y + menuShift.y, left: contextMenu.x + menuShift.x }}
               onMouseDown={(e) => e.stopPropagation()}
             >
-              {menuIsDir ? (
-                <>
-                  {favourites.some((f) => f.path === menuItem.path) ? (
-                    <div
-                      className="context-menu-item"
-                      onClick={() => {
-                        closeMenu();
-                        removeFavourite(menuItem.path);
-                      }}
-                    >
-                      ★ Remove from Favourites
-                    </div>
-                  ) : (
-                    <div
-                      className="context-menu-item"
-                      onClick={() => {
-                        closeMenu();
-                        addFavourite(menuItem.path);
-                      }}
-                    >
-                      ⭐ Add to Favourites
-                    </div>
-                  )}
-                  <div className="context-menu-separator" />
-                  <div
-                    className="context-menu-item"
-                    onClick={() => {
-                      closeMenu();
-                      linkDir(menuItem.path, false);
-                    }}
-                  >
-                    📁 Import folder (flat)
-                  </div>
-                  <div
-                    className="context-menu-item"
-                    onClick={() => {
-                      closeMenu();
-                      linkDir(menuItem.path, true);
-                    }}
-                  >
-                    📁 Import folder (recursive)
-                  </div>
-                  <div className="context-menu-separator" />
-                  <div
-                    className="context-menu-item"
-                    onClick={async () => {
-                      closeMenu();
-                      const pl = await window.api.createPlaylist(menuItem.name);
-                      linkDir(menuItem.path, false, pl.id);
-                    }}
-                  >
-                    ➕ Create playlist (flat)
-                  </div>
-                  <div
-                    className="context-menu-item"
-                    onClick={async () => {
-                      closeMenu();
-                      const pl = await window.api.createPlaylist(menuItem.name);
-                      linkDir(menuItem.path, true, pl.id);
-                    }}
-                  >
-                    ➕ Create playlist (recursive)
-                  </div>
-                  {brokenTracks.some((b) => b.file_path.startsWith(menuItem.path)) && (
-                    <>
-                      <div className="context-menu-separator" />
-                      <div
-                        className="context-menu-item"
-                        onClick={async () => {
-                          closeMenu();
-                          const r = await window.api.remapFolder(menuItem.path);
-                          showToast(r.ok ? `Remapped ${r.count} track(s)` : 'Remap failed', r.ok);
-                        }}
-                      >
-                        🔗 Remap broken folder…
-                      </div>
-                    </>
-                  )}
-                </>
-              ) : (
-                <>
-                  {/* Add to library — unlinked files only */}
-                  {!menuIsLinked && (
-                    <>
-                      <div
-                        className="context-menu-item"
-                        onClick={() => {
-                          closeMenu();
-                          linkFiles([menuItem.path]);
-                        }}
-                      >
-                        ➕ Add to library
-                      </div>
-                      <div className="context-menu-separator" />
-                    </>
-                  )}
-
-                  {/* Add to playlist submenu */}
-                  <div className="context-menu-item context-menu-item--has-submenu">
-                    ➕ Add to playlist
-                    <div className="context-submenu context-submenu--scrollable">
-                      <div
-                        className="context-menu-item"
-                        onClick={async () => {
-                          closeMenu();
-                          const pl = await window.api.createPlaylist(menuFilename);
-                          await linkFiles([menuItem.path], pl.id);
-                        }}
-                      >
-                        ✚ New playlist…
-                      </div>
-                      {playlists.length > 0 && <div className="context-menu-separator" />}
-                      {playlists.map((pl) => (
-                        <div
-                          key={pl.id}
-                          className="context-menu-item"
-                          onClick={async () => {
-                            closeMenu();
-                            let trackId = menuTrack?.id;
-                            if (!menuIsLinked || typeof trackId === 'string') {
-                              const results = await linkFiles([menuItem.path]);
-                              trackId = results[0]?.id ?? null;
-                            }
-                            if (trackId && typeof trackId === 'number')
-                              await window.api.addTracksToPlaylist(pl.id, [trackId]);
-                            showToast(`Added to "${pl.name}"`);
-                          }}
-                        >
-                          {pl.color && <span style={{ color: pl.color }}>● </span>}
-                          {pl.name}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="context-menu-separator" />
-
-                  {/* Play */}
-                  <div
-                    className="context-menu-item"
-                    onClick={() => {
-                      closeMenu();
-                      handleDoubleClick(menuItem);
-                    }}
-                  >
-                    ▶ Play
-                  </div>
-
-                  {/* Edit / Prepare / Analysis — linked tracks only */}
-                  {menuIsLinked && menuTrack && (
-                    <>
-                      <div className="context-menu-separator" />
-                      <div
-                        className="context-menu-item"
-                        onClick={() => {
-                          closeMenu();
-                          setDetailsTrack(menuTrack);
-                        }}
-                      >
-                        ✏️ Edit Details
-                      </div>
-                      <div
-                        className="context-menu-item"
-                        onClick={() => {
-                          closeMenu();
-                          setBeatGridTrack(menuTrack);
-                        }}
-                      >
-                        🎛 Prepare Track…
-                      </div>
-                      <div className="context-menu-item context-menu-item--has-submenu">
-                        🔬 Analysis
-                        <div className="context-submenu">
-                          <div
-                            className="context-menu-item"
-                            onClick={() => {
-                              closeMenu();
-                              window.api.reanalyzeTrack(menuTrack.id);
-                              showToast('Re-analysis started');
-                            }}
-                          >
-                            🔄 Re-analyze
-                          </div>
-                          <div className="context-menu-separator" />
-                          <div
-                            className="context-menu-item"
-                            onClick={() => {
-                              closeMenu();
-                              window.api.normalizeTracksAudio({ trackIds: [menuTrack.id] });
-                              showToast('Normalization started');
-                            }}
-                          >
-                            🔊 Normalize
-                          </div>
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  {/* Remap — only when broken link detected */}
-                  {(menuBrokenMatch || menuLinkedBroken) && (
-                    <>
-                      <div className="context-menu-separator" />
-                      {menuBrokenMatch && (
-                        <div
-                          className="context-menu-item"
-                          title={`Remap broken track: ${menuBrokenMatch.title}`}
-                          onClick={async () => {
-                            closeMenu();
-                            const r = await window.api.remapTrack(
-                              menuBrokenMatch.id,
-                              menuItem.path
-                            );
-                            if (r.ok) {
-                              setBrokenTracks((p) => p.filter((b) => b.id !== menuBrokenMatch.id));
-                              showToast(`Remapped: ${menuBrokenMatch.title}`);
-                            } else showToast('Remap failed', false);
-                          }}
-                        >
-                          🔗 Remap &ldquo;{menuBrokenMatch.title}&rdquo; to this file
-                        </div>
-                      )}
-                      {menuLinkedBroken && (
-                        <div
-                          className="context-menu-item context-menu-item--disabled"
-                          title="This track's file is missing from disk"
-                        >
-                          ⚠️ Broken link — file missing
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {/* Remove file */}
-                  {menuIsLinked && (
-                    <>
-                      <div className="context-menu-separator" />
-                      <div
-                        className="context-menu-item context-menu-item--danger"
-                        onClick={() => {
-                          const { path: itemPath, id: trackId } = {
-                            path: menuItem.path,
-                            id: menuTrack.id,
-                          };
-                          closeMenu();
-                          setConfirmDialog({
-                            title: '🗑️ Delete file?',
-                            body: `"${basename(itemPath)}" will be permanently deleted from your disk and removed from the library.\n\nThis cannot be undone.`,
-                            confirmLabel: 'Delete file',
-                            onConfirm: async () => {
-                              setConfirmDialog(null);
-                              await window.api.removeLinkedFile(trackId);
-                              setTracksMap((prev) => {
-                                const next = new Map(prev);
-                                next.delete(itemPath);
-                                return next;
-                              });
-                              showToast(`Deleted: ${basename(itemPath)}`);
-                            },
-                          });
-                        }}
-                      >
-                        🗑️ Remove file
-                      </div>
-                    </>
-                  )}
-                </>
-              )}
+              {menuModel?.entries.map((entry, i) => renderMenuEntry(entry, `menu-${i}`))}
             </div>
           </>
         )}
