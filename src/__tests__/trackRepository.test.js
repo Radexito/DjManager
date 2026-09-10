@@ -701,3 +701,69 @@ describe('getTrackRank', () => {
     expect(getTrackRank({ trackId: 999999, sort: { key: 'title', asc: true } })).toBeNull();
   });
 });
+
+// #463 — trim range columns (Prepare Track)
+describe('trackRepository — trim columns', () => {
+  it('defaults trim_start_ms / trim_end_ms to NULL when addTrack() gets none', () => {
+    const id = addTrack(SAMPLE);
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBeNull();
+    expect(track.trim_end_ms).toBeNull();
+  });
+
+  it('persists trim columns passed to addTrack()', () => {
+    const id = addTrack({ ...SAMPLE, trim_start_ms: 15_000, trim_end_ms: 145_000 });
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBe(15_000);
+    expect(track.trim_end_ms).toBe(145_000);
+  });
+
+  it('stores and reads back a trim range set through updateTrack()', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'trim-upd', file_path: '/tmp/trim-upd.mp3' });
+    updateTrack(id, { trim_start_ms: 30_000, trim_end_ms: 120_000 });
+
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBe(30_000);
+    expect(track.trim_end_ms).toBe(120_000);
+  });
+
+  it('exposes the trim columns through getTracks()', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'trim-list', file_path: '/tmp/trim-list.mp3' });
+    updateTrack(id, { trim_start_ms: 5000, trim_end_ms: 60_000 });
+
+    const rows = getTracks({ limit: 10 });
+    const row = rows.find((t) => t.id === id);
+    expect(row.trim_start_ms).toBe(5000);
+    expect(row.trim_end_ms).toBe(60_000);
+  });
+
+  it('clears both trim points when updateTrack() gets nulls (reset to full track)', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'trim-reset', file_path: '/tmp/trim-reset.mp3' });
+    updateTrack(id, { trim_start_ms: 30_000, trim_end_ms: 120_000 });
+    updateTrack(id, { trim_start_ms: null, trim_end_ms: null });
+
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBeNull();
+    expect(track.trim_end_ms).toBeNull();
+  });
+
+  it('allows a start-only trim (end = end of file)', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'trim-start', file_path: '/tmp/trim-start.mp3' });
+    updateTrack(id, { trim_start_ms: 12_345 });
+
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBe(12_345);
+    expect(track.trim_end_ms).toBeNull();
+  });
+
+  it('keeps the trim columns after an analysis update (updateTrack always sets analyzed = 1)', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'trim-analysis', file_path: '/tmp/trim-a.mp3' });
+    updateTrack(id, { trim_start_ms: 7000, trim_end_ms: 90_000 });
+    updateTrack(id, { bpm: 128, key_camelot: '8A' });
+
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBe(7000);
+    expect(track.trim_end_ms).toBe(90_000);
+    expect(track.analyzed).toBe(1);
+  });
+});

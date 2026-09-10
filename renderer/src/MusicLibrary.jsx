@@ -2273,9 +2273,12 @@ function MusicLibrary({
   );
 
   const handleApplyBeatGrid = useCallback(
-    async (trackId, { beatgrid_offset, bpm_override }) => {
+    async (trackId, { beatgrid_offset, bpm_override, trim_start_ms, trim_end_ms }) => {
       const update = { beatgrid_offset };
       if (bpm_override != null) update.bpm_override = bpm_override;
+      // #463: trim range travels with the same Apply — null clears it
+      update.trim_start_ms = trim_start_ms ?? null;
+      update.trim_end_ms = trim_end_ms ?? null;
       setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, ...update } : t)));
       patchCurrentTrack(trackId, update);
       await window.api.updateTrack(trackId, update);
