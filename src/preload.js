@@ -160,6 +160,14 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('library-updated', handler);
     return () => ipcRenderer.removeListener('library-updated', handler);
   },
+  // #256 — ingest folder watchdog: manual scan + live status events
+  scanWatchFolders: () => ipcRenderer.invoke('scan-watch-folders'),
+  getWatchState: () => ipcRenderer.invoke('get-watch-state'),
+  onWatchStatus: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('watch-status', handler);
+    return () => ipcRenderer.removeListener('watch-status', handler);
+  },
   onImportProgress: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('import-progress', handler);
