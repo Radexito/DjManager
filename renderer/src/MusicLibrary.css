@@ -333,6 +333,18 @@
   background: transparent;
 }
 
+/* Count header shown when a multi-selection includes single-item-only actions */
+.context-menu-header {
+  padding: 6px 16px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8a8a8a;
+  cursor: default;
+  white-space: nowrap;
+}
+
 .context-menu-separator {
   height: 1px;
   background: #3a3a3a;
