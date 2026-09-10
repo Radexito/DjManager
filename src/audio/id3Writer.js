@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { getFfmpegRuntimePath } from '../deps.js';
 import { ffprobe as runFfprobe } from './ffmpeg.js';
+import { supportsMp4Tags, readMp4Tags, writeMp4Tags } from './mp4Tags.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -37,6 +38,8 @@ const KEY_TAG_NAMES = ['key', 'KEY', 'initialkey', 'INITIALKEY', 'TKEY', 'tkey']
 
 /** True when the file's container can carry BPM/key tags (#474). */
 export function supportsBpmKeyTags(filePath) {
+  // MP4 goes through the atom writer, not ffmpeg, but it is supported.
+  if (supportsMp4Tags(filePath)) return true;
   return Boolean(BPM_KEY_FIELDS[path.extname(filePath ?? '').toLowerCase()]);
 }
 
@@ -63,7 +66,14 @@ export async function readBpmKeyTags(filePath) {
  * ffmpeg metadata write through a temp file + atomic rename. `-map_metadata 0`
  * keeps every existing tag; only the passed keys are overridden. The temp file
  * is always cleaned up, so a failure can never corrupt the original.
+ *
+ * MP4 container fields that leaked into the tag as `TXXX major_brand` /
+ * `minor_version` / `compatible_brands` (they arrive whenever an m4a is turned
+ * into an mp3) are deleted instead of copied forward: ffmpeg removes a tag when
+ * it is given an empty value.
  */
+const JUNK_CONTAINER_TAGS = ['major_brand', 'minor_version', 'compatible_brands'];
+
 async function runMetadataWrite(filePath, metadataArgs) {
   const ffmpeg = getFfmpegRuntimePath();
   if (!fs.existsSync(ffmpeg)) throw new Error('ffmpeg binary not found');
@@ -77,6 +87,7 @@ async function runMetadataWrite(filePath, metadataArgs) {
       filePath,
       '-map_metadata',
       '0',
+      ...JUNK_CONTAINER_TAGS.flatMap((tag) => ['-metadata', `${tag}=`]),
       ...metadataArgs,
       '-codec',
       'copy',
@@ -147,16 +158,20 @@ export async function writeBpmKeyTags(
 ) {
   if (!filePath || !fs.existsSync(filePath)) return { ok: false, reason: 'missing-file' };
 
-  const ext = path.extname(filePath).toLowerCase();
-  const fields = BPM_KEY_FIELDS[ext];
-  if (!fields) return { ok: false, reason: 'unsupported-format' };
-
   const bpmValue =
     bpm == null || bpm === '' || !Number.isFinite(Number(bpm))
       ? null
       : String(Math.round(Number(bpm)));
   const keyValue = key == null || String(key).trim() === '' ? null : String(key).trim();
   if (bpmValue == null && keyValue == null) return { ok: false, reason: 'no-values' };
+
+  // MP4 (.m4a/.mp4) has no ffmpeg-writable key field — edit the atoms ourselves.
+  if (supportsMp4Tags(filePath)) {
+    return writeMp4BpmKeyTags(filePath, { bpm: bpmValue, key: keyValue, overwrite });
+  }
+
+  const fields = BPM_KEY_FIELDS[path.extname(filePath).toLowerCase()];
+  if (!fields) return { ok: false, reason: 'unsupported-format' };
 
   // Existing tags decide whether anything is left to do.
   let existing = { bpm: null, key: null };
@@ -206,4 +221,33 @@ function bpmTagIsCurrent(existing, value, overwrite) {
 function keyTagIsCurrent(existing, value, overwrite) {
   if (existing == null) return false;
   return overwrite ? String(existing).toLowerCase() === String(value).toLowerCase() : true;
+}
+
+/**
+ * #474 — BPM/key into an .m4a/.mp4 by editing the `ilst` atoms ourselves
+ * (`tmpo` + a freeform `INITIALKEY` item). Same fill-missing / overwrite policy
+ * as the ffmpeg path; nothing else in the file is touched.
+ *
+ * @param {string} filePath
+ * @param {{ bpm?: number|string|null, key?: string|null, overwrite?: boolean }} opts
+ * @returns {{ ok: boolean, reason?: string, wrote?: string[], error?: string }}
+ */
+export function writeMp4BpmKeyTags(filePath, { bpm = null, key = null, overwrite = false } = {}) {
+  let existing = { bpm: null, key: null };
+  try {
+    existing = readMp4Tags(fs.readFileSync(filePath));
+  } catch (err) {
+    if (!overwrite) return { ok: false, reason: 'unreadable-tags', error: err.message };
+  }
+
+  const wantsBpm = bpm != null && !bpmTagIsCurrent(existing.bpm, bpm, overwrite);
+  const wantsKey = key != null && !keyTagIsCurrent(existing.key, key, overwrite);
+  if (!wantsBpm && !wantsKey) return { ok: true, reason: 'already-current', wrote: [] };
+
+  const res = writeMp4Tags(filePath, {
+    bpm: wantsBpm ? Math.round(Number(bpm)) : null,
+    key: wantsKey ? key : null,
+  });
+  if (!res.ok) return { ok: false, reason: res.reason, error: res.error };
+  return { ok: true, wrote: [wantsBpm ? 'bpm' : null, wantsKey ? 'key' : null].filter(Boolean) };
 }

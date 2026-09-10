@@ -43,11 +43,24 @@ const FORMAT_CODEC = {
  * Copy srcPath to destPath via ffmpeg, optionally applying a gain adjustment
  * and/or converting to a different output format/codec.
  * destPath is always overwritten (-y). Parent directory must already exist.
+ *
+ * `metadata` (optional) writes real tags into the output so the file is
+ * self-describing for other software: { title, artist, album, bpm, key }.
+ * BPM/key land in the container's own field (ID3 TBPM/TKEY for mp3, Vorbis
+ * BPM/KEY for flac/ogg). MP4 output is handled by the caller, which edits the
+ * ilst atoms directly (ffmpeg cannot write the key field there).
+ *
+ * Junk inherited from a container change is always dropped: a .m4a converted to
+ * .mp3 used to carry `TXXX major_brand/minor_version/compatible_brands` (fields
+ * of the MP4 container that mean nothing inside an MP3). Passing an empty value
+ * makes ffmpeg delete the tag.
  */
+const JUNK_CONTAINER_TAGS = ['major_brand', 'minor_version', 'compatible_brands'];
+
 export function convertAudio(
   srcPath,
   destPath,
-  { gainDb = 0, sourceBitrateKbps = null, format = null } = {}
+  { gainDb = 0, sourceBitrateKbps = null, format = null, metadata = null } = {}
 ) {
   const ffmpegPath = getFfmpegRuntimePath();
   if (!fs.existsSync(ffmpegPath))
@@ -88,6 +101,19 @@ export function convertAudio(
     // Preserve source bitrate to avoid silent quality downgrade (ffmpeg default is 128 kbps)
     if (sourceBitrateKbps) args.push('-b:a', `${Math.round(sourceBitrateKbps)}k`);
   }
+
+  for (const junk of JUNK_CONTAINER_TAGS) {
+    args.push('-metadata', `${junk}=`);
+  }
+
+  if (metadata) {
+    for (const [key, value] of Object.entries(bpmKeyMetadata(format, metadata))) {
+      if (value !== null && value !== undefined && value !== '') {
+        args.push('-metadata', `${key}=${value}`);
+      }
+    }
+  }
+
   args.push(destPath);
 
   return new Promise((resolve, reject) => {
@@ -100,4 +126,24 @@ export function convertAudio(
     });
     proc.on('error', reject);
   });
+}
+
+/** ffmpeg metadata keys that carry a title/artist/album plus BPM/key per format. */
+export function bpmKeyMetadata(format, { title, artist, album, bpm, key } = {}) {
+  const out = {};
+  if (title) out.title = title;
+  if (artist) out.artist = artist;
+  if (album) out.album = album;
+  if (bpm == null && !key) return out;
+
+  if (format === 'flac' || format === 'ogg' || format === 'opus') {
+    // Vorbis comments
+    if (bpm != null) out.BPM = String(Math.round(Number(bpm)));
+    if (key) out.KEY = String(key);
+  } else {
+    // ID3 frames (mp3, and the ID3 chunk ffmpeg writes into wav/aiff/adts)
+    if (bpm != null) out.TBPM = String(Math.round(Number(bpm)));
+    if (key) out.TKEY = String(key);
+  }
+  return out;
 }
