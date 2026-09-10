@@ -121,6 +121,10 @@ import {
   startLogin as tidalStartLogin,
   downloadTidal,
   fetchTidalInfo,
+  fetchTidalCollections,
+  fetchTidalCollectionTracks,
+  splitTidalCollectionEntries,
+  reindexTidalEntries,
   searchTidal,
   getTidalPreviewUrl,
 } from './audio/tidalDlManager.js';
@@ -1605,131 +1609,228 @@ ipcMain.handle('tidal-login', async () => {
   }
 });
 
-ipcMain.handle(
-  'tidal-download-url',
-  async (_event, { url, selectedEntries, linkTrackIds, existingPlaylistId, newPlaylistName }) => {
-    const send = (ch, data) => {
-      if (global.mainWindow) global.mainWindow.webContents.send(ch, data);
+// Build the TIDAL URL handed to tdn for one entry. Entries resolved from an
+// account collection carry their own URL (tracks and videos), so prefer it and
+// only fall back to the conventional track URL for search/single-track entries.
+function tidalEntryUrl(entry) {
+  if (entry?.url) return entry.url;
+  if (entry?.id) return `https://tidal.com/browse/track/${entry.id}`;
+  return null;
+}
+
+// Share URL of an account collection, used for provenance and as the default
+// playlist name source when a collection is downloaded without a URL.
+function tidalCollectionUrl(type, id) {
+  switch (type) {
+    case 'playlist':
+      return `https://tidal.com/browse/playlist/${id}`;
+    case 'mix':
+      return `https://tidal.com/browse/mix/${id}`;
+    case 'album':
+      return `https://tidal.com/browse/album/${id}`;
+    case 'artist':
+      return `https://tidal.com/browse/artist/${id}`;
+    default:
+      return 'https://tidal.com/my-collection';
+  }
+}
+
+/**
+ * Shared TIDAL download routine: resolves the URLs handed to tdn, imports every
+ * downloaded file into the library and reports per-track progress.
+ * Used by both `tidal-download-url` and `tidal-download-collection`.
+ */
+async function runTidalDownload({
+  url,
+  selectedEntries,
+  linkTrackIds,
+  existingPlaylistId,
+  newPlaylistName,
+}) {
+  const send = (ch, data) => {
+    if (global.mainWindow) global.mainWindow.webContents.send(ch, data);
+  };
+  const sendTrackUpdate = (data) => send('tidal-track-update', data);
+  const sendProgress = (msg) => send('tidal-progress', { msg });
+
+  try {
+    const tmpDir = path.join(app.getPath('userData'), 'tidal_tmp');
+
+    // Contiguous indices: progress is reported positionally (Nth file -> Nth
+    // entry), so a selection with gaps would desync the per-track status list.
+    const entries = reindexTidalEntries(selectedEntries);
+
+    // Resolve the download URLs: individual entries when selectedEntries are provided,
+    // otherwise the raw URL (for mixes and direct single-URL downloads).
+    const downloadUrls =
+      entries.length > 0 ? entries.map((e) => tidalEntryUrl(e)).filter(Boolean) : [url];
+
+    // Create playlist before starting download so tracks can be added progressively.
+    let playlistId = null;
+    if (existingPlaylistId) {
+      playlistId = existingPlaylistId;
+    } else if (newPlaylistName?.trim()) {
+      try {
+        const { id } = findOrCreatePlaylist(newPlaylistName.trim(), null, url);
+        playlistId = id;
+        send('playlists-updated');
+      } catch (err) {
+        console.error('[tidal] findOrCreatePlaylist failed:', err.message);
+      }
+    }
+
+    // Emit init event so the UI can render the full track list immediately.
+    if (entries.length > 0) {
+      sendTrackUpdate({ type: 'init', tracks: entries });
+    }
+
+    const trackIds = [];
+    // fileIndex tracks which entry corresponds to the next file reported by onFileReady.
+    // tdn downloads in the order we pass URLs, so positional matching is reliable.
+    let fileIndex = 0;
+
+    const onFileReady = async (filePath) => {
+      const entry = entries[fileIndex] ?? null;
+      const idx = fileIndex;
+      fileIndex++;
+
+      if (entry) {
+        sendTrackUpdate({
+          index: idx,
+          title: entry.title,
+          artist: entry.artist,
+          status: 'importing',
+        });
+      } else {
+        // No entry info (e.g. mix download) — emit a generic update
+        sendTrackUpdate({
+          index: idx,
+          title: path.basename(filePath),
+          artist: '',
+          status: 'importing',
+        });
+      }
+
+      try {
+        const trackSourceUrl = tidalEntryUrl(entry) ?? url;
+        const trackId = await importAudioFile(filePath, {
+          source_url: trackSourceUrl,
+          source_link: url !== trackSourceUrl ? url : null,
+          source_platform: 'tidal',
+        });
+        trackIds.push(trackId);
+        if (playlistId) {
+          addTrackToPlaylist(playlistId, trackId);
+          send('playlists-updated');
+        }
+        send('library-updated');
+        sendTrackUpdate({
+          index: idx,
+          title: entry?.title ?? path.basename(filePath),
+          artist: entry?.artist ?? '',
+          status: 'done',
+          trackId,
+        });
+      } catch (err) {
+        console.error('[tidal] importAudioFile failed:', err.message);
+        sendTrackUpdate({
+          index: idx,
+          title: entry?.title ?? path.basename(filePath),
+          artist: entry?.artist ?? '',
+          status: 'failed',
+          error: err.message,
+        });
+      }
     };
-    const sendTrackUpdate = (data) => send('tidal-track-update', data);
-    const sendProgress = (msg) => send('tidal-progress', { msg });
+
+    sendProgress('Starting download…');
+
+    // Only call tdn if there are new tracks to download
+    const hasDownloads = entries.length > 0 || !selectedEntries;
+    if (hasDownloads) {
+      const files = await downloadTidal(downloadUrls, tmpDir, sendProgress, { onFileReady });
+      if (files.length === 0 && trackIds.length === 0 && (linkTrackIds?.length ?? 0) === 0) {
+        send('tidal-progress', null);
+        return { ok: false, error: 'Download finished but no audio files were found.' };
+      }
+    }
+
+    // Link already-in-library tracks to the playlist (no re-download needed)
+    if (linkTrackIds?.length > 0 && playlistId) {
+      for (const tid of linkTrackIds) {
+        try {
+          addTrackToPlaylist(playlistId, tid);
+        } catch {
+          // ignore duplicate playlist entry errors
+        }
+      }
+      send('playlists-updated');
+    }
+
+    send('tidal-progress', null);
+    return { ok: true, trackIds, playlistId: playlistId ?? null };
+  } catch (err) {
+    send('tidal-progress', null);
+    return { ok: false, error: err.message };
+  }
+}
+
+ipcMain.handle('tidal-download-url', async (_event, opts) => runTidalDownload(opts ?? {}));
+
+ipcMain.handle('tidal-list-collections', async () => {
+  try {
+    const res = await fetchTidalCollections();
+    console.log(`[tidal-list-collections] ok=${res.ok} count=${res.collections?.length ?? 0}`);
+    return res;
+  } catch (err) {
+    console.error('[tidal-list-collections] error:', err.message);
+    return { ok: false, error: err.message, collections: [], warnings: [] };
+  }
+});
+
+ipcMain.handle(
+  'tidal-download-collection',
+  async (_event, { type, id, title, existingPlaylistId, newPlaylistName } = {}) => {
+    if (!type || !id) return { ok: false, error: 'Missing collection type or id' };
 
     try {
-      const tmpDir = path.join(app.getPath('userData'), 'tidal_tmp');
+      // Resolve the collection into individual track/video entries, then reuse
+      // the shared download path (same tdn invocation, same progressive import).
+      const resolved = await fetchTidalCollectionTracks(type, id);
+      if (!resolved.ok) return resolved;
 
-      // Resolve the download URLs: individual track URLs when selectedEntries are provided,
-      // otherwise the raw URL (for mixes and direct single-URL downloads).
-      const downloadUrls =
-        selectedEntries?.length > 0
-          ? selectedEntries.map((e) => `https://tidal.com/browse/track/${e.id}`)
-          : [url];
+      // Videos download as .mp4/.ts, which the audio importer cannot read.
+      const { tracks, videoCount } = splitTidalCollectionEntries(resolved.entries);
+      const collectionTitle = resolved.title || title || id;
 
-      // Create playlist before starting download so tracks can be added progressively.
-      let playlistId = null;
-      if (existingPlaylistId) {
-        playlistId = existingPlaylistId;
-      } else if (newPlaylistName?.trim()) {
-        try {
-          const { id } = findOrCreatePlaylist(newPlaylistName.trim(), null, url);
-          playlistId = id;
-          send('playlists-updated');
-        } catch (err) {
-          console.error('[tidal] findOrCreatePlaylist failed:', err.message);
-        }
+      if (tracks.length === 0) {
+        return {
+          ok: false,
+          error:
+            videoCount > 0
+              ? `"${collectionTitle}" contains only video items. DjManager imports audio tracks only.`
+              : 'This collection has no downloadable tracks.',
+          videoCount,
+        };
       }
 
-      // Emit init event so the UI can render the full track list immediately.
-      if (selectedEntries?.length > 0) {
-        sendTrackUpdate({ type: 'init', tracks: selectedEntries });
+      if (global.mainWindow) {
+        global.mainWindow.webContents.send('tidal-progress', {
+          msg: `Downloading ${tracks.length} tracks from ${collectionTitle}...`,
+        });
       }
 
-      const trackIds = [];
-      // fileIndex tracks which selectedEntry corresponds to the next file reported by onFileReady.
-      // tdn downloads in the order we pass URLs, so positional matching is reliable.
-      let fileIndex = 0;
+      const res = await runTidalDownload({
+        url: tidalCollectionUrl(type, id),
+        selectedEntries: tracks,
+        linkTrackIds: [],
+        existingPlaylistId: existingPlaylistId ?? null,
+        newPlaylistName: newPlaylistName ?? collectionTitle,
+      });
 
-      const onFileReady = async (filePath) => {
-        const entry = selectedEntries?.[fileIndex] ?? null;
-        const idx = fileIndex;
-        fileIndex++;
-
-        if (entry) {
-          sendTrackUpdate({
-            index: idx,
-            title: entry.title,
-            artist: entry.artist,
-            status: 'importing',
-          });
-        } else {
-          // No entry info (e.g. mix download) — emit a generic update
-          sendTrackUpdate({
-            index: idx,
-            title: path.basename(filePath),
-            artist: '',
-            status: 'importing',
-          });
-        }
-
-        try {
-          const trackSourceUrl = entry?.id ? `https://tidal.com/browse/track/${entry.id}` : url;
-          const trackId = await importAudioFile(filePath, {
-            source_url: trackSourceUrl,
-            source_link: url !== trackSourceUrl ? url : null,
-            source_platform: 'tidal',
-          });
-          trackIds.push(trackId);
-          if (playlistId) {
-            addTrackToPlaylist(playlistId, trackId);
-            send('playlists-updated');
-          }
-          send('library-updated');
-          sendTrackUpdate({
-            index: idx,
-            title: entry?.title ?? path.basename(filePath),
-            artist: entry?.artist ?? '',
-            status: 'done',
-            trackId,
-          });
-        } catch (err) {
-          console.error('[tidal] importAudioFile failed:', err.message);
-          sendTrackUpdate({
-            index: idx,
-            title: entry?.title ?? path.basename(filePath),
-            artist: entry?.artist ?? '',
-            status: 'failed',
-            error: err.message,
-          });
-        }
-      };
-
-      sendProgress('Starting download…');
-
-      // Only call tdn if there are new tracks to download
-      const hasDownloads = selectedEntries?.length > 0 || !selectedEntries;
-      if (hasDownloads) {
-        const files = await downloadTidal(downloadUrls, tmpDir, sendProgress, { onFileReady });
-        if (files.length === 0 && trackIds.length === 0 && (linkTrackIds?.length ?? 0) === 0) {
-          send('tidal-progress', null);
-          return { ok: false, error: 'Download finished but no audio files were found.' };
-        }
-      }
-
-      // Link already-in-library tracks to the playlist (no re-download needed)
-      if (linkTrackIds?.length > 0 && playlistId) {
-        for (const tid of linkTrackIds) {
-          try {
-            addTrackToPlaylist(playlistId, tid);
-          } catch {
-            // ignore duplicate playlist entry errors
-          }
-        }
-        send('playlists-updated');
-      }
-
-      send('tidal-progress', null);
-      return { ok: true, trackIds, playlistId: playlistId ?? null };
+      return { ...res, videoCount };
     } catch (err) {
-      send('tidal-progress', null);
+      console.error('[tidal-download-collection] error:', err.message);
       return { ok: false, error: err.message };
     }
   }
