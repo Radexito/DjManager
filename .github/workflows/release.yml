@@ -16,12 +16,33 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history + tags — the version derives from tags
+
       - name: Generate release metadata
         id: meta
         run: |
-          VERSION="1.0.${{ github.run_number }}"
+          # Semantic versioning derived from the highest existing vX.Y.Z tag:
+          #   staging (dev build)   -> patch bump:  1.0.65, 1.0.66, 1.0.67
+          #   master (dev -> master)-> minor bump:  1.0.x  -> 1.1.0
+          LAST_TAG=$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | sed -E 's/^v//; s/-.*//' | sort -V | tail -1)
+          if [ -z "$LAST_TAG" ]; then
+            MAJOR=1; MINOR=0; PATCH=0
+          else
+            IFS=. read -r MAJOR MINOR PATCH <<< "$LAST_TAG"
+          fi
+          if [ "${{ github.ref_name }}" == "master" ]; then
+            # dev -> master release: bump MINOR, reset patch -> 1.1.0
+            MINOR=$((MINOR + 1)); PATCH=0
+            PRERELEASE=false
+          else
+            # staging pre-release build: bump PATCH -> 1.0.66, 1.0.67, ...
+            PATCH=$((PATCH + 1))
+            PRERELEASE=true
+          fi
+          VERSION="$MAJOR.$MINOR.$PATCH"
           TAG="v${VERSION}-${GITHUB_SHA::7}"
-          PRERELEASE=${{ github.ref_name == 'staging' }}
           echo "tag=$TAG"           >> "$GITHUB_OUTPUT"
           echo "version=$VERSION"   >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
