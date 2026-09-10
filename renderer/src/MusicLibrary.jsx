@@ -875,6 +875,7 @@ function MusicLibrary({
   onSearchChange,
   openDetailsRequest,
   locateTrack,
+  onImportUsbCues,
 }) {
   const isPlaylistView = selectedPlaylist !== 'music';
   const {
@@ -3076,6 +3077,18 @@ function MusicLibrary({
                         </div>
                       </SubItem>
                     </SubItem>
+
+                    {/* ── Cue points from hardware (#259) ── */}
+                    <div className="context-menu-separator" />
+                    <div
+                      className="context-menu-item"
+                      onClick={() => {
+                        setContextMenu(null);
+                        onImportUsbCues?.();
+                      }}
+                    >
+                      🎧 Import cue points from USB
+                    </div>
 
                     {/* ── Remove ── */}
                     {isPlaylistView ? (

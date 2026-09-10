@@ -139,6 +139,7 @@ import { initLogger, getLogDir, initRendererLogger, logRendererMessage } from '.
 import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
 import { detectWindowsDrives } from './explorer/drives.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
+import { readTrackCues, buildCueImportPlan } from './usb/anlzCueReader.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
 import { resolveExportFormat } from './usb/deviceFormats.js';
@@ -480,6 +481,8 @@ async function initApp() {
       sendDepsProgress(null);
       // Auto-generate waveforms for any analyzed tracks missing overview data
       autoGenerateMissingWaveforms();
+      // #259 — notice a Rekordbox stick being plugged in and offer a cue import
+      startUsbCueWatch();
     })
     .catch((err) => {
       console.error('[deps] Failed to download FFmpeg:', err.message);
@@ -2296,6 +2299,145 @@ function saveManifest(usbRoot, tracksMap, playlistsMap) {
     }),
     'utf8'
   );
+}
+
+// ── #259: pull cue points set on hardware back into the library ────────────────
+// The CDJ writes hot/memory cues into the stick's ANLZ files; the export
+// manifest tells us which library track each USB file came from, so a stick we
+// exported can be read straight back.
+
+/** Everything the stick carries for tracks that still exist in the library. */
+function scanUsbCues(usbRoot) {
+  const manifest = loadManifest(usbRoot);
+  const tracks = [];
+  for (const [id, row] of manifest.tracks) {
+    const trackId = Number(id);
+    const track = getTrackById(trackId);
+    if (!track || !row?.file_path) continue;
+    const usbCues = readTrackCues(usbRoot, row.file_path);
+    if (usbCues.length === 0) continue;
+    const plan = buildCueImportPlan({ usbCues, existingCues: getCuePoints(trackId) });
+    tracks.push({
+      trackId,
+      title: track.title || path.basename(track.file_path || ''),
+      usbFilePath: row.file_path,
+      cues: usbCues,
+      add: plan.add,
+      update: plan.update,
+      skip: plan.skip,
+    });
+  }
+  const summary = tracks.reduce(
+    (acc, t) => ({
+      tracks: acc.tracks + 1,
+      cues: acc.cues + t.cues.length,
+      add: acc.add + t.add.length,
+      update: acc.update + t.update.length,
+      skip: acc.skip + t.skip.length,
+    }),
+    { tracks: 0, cues: 0, add: 0, update: 0, skip: 0 }
+  );
+  return { ok: true, usbRoot, tracks, summary };
+}
+
+/** Apply the scan: insert missing cues, move slots the hardware moved. */
+function applyUsbCues(usbRoot) {
+  const scan = scanUsbCues(usbRoot);
+  let added = 0;
+  let updated = 0;
+  let skipped = 0;
+  for (const t of scan.tracks) {
+    for (const cue of t.add) {
+      addCuePoint({
+        trackId: t.trackId,
+        positionMs: Math.round(cue.positionMs),
+        label: cue.label || '',
+        color: cue.color || '#00b4d8',
+        hotCueIndex: cue.hotCueIndex,
+      });
+      added += 1;
+    }
+    for (const cue of t.update) {
+      updateCuePoint(cue.existingId, {
+        positionMs: Math.round(cue.positionMs),
+        ...(cue.label ? { label: cue.label } : {}),
+        ...(cue.color ? { color: cue.color } : {}),
+      });
+      updated += 1;
+    }
+    skipped += t.skip.length;
+  }
+  if (added + updated > 0) send('cue-points-updated');
+  return { ok: true, usbRoot, added, updated, skipped, tracks: scan.summary.tracks };
+}
+
+ipcMain.handle('scan-usb-cues', (_, { usbRoot } = {}) => {
+  try {
+    return scanUsbCues(usbRoot);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('import-usb-cues', (_, { usbRoot } = {}) => {
+  try {
+    return applyUsbCues(usbRoot);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// Notice a freshly inserted stick: poll the usual mount points and ask the
+// renderer once per stick (per session) when it actually holds new cues.
+const seenCueUsbRoots = new Set();
+
+function candidateUsbRoots() {
+  const roots = [];
+  const addChildren = (dir) => {
+    try {
+      for (const entry of fs.readdirSync(dir)) roots.push(path.join(dir, entry));
+    } catch {
+      // not mounted / not readable — nothing to do
+    }
+  };
+  if (process.platform === 'win32') {
+    for (let code = 68; code <= 90; code += 1) {
+      const root = `${String.fromCharCode(code)}:\\`;
+      if (fs.existsSync(root)) roots.push(root);
+    }
+  } else if (process.platform === 'darwin') {
+    addChildren('/Volumes');
+  } else {
+    const user = process.env.USER || '';
+    addChildren(`/run/media/${user}`);
+    addChildren(`/media/${user}`);
+    addChildren('/media');
+    addChildren('/mnt');
+  }
+  return roots;
+}
+
+function detectCueUsb() {
+  for (const root of candidateUsbRoots()) {
+    if (seenCueUsbRoots.has(root)) continue;
+    if (!fs.existsSync(getManifestPath(root))) continue;
+    seenCueUsbRoots.add(root);
+    try {
+      const scan = scanUsbCues(root);
+      if (scan.summary.add + scan.summary.update > 0) {
+        send('usb-cues-detected', { usbRoot: root, summary: scan.summary });
+      }
+    } catch (err) {
+      console.warn('[usb-cues] detection scan failed:', err.message);
+    }
+  }
+}
+
+function startUsbCueWatch() {
+  detectCueUsb();
+  const timer = setInterval(detectCueUsb, 15000);
+  if (timer.unref) timer.unref();
+  app.on('will-quit', () => clearInterval(timer));
 }
 
 ipcMain.handle(

@@ -298,7 +298,7 @@ function buildPvbrSection(fileSize) {
 // PCPT (DAT/EXT PCOB sections) color palette — read by CDJ hardware.
 // Codes 1–8 are Pioneer's per-slot palette: 1=orange-red(A)…8=violet(H).
 //   ✓ = confirmed from native Rekordbox USB hex-diff   ○ = inferred
-const PIONEER_PALETTE = new Map([
+export const PIONEER_PALETTE = new Map([
   ['#ff6b35', 1], // orange-red ○
   ['#ff0000', 2], // red        ○
   ['#ff9900', 3], // orange     ✓
@@ -319,7 +319,7 @@ function hexToPioneerCode(hex) {
 // This is NOT the same numbering as PCPT (1-8).  Confirmed from native Rekordbox USB dumps
 // of "Riders on the Storm" with 16 cues using all available colors.
 //   ✓ = confirmed exact RGB from native dump   ~ = interpolated between confirmed neighbors
-const PIONEER_PCP2_MAP = new Map([
+export const PIONEER_PCP2_MAP = new Map([
   ['#ff6b35', { code: 0x27, r: 0xff, g: 0x46, b: 0x00 }], // orange-red  ~ code 39 (hue≈16°, Δ0.5°)
   ['#ff0000', { code: 0x2a, r: 0xff, g: 0x00, b: 0x00 }], // red         ✓ code 42
   ['#ff9900', { code: 0x23, r: 0xff, g: 0xa2, b: 0x00 }], // orange      ~ code 35 (hue≈38°, Δ2°)

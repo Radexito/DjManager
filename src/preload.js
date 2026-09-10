@@ -140,6 +140,14 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('cue-points-updated', handler);
     return () => ipcRenderer.removeListener('cue-points-updated', handler);
   },
+  // #259 — cue points set on a CDJ, read back from a Rekordbox USB
+  scanUsbCues: ({ usbRoot }) => ipcRenderer.invoke('scan-usb-cues', { usbRoot }),
+  importUsbCues: ({ usbRoot }) => ipcRenderer.invoke('import-usb-cues', { usbRoot }),
+  onUsbCuesDetected: (callback) => {
+    const handler = (_, payload) => callback(payload);
+    ipcRenderer.on('usb-cues-detected', handler);
+    return () => ipcRenderer.removeListener('usb-cues-detected', handler);
+  },
   onNormalizeProgress: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('normalize-progress', handler);
