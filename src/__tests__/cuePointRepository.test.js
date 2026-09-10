@@ -110,6 +110,24 @@ describe('updateCuePoint', () => {
     updateCuePoint(cueId, {});
     expect(getCuePoints(trackId)[0].label).toBe('X');
   });
+
+  // #259 — hardware may move a hot cue slot; the importer mirrors that position
+  it('moves a cue point to a new position', () => {
+    const trackId = addTrack(TRACK);
+    const cueId = addCuePoint({ trackId, positionMs: 1000 });
+    updateCuePoint(cueId, { positionMs: 4321 });
+    expect(getCuePoints(trackId)[0].position_ms).toBe(4321);
+  });
+
+  it('keeps other fields when only the position changes', () => {
+    const trackId = addTrack(TRACK);
+    const cueId = addCuePoint({ trackId, positionMs: 1000, label: 'Drop', hotCueIndex: 2 });
+    updateCuePoint(cueId, { positionMs: 2000 });
+    const cue = getCuePoints(trackId)[0];
+    expect(cue.position_ms).toBe(2000);
+    expect(cue.label).toBe('Drop');
+    expect(cue.hot_cue_index).toBe(2);
+  });
 });
 
 describe('deleteCuePoint', () => {

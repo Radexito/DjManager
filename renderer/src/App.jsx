@@ -9,6 +9,7 @@ import FileExplorerView from './FileExplorerView.jsx';
 import HelpView from './HelpView.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import ExportModal from './ExportModal.jsx';
+import UsbCueImport from './UsbCueImport.jsx';
 import PlayerBar from './PlayerBar.jsx';
 import TopBar from './TopBar.jsx';
 import { PlayerProvider } from './PlayerContext.jsx';
@@ -34,6 +35,16 @@ function App() {
   // "Show track in Music" — the player-bar title while playing from the
   // all-tracks view asks the library to jump to that track.
   const [locateTrackRequest, setLocateTrackRequest] = useState(null);
+  // #259 — cue import from a Rekordbox stick: null = closed, '' = pick a folder
+  const [cueImportRoot, setCueImportRoot] = useState(null);
+
+  // Ask once per inserted stick that actually carries new cues.
+  useEffect(() => {
+    if (!window.api?.onUsbCuesDetected) return undefined;
+    return window.api.onUsbCuesDetected(({ usbRoot }) => {
+      setCueImportRoot((current) => (current === null ? usbRoot : current));
+    });
+  }, []);
 
   const handleArtistSearch = (artist) => {
     setSelectedPlaylistId('music');
@@ -236,6 +247,7 @@ function App() {
                     onSearchChange={setSearch}
                     openDetailsRequest={openDetailsRequest}
                     locateTrack={locateTrackRequest}
+                    onImportUsbCues={() => setCueImportRoot('')}
                   />
                 )}
             </div>
@@ -253,6 +265,9 @@ function App() {
               initialMode={exportState.mode}
               onClose={() => setExportState(null)}
             />
+          )}
+          {cueImportRoot !== null && (
+            <UsbCueImport usbRoot={cueImportRoot} onClose={() => setCueImportRoot(null)} />
           )}
           {zoomLevel !== null && zoomLevel !== 1.0 && (
             <button
