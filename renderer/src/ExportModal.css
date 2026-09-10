@@ -350,3 +350,55 @@
   gap: 10px;
   margin-top: 4px;
 }
+
+/* #259 cue import — extend vs replace choice (#518 review) */
+.usb-cue-modes {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+
+.usb-cue-mode {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #3a3a3a;
+  background: #202020;
+  cursor: pointer;
+}
+
+.usb-cue-mode:hover:not(:disabled) {
+  border-color: #4a4a4a;
+}
+
+.usb-cue-mode--active {
+  border-color: #2d6aa0;
+  background: #1d2c3a;
+}
+
+.usb-cue-mode-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.usb-cue-mode-sub {
+  font-size: 11px;
+  color: #9a9a9a;
+  line-height: 1.35;
+}
+
+.usb-cue-warning {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #3a2418;
+  border: 1px solid #6b4423;
+  color: #e8b98a;
+  font-size: 11px;
+  line-height: 1.4;
+}

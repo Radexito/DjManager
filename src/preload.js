@@ -140,9 +140,13 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('cue-points-updated', handler);
     return () => ipcRenderer.removeListener('cue-points-updated', handler);
   },
-  // #259 — cue points set on a CDJ, read back from a Rekordbox USB
-  scanUsbCues: ({ usbRoot }) => ipcRenderer.invoke('scan-usb-cues', { usbRoot }),
-  importUsbCues: ({ usbRoot }) => ipcRenderer.invoke('import-usb-cues', { usbRoot }),
+  // #259 — cue points set on a CDJ, read back from a Rekordbox USB.
+  // `mode` is 'extend' (add + refresh, never delete) or 'replace' (mirror the
+  // stick, dropping library cues it does not carry).
+  scanUsbCues: ({ usbRoot, mode = 'extend' }) =>
+    ipcRenderer.invoke('scan-usb-cues', { usbRoot, mode }),
+  importUsbCues: ({ usbRoot, mode = 'extend' }) =>
+    ipcRenderer.invoke('import-usb-cues', { usbRoot, mode }),
   onUsbCuesDetected: (callback) => {
     const handler = (_, payload) => callback(payload);
     ipcRenderer.on('usb-cues-detected', handler);

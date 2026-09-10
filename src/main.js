@@ -2307,7 +2307,7 @@ function saveManifest(usbRoot, tracksMap, playlistsMap) {
 // exported can be read straight back.
 
 /** Everything the stick carries for tracks that still exist in the library. */
-function scanUsbCues(usbRoot) {
+function scanUsbCues(usbRoot, mode = 'extend') {
   const manifest = loadManifest(usbRoot);
   const tracks = [];
   for (const [id, row] of manifest.tracks) {
@@ -2315,8 +2315,11 @@ function scanUsbCues(usbRoot) {
     const track = getTrackById(trackId);
     if (!track || !row?.file_path) continue;
     const usbCues = readTrackCues(usbRoot, row.file_path);
-    if (usbCues.length === 0) continue;
-    const plan = buildCueImportPlan({ usbCues, existingCues: getCuePoints(trackId) });
+    // 'replace' still plans removals for tracks with no cues on the stick, so
+    // an empty stick is not skipped in that mode.
+    const existingCues = getCuePoints(trackId);
+    if (usbCues.length === 0 && !(mode === 'replace' && existingCues.length > 0)) continue;
+    const plan = buildCueImportPlan({ usbCues, existingCues, mode });
     tracks.push({
       trackId,
       title: track.title || path.basename(track.file_path || ''),
@@ -2325,6 +2328,7 @@ function scanUsbCues(usbRoot) {
       add: plan.add,
       update: plan.update,
       skip: plan.skip,
+      remove: plan.remove,
     });
   }
   const summary = tracks.reduce(
@@ -2334,18 +2338,23 @@ function scanUsbCues(usbRoot) {
       add: acc.add + t.add.length,
       update: acc.update + t.update.length,
       skip: acc.skip + t.skip.length,
+      remove: acc.remove + t.remove.length,
     }),
-    { tracks: 0, cues: 0, add: 0, update: 0, skip: 0 }
+    { tracks: 0, cues: 0, add: 0, update: 0, skip: 0, remove: 0 }
   );
-  return { ok: true, usbRoot, tracks, summary };
+  return { ok: true, usbRoot, mode: mode === 'replace' ? 'replace' : 'extend', tracks, summary };
 }
 
-/** Apply the scan: insert missing cues, move slots the hardware moved. */
-function applyUsbCues(usbRoot) {
-  const scan = scanUsbCues(usbRoot);
+/**
+ * Apply the scan: insert missing cues, move slots the hardware moved and — in
+ * 'replace' mode only — drop the cues the stick does not carry.
+ */
+function applyUsbCues(usbRoot, mode = 'extend') {
+  const scan = scanUsbCues(usbRoot, mode);
   let added = 0;
   let updated = 0;
   let skipped = 0;
+  let removed = 0;
   for (const t of scan.tracks) {
     for (const cue of t.add) {
       addCuePoint({
@@ -2365,23 +2374,36 @@ function applyUsbCues(usbRoot) {
       });
       updated += 1;
     }
+    for (const cue of t.remove) {
+      deleteCuePoint(cue.id);
+      removed += 1;
+    }
     skipped += t.skip.length;
   }
-  if (added + updated > 0) send('cue-points-updated');
-  return { ok: true, usbRoot, added, updated, skipped, tracks: scan.summary.tracks };
+  if (added + updated + removed > 0) send('cue-points-updated');
+  return {
+    ok: true,
+    usbRoot,
+    mode: scan.mode,
+    added,
+    updated,
+    skipped,
+    removed,
+    tracks: scan.summary.tracks,
+  };
 }
 
-ipcMain.handle('scan-usb-cues', (_, { usbRoot } = {}) => {
+ipcMain.handle('scan-usb-cues', (_, { usbRoot, mode } = {}) => {
   try {
-    return scanUsbCues(usbRoot);
+    return scanUsbCues(usbRoot, mode);
   } catch (err) {
     return { ok: false, error: err.message };
   }
 });
 
-ipcMain.handle('import-usb-cues', (_, { usbRoot } = {}) => {
+ipcMain.handle('import-usb-cues', (_, { usbRoot, mode } = {}) => {
   try {
-    return applyUsbCues(usbRoot);
+    return applyUsbCues(usbRoot, mode);
   } catch (err) {
     return { ok: false, error: err.message };
   }

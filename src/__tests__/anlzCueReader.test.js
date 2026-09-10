@@ -215,5 +215,68 @@ describe('#259 USB cue import — ANLZ reader', () => {
       });
       expect(movedSpot.add).toHaveLength(1);
     });
+
+    // #518 review — the user picks between extending and replacing.
+    describe('modes', () => {
+      const existingCues = [
+        { id: 1, hot_cue_index: 0, position_ms: 1000 },
+        { id: 2, hot_cue_index: 3, position_ms: 30000 },
+        { id: 9, hot_cue_index: -1, position_ms: 5000 },
+      ];
+
+      it('defaults to extend and reports the mode', () => {
+        const plan = buildCueImportPlan({ usbCues: [], existingCues });
+        expect(plan.mode).toBe('extend');
+        expect(plan.remove).toEqual([]);
+      });
+
+      it('extend never plans a removal, even for cues the stick lacks', () => {
+        const plan = buildCueImportPlan({
+          usbCues: [{ hotCueIndex: 0, positionMs: 1000, label: '' }],
+          existingCues,
+          mode: 'extend',
+        });
+        expect(plan.skip).toHaveLength(1);
+        expect(plan.remove).toEqual([]);
+      });
+
+      it('replace removes library cues the stick does not carry', () => {
+        const plan = buildCueImportPlan({
+          usbCues: [{ hotCueIndex: 0, positionMs: 1000, label: '' }],
+          existingCues,
+          mode: 'replace',
+        });
+        expect(plan.mode).toBe('replace');
+        // hot cue 3 and the memory cue are only in the library
+        expect(plan.remove.map((c) => c.id).sort()).toEqual([2, 9]);
+        expect(plan.skip).toHaveLength(1);
+      });
+
+      it('replace updates a moved slot instead of removing it', () => {
+        const plan = buildCueImportPlan({
+          usbCues: [{ hotCueIndex: 3, positionMs: 31000, label: '' }],
+          existingCues,
+          mode: 'replace',
+        });
+        expect(plan.update.map((c) => c.existingId)).toEqual([2]);
+        expect(plan.remove.map((c) => c.id).sort()).toEqual([1, 9]);
+      });
+
+      it('replace keeps a memory cue that the stick still carries', () => {
+        const plan = buildCueImportPlan({
+          usbCues: [{ hotCueIndex: -1, positionMs: 5040, label: '' }],
+          existingCues,
+          mode: 'replace',
+        });
+        expect(plan.skip).toHaveLength(1);
+        expect(plan.remove.map((c) => c.id).sort()).toEqual([1, 2]);
+      });
+
+      it('replace with an empty stick clears the track', () => {
+        const plan = buildCueImportPlan({ usbCues: [], existingCues, mode: 'replace' });
+        expect(plan.remove).toHaveLength(3);
+        expect(plan.add).toEqual([]);
+      });
+    });
   });
 });

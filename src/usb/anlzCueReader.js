@@ -163,14 +163,23 @@ export function readTrackCues(usbRoot, usbFilePath, { fsImpl = fs } = {}) {
 const POSITION_TOLERANCE_MS = 200;
 const MEMORY_CUE_INDEX = -1;
 
+/** Import modes offered in the UI. */
+export const CUE_IMPORT_MODES = ['extend', 'replace'];
+
 /**
  * Compare the cues on the stick with what the library already has.
  * Hardware is the source of truth for a given hot cue slot, so a slot that
- * moved on the CDJ is an update — but nothing is ever deleted.
+ * moved on the CDJ is an update.
  *
- * @returns {{add: Array, update: Array, skip: Array, conflicts: number}}
+ * Modes:
+ *  - 'extend' (default): only adds and refreshes — nothing is ever deleted.
+ *  - 'replace': the stick mirrors the library, so cues that exist only in the
+ *    library are removed and the result matches the hardware exactly.
+ *
+ * @returns {{add: Array, update: Array, skip: Array, remove: Array, mode: string, conflicts: number}}
  */
-export function buildCueImportPlan({ usbCues = [], existingCues = [] }) {
+export function buildCueImportPlan({ usbCues = [], existingCues = [], mode = 'extend' }) {
+  const replace = mode === 'replace';
   const add = [];
   const update = [];
   const skip = [];
@@ -197,5 +206,16 @@ export function buildCueImportPlan({ usbCues = [], existingCues = [] }) {
     else update.push({ ...cue, existingId: match.id });
   }
 
-  return { add, update, skip, conflicts: update.length };
+  // 'replace' drops whatever the stick does not carry, so the library ends up
+  // as an exact copy of the hardware. 'extend' never removes anything.
+  const remove = replace ? existingCues.filter((e) => !usedExisting.has(e.id)) : [];
+
+  return {
+    add,
+    update,
+    skip,
+    remove,
+    mode: replace ? 'replace' : 'extend',
+    conflicts: update.length,
+  };
 }
