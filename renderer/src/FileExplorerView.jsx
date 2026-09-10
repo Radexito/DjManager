@@ -4,6 +4,7 @@ import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
 import TrackDetails from './TrackDetails.jsx';
 import BeatGridEditor from './BeatGridEditor.jsx';
+import { applyVolumeRenames } from './volumeRenames.js';
 import './MusicLibrary.css';
 import './FileExplorerView.css';
 
@@ -360,6 +361,33 @@ export default function FileExplorerView({ style }) {
       setFavourites(Array.isArray(parsed) ? parsed : []);
     });
     const unsub = window.api.onPlaylistsUpdated(() => window.api.getPlaylists().then(setPlaylists));
+    return unsub;
+  }, []);
+
+  // Drive hot-swap (#514): the main process re-scans drives on focus and on a
+  // short poll. Refresh the drive list, and when the volume we are browsing came
+  // back under a different letter, follow it instead of showing a stale path.
+  useEffect(() => {
+    const unsub = window.api.onDrivesUpdated((payload) => {
+      setDrives(payload?.drives ?? []);
+      const renames = payload?.letterChanged ?? [];
+      if (renames.length === 0) return;
+      setCurrentPath((prev) => applyVolumeRenames(prev, renames));
+      // Favourites are remembered by path too, so re-point the ones that lived on
+      // the renamed drive and persist the rewrite (#514).
+      setFavourites((prev) => {
+        let changed = false;
+        const next = prev.map((fav) => {
+          const path = applyVolumeRenames(fav.path, renames);
+          if (path === fav.path) return fav;
+          changed = true;
+          return { path, name: basename(path) || path };
+        });
+        if (!changed) return prev;
+        window.api.setSetting('explorer_favourites', JSON.stringify(next));
+        return next;
+      });
+    });
     return unsub;
   }, []);
 

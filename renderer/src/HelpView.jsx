@@ -87,20 +87,22 @@ const SECTIONS = [
   },
   {
     title: 'Explorer & linked files',
-    keywords: 'filesystem drives usb folder link reference unavailable',
+    keywords: 'filesystem drives usb folder link reference unavailable reconnect letter hot swap',
     items: [
       'Explorer browses the filesystem: select a folder or files with audio and Add to Library to link them (kept in place), or manage linked files and their availability.',
-      'Removable drives are listed separately, which keeps USB workflow quick. Linked tracks on a disconnected drive show as unavailable rather than disappearing.',
+      'Removable drives are listed separately, which keeps USB workflow quick. Linked tracks on a disconnected drive show as unavailable rather than disappearing, and when the drive returns under a different letter the linked paths are re-pointed automatically.',
+      'Drives are re-detected automatically when one is plugged in, unplugged or comes back under a different letter: the folder you are browsing follows the drive instead of pointing at a stale path.',
     ],
   },
   {
     title: 'USB export (Rekordbox)',
-    keywords: 'usb stick drive rekordbox cdj export playlist format pdb',
+    keywords: 'usb stick drive rekordbox cdj export playlist format pdb reconnect letter',
     items: [
       'Export a single playlist or the whole library to a Rekordbox-compatible USB drive from the playlist context menu or the Export dialog.',
       'Only removable drives are offered as targets, so internal disks can never be overwritten by accident. Drives must be FAT32/exFAT (Rekordbox format).',
       'The export writes cue points, beat grid, BPM and automatic gain so CDJs (e.g. CDJ-3000) load the track ready to mix.',
       'Exporting again to a drive that already has the playlist reuses the existing path/name instead of creating duplicates.',
+      'The destination is re-checked right before writing: if the stick was unplugged or came back under another letter, the export follows it, or stops with a clear message instead of writing to the wrong disk.',
       'A supported format action is available for USB sticks that need a fresh Rekordbox layout.',
     ],
   },

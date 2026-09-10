@@ -256,6 +256,15 @@ contextBridge.exposeInMainWorld('api', {
 
   // File Explorer
   getComputerRoot: () => ipcRenderer.invoke('get-computer-root'),
+  // Stable volume id of the drive holding a path (#514) — lets the export flow
+  // follow the volume when Windows reassigns its letter.
+  getVolumeForPath: (targetPath) => ipcRenderer.invoke('get-volume-for-path', targetPath),
+  // Fired when a drive is added, removed or comes back under another letter.
+  onDrivesUpdated: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('drives-updated', handler);
+    return () => ipcRenderer.removeListener('drives-updated', handler);
+  },
   browseDirectory: (dirPath) => ipcRenderer.invoke('browse-directory', dirPath),
   selectExplorerFolder: () => ipcRenderer.invoke('select-explorer-folder'),
   getTracksByPaths: (filePaths) => ipcRenderer.invoke('get-tracks-by-paths', filePaths),

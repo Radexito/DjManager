@@ -76,8 +76,10 @@ export function PlayerProvider({ children }) {
 
   // Track availability for linked (Explorer-referenced) files, which point at
   // arbitrary — often removable — paths. Re-check on mount, whenever the window
-  // regains focus (e.g. the user just plugged a drive back in), and on a slow
-  // background interval so the "grayed out" state doesn't require an action.
+  // regains focus (e.g. the user just plugged a drive back in), whenever the
+  // drive list changes (#514: a stick that came back under a new letter makes the
+  // greyed-out rows stale), and on a slow background interval so the "grayed out"
+  // state doesn't require an action.
   const refreshAvailability = useCallback(() => {
     window.api
       .getUnavailableLinkedTracks()
@@ -88,9 +90,13 @@ export function PlayerProvider({ children }) {
     refreshAvailability();
     window.addEventListener('focus', refreshAvailability);
     const interval = setInterval(refreshAvailability, 20000);
+    // Re-request immediately after a drive was added, removed or re-lettered so
+    // linked tracks stop showing as unavailable once the stick is back.
+    const unsubDrives = window.api.onDrivesUpdated(refreshAvailability);
     return () => {
       window.removeEventListener('focus', refreshAvailability);
       clearInterval(interval);
+      unsubDrives();
     };
   }, [refreshAvailability]);
 

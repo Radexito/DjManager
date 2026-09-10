@@ -137,7 +137,13 @@ import {
 } from './deps.js';
 import { initLogger, getLogDir, initRendererLogger, logRendererMessage } from './logger.js';
 import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
-import { detectWindowsDrives } from './explorer/drives.js';
+import { detectWindowsDrives, detectVolumes } from './explorer/drives.js';
+import {
+  decideExportDestination,
+  diffVolumes,
+  findVolumeForPath,
+  planLinkedTrackRekeys,
+} from './explorer/volumeIdentity.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
@@ -286,6 +292,11 @@ function createWindow() {
 
   global.mainWindow = mainWindow; // make accessible to workers
   mainWindow.maximize();
+
+  // Drives are usually swapped while the app is in the background, so make the
+  // common "plug the stick in and come back" case instant instead of waiting for
+  // the next poll tick (#514).
+  mainWindow.on('focus', () => checkDrivesChanged());
 
   // Native right-click context menu for editable inputs and text selections
   mainWindow.webContents.on('context-menu', (_e, params) => {
@@ -469,6 +480,7 @@ async function initApp() {
   await startMediaServer();
   console.log('Creating window.');
   createWindow();
+  startDriveWatcher();
 
   // Skip dep download in E2E tests — binary not needed for UI tests and the
   // pending download blocks app.close(), causing afterEach timeouts.
@@ -1844,146 +1856,253 @@ ipcMain.handle('get-explorer-track-metadata', async (_, filePath) => {
   }
 });
 
-ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlistName }) => {
-  try {
-    const total = filePaths.length;
-    send('export-explorer-progress', { msg: `Exporting ${total} tracks to USB…`, pct: 0 });
-
-    const usedNames = new Map();
-    const pdbTracks = [];
-    const anlzPaths = new Map();
-
-    for (let i = 0; i < filePaths.length; i++) {
-      const srcPath = filePaths[i];
-      const ext = path.extname(srcPath);
-
-      // Extract metadata
-      let meta = {
-        title: path.basename(srcPath, ext),
-        artist: '',
-        album: '',
-        bpm: null,
-        key_raw: '',
-        duration: 0,
-        bitrate: 0,
-      };
-      try {
-        const { ffprobe: runFfprobe } = await import('./audio/ffmpeg.js');
-        const data = await runFfprobe(srcPath);
-        const tags = data.format?.tags || {};
-        const stream = data.streams?.find((s) => s.codec_type === 'audio') || {};
-        const bpmTag = tags.bpm || tags.BPM || tags.TBPM || tags['tbpm'];
-        meta = {
-          title: tags.title || path.basename(srcPath, ext),
-          artist: tags.artist || '',
-          album: tags.album || '',
-          bpm: bpmTag ? parseFloat(bpmTag) || null : null,
-          key_raw: tags.key || tags.KEY || tags.initialkey || tags.INITIALKEY || '',
-          duration: parseFloat(data.format?.duration) || 0,
-          bitrate: parseInt(stream.bit_rate || data.format?.bit_rate || 0, 10) || 0,
-        };
-      } catch {}
-
-      // Copy to USB /music/
-      const rawBase =
-        [meta.artist, meta.title].filter(Boolean).join(' - ') || path.basename(srcPath, ext);
-      const safeBase = rawBase.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
-      let filename = `${safeBase}${ext}`;
-      let n = 1;
-      while (usedNames.has(filename.toLowerCase())) {
-        filename = `${safeBase} (${n++})${ext}`;
-      }
-      usedNames.set(filename.toLowerCase(), true);
-
-      const destDir = path.join(usbRoot, 'music');
-      fs.mkdirSync(destDir, { recursive: true });
-      const destPath = path.join(destDir, filename);
-      if (!fs.existsSync(destPath)) fs.copyFileSync(srcPath, destPath);
-      const usbFilePath = `/music/${filename}`;
-
-      // Write minimal ANLZ (path + beatgrid only, no waveform for speed)
-      try {
-        const anlzDat = await writeAnlz({
-          usbFilePath,
-          sourceFilePath: null,
-          beatgrid: null,
-          bpm: meta.bpm || 0,
-          beatgridOffset: 0,
-          usbRoot,
-          ffmpegPath: getFfmpegRuntimePath(),
-          cuePoints: [],
-        });
-        anlzPaths.set(i, anlzDat);
-      } catch {}
-
-      let fileSize = 0;
-      try {
-        fileSize = fs.statSync(destPath).size;
-      } catch {}
-
-      pdbTracks.push({
-        id: i + 1,
-        title: meta.title,
-        artist: meta.artist,
-        album: meta.album,
-        duration: meta.duration,
-        bpm: meta.bpm || 0,
-        key_raw: meta.key_raw,
-        file_path: usbFilePath,
-        track_number: i + 1,
-        year: '',
-        label: '',
-        genres: [],
-        file_size: fileSize,
-        bitrate: meta.bitrate,
-        comments: '',
-        rating: 0,
-        analyzePath: anlzPaths.get(i) || '',
-      });
-
-      const pct = Math.round(((i + 1) / total) * 90);
-      send('export-explorer-progress', { msg: `Copying ${i + 1}/${total}: ${filename}`, pct });
-    }
-
-    send('export-explorer-progress', { msg: 'Writing PDB database…', pct: 92 });
-
-    const pdbPlaylists = playlistName
-      ? [{ id: 1, name: playlistName, track_ids: pdbTracks.map((t) => t.id) }]
-      : [];
-
-    const outputPath = path.join(usbRoot, 'PIONEER', 'rekordbox', 'export.pdb');
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    writePdb({ tracks: pdbTracks, playlists: pdbPlaylists }, outputPath);
-
-    send('export-explorer-progress', { msg: 'Writing settings files…', pct: 96 });
+ipcMain.handle(
+  'export-explorer-to-usb',
+  async (_, { filePaths, usbRoot, usbVolumeId = null, usbVolumeRoot = null, playlistName }) => {
     try {
-      await writeSettingFiles(usbRoot);
-    } catch {}
+      // Resolve the drive's CURRENT root first: the user may have replugged the
+      // stick between picking it and pressing export (#514).
+      usbRoot = resolveExportRoot(usbRoot, usbVolumeId, usbVolumeRoot);
+      const total = filePaths.length;
+      send('export-explorer-progress', { msg: `Exporting ${total} tracks to USB…`, pct: 0 });
 
-    send('export-explorer-progress', null);
-    return { ok: true, trackCount: pdbTracks.length, usbRoot };
-  } catch (err) {
-    send('export-explorer-progress', null);
-    return { ok: false, error: err.message };
+      const usedNames = new Map();
+      const pdbTracks = [];
+      const anlzPaths = new Map();
+
+      for (let i = 0; i < filePaths.length; i++) {
+        const srcPath = filePaths[i];
+        const ext = path.extname(srcPath);
+
+        // Extract metadata
+        let meta = {
+          title: path.basename(srcPath, ext),
+          artist: '',
+          album: '',
+          bpm: null,
+          key_raw: '',
+          duration: 0,
+          bitrate: 0,
+        };
+        try {
+          const { ffprobe: runFfprobe } = await import('./audio/ffmpeg.js');
+          const data = await runFfprobe(srcPath);
+          const tags = data.format?.tags || {};
+          const stream = data.streams?.find((s) => s.codec_type === 'audio') || {};
+          const bpmTag = tags.bpm || tags.BPM || tags.TBPM || tags['tbpm'];
+          meta = {
+            title: tags.title || path.basename(srcPath, ext),
+            artist: tags.artist || '',
+            album: tags.album || '',
+            bpm: bpmTag ? parseFloat(bpmTag) || null : null,
+            key_raw: tags.key || tags.KEY || tags.initialkey || tags.INITIALKEY || '',
+            duration: parseFloat(data.format?.duration) || 0,
+            bitrate: parseInt(stream.bit_rate || data.format?.bit_rate || 0, 10) || 0,
+          };
+        } catch {}
+
+        // Copy to USB /music/
+        const rawBase =
+          [meta.artist, meta.title].filter(Boolean).join(' - ') || path.basename(srcPath, ext);
+        const safeBase = rawBase.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+        let filename = `${safeBase}${ext}`;
+        let n = 1;
+        while (usedNames.has(filename.toLowerCase())) {
+          filename = `${safeBase} (${n++})${ext}`;
+        }
+        usedNames.set(filename.toLowerCase(), true);
+
+        const destDir = path.join(usbRoot, 'music');
+        fs.mkdirSync(destDir, { recursive: true });
+        const destPath = path.join(destDir, filename);
+        if (!fs.existsSync(destPath)) fs.copyFileSync(srcPath, destPath);
+        const usbFilePath = `/music/${filename}`;
+
+        // Write minimal ANLZ (path + beatgrid only, no waveform for speed)
+        try {
+          const anlzDat = await writeAnlz({
+            usbFilePath,
+            sourceFilePath: null,
+            beatgrid: null,
+            bpm: meta.bpm || 0,
+            beatgridOffset: 0,
+            usbRoot,
+            ffmpegPath: getFfmpegRuntimePath(),
+            cuePoints: [],
+          });
+          anlzPaths.set(i, anlzDat);
+        } catch {}
+
+        let fileSize = 0;
+        try {
+          fileSize = fs.statSync(destPath).size;
+        } catch {}
+
+        pdbTracks.push({
+          id: i + 1,
+          title: meta.title,
+          artist: meta.artist,
+          album: meta.album,
+          duration: meta.duration,
+          bpm: meta.bpm || 0,
+          key_raw: meta.key_raw,
+          file_path: usbFilePath,
+          track_number: i + 1,
+          year: '',
+          label: '',
+          genres: [],
+          file_size: fileSize,
+          bitrate: meta.bitrate,
+          comments: '',
+          rating: 0,
+          analyzePath: anlzPaths.get(i) || '',
+        });
+
+        const pct = Math.round(((i + 1) / total) * 90);
+        send('export-explorer-progress', { msg: `Copying ${i + 1}/${total}: ${filename}`, pct });
+      }
+
+      send('export-explorer-progress', { msg: 'Writing PDB database…', pct: 92 });
+
+      const pdbPlaylists = playlistName
+        ? [{ id: 1, name: playlistName, track_ids: pdbTracks.map((t) => t.id) }]
+        : [];
+
+      const outputPath = path.join(usbRoot, 'PIONEER', 'rekordbox', 'export.pdb');
+      fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+      writePdb({ tracks: pdbTracks, playlists: pdbPlaylists }, outputPath);
+
+      send('export-explorer-progress', { msg: 'Writing settings files…', pct: 96 });
+      try {
+        await writeSettingFiles(usbRoot);
+      } catch {}
+
+      send('export-explorer-progress', null);
+      return { ok: true, trackCount: pdbTracks.length, usbRoot };
+    } catch (err) {
+      send('export-explorer-progress', null);
+      return { ok: false, error: err.message };
+    }
   }
-});
+);
 
-// ── File Explorer v2 IPC ───────────────────────────────────────────────────────
+// ── Drive hot-swap detection (#514) ────────────────────────────────────────────
+// Windows can hand a replugged USB stick a different letter, which makes every
+// path the UI remembered stale. Poll the volume list (and re-check on window
+// focus), diff it against the previous snapshot by stable volume id and push the
+// result to the renderer so the drive picker, the open folder and the export
+// target follow the stick instead of the letter.
 
-ipcMain.handle('get-computer-root', () => {
+const DRIVE_POLL_INTERVAL_MS = 7000;
+
+let driveWatcher = null; // { timer, volumes }
+
+/**
+ * Current drive roots, home directory and identified volumes. Shared by the
+ * IPC handlers and the watcher so both always agree on the same snapshot.
+ */
+function scanDrives() {
+  const platform = process.platform;
   const home = os.homedir();
   let root;
   let drives = [];
-  if (process.platform === 'win32') {
+  if (platform === 'win32') {
     root = path.parse(home).root || 'C:\\';
-    // #473: enumerate ALL present drives so the Explorer can switch from C:
+    // #473: enumerate ALL present drives so the Explorer can switch from C:\
     // to any other volume (D:, E:, ...).
-    drives = detectWindowsDrives();
+    drives = detectWindowsDrives({ platform });
     if (!drives.includes(root)) drives.unshift(root);
   } else {
     root = '/';
   }
-  return { root, home, drives };
+  return { root, home, drives, volumes: detectVolumes({ platform }) };
+}
+
+/** Re-scans and notifies the renderer when the drive landscape changed. */
+function checkDrivesChanged() {
+  if (!driveWatcher) return null;
+  let snapshot;
+  try {
+    snapshot = scanDrives();
+  } catch (err) {
+    console.error('[drives] rescan failed:', err.message);
+    return null;
+  }
+  const diff = diffVolumes(driveWatcher.volumes, snapshot.volumes);
+  if (!diff.changed) return null;
+  driveWatcher.volumes = snapshot.volumes;
+
+  // A stick that came back under another letter leaves every linked-track path
+  // stale, so re-point the stored rows before the renderer refreshes (#514). The
+  // new root is pre-allowed too, so the media server can serve from it without
+  // the user having to reopen the Explorer.
+  const rekeys = planLinkedTrackRekeys(diff.letterChanged, path.sep);
+  let rekeyedTracks = 0;
+  for (const rekey of rekeys) {
+    rekeyedTracks += remapTracksByPrefix(rekey.fromPrefix, rekey.toPrefix);
+    if (!explorerAllowedBases.includes(rekey.to)) explorerAllowedBases.push(rekey.to);
+  }
+  if (rekeyedTracks > 0) {
+    console.log(`[drives] re-pointed ${rekeyedTracks} linked track path(s) after a letter change`);
+    send('library-updated');
+  }
+
+  const payload = {
+    drives: snapshot.drives,
+    volumes: snapshot.volumes,
+    added: diff.added,
+    removed: diff.removed,
+    letterChanged: diff.letterChanged,
+  };
+  console.log(
+    `[drives] change: +${diff.added.length} -${diff.removed.length} ` +
+      `renamed=${diff.letterChanged.map((c) => `${c.from}->${c.to}`).join(',') || 'none'}`
+  );
+  if (global.mainWindow) global.mainWindow.webContents.send('drives-updated', payload);
+  return payload;
+}
+
+function startDriveWatcher() {
+  if (driveWatcher) return;
+  driveWatcher = { timer: null, volumes: scanDrives().volumes };
+  // A poll keeps working when the app is unfocused (exports keep running there);
+  // the window focus hook below makes the common plug-in case instant.
+  driveWatcher.timer = setInterval(checkDrivesChanged, DRIVE_POLL_INTERVAL_MS);
+  if (typeof driveWatcher.timer.unref === 'function') driveWatcher.timer.unref();
+}
+
+/**
+ * Resolves an export destination right before anything is written (#514).
+ * `usbRoot` is the path the user picked (it may still carry the old letter) and
+ * `usbVolumeId` is the stable id captured at pick time, so the drive can be
+ * followed across a letter change. Throws when the volume is gone rather than
+ * writing into a path some other device may own by now.
+ */
+function resolveExportRoot(usbRoot, usbVolumeId = null, usbVolumeRoot = null) {
+  const { volumes } = scanDrives();
+  const decision = decideExportDestination({ usbRoot, usbVolumeId, usbVolumeRoot }, volumes, {
+    exists: fs.existsSync,
+  });
+
+  if (decision.ok) {
+    if (decision.changed) {
+      console.log(`[export] drive letter changed, using ${decision.path} instead of ${usbRoot}`);
+    }
+    return decision.path;
+  }
+
+  throw new Error(decision.error);
+}
+
+// ── File Explorer v2 IPC ───────────────────────────────────────────────────────
+
+ipcMain.handle('get-computer-root', () => scanDrives());
+
+// Stable volume id of the drive that holds `targetPath`, so the export flow can
+// follow a volume instead of the letter it had when the folder was picked (#514).
+ipcMain.handle('get-volume-for-path', (_, targetPath) => {
+  const volume = findVolumeForPath(targetPath, scanDrives().volumes);
+  return volume ? { id: volume.id, root: volume.root } : null;
 });
 
 ipcMain.handle('get-tracks-by-paths', (_, filePaths) => {
@@ -2309,9 +2428,15 @@ ipcMain.handle(
       useNormalized = false,
       targetDevice = null,
       forceMp3 = false,
+      usbVolumeId = null,
+      usbVolumeRoot = null,
     }
   ) => {
     try {
+      // Follow the volume, not the letter it had when it was picked: the drive
+      // may have come back under a different letter, and a missing drive must
+      // fail loudly instead of writing to a stale path (#514).
+      usbRoot = resolveExportRoot(usbRoot, usbVolumeId, usbVolumeRoot);
       const targetLufs = useNormalized ? Number(getSetting('normalize_target_lufs', '-9')) : null;
       const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
       const allPlaylists = ids?.length
@@ -2472,9 +2597,14 @@ ipcMain.handle(
       useNormalized = false,
       targetDevice = null,
       forceMp3 = false,
+      usbVolumeId = null,
+      usbVolumeRoot = null,
     }
   ) => {
     try {
+      // Re-resolve the destination from the volume id before writing anything, so
+      // a letter change is followed and a disconnected drive fails loudly (#514).
+      usbRoot = resolveExportRoot(usbRoot, usbVolumeId, usbVolumeRoot);
       const targetLufs = useNormalized ? Number(getSetting('normalize_target_lufs', '-9')) : null;
       const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
       const allPlaylists = ids?.length
