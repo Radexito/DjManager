@@ -131,6 +131,8 @@ window.api = {
   onTidalTrackUpdate: vi.fn().mockImplementation(() => () => {}),
   openExternal: vi.fn().mockResolvedValue(undefined),
   getComputerRoot: vi.fn().mockResolvedValue({ root: '/', home: '/home/user' }),
+  getVolumeForPath: vi.fn().mockResolvedValue(null),
+  onDrivesUpdated: vi.fn().mockImplementation(noop),
   browseDirectory: vi.fn().mockResolvedValue({ dirs: [], files: [] }),
   selectExplorerFolder: vi.fn().mockResolvedValue(null),
   getTracksByPaths: vi.fn().mockResolvedValue([]),
