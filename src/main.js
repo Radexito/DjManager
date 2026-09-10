@@ -138,6 +138,7 @@ import {
 import { initLogger, getLogDir, initRendererLogger, logRendererMessage } from './logger.js';
 import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
 import { detectWindowsDrives } from './explorer/drives.js';
+import { detectExports } from './explorer/exportDetection.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
@@ -1988,6 +1989,16 @@ ipcMain.handle('get-computer-root', () => {
 
 ipcMain.handle('get-tracks-by-paths', (_, filePaths) => {
   return getTracksByPaths(filePaths);
+});
+
+// #504: read-only scan of a drive for DJ-software exports (Rekordbox, Serato,
+// Engine DJ, Traktor). Never writes to the drive.
+ipcMain.handle('detect-drive-exports', (_, driveRoot) => {
+  try {
+    return { ok: true, exports: detectExports(driveRoot) };
+  } catch (err) {
+    return { ok: false, error: err.message, exports: [] };
+  }
 });
 
 let activeRecursiveWalker = null;

@@ -133,6 +133,7 @@ window.api = {
   getComputerRoot: vi.fn().mockResolvedValue({ root: '/', home: '/home/user' }),
   browseDirectory: vi.fn().mockResolvedValue({ dirs: [], files: [] }),
   selectExplorerFolder: vi.fn().mockResolvedValue(null),
+  detectDriveExports: vi.fn().mockResolvedValue({ ok: true, exports: [] }),
   getTracksByPaths: vi.fn().mockResolvedValue([]),
   explorerStartRecursive: vi.fn().mockResolvedValue(undefined),
   explorerCancelRecursive: vi.fn().mockResolvedValue(undefined),

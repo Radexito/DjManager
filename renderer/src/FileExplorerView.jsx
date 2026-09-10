@@ -1,4 +1,12 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
+import {
+  Fragment,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from 'react';
 import { List } from 'react-window';
 import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
@@ -33,6 +41,22 @@ function fmtDuration(secs) {
 
 function basename(p) {
   return p.replace(/.*[\\/]/, '');
+}
+
+function exportCountLabel(n, noun) {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`;
+}
+
+/**
+ * One-line summary for a detected DJ export (#504), e.g.
+ * "Rekordbox export - 3 playlists / 42 tracks". Formats with no reader yet
+ * show "not parsed yet" instead of an invented count.
+ */
+function exportSummaryLine(exp) {
+  const parts = [];
+  if (exp.playlists != null) parts.push(exportCountLabel(exp.playlists, 'playlist'));
+  if (exp.trackCount != null) parts.push(exportCountLabel(exp.trackCount, 'track'));
+  return `${exp.label} export - ${parts.length ? parts.join(' / ') : 'not parsed yet'}`;
 }
 
 function fileToSyntheticTrack(f) {
@@ -328,6 +352,12 @@ export default function FileExplorerView({ style }) {
   const [recursiveFiles, setRecursiveFiles] = useState(null);
   const [recursiveScanning, setRecursiveScanning] = useState(false);
 
+  // Detected DJ-software exports per drive (#504) - read-only inspection,
+  // cached by drive root so navigating inside a drive does not rescan.
+  const [driveExports, setDriveExports] = useState({});
+  const [driveExportsScanning, setDriveExportsScanning] = useState({});
+  const [expandedExport, setExpandedExport] = useState(null); // `${driveRoot}|${software}`
+
   const listRef = useRef();
   const containerRef = useRef();
   const [listHeight, setListHeight] = useState(500);
@@ -496,6 +526,31 @@ export default function FileExplorerView({ style }) {
       u2();
     };
   }, []);
+
+  // ── DJ export detection per drive (read-only, #504) ───────────────────────
+
+  const detectDriveExports = useCallback(async (driveRoot) => {
+    setDriveExportsScanning((prev) => ({ ...prev, [driveRoot]: true }));
+    try {
+      const res = await window.api.detectDriveExports(driveRoot);
+      setDriveExports((prev) => ({ ...prev, [driveRoot]: res?.exports ?? [] }));
+    } catch {
+      setDriveExports((prev) => ({ ...prev, [driveRoot]: [] }));
+    } finally {
+      setDriveExportsScanning((prev) => ({ ...prev, [driveRoot]: false }));
+    }
+  }, []);
+
+  const activeDrive = useMemo(
+    () => drives.find((d) => currentPath === d || (currentPath?.startsWith(d) ?? false)) ?? null,
+    [drives, currentPath]
+  );
+
+  // Scan the selected drive once; the refresh button on the drive row rescans.
+  useEffect(() => {
+    if (!activeDrive || driveExports[activeDrive] !== undefined) return;
+    detectDriveExports(activeDrive);
+  }, [activeDrive, driveExports, detectDriveExports]);
 
   // ── Derived state ─────────────────────────────────────────────────────────
 
@@ -806,21 +861,96 @@ export default function FileExplorerView({ style }) {
         {drives.length > 1 && (
           <>
             <div className="explorer-favourites__header">Drives</div>
-            {drives.map((d) => (
-              <div
-                key={d}
-                className={`explorer-favourites__item${
-                  currentPath === d || currentPath.startsWith(d)
-                    ? ' explorer-favourites__item--active'
-                    : ''
-                }`}
-                title={d}
-                onClick={() => navigateTo(d)}
-              >
-                <span className="explorer-favourites__icon">💽</span>
-                <span className="explorer-favourites__name">{d}</span>
-              </div>
-            ))}
+            {drives.map((d) => {
+              const isActiveDrive = currentPath === d || (currentPath?.startsWith(d) ?? false);
+              const exports = driveExports[d];
+              const scanning = driveExportsScanning[d];
+              return (
+                <Fragment key={d}>
+                  <div
+                    className={`explorer-favourites__item${
+                      isActiveDrive ? ' explorer-favourites__item--active' : ''
+                    }`}
+                    title={d}
+                    onClick={() => navigateTo(d)}
+                  >
+                    <span className="explorer-favourites__icon">💽</span>
+                    <span className="explorer-favourites__name">{d}</span>
+                    <button
+                      className="explorer-favourites__remove"
+                      title="Rescan this drive for DJ software exports"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        detectDriveExports(d);
+                      }}
+                    >
+                      ↻
+                    </button>
+                  </div>
+                  {isActiveDrive && (
+                    <div className="explorer-drive-exports">
+                      {scanning && (
+                        <div className="explorer-drive-exports__empty">
+                          Scanning for DJ exports...
+                        </div>
+                      )}
+                      {!scanning && exports && exports.length === 0 && (
+                        <div className="explorer-drive-exports__empty">No DJ exports found</div>
+                      )}
+                      {(exports ?? []).map((exp) => {
+                        const key = `${d}|${exp.software}`;
+                        const open = expandedExport === key;
+                        return (
+                          <div key={key} className="explorer-drive-export">
+                            <button
+                              className="explorer-drive-export__head"
+                              title={exp.path}
+                              onClick={() => setExpandedExport(open ? null : key)}
+                            >
+                              <span className="explorer-drive-export__caret">
+                                {open ? '▾' : '▸'}
+                              </span>
+                              <span className="explorer-drive-export__name">
+                                {exportSummaryLine(exp)}
+                              </span>
+                            </button>
+                            {open && (
+                              <div className="explorer-drive-export__body">
+                                {exp.entries.length === 0 ? (
+                                  <div className="explorer-drive-export__note">
+                                    {exp.note ?? 'No readable track listing.'}
+                                  </div>
+                                ) : (
+                                  exp.entries.map((pl) => (
+                                    <div key={pl.id} className="explorer-drive-export__playlist">
+                                      <div className="explorer-drive-export__playlist-name">
+                                        {`${pl.name} (${pl.trackCount})`}
+                                      </div>
+                                      {pl.tracks.map((t) => (
+                                        <div key={t.id} className="explorer-drive-export__track">
+                                          <span className="explorer-drive-export__track-title">
+                                            {t.title || basename(t.file_path)}
+                                          </span>
+                                          {t.artist && (
+                                            <span className="explorer-drive-export__track-artist">
+                                              {t.artist}
+                                            </span>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Fragment>
+              );
+            })}
           </>
         )}
         <div className="explorer-favourites__header">Favourites</div>

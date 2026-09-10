@@ -107,6 +107,101 @@
   background: var(--bg-tertiary, #333);
 }
 
+/* ── Detected DJ exports under a drive (#504) ───────────────────────────── */
+
+.explorer-drive-exports {
+  display: flex;
+  flex-direction: column;
+  margin: 0 4px 4px 14px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border, #2a2a2a);
+  flex-shrink: 0;
+}
+
+.explorer-drive-exports__empty {
+  padding: 3px 4px;
+  font-size: 10px;
+  color: var(--text-muted, #666);
+  line-height: 1.4;
+}
+
+.explorer-drive-export {
+  display: flex;
+  flex-direction: column;
+}
+
+.explorer-drive-export__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 3px 4px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 11px;
+  color: var(--text-secondary, #aaa);
+  border-radius: 3px;
+}
+
+.explorer-drive-export__head:hover {
+  background: var(--bg-hover, #2d2d2d);
+  color: var(--text-primary, #e0e0e0);
+}
+
+.explorer-drive-export__caret {
+  flex-shrink: 0;
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+.explorer-drive-export__name {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.explorer-drive-export__body {
+  padding: 2px 4px 4px 14px;
+}
+
+.explorer-drive-export__note {
+  font-size: 10px;
+  color: var(--text-muted, #666);
+  line-height: 1.4;
+}
+
+.explorer-drive-export__playlist {
+  margin-bottom: 4px;
+}
+
+.explorer-drive-export__playlist-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary, #aaa);
+  margin-bottom: 1px;
+}
+
+.explorer-drive-export__track {
+  display: flex;
+  flex-direction: column;
+  font-size: 10px;
+  color: var(--text-muted, #777);
+  line-height: 1.35;
+  overflow: hidden;
+}
+
+.explorer-drive-export__track-title,
+.explorer-drive-export__track-artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-drive-export__track-artist {
+  color: var(--text-muted, #555);
+}
+
 /* ── Toolbar ────────────────────────────────────────────────────────────── */
 
 .explorer-toolbar {

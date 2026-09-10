@@ -258,6 +258,7 @@ contextBridge.exposeInMainWorld('api', {
   getComputerRoot: () => ipcRenderer.invoke('get-computer-root'),
   browseDirectory: (dirPath) => ipcRenderer.invoke('browse-directory', dirPath),
   selectExplorerFolder: () => ipcRenderer.invoke('select-explorer-folder'),
+  detectDriveExports: (driveRoot) => ipcRenderer.invoke('detect-drive-exports', driveRoot),
   getTracksByPaths: (filePaths) => ipcRenderer.invoke('get-tracks-by-paths', filePaths),
   explorerStartRecursive: (dirPath) => ipcRenderer.invoke('explorer-start-recursive', dirPath),
   explorerCancelRecursive: () => ipcRenderer.invoke('explorer-cancel-recursive'),
