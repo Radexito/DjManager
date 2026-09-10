@@ -1,7 +1,12 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { usePlayer } from './PlayerContext.jsx';
 import CuePointsEditor from './CuePointsEditor.jsx';
+import { clampTrimRange, formatTrimTime, trimColumns } from './trackTrim.js';
 import './BeatGridEditor.css';
+
+// Trim range markers (#463) — same accent as the grid-offset readout so the
+// editor keeps one palette; the shaded area is what tells the range apart.
+const TRIM_COLOR = '#7eb8f7';
 
 // Fallback assumed resolution (cols/sec) only used when the real track
 // duration isn't known yet — normally cols/sec is derived from the detail
@@ -67,7 +72,7 @@ function computeBeats(beatgridJson, bpm, offsetMs = 0) {
  *                    150 cols/sec buffer, or a mix during the lazy-regen
  *                    transition period (#262)
  */
-function drawDetail(canvas, detail, viewCenter, beats, cuePoints, viewMs, trackDurationMs) {
+function drawDetail(canvas, detail, viewCenter, beats, cuePoints, viewMs, trackDurationMs, trim) {
   const ctx = canvas.getContext('2d');
   const W = canvas.width;
   const H = canvas.height;
@@ -193,6 +198,39 @@ function drawDetail(canvas, detail, viewCenter, beats, cuePoints, viewMs, trackD
     }
   }
 
+  // ── Trim range (#463) — shade what is outside the usable range, then mark
+  // both edges with the same full-height line + tab language the cues use ────
+  if (trim) {
+    const xIn = W / 2 + (trim.startMs - viewCenter) * pxPerMs;
+    const xOut = W / 2 + (trim.endMs - viewCenter) * pxPerMs;
+    const dimFrom = Math.max(0, Math.min(xIn, W));
+    const dimTo = Math.max(0, Math.min(xOut, W));
+
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    if (dimFrom > 0) ctx.fillRect(0, 0, dimFrom, H);
+    if (dimTo < W) ctx.fillRect(dimTo, 0, W - dimTo, H);
+
+    for (const [x, label] of [
+      [xIn, 'IN'],
+      [xOut, 'OUT'],
+    ]) {
+      if (x < -14 || x > W + 14) continue;
+      ctx.strokeStyle = TRIM_COLOR;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, H);
+      ctx.stroke();
+
+      ctx.fillStyle = TRIM_COLOR;
+      ctx.fillRect(x, 0, label.length * 6 + 6, 14);
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(label, x + 3, 10);
+    }
+  }
+
   // ── Red center playhead (fixed at W/2) ────────────────────────────────────
   ctx.strokeStyle = '#e03030';
   ctx.lineWidth = 2;
@@ -217,7 +255,16 @@ function drawDetail(canvas, detail, viewCenter, beats, cuePoints, viewMs, trackD
   ctx.fill();
 }
 
-function drawOverview(canvas, overview, viewCenter, durationMs, playheadMs, cuePoints, viewMs) {
+function drawOverview(
+  canvas,
+  overview,
+  viewCenter,
+  durationMs,
+  playheadMs,
+  cuePoints,
+  viewMs,
+  trim
+) {
   const ctx = canvas.getContext('2d');
   const W = canvas.width;
   const H = canvas.height;
@@ -270,6 +317,18 @@ function drawOverview(canvas, overview, viewCenter, durationMs, playheadMs, cueP
     }
   }
 
+  // ── Trim range (#463) — shade outside, mark both edges ────────────────────
+  if (trim && durationMs > 0) {
+    const pxIn = Math.max(0, Math.min(W, (trim.startMs / durationMs) * W));
+    const pxOut = Math.max(0, Math.min(W, (trim.endMs / durationMs) * W));
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    if (pxIn > 0) ctx.fillRect(0, 0, pxIn, H);
+    if (pxOut < W) ctx.fillRect(pxOut, 0, W - pxOut, H);
+    ctx.fillStyle = TRIM_COLOR;
+    ctx.fillRect(pxIn - 1, 0, 2, H);
+    ctx.fillRect(pxOut - 1, 0, 2, H);
+  }
+
   // ── Viewport highlight ────────────────────────────────────────────────────
   if (durationMs > 0) {
     const viewStart = viewCenter - viewMs / 2;
@@ -309,6 +368,9 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
   });
   const [waveformLoading, setWaveformLoading] = useState(true);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  // Trim range (#463) — millisecond positions, null = player/file end.
+  const [trimStart, setTrimStart] = useState(() => track.trim_start_ms ?? null);
+  const [trimEnd, setTrimEnd] = useState(() => track.trim_end_ms ?? null);
   const initialCuesRef = useRef(null);
   const showCancelConfirmRef = useRef(false);
 
@@ -330,6 +392,7 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
   const waveformOverviewRef = useRef(null);
   const beatsRef = useRef([]);
   const cuePointsRef = useRef([]);
+  const trimRef = useRef(null); // pending trim markers (#463) for the canvas loop
   const viewCenterRef = useRef(0); // track start at playhead on open
   const trackDurationMsRef = useRef(0);
   const isPlayingRef = useRef(false);
@@ -341,6 +404,20 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
 
   const trackDurationMs = (track.duration ?? duration ?? 0) * 1000;
   const isThisTrack = currentTrack?.id === track.id;
+  // Validated view of the pending trim values — what a saved range would be.
+  const trimRange = clampTrimRange(trimStart, trimEnd, trackDurationMs);
+  // Raw view for the waveform markers, so they stay visible while the pending
+  // combination is still invalid (e.g. IN placed after OUT).
+  const pendingTrim =
+    trimStart != null || trimEnd != null
+      ? { startMs: trimStart ?? 0, endMs: trimEnd ?? trackDurationMs }
+      : null;
+  // #463: both sides given but the range is empty — refuse to save rather than
+  // silently dropping the trim (a null range means "no trim", not "invalid").
+  const trimValidationError =
+    trimStart != null && trimEnd != null && trimEnd <= trimStart
+      ? 'Trim end must be after trim start'
+      : null;
 
   // Live preview BPM: use whatever is in the input field (so tapping updates grid immediately)
   const previewBpm = (() => {
@@ -357,6 +434,7 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
   useLayoutEffect(() => {
     seekRef.current = seek;
     beatsRef.current = beats;
+    trimRef.current = pendingTrim;
     viewMsRef.current = ZOOM_LEVELS[zoomIdx];
     trackDurationMsRef.current = trackDurationMs;
     isPlayingRef.current = isPlaying;
@@ -454,10 +532,21 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
       const cues = cuePointsRef.current;
 
       const dc = detailCanvasRef.current;
-      if (dc) drawDetail(dc, waveformDetailRef.current, vc, beatsRef.current, cues, vms, dur);
+      if (dc)
+        drawDetail(
+          dc,
+          waveformDetailRef.current,
+          vc,
+          beatsRef.current,
+          cues,
+          vms,
+          dur,
+          trimRef.current
+        );
 
       const oc = overviewCanvasRef.current;
-      if (oc) drawOverview(oc, waveformOverviewRef.current, vc, dur, ph, cues, vms);
+      if (oc)
+        drawOverview(oc, waveformOverviewRef.current, vc, dur, ph, cues, vms, trimRef.current);
 
       rafRef.current = requestAnimationFrame(loop);
     };
@@ -492,6 +581,9 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
       return bpm > 0 ? String(Math.round(bpm * 10) / 10) : '';
     })();
     if (bpmInput !== initialBpmStr || offset !== (track.beatgrid_offset ?? 0)) return true;
+    // #463: pending trim edits count as unsaved changes too
+    if (trimStart !== (track.trim_start_ms ?? null)) return true;
+    if (trimEnd !== (track.trim_end_ms ?? null)) return true;
     if (initial.length !== pending.length) return true;
     return initial.some((c, i) => {
       const p = pending[i];
@@ -504,7 +596,7 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
         (c.label ?? '') !== (p.label ?? '')
       );
     });
-  }, [bpmInput, offset, track]);
+  }, [bpmInput, offset, track, trimStart, trimEnd]);
 
   // ── Close — show confirmation if there are unsaved changes ────────────────
   const handleClose = useCallback(() => {
@@ -651,6 +743,30 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
   const nudge = (deltaMs) => setOffset((prev) => prev + deltaMs);
   const resetOffset = () => setOffset(0);
 
+  // ── Trim range (#463) ─────────────────────────────────────────────────────
+  // Playhead in ms at the moment the button is pressed: the live player
+  // position when this track is loaded (interpolated between timeupdates, like
+  // the canvas playhead), otherwise the visible waveform center the user
+  // scrolled to.
+  const playheadMs = () => {
+    if (!isThisTrack) return Math.round(viewCenterRef.current);
+    const elapsed = isPlayingRef.current
+      ? (performance.now() - lastTimeUpdateRef.current) / 1000
+      : 0;
+    return Math.round((currentTimeSecRef.current + elapsed) * 1000);
+  };
+
+  const setTrimPoint = (side) => {
+    const ms = Math.max(0, playheadMs());
+    if (side === 'in') setTrimStart(ms);
+    else setTrimEnd(ms);
+  };
+
+  const clearTrim = () => {
+    setTrimStart(null);
+    setTrimEnd(null);
+  };
+
   // ── TAP tempo ─────────────────────────────────────────────────────────────
   const handleTap = useCallback(() => {
     const now = performance.now();
@@ -681,6 +797,9 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
 
   // ── Apply — commit all pending cue changes, then save BPM/offset ──────────
   const handleApply = async () => {
+    // #463: an empty/inverted trim range is a real error — saving would silently
+    // wipe the trim (clampTrimRange() returns null for both cases), so refuse.
+    if (trimValidationError) return;
     const parsed = parseFloat(bpmInput);
     const bpmOverride = Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 10) / 10 : null;
 
@@ -722,7 +841,12 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
       }
     }
 
-    onApply(track.id, { beatgrid_offset: offset, bpm_override: bpmOverride });
+    onApply(track.id, {
+      beatgrid_offset: offset,
+      bpm_override: bpmOverride,
+      // #463: unset sides stay NULL; an invalid/whole-file range clears both
+      ...trimColumns(trimStart, trimEnd, trackDurationMs),
+    });
     onClose();
   };
 
@@ -951,6 +1075,65 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
                 <span className="bge-bpm-hint bge-bpm-hint--override">override active</span>
               )}
             </div>
+          </div>
+
+          {/* Trim range (#463) — usable start/end of the track */}
+          <div className="bge-row">
+            <span className="bge-label">Trim</span>
+            <div className="bge-trim-group">
+              <button
+                className="bge-nudge-btn"
+                onClick={() => setTrimPoint('in')}
+                title="Set the trim start at the playhead"
+              >
+                Set IN
+              </button>
+              <span className="bge-trim-val" title="Trim start">
+                {trimStart != null ? formatTrimTime(trimStart) : 'file start'}
+              </span>
+              {trimStart != null && (
+                <button
+                  className="bge-nudge-btn bge-nudge-reset"
+                  onClick={() => setTrimStart(null)}
+                  title="Clear the trim start"
+                >
+                  ↺
+                </button>
+              )}
+              <button
+                className="bge-nudge-btn"
+                onClick={() => setTrimPoint('out')}
+                title="Set the trim end at the playhead"
+              >
+                Set OUT
+              </button>
+              <span className="bge-trim-val" title="Trim end">
+                {trimEnd != null ? formatTrimTime(trimEnd) : 'file end'}
+              </span>
+              {trimEnd != null && (
+                <button
+                  className="bge-nudge-btn bge-nudge-reset"
+                  onClick={() => setTrimEnd(null)}
+                  title="Clear the trim end"
+                >
+                  ↺
+                </button>
+              )}
+              <button
+                className="bge-nudge-btn"
+                onClick={clearTrim}
+                disabled={trimStart == null && trimEnd == null}
+                title="Clear both trim points and play/export the whole track"
+              >
+                Clear trim
+              </button>
+              {trimRange && (
+                <span className="bge-bpm-hint">
+                  {formatTrimTime(trimRange.endMs - trimRange.startMs)} usable
+                </span>
+              )}
+            </div>
+            {trimValidationError && <span className="bge-trim-error">{trimValidationError}</span>}
           </div>
         </div>
 

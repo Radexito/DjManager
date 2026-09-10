@@ -40,6 +40,8 @@ const ALLOWED_TRACK_COLUMNS = new Set([
   'source_link',
   'library_id',
   'is_linked',
+  'trim_start_ms',
+  'trim_end_ms',
 ]);
 
 // ─── Camelot helpers (mirrors renderer/src/searchParser.js) ─────────────────
@@ -213,6 +215,7 @@ export function addTrack(track) {
       year, label, genres, bpm,
       source_url, source_platform, source_quality, source_link,
       user_tags, has_artwork, artwork_path, is_linked, library_id,
+      trim_start_ms, trim_end_ms,
       created_at
     ) VALUES (
       @title, @artist, @album, @duration,
@@ -220,6 +223,7 @@ export function addTrack(track) {
       @year, @label, @genres, @bpm,
       @source_url, @source_platform, @source_quality, @source_link,
       @user_tags, @has_artwork, @artwork_path, @is_linked, @library_id,
+      @trim_start_ms, @trim_end_ms,
       @created_at
     )
   `);
@@ -246,6 +250,9 @@ export function addTrack(track) {
     artwork_path: track.artwork_path ?? null,
     is_linked: track.is_linked ?? 0,
     library_id: track.library_id ?? null,
+    // #463: NULL = no trim on that side (play/export the whole file)
+    trim_start_ms: track.trim_start_ms ?? null,
+    trim_end_ms: track.trim_end_ms ?? null,
     created_at: Date.now(),
   });
 

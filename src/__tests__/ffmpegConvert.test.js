@@ -106,4 +106,81 @@ describe('convertAudio — format conversion arg building', () => {
     expect(args).toContain('-map');
     expect(args).toContain('libmp3lame');
   });
+
+  // ── Trim range (#463) ─────────────────────────────────────────────────────
+  describe('trim range', () => {
+    it('adds no seek/duration args without a trim', async () => {
+      await convertAudio('/src/track.mp3', '/dest/track.mp3', {});
+      const args = spawn.mock.calls[0][1];
+      expect(args).not.toContain('-ss');
+      expect(args).not.toContain('-t');
+    });
+
+    it('seeks inputs before -i and caps the output with -t for a trimmed range', async () => {
+      await convertAudio('/src/track.mp3', '/dest/track.mp3', {
+        trimStartSec: 30,
+        trimEndSec: 90,
+      });
+      const args = spawn.mock.calls[0][1];
+      const ssIdx = args.indexOf('-ss');
+      const iIdx = args.indexOf('-i');
+      const tIdx = args.indexOf('-t');
+      expect(args[ssIdx + 1]).toBe('30');
+      expect(ssIdx).toBeLessThan(iIdx); // -ss before -i = input seek
+      expect(args[tIdx + 1]).toBe('60'); // duration of the trimmed range
+      expect(tIdx).toBeGreaterThan(iIdx); // -t is an output option
+      expect(args).toContain('copy'); // still a stream copy, no re-encode
+    });
+
+    it('applies a start-only trim as a seek with no duration cap', async () => {
+      await convertAudio('/src/track.mp3', '/dest/track.mp3', { trimStartSec: 12.5 });
+      const args = spawn.mock.calls[0][1];
+      expect(args[args.indexOf('-ss') + 1]).toBe('12.5');
+      expect(args).not.toContain('-t');
+    });
+
+    it('treats a zero start as no seek', async () => {
+      await convertAudio('/src/track.mp3', '/dest/track.mp3', {
+        trimStartSec: 0,
+        trimEndSec: 45,
+      });
+      const args = spawn.mock.calls[0][1];
+      expect(args).not.toContain('-ss');
+      expect(args[args.indexOf('-t') + 1]).toBe('45');
+    });
+
+    it('ignores a trim end that is not after the start', async () => {
+      await convertAudio('/src/track.mp3', '/dest/track.mp3', {
+        trimStartSec: 60,
+        trimEndSec: 30,
+      });
+      const args = spawn.mock.calls[0][1];
+      expect(args[args.indexOf('-ss') + 1]).toBe('60');
+      expect(args).not.toContain('-t');
+    });
+
+    it('ignores non-numeric trim values', async () => {
+      await convertAudio('/src/track.mp3', '/dest/track.mp3', {
+        trimStartSec: null,
+        trimEndSec: '90',
+      });
+      const args = spawn.mock.calls[0][1];
+      expect(args).not.toContain('-ss');
+      expect(args).not.toContain('-t');
+    });
+
+    it('keeps the trim alongside a format conversion and a gain change', async () => {
+      await convertAudio('/src/track.wav', '/dest/track.mp3', {
+        format: 'mp3',
+        gainDb: 2,
+        trimStartSec: 15,
+        trimEndSec: 105,
+      });
+      const args = spawn.mock.calls[0][1];
+      expect(args[args.indexOf('-ss') + 1]).toBe('15');
+      expect(args[args.indexOf('-t') + 1]).toBe('90');
+      expect(args).toContain('libmp3lame');
+      expect(args.some((a) => typeof a === 'string' && a.includes('volume=2.00dB'))).toBe(true);
+    });
+  });
 });
