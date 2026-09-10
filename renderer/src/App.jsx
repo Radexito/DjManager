@@ -236,6 +236,7 @@ function App() {
                     onSearchChange={setSearch}
                     openDetailsRequest={openDetailsRequest}
                     locateTrack={locateTrackRequest}
+                    onArtistSearch={handleArtistSearch}
                   />
                 )}
             </div>
