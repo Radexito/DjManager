@@ -916,7 +916,7 @@ function SettingsModal({ onClose }) {
                 </p>
                 <div className="settings-row">
                   <button
-                    className="btn"
+                    className="btn-primary"
                     onClick={() => handleGenerateWaveformsLibrary(true)}
                     disabled={generatingWaveforms}
                   >
