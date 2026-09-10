@@ -7,10 +7,9 @@ import {
   useEffect,
   useLayoutEffect,
 } from 'react';
+import { appendHistoryEntry, loadHistory, persistHistory } from './playbackHistory.js';
 
 const PlayerContext = createContext(null);
-
-const HISTORY_MAX = 50;
 
 export function PlayerProvider({ children }) {
   const audioRef = useRef(null);
@@ -42,9 +41,15 @@ export function PlayerProvider({ children }) {
   const [repeat, setRepeat] = useState('none'); // 'none' | 'all' | 'one'
   const [outputDeviceId, setOutputDeviceId] = useState('');
   const [volume, setVolumeState] = useState(1.0);
-  const [history, setHistory] = useState([]); // ring buffer, newest first
+  const [history, setHistory] = useState(loadHistory); // ring buffer, newest first, persisted (#507)
   const [playbackError, setPlaybackError] = useState(null); // { message } | null — surfaced by PlayerBar
   const [unavailableLinkedIds, setUnavailableLinkedIds] = useState(() => new Set());
+
+  // #507: keep the persisted copy in sync with the in-memory ring buffer. Runs
+  // on mount too, which rewrites exactly what was just hydrated - harmless.
+  useEffect(() => {
+    persistHistory(history);
+  }, [history]);
 
   // Port of the local HTTP media server (started in main process before window opens).
   const mediaPortRef = useRef(null);
@@ -229,12 +234,10 @@ export function PlayerProvider({ children }) {
       // Always ensure exactly one leading slash (Unix paths already start with '/', Windows 'C:/...' don't)
       const src = `http://127.0.0.1:${port}/${encodedPath.replace(/^\//, '')}?t=${gen}`; // cache-bust: same file reloaded = fresh pipeline
 
-      // Push currently playing track to history before switching
+      // Push currently playing track to history before switching (#507):
+      // no duplicate for a back-to-back replay, capped and persisted.
       if (currentTrackRef.current) {
-        setHistory((prev) => {
-          const next = [currentTrackRef.current, ...prev];
-          return next.length > HISTORY_MAX ? next.slice(0, HISTORY_MAX) : next;
-        });
+        setHistory((prev) => appendHistoryEntry(prev, currentTrackRef.current));
       }
       console.log('[diag] playAtIndex src =', src);
       // Build Web Audio graph on first play (must be inside user gesture so ctx starts running)
