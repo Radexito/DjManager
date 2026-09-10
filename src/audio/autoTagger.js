@@ -23,6 +23,17 @@ async function discogsFetch(url) {
   return res.json();
 }
 
+// Cover Art Archive URLs are constructed from a release id with no guarantee
+// art was ever uploaded — verify existence before offering them as candidates.
+async function coverArtExists(url) {
+  try {
+    const res = await fetch(url, { method: 'HEAD', headers: { 'User-Agent': USER_AGENT } });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Normalise ─────────────────────────────────────────────────────────────────
 
 function normalise(fields) {
@@ -47,7 +58,7 @@ export async function searchMusicBrainz(query) {
   const url = `${MB_BASE}/recording?query=${q}&fmt=json&limit=10&inc=releases+artists+genres+tags`;
   const data = await mbFetch(url);
 
-  return (data.recordings ?? []).map((rec) => {
+  const mapped = (data.recordings ?? []).map((rec) => {
     const artists = (rec['artist-credit'] ?? [])
       .map((ac) => (typeof ac === 'object' ? (ac.name ?? ac.artist?.name) : ac))
       .filter(Boolean)
@@ -80,6 +91,16 @@ export async function searchMusicBrainz(query) {
       coverUrl,
     });
   });
+
+  // Most releases have no uploaded art — drop coverUrl for any that 404 so
+  // callers never see or auto-select a broken thumbnail.
+  await Promise.all(
+    mapped.map(async (r) => {
+      if (r.coverUrl && !(await coverArtExists(r.coverUrl))) r.coverUrl = '';
+    })
+  );
+
+  return mapped;
 }
 
 // ─── Discogs ───────────────────────────────────────────────────────────────────

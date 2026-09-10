@@ -96,10 +96,16 @@ await app.close();
 
 ## Submitting changes
 
-1. Fork the repo and create a branch: `git checkout -b feat/my-feature`
+1. Fork the repo and create a branch off `dev`: `git checkout -b feat/my-feature`
 2. Make your changes — the pre-commit hook will lint and format automatically
-3. Open a pull request against `master`
-4. Describe what you changed and why
+3. Open a pull request against **`dev`** (not `master`)
+4. When `dev` has accumulated enough changes, a maintainer pushes it to `staging`
+   for a test/prerelease build. If that passes, a PR `dev` → `master` is opened
+   for the stable release.
+5. Describe what you changed and why
+
+> **Note:** Direct PRs to `master` are rejected by CI unless the head branch is
+> `dev`. Always target `dev` first.
 
 ---
 

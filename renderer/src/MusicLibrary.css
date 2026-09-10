@@ -16,6 +16,10 @@
   position: relative;
 }
 
+.music-library__search {
+  flex-shrink: 0;
+}
+
 /* Search */
 .search-input {
   padding: 8px;
@@ -46,6 +50,10 @@
 
 .header-cell.right {
   text-align: right;
+}
+
+.header-cell--sorting {
+  opacity: 0.6;
 }
 
 /* Rows */
@@ -166,6 +174,19 @@
   cursor: default;
 }
 
+/* Shown only when more than one library exists (#390) */
+.cell-library-badge {
+  font-size: 10px;
+  flex-shrink: 0;
+  margin-right: 5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #313244;
+  color: #a6adc8;
+  cursor: default;
+  white-space: nowrap;
+}
+
 .cell-title-text {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -201,12 +222,67 @@
 /* In library mode the List manages its own scroll — wrapper must not clip it */
 .table-scroll-wrap.library-mode {
   overflow-x: hidden;
+  position: relative;
 }
 
-/* react-window */
+/* Grayout + spinner shown while the table repopulates (sort transition) or the
+   full queue snapshot is being built (double-click play). */
+.table-busy-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* No backdrop-filter here — on some GPU/driver combos Chromium's backdrop
+     blur smears the whole window with artifacts while the overlay is up. */
+  background: rgba(16, 16, 16, 0.66);
+  pointer-events: none;
+}
+
+.table-busy-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: rgba(26, 26, 26, 0.9);
+  border: 1px solid #333;
+  color: #ddd;
+  font-size: 13px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+}
+
+.table-busy-spinner {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid #444;
+  border-top-color: #1db954;
+  animation: table-busy-spin 0.7s linear infinite;
+  flex: none;
+}
+
+@keyframes table-busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* react-window (kept for FileExplorer) — Music view uses plain rows now */
 .track-list {
   flex: 1;
   background-color: #1a1a1a;
+}
+
+/* Plain (non-virtualized) music list: native scroll, rows in normal flow */
+.track-list--plain {
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+.track-list--plain .row {
+  position: static;
 }
 
 /* Context Menu */
@@ -525,6 +601,17 @@
   border-radius: 50%;
   margin-right: 5px;
   vertical-align: middle;
+}
+
+.context-menu-item--library {
+  justify-content: space-between;
+}
+
+.ctx-library-free {
+  font-size: 11px;
+  color: #888;
+  margin-left: 12px;
+  white-space: nowrap;
 }
 
 .context-menu-item--header {

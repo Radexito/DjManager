@@ -295,6 +295,14 @@
   white-space: nowrap;
   padding: 4px 0;
 }
+.settings-size-display {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: monospace;
+  color: #a6adc8;
+  white-space: nowrap;
+  padding: 4px 8px;
+}
 .move-progress {
   margin-top: 0.5rem;
 }
@@ -429,4 +437,106 @@
   color: #aaa;
   font-size: 12px;
   line-height: 1.4;
+}
+
+/* Storage format radios */
+.settings-radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #cdd6f4;
+  cursor: pointer;
+  margin-right: 20px;
+}
+.settings-radio input[type='radio'] {
+  accent-color: #1db954;
+  cursor: pointer;
+}
+
+/* Libraries list */
+.library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.library-card {
+  padding: 10px 12px;
+  background: #1e1e2e;
+  border: 1px solid #313244;
+  border-radius: 6px;
+}
+.library-card--new {
+  border-style: dashed;
+  margin-top: 10px;
+}
+.library-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.library-card-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #cdd6f4;
+}
+.library-active-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #1db954;
+  border: 1px solid #1db954;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-weight: 400;
+}
+.library-size-badge {
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: #a6adc8;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-weight: 400;
+  font-family: monospace;
+}
+.library-rename-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #888;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.library-rename-btn:hover {
+  background: #2a2a2a;
+  color: #ccc;
+}
+.library-card-actions {
+  display: flex;
+  gap: 6px;
+}
+.library-rename-input {
+  flex: 1;
+  padding: 6px 8px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 5px;
+  color: #f0f0f0;
+  font-size: 13px;
+}
+.library-rename-input:focus {
+  outline: none;
+  border-color: #2d6aa0;
 }
