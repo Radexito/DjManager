@@ -91,6 +91,7 @@ import {
   moveTrackToLibrary,
   getLibraryDiskUsage,
   getLibraryFreeSpace,
+  writeBpmKeyTagsForTrack,
 } from './audio/importManager.js';
 import {
   listLibraries,
@@ -164,7 +165,7 @@ let mainWindow;
 import { startMediaServer as _startMediaServer } from './audio/mediaServer.js';
 import { moveFileSafe } from './utils/fsMove.js';
 import { getArtworkBase } from './audio/importManager.js';
-import { writeId3Tags } from './audio/id3Writer.js';
+import { writeId3Tags, writeBpmKeyTags } from './audio/id3Writer.js';
 
 // Serve audio files over a local HTTP server so Chromium's media pipeline can
 // issue standard Range requests during seeking. Custom Electron protocols have
@@ -519,6 +520,22 @@ ipcMain.handle('get-unavailable-linked-tracks', () =>
 ipcMain.handle('get-track-waveform', (_, trackId) => {
   const buf = getTrackWaveform(trackId);
   return buf ? new Uint8Array(buf) : null;
+});
+// #474 — write the analyzed BPM/key into the tracks' own file tags (manual
+// action from the library context menu). Respects the metadata settings:
+// `metadata_overwrite_tags` decides whether differing tags are overwritten,
+// otherwise only missing tags are filled.
+ipcMain.handle('write-bpm-key-tags', async (_event, { trackIds = [] } = {}) => {
+  const results = [];
+  for (const id of trackIds) {
+    try {
+      results.push(await writeBpmKeyTagsForTrack(id));
+    } catch (err) {
+      results.push({ trackId: id, ok: false, reason: 'error', error: err.message });
+    }
+  }
+  const written = results.filter((r) => r.ok && (r.wrote?.length ?? 0) > 0).length;
+  return { ok: true, written, skipped: results.length - written, results };
 });
 ipcMain.handle('get-setting', (_, key, def) => getSetting(key, def));
 ipcMain.handle('set-setting', (_, key, value) => {
@@ -2208,7 +2225,13 @@ async function copyTrackToUsb(
   track,
   usbRoot,
   usedNames,
-  { useNormalized = false, targetLufs = null, targetDevice = null, forceMp3 = false } = {}
+  {
+    useNormalized = false,
+    targetLufs = null,
+    targetDevice = null,
+    forceMp3 = false,
+    blind = false,
+  } = {}
 ) {
   const srcPath = track.file_path;
   const srcExt = path.extname(srcPath || '');
@@ -2249,9 +2272,44 @@ async function copyTrackToUsb(
     } else {
       fs.copyFileSync(srcPath, destPath);
     }
+    // #474 — the exported file must describe itself: title/artist/album always,
+    // BPM/key unless this is a blind (real DJ mode) export.
+    await writeExportTags(destPath, track, blind);
   }
 
   return { path: `/music/${finalName}`, meta };
+}
+
+/**
+ * #474 — write the library metadata into the file that lands on the stick.
+ * The exported file then describes itself for any other tool (tag viewer,
+ * Rekordbox import, Mixed In Key, ...): title/artist/album always, BPM and key
+ * unless this is a blind (real DJ mode) export, which must carry nothing to
+ * sync to. Failures are logged, never fatal: the audio already copied fine.
+ */
+async function writeExportTags(destPath, track, blind = false) {
+  try {
+    await writeId3Tags(destPath, {
+      title: track.title || null,
+      artist: track.artist || null,
+      album: track.album || null,
+    });
+  } catch (err) {
+    console.warn(`Tag write failed for ${path.basename(destPath)}:`, err.message);
+  }
+  if (blind) return;
+
+  const bpm = track.bpm_override ?? track.bpm ?? null;
+  const key = track.key_camelot || track.key_raw || null;
+  if (bpm == null && !key) return;
+  try {
+    const res = await writeBpmKeyTags(destPath, { bpm, key, overwrite: false });
+    if (res?.ok === false && res.reason && !['no-values', 'already-current'].includes(res.reason)) {
+      console.warn(`BPM/key tag write failed for ${path.basename(destPath)}: ${res.reason}`);
+    }
+  } catch (err) {
+    console.warn(`BPM/key tag write failed for ${path.basename(destPath)}:`, err.message);
+  }
 }
 
 /** Writes the Rekordbox PDB database file using the pure-JS writer. */
@@ -2362,6 +2420,7 @@ ipcMain.handle(
             targetLufs,
             targetDevice,
             forceMp3,
+            blind,
           });
           usbPaths.set(t.id, usbPath);
           if (meta) usbMeta.set(t.id, meta);
@@ -2526,6 +2585,7 @@ ipcMain.handle(
             targetLufs,
             targetDevice,
             forceMp3,
+            blind,
           });
           usbPaths.set(t.id, usbPath);
           if (meta) usbMeta.set(t.id, meta);
