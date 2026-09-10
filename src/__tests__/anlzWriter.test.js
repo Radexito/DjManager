@@ -127,6 +127,83 @@ describe('writeAnlz', () => {
     });
   });
 
+  // #258 — real DJ mode: the ANLZ must still exist, so the player does not
+  // analyse the track itself, but it carries no waveform and no beat grid.
+  describe('blind mode', () => {
+    const blindOpts = { ...baseOpts, blind: true, cuePoints: [] };
+
+    /** Buffers written for the DAT / EXT file. */
+    function writtenFiles() {
+      const bySuffix = {};
+      for (const [filePath, buf] of fs.writeFileSync.mock.calls) {
+        const suffix = filePath.slice(-3);
+        bySuffix[suffix] = buf;
+      }
+      return bySuffix;
+    }
+
+    it('never generates a waveform', async () => {
+      const { generateWaveform } = await import('../audio/waveformGenerator.js');
+      await writeAnlz(blindOpts);
+      expect(generateWaveform).not.toHaveBeenCalled();
+    });
+
+    it('writes DAT and EXT but no 2EX', async () => {
+      await writeAnlz(blindOpts);
+      const suffixes = fs.writeFileSync.mock.calls.map((c) => c[0].slice(-3));
+      expect(suffixes).toEqual(['DAT', 'EXT']);
+    });
+
+    it('omits every waveform section', async () => {
+      await writeAnlz(blindOpts);
+      const { DAT, EXT } = writtenFiles();
+      const datTags = parseSections(DAT).map((s) => s.tag);
+      expect(datTags).not.toContain('PWAV');
+      expect(datTags).not.toContain('PWV2');
+      expect(datTags).not.toContain('PWV3');
+      const extTags = parseSections(EXT).map((s) => s.tag);
+      expect(extTags).not.toContain('PWV3');
+      expect(extTags).not.toContain('PWV5');
+      expect(extTags).not.toContain('PWV4');
+    });
+
+    it('leaves both beat grids header-only', async () => {
+      await writeAnlz(blindOpts);
+      const { DAT, EXT } = writtenFiles();
+      const pqtz = parseSections(DAT).find((s) => s.tag === 'PQTZ');
+      const pqt2 = parseSections(EXT).find((s) => s.tag === 'PQT2');
+      expect(pqtz).toBeTruthy();
+      expect(pqtz.lenTag).toBe(24); // header only — not a single beat entry
+      expect(pqt2).toBeTruthy();
+      expect(pqt2.lenTag).toBe(56); // header only — no beat entries
+    });
+
+    it('still keeps the path tag and the seek table', async () => {
+      await writeAnlz(blindOpts);
+      const { DAT } = writtenFiles();
+      const datTags = parseSections(DAT).map((s) => s.tag);
+      expect(datTags).toContain('PPTH');
+      expect(datTags).toContain('PVBR');
+    });
+
+    it('still writes cue points', async () => {
+      await writeAnlz({
+        ...blindOpts,
+        cuePoints: [{ hot_cue_index: 0, position_ms: 1000, color: '#ff0000', label: 'Intro' }],
+      });
+      const { DAT, EXT } = writtenFiles();
+      expect(parseSections(DAT).map((s) => s.tag)).toContain('PCOB');
+      expect(parseSections(EXT).map((s) => s.tag)).toContain('PCO2');
+    });
+
+    it('a normal (non-blind) export is untouched by the option', async () => {
+      await writeAnlz(baseOpts);
+      expect(fs.writeFileSync).toHaveBeenCalledTimes(3);
+      const { DAT } = writtenFiles();
+      expect(parseSections(DAT).map((s) => s.tag)).toContain('PWAV');
+    });
+  });
+
   it('DAT file starts with PMAI magic bytes', async () => {
     await writeAnlz(baseOpts);
 

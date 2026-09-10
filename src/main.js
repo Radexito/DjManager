@@ -139,7 +139,7 @@ import { initLogger, getLogDir, initRendererLogger, logRendererMessage } from '.
 import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
 import { detectWindowsDrives } from './explorer/drives.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
-import { resolveBlindMode, applyBlindMode, shouldWriteAnlz } from './usb/blindMode.js';
+import { resolveBlindMode, applyBlindMode } from './usb/blindMode.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
 import { resolveExportFormat } from './usb/deviceFormats.js';
@@ -1906,22 +1906,21 @@ ipcMain.handle(
         const usbFilePath = `/music/${filename}`;
 
         // Write minimal ANLZ (path + beatgrid only, no waveform for speed).
-        // #258 — blind mode writes no ANLZ at all.
-        if (shouldWriteAnlz(blind)) {
-          try {
-            const anlzDat = await writeAnlz({
-              usbFilePath,
-              sourceFilePath: null,
-              beatgrid: null,
-              bpm: meta.bpm || 0,
-              beatgridOffset: 0,
-              usbRoot,
-              ffmpegPath: getFfmpegRuntimePath(),
-              cuePoints: [],
-            });
-            anlzPaths.set(i, anlzDat);
-          } catch {}
-        }
+        // #258 — in blind mode the same file is written with an empty grid.
+        try {
+          const anlzDat = await writeAnlz({
+            usbFilePath,
+            sourceFilePath: null,
+            beatgrid: null,
+            bpm: meta.bpm || 0,
+            beatgridOffset: 0,
+            usbRoot,
+            ffmpegPath: getFfmpegRuntimePath(),
+            cuePoints: [],
+            blind,
+          });
+          anlzPaths.set(i, anlzDat);
+        } catch {}
 
         let fileSize = 0;
         try {
@@ -2399,7 +2398,9 @@ ipcMain.handle(
         const t = tracks[i];
         const usbFilePath = usbPaths.get(t.id);
         if (!usbFilePath) continue;
-        if (shouldWriteAnlz(blind)) {
+        // #258 — blind mode still writes the ANLZ (so the player does not
+        // analyse the track itself) but with no waveform and an empty grid.
+        {
           const anlzFolder = getAnlzFolder(usbFilePath).replace(/\\/g, '/');
           anlzPaths.set(t.id, `/${anlzFolder}/ANLZ0000.DAT`);
           const sourceFilePath = t.file_path || null;
@@ -2413,6 +2414,7 @@ ipcMain.handle(
               usbRoot,
               ffmpegPath: getFfmpegRuntimePath(),
               cuePoints: getCuePoints(t.id).filter((c) => c.enabled !== 0),
+              blind,
             });
           } catch (err) {
             console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
@@ -2596,7 +2598,9 @@ ipcMain.handle(
         const t = allTracks[i];
         const usbFilePath = usbPaths.get(t.id);
         if (!usbFilePath) continue;
-        if (shouldWriteAnlz(blind)) {
+        // #258 — blind mode still writes the ANLZ (so the player does not
+        // analyse the track itself) but with no waveform and an empty grid.
+        {
           try {
             await writeAnlz({
               usbFilePath,
@@ -2607,6 +2611,7 @@ ipcMain.handle(
               usbRoot,
               ffmpegPath: getFfmpegRuntimePath(),
               cuePoints: getCuePoints(t.id).filter((c) => c.enabled !== 0),
+              blind,
             });
           } catch (err) {
             console.warn(`ANLZ write failed for track ${t.id}:`, err.message);

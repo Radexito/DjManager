@@ -1,10 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import {
-  BLIND_MODE_SETTING,
-  resolveBlindMode,
-  applyBlindMode,
-  shouldWriteAnlz,
-} from '../usb/blindMode.js';
+import { BLIND_MODE_SETTING, resolveBlindMode, applyBlindMode } from '../usb/blindMode.js';
 
 describe('#258 real DJ mode (blind export)', () => {
   describe('resolveBlindMode', () => {
@@ -50,10 +45,12 @@ describe('#258 real DJ mode (blind export)', () => {
       expect(applyBlindMode(track, false)).toBe(track);
     });
 
-    it('blanks BPM and the analyse path when blind mode is on', () => {
+    it('blanks BPM but KEEPS the analyse path', () => {
       const out = applyBlindMode(track, true);
       expect(out.bpm).toBe(0);
-      expect(out.analyzePath).toBe('');
+      // The path must stay: the blind ANLZ exists precisely so the player does
+      // not treat the track as unanalysed and build its own waveform + grid.
+      expect(out.analyzePath).toBe('/music/a/ANLZ0000.DAT');
     });
 
     it('keeps everything else a player reads (title, key, cues, rating)', () => {
@@ -70,13 +67,6 @@ describe('#258 real DJ mode (blind export)', () => {
       applyBlindMode(track, true);
       expect(track.bpm).toBe(128);
       expect(track.analyzePath).toBe('/music/a/ANLZ0000.DAT');
-    });
-  });
-
-  describe('shouldWriteAnlz', () => {
-    it('writes ANLZ normally and skips it in blind mode', () => {
-      expect(shouldWriteAnlz(false)).toBe(true);
-      expect(shouldWriteAnlz(true)).toBe(false);
     });
   });
 });

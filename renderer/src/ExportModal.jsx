@@ -60,14 +60,14 @@ function ExportFormatOptions({
       </label>
       <label
         className="export-normalized-option"
-        title="Export without waveforms and BPM — the standalone player shows nothing to sync to"
+        title="Export with a blank waveform and no BPM. The stick still carries analysis data, so the player will not generate its own - there is simply nothing to mix against."
       >
         <input
           type="checkbox"
           checked={blindMode}
           onChange={(e) => setBlindMode(e.target.checked)}
         />
-        <span>Real DJ mode — no waveforms / no BPM (mix blind)</span>
+        <span>Real DJ mode - blank waveform, no BPM (mix blind)</span>
       </label>
     </div>
   );
