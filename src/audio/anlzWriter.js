@@ -757,6 +757,9 @@ function buildSectionWithBigHeader(fourcc, specificHeader, data) {
  * @param {number}  [opts.beatgridOffset=0] - Grid shift in ms (beatgrid_offset from DB)
  * @param {string}  opts.usbRoot            - Absolute path to USB root on disk
  * @param {Array}   [opts.cuePoints]        - Cue point rows from cue_points table
+ * @param {boolean} [opts.blind=false]      - #258 "real DJ mode": write an ANLZ
+ *   that still looks analysed (so the player does NOT run its own analysis) but
+ *   carries no beat grid and no waveform at all. Cue points are still written.
  */
 export async function writeAnlz(opts) {
   const {
@@ -768,6 +771,7 @@ export async function writeAnlz(opts) {
     usbRoot,
     ffmpegPath,
     cuePoints,
+    blind = false,
   } = opts;
 
   const folderHash = getFolderName(usbFilePath);
@@ -775,8 +779,11 @@ export async function writeAnlz(opts) {
   fs.mkdirSync(anlzDir, { recursive: true });
 
   // ── Generate waveforms from source audio ─────────────────────────────────
+  // Blind mode skips generation entirely: no ffmpeg pass, and the waveform
+  // sections below are omitted, which is the state a failed export produced —
+  // the stick shows no waveform instead of the player analysing one itself.
   let waveforms = null;
-  if (sourceFilePath) {
+  if (!blind && sourceFilePath) {
     try {
       waveforms = await generateWaveform(sourceFilePath, ffmpegPath || 'ffmpeg');
     } catch (err) {
@@ -785,7 +792,8 @@ export async function writeAnlz(opts) {
   }
 
   // ── Compute beat array once — shared by PQTZ (DAT) and PQT2 (EXT) ──────────
-  const beats = computeBeats(beatgrid, bpm, beatgridOffset);
+  // Blind mode forces an empty beat array: both grids come out header-only.
+  const beats = blind ? [] : computeBeats(beatgrid, bpm, beatgridOffset);
 
   // ── PVBR seek table ───────────────────────────────────────────────────────────
   // Native Rekordbox always includes PVBR between PPTH and PQTZ in the DAT file.
