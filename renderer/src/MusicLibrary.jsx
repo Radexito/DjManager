@@ -180,10 +180,10 @@ function renderCell(t, colKey, onArtistClick) {
           {i > 0 ? ', ' : null}
           <span
             className="cell-artist--clickable"
-            title={`Search: ARTIST is ${one}`}
+            title={`Search: ARTIST contains ${one}`}
             onClick={(e) => {
               e.stopPropagation();
-              onArtistClick(one);
+              onArtistClick(one, true);
             }}
           >
             {one}
@@ -1974,10 +1974,11 @@ function MusicLibrary({
   // Without a wired handler the cell stays plain text (no fake affordance).
   const handleArtistClick = useMemo(() => {
     if (!onArtistSearch && !onSearchChange) return undefined;
-    return (artist) => {
-      const query = buildArtistQuery(artist);
+    return (artist, fromCredit) => {
+      const query = buildArtistQuery(artist, { fromCredit });
       if (!query) return;
-      if (onArtistSearch) onArtistSearch(artist);
+      // always an explicit boolean: App folds it into the query operator
+      if (onArtistSearch) onArtistSearch(artist, Boolean(fromCredit));
       else onSearchChange(query);
     };
   }, [onArtistSearch, onSearchChange]);

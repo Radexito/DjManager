@@ -380,6 +380,11 @@ describe('buildArtistQuery', () => {
     expect(buildArtistQuery('Doja Cat')).toBe('ARTIST is Doja Cat');
   });
 
+  it('searches a name from a comma credit with contains', () => {
+    expect(buildArtistQuery('Egzod', { fromCredit: true })).toBe('ARTIST contains Egzod');
+    expect(buildArtistQuery('Egzod')).toBe('ARTIST is Egzod');
+  });
+
   it('degrades to free text when the name contains AND', () => {
     expect(buildArtistQuery('Simon AND Garfunkel')).toBe('Simon AND Garfunkel');
   });

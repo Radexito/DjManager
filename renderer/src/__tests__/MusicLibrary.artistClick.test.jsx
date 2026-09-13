@@ -119,7 +119,7 @@ describe('artist cell click (#505)', () => {
     fireEvent.click(await screen.findByText('Artist A'));
 
     expect(onArtistSearch).toHaveBeenCalledTimes(1);
-    expect(onArtistSearch).toHaveBeenCalledWith('Artist A');
+    expect(onArtistSearch).toHaveBeenCalledWith('Artist A', false);
   });
 
   it('works for multi-word names', async () => {
@@ -128,7 +128,7 @@ describe('artist cell click (#505)', () => {
 
     fireEvent.click(await screen.findByText('Doja Cat'));
 
-    expect(onArtistSearch).toHaveBeenCalledWith('Doja Cat');
+    expect(onArtistSearch).toHaveBeenCalledWith('Doja Cat', false);
   });
 
   it('does not select the row (the click is stopped at the cell)', async () => {
@@ -175,13 +175,14 @@ describe('artist cell click (#505)', () => {
 
     expect(first.className).toBe('cell-artist--clickable');
     expect(second.className).toBe('cell-artist--clickable');
-    expect(second.getAttribute('title')).toBe('Search: ARTIST is Doctor P');
+
+    expect(second.getAttribute('title')).toBe('Search: ARTIST contains Doctor P');
 
     fireEvent.click(second);
-    expect(onArtistSearch).toHaveBeenCalledWith('Doctor P');
+    expect(onArtistSearch).toHaveBeenCalledWith('Doctor P', true);
 
     fireEvent.click(first);
-    expect(onArtistSearch).toHaveBeenLastCalledWith('Sigma');
+    expect(onArtistSearch).toHaveBeenLastCalledWith('Sigma', true);
   });
 
   it('searches one name of a split credit through the search box fallback', async () => {
@@ -190,7 +191,7 @@ describe('artist cell click (#505)', () => {
 
     fireEvent.click(await screen.findByText('Doctor P'));
 
-    expect(onSearchChange).toHaveBeenCalledWith('ARTIST is Doctor P');
+    expect(onSearchChange).toHaveBeenCalledWith('ARTIST contains Doctor P');
   });
 
   it('does not select the row when a split name is clicked', async () => {

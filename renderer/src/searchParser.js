@@ -359,10 +359,15 @@ export function splitArtists(artist) {
  * A name containing " AND " cannot be expressed as a field clause (the query
  * would split into two clauses), so it degrades to free text - which still
  * matches the artist column, because `_text` searches artist names too.
+ *
+ * `fromCredit` marks a name that came out of a comma-separated credit. Those are
+ * searched with `contains`: a name pulled out of "Merage, Ghost in Real Life,
+ * Egzod" is almost never a whole tag on its own, so exact `is` returns an empty
+ * list - the collab tracks it came from are exactly what the user wants.
  */
-export function buildArtistQuery(artist) {
+export function buildArtistQuery(artist, { fromCredit = false } = {}) {
   const name = String(artist ?? '').trim();
   if (!name) return '';
   if (AND_SEPARATOR_RE.test(name)) return name;
-  return `ARTIST is ${name}`;
+  return `ARTIST ${fromCredit ? 'contains' : 'is'} ${name}`;
 }
