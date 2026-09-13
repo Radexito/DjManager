@@ -2085,6 +2085,22 @@ function MusicLibrary({
     toastTimerRef.current = setTimeout(() => setToast(null), 4000);
   }, []);
 
+  // #474 — write the analyzed BPM/key into the selected tracks' own file tags
+  const handleWriteBpmKeyTags = useCallback(async () => {
+    const targetIds = contextMenu?.targetIds ?? [];
+    setContextMenu(null);
+    if (targetIds.length === 0) return;
+    try {
+      const res = await window.api.writeBpmKeyTags({ trackIds: targetIds });
+      showToast(
+        `BPM & Key tags — written: ${res.written}, skipped: ${res.skipped}`,
+        res.written > 0
+      );
+    } catch (err) {
+      showToast(`BPM & Key tag write failed: ${err.message}`, false);
+    }
+  }, [contextMenu, showToast]);
+
   const handleNormalizeTracks = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
     setContextMenu(null);
@@ -3076,6 +3092,12 @@ function MusicLibrary({
                         </div>
                       </SubItem>
                     </SubItem>
+
+                    {/* ── Write BPM & Key tags (#474) ── */}
+                    <div className="context-menu-separator" />
+                    <div className="context-menu-item" onClick={handleWriteBpmKeyTags}>
+                      🏷️ Save BPM &amp; Key to file{selectionLabel}
+                    </div>
 
                     {/* ── Remove ── */}
                     {isPlaylistView ? (
