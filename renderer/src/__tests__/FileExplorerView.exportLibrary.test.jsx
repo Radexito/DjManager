@@ -96,6 +96,13 @@ function renderExplorer() {
   );
 }
 
+/** Buttons inside the open dialog: the banner behind it uses the same wording. */
+function dialogButton(label) {
+  const dialog = document.querySelector('.explorer-dialog');
+  if (!dialog) throw new Error('no open dialog');
+  return [...dialog.querySelectorAll('button')].find((b) => b.textContent.trim() === label);
+}
+
 /** The library view is a deliberate step, never the default. */
 async function openLibraryView() {
   fireEvent.click(await screen.findByText('Open as library'));
@@ -191,6 +198,105 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
     );
     expect(screen.queryByText('📚 Rekordbox export')).toBeNull();
     expect(screen.queryByText('Open as library')).toBeNull();
+  });
+
+  it('asks how to open a folder that holds an export', async () => {
+    window.api.browseDirectory.mockResolvedValue({
+      dirs: [
+        { name: 'id3', path: NESTED_ROOT },
+        { name: 'notes', path: `${EXPORT_ROOT}/notes` },
+      ],
+      files: [],
+    });
+    window.api.exportRoots.mockResolvedValue({
+      ok: true,
+      roots: { [NESTED_ROOT]: { software: 'rekordbox', label: 'Rekordbox' } },
+    });
+
+    renderExplorer();
+
+    fireEvent.doubleClick(await screen.findByText('id3'));
+
+    expect(await screen.findByText('Open id3')).toBeTruthy();
+    expect(dialogButton('Open as folder')).toBeTruthy();
+    expect(dialogButton('Open as library')).toBeTruthy();
+
+    // a folder that is not an export is still opened straight away
+    fireEvent.doubleClick(screen.getByText('notes'));
+
+    await waitFor(() =>
+      expect(window.api.findExportAt).toHaveBeenCalledWith(`${EXPORT_ROOT}/notes`)
+    );
+    expect(screen.queryByText('Open notes')).toBeNull();
+  });
+
+  it('opens the folder, not the library, when the folder is chosen', async () => {
+    window.api.browseDirectory.mockResolvedValue({
+      dirs: [{ name: 'id3', path: NESTED_ROOT }],
+      files: [],
+    });
+    window.api.exportRoots.mockResolvedValue({
+      ok: true,
+      roots: { [NESTED_ROOT]: { software: 'rekordbox', label: 'Rekordbox' } },
+    });
+
+    renderExplorer();
+
+    fireEvent.doubleClick(await screen.findByText('id3'));
+    await screen.findByText('Open id3');
+    fireEvent.click(dialogButton('Open as folder'));
+
+    await waitFor(() => expect(window.api.findExportAt).toHaveBeenCalledWith(NESTED_ROOT));
+    expect(screen.queryByText('The Third Invasion')).toBeNull();
+    expect(screen.getByText('Open as library')).toBeTruthy();
+  });
+
+  it('opens the library when the library is chosen', async () => {
+    window.api.browseDirectory.mockResolvedValue({
+      dirs: [{ name: 'id3', path: NESTED_ROOT }],
+      files: [],
+    });
+    window.api.exportRoots.mockResolvedValue({
+      ok: true,
+      roots: { [NESTED_ROOT]: { software: 'rekordbox', label: 'Rekordbox' } },
+    });
+
+    renderExplorer();
+
+    fireEvent.doubleClick(await screen.findByText('id3'));
+    await screen.findByText('Open id3');
+    fireEvent.click(dialogButton('Open as library'));
+
+    expect(await screen.findByText('The Third Invasion')).toBeTruthy();
+  });
+
+  it('does not carry the library view into the next folder', async () => {
+    window.api.browseDirectory.mockResolvedValue({
+      dirs: [
+        { name: 'id3', path: NESTED_ROOT },
+        { name: 'notes', path: `${EXPORT_ROOT}/notes` },
+      ],
+      files: [],
+    });
+    window.api.exportRoots.mockResolvedValue({
+      ok: true,
+      roots: { [NESTED_ROOT]: { software: 'rekordbox', label: 'Rekordbox' } },
+    });
+
+    renderExplorer();
+
+    // open a library on purpose...
+    fireEvent.click(await screen.findByText('Library'));
+    await screen.findByText('The Third Invasion');
+
+    // ...then leave the library view and walk into an ordinary folder
+    fireEvent.click(screen.getByText('Files'));
+    fireEvent.doubleClick(await screen.findByText('notes'));
+
+    await waitFor(() =>
+      expect(window.api.findExportAt).toHaveBeenCalledWith(`${EXPORT_ROOT}/notes`)
+    );
+    expect(screen.queryByText('The Third Invasion')).toBeNull();
   });
 
   it('marks an export folder one level up and opens it as a library', async () => {

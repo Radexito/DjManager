@@ -392,6 +392,10 @@ export default function FileExplorerView({ style }) {
   // not a replacement for the folder (#504).
   const [exportViewMode, setExportViewMode] = useState('files'); // 'files' | 'library'
   const [exportFolders, setExportFolders] = useState({}); // dir path -> { software, label }
+  const [folderChoice, setFolderChoice] = useState(null); // { name, path, label }
+  // What the user asked for when they entered a folder: 'library' only when they
+  // chose it, so the view never sticks to the next folder that happens to be one.
+  const libraryIntentRef = useRef(null);
   const [openExportPlaylist, setOpenExportPlaylist] = useState(null);
 
   const listRef = useRef();
@@ -637,6 +641,9 @@ export default function FileExplorerView({ style }) {
   // land on the same view.
   useEffect(() => {
     let cancelled = false;
+    // Entering a folder always starts on its listing; the library view is only
+    // shown when that is what was chosen for this folder.
+    setExportViewMode(libraryIntentRef.current === currentPath ? 'library' : 'files');
     if (!currentPath) {
       setExportContext(null);
       return () => {};
@@ -768,6 +775,13 @@ export default function FileExplorerView({ style }) {
   const handleDoubleClick = useCallback(
     (item) => {
       if (item.type === 'dir') {
+        // A folder that is an export can be seen two ways, so ask rather than
+        // guess: the same folder is a library and a folder full of files.
+        const exportInfo = exportFolders?.[item.path];
+        if (exportInfo) {
+          setFolderChoice({ name: item.name, path: item.path, label: exportInfo.label });
+          return;
+        }
         navigateTo(item.path);
         return;
       }
@@ -797,7 +811,7 @@ export default function FileExplorerView({ style }) {
         });
       }
     },
-    [displayItems, tracksMap, play, navigateTo, patchCurrentTrack]
+    [displayItems, tracksMap, play, navigateTo, patchCurrentTrack, exportFolders]
   );
 
   // ── Link helpers ──────────────────────────────────────────────────────────
@@ -1061,7 +1075,20 @@ export default function FileExplorerView({ style }) {
   // Opening a folder as a library: same navigation, different view.
   const handleOpenAsLibrary = useCallback(
     (path) => {
+      libraryIntentRef.current = path;
+      setFolderChoice(null);
       setExportViewMode('library');
+      navigateTo(path);
+    },
+    [navigateTo]
+  );
+
+  // Opening it as a folder: the listing, and nothing remembered for next time.
+  const handleOpenAsFolder = useCallback(
+    (path) => {
+      libraryIntentRef.current = null;
+      setFolderChoice(null);
+      setExportViewMode('files');
       navigateTo(path);
     },
     [navigateTo]
@@ -1685,6 +1712,35 @@ export default function FileExplorerView({ style }) {
         )}
 
         {/* ── Link-to-library dialog ────────────────────────────────────────── */}
+        {folderChoice && (
+          <div className="explorer-dialog-backdrop" onMouseDown={() => setFolderChoice(null)}>
+            <div className="explorer-dialog" onMouseDown={(e) => e.stopPropagation()}>
+              <div className="explorer-dialog__title">Open {folderChoice.name}</div>
+              <p className="explorer-dialog__body">
+                {`This folder holds a ${folderChoice.label} export. Open it as a library to see its
+              playlists and tracks, or as a folder to browse the files it is made of.`}
+              </p>
+              <div className="explorer-dialog__actions">
+                <button className="explorer-btn" onClick={() => setFolderChoice(null)}>
+                  Cancel
+                </button>
+                <button
+                  className="explorer-btn"
+                  onClick={() => handleOpenAsFolder(folderChoice.path)}
+                >
+                  Open as folder
+                </button>
+                <button
+                  className="explorer-btn accent"
+                  onClick={() => handleOpenAsLibrary(folderChoice.path)}
+                >
+                  Open as library
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {linkDialog && (
           <LinkFolderDialog
             description={linkDialog.description}
