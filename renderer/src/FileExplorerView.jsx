@@ -101,6 +101,8 @@ function ExplorerRow({
   onRowClick,
   onDoubleClick,
   onContextMenu,
+  onOpenAsLibrary,
+  exportFolders,
   mediaPort,
 }) {
   const item = items[index];
@@ -114,21 +116,38 @@ function ExplorerRow({
   const isAnalyzing = isLinked && track?.analyzed === 0;
 
   if (item.type === 'dir') {
+    // A folder that is itself an export gets its own icon and a shortcut, so it
+    // is recognisable one level above instead of being found by accident.
+    const exportInfo = exportFolders?.[item.path] ?? null;
     return (
       <div
         style={{ ...style, gridTemplateColumns: GRID, minWidth: MIN_WIDTH }}
-        className={`row row-even explorer-dir-row${isSelected ? ' row--selected' : ''}`}
+        className={`row row-even explorer-dir-row${isSelected ? ' row--selected' : ''}${
+          exportInfo ? ' explorer-dir-row--export' : ''
+        }`}
         onClick={(e) => onRowClick(e, item)}
         onDoubleClick={() => onDoubleClick(item)}
         onContextMenu={(e) => onContextMenu(e, item)}
       >
         <div className="cell index">
-          <span className="index-num">📁</span>
+          <span className="index-num">{exportInfo ? '📚' : '📁'}</span>
         </div>
         <div className="cell" />
         <div className="cell title">
-          <span className="cell-artwork cell-artwork--placeholder">📁</span>
+          <span className="cell-artwork cell-artwork--placeholder">{exportInfo ? '📚' : '📁'}</span>
           <span className="cell-title-text">{item.name}</span>
+          {exportInfo && (
+            <button
+              className="cell-export-chip"
+              title={`${exportInfo.label} export - open as a library instead of folders`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenAsLibrary?.(item.path);
+              }}
+            >
+              Library
+            </button>
+          )}
         </div>
         <div className="cell artist" />
         <div className="cell bpm numeric" />
@@ -368,7 +387,11 @@ export default function FileExplorerView({ style }) {
   // pane shows a library view of it (its playlists and tracks) instead of the
   // folders it happens to be made of, with a toggle back to the file listing.
   const [exportContext, setExportContext] = useState(null); // { path, root, exports }
-  const [exportViewMode, setExportViewMode] = useState('library'); // 'library' | 'files'
+  // The file listing stays the default: a folder that holds an export usually
+  // has other things in it too, and the library view is a view of the export,
+  // not a replacement for the folder (#504).
+  const [exportViewMode, setExportViewMode] = useState('files'); // 'files' | 'library'
+  const [exportFolders, setExportFolders] = useState({}); // dir path -> { software, label }
   const [openExportPlaylist, setOpenExportPlaylist] = useState(null);
 
   const listRef = useRef();
@@ -632,6 +655,26 @@ export default function FileExplorerView({ style }) {
       cancelled = true;
     };
   }, [currentPath]);
+
+  // Mark the folders in this listing that are exports themselves.
+  useEffect(() => {
+    const dirs = dirEntries.dirs.map((dir) => dir.path);
+    if (dirs.length === 0) {
+      setExportFolders({});
+      return () => {};
+    }
+    let cancelled = false;
+    Promise.resolve(window.api.exportRoots?.(dirs))
+      .then((res) => {
+        if (!cancelled) setExportFolders(res?.roots ?? {});
+      })
+      .catch(() => {
+        if (!cancelled) setExportFolders({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dirEntries.dirs]);
 
   const activeExport = exportContext?.exports?.[0] ?? null;
   const exportPlaylists = activeExport?.entries ?? [];
@@ -1015,6 +1058,15 @@ export default function FileExplorerView({ style }) {
     [displayItems, selectedPaths]
   );
 
+  // Opening a folder as a library: same navigation, different view.
+  const handleOpenAsLibrary = useCallback(
+    (path) => {
+      setExportViewMode('library');
+      navigateTo(path);
+    },
+    [navigateTo]
+  );
+
   const rowProps = useMemo(
     () => ({
       items: displayItems,
@@ -1023,6 +1075,8 @@ export default function FileExplorerView({ style }) {
       playingFilePath,
       onRowClick: handleRowClick,
       onDoubleClick: handleDoubleClick,
+      onOpenAsLibrary: handleOpenAsLibrary,
+      exportFolders,
       onContextMenu: handleContextMenu,
       mediaPort,
     }),
@@ -1034,6 +1088,8 @@ export default function FileExplorerView({ style }) {
       handleRowClick,
       handleDoubleClick,
       handleContextMenu,
+      handleOpenAsLibrary,
+      exportFolders,
       mediaPort,
     ]
   );
@@ -1561,9 +1617,12 @@ export default function FileExplorerView({ style }) {
           <>
             {activeExport && (
               <div className="explorer-export-banner">
-                <span>📚 {activeExport.label} export detected here</span>
+                <span>
+                  📚 {activeExport.label} export
+                  {exportContext.root === currentPath ? ' here' : ` at ${exportContext.root}`}
+                </span>
                 <button className="explorer-btn" onClick={() => setExportViewMode('library')}>
-                  Library view
+                  Open as library
                 </button>
               </div>
             )}

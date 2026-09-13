@@ -596,3 +596,24 @@
   border-bottom: 1px solid var(--border, #2a2a2a);
   flex-shrink: 0;
 }
+
+.explorer-dir-row--export .cell-title-text {
+  color: var(--accent, #4a90d9);
+}
+
+.cell-export-chip {
+  margin-left: 8px;
+  padding: 1px 7px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--accent, #4a90d9);
+  background: transparent;
+  border: 1px solid var(--accent, #4a90d9);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.cell-export-chip:hover {
+  color: var(--bg-primary, #111);
+  background: var(--accent, #4a90d9);
+}

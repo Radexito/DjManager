@@ -139,6 +139,7 @@ window.api = {
   selectExplorerFolder: vi.fn().mockResolvedValue(null),
   detectDriveExports: vi.fn().mockResolvedValue({ ok: true, exports: [] }),
   findExportAt: vi.fn().mockResolvedValue({ ok: true, root: null, exports: [] }),
+  exportRoots: vi.fn().mockResolvedValue({ ok: true, roots: {} }),
   getTracksByPaths: vi.fn().mockResolvedValue([]),
   explorerStartRecursive: vi.fn().mockResolvedValue(undefined),
   explorerCancelRecursive: vi.fn().mockResolvedValue(undefined),

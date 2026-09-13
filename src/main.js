@@ -2201,6 +2201,24 @@ ipcMain.handle('detect-drive-exports', (_, driveRoot) => {
 // Same detection, but starting from the folder the user opened and walking up:
 // browsing into an export (or a folder inside it) should be able to show what
 // the export contains instead of the folders it is made of (#504).
+// The folders in a listing that are themselves a DJ-software export, so the
+// Explorer can mark them in the parent and offer the library view up front.
+// One stat pass per folder on the main side, and only for what is on screen.
+ipcMain.handle('explorer-export-roots', (_, dirs) => {
+  const roots = {};
+  try {
+    for (const dir of Array.isArray(dirs) ? dirs.slice(0, 500) : []) {
+      const exports = detectExports(dir);
+      if (exports.length > 0) {
+        roots[dir] = { software: exports[0].software, label: exports[0].label };
+      }
+    }
+    return { ok: true, roots };
+  } catch (err) {
+    return { ok: false, error: err.message, roots: {} };
+  }
+});
+
 ipcMain.handle('explorer-find-export', (_, startDir) => {
   try {
     const found = findExportRoot(startDir);

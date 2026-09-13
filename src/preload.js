@@ -264,6 +264,7 @@ contextBridge.exposeInMainWorld('api', {
   selectExplorerFolder: () => ipcRenderer.invoke('select-explorer-folder'),
   detectDriveExports: (driveRoot) => ipcRenderer.invoke('detect-drive-exports', driveRoot),
   findExportAt: (startDir) => ipcRenderer.invoke('explorer-find-export', startDir),
+  exportRoots: (dirs) => ipcRenderer.invoke('explorer-export-roots', dirs),
   getTracksByPaths: (filePaths) => ipcRenderer.invoke('get-tracks-by-paths', filePaths),
   explorerStartRecursive: (dirPath) => ipcRenderer.invoke('explorer-start-recursive', dirPath),
   explorerCancelRecursive: () => ipcRenderer.invoke('explorer-cancel-recursive'),

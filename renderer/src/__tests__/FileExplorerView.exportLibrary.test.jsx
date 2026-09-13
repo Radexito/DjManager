@@ -3,6 +3,20 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import FileExplorerView from '../FileExplorerView.jsx';
 import { PlayerProvider } from '../PlayerContext.jsx';
 
+// Render every virtualized row inline so rows are clickable in jsdom.
+vi.mock('react-window', () => ({
+  List: ({ rowComponent, rowProps, rowCount }) => {
+    const Item = rowComponent;
+    return (
+      <div data-testid="virtual-list">
+        {Array.from({ length: rowCount }, (_, i) => (
+          <Item key={i} index={i} style={{}} {...rowProps} />
+        ))}
+      </div>
+    );
+  },
+}));
+
 // jsdom has no ResizeObserver; FileExplorerView uses one to size its virtualized list.
 globalThis.ResizeObserver =
   globalThis.ResizeObserver ||
@@ -12,7 +26,9 @@ globalThis.ResizeObserver =
     disconnect() {}
   };
 
-const EXPORT_ROOT = '/home/radexito/output_folder/id3';
+const EXPORT_ROOT = '/home/radexito/output_folder';
+const NESTED_ROOT = `${EXPORT_ROOT}/id3`;
+
 const REKORDBOX = {
   software: 'rekordbox',
   label: 'Rekordbox',
@@ -80,6 +96,12 @@ function renderExplorer() {
   );
 }
 
+/** The library view is a deliberate step, never the default. */
+async function openLibraryView() {
+  fireEvent.click(await screen.findByText('Open as library'));
+  await screen.findByText('📚 Rekordbox export');
+}
+
 describe('FileExplorerView - library view of a detected export (#504)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -99,32 +121,36 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
     });
   });
 
-  it('shows what the export contains instead of the folders it is made of', async () => {
+  it('stays on the folder listing and offers the library as a choice', async () => {
     renderExplorer();
 
     await waitFor(() => expect(window.api.findExportAt).toHaveBeenCalledWith(EXPORT_ROOT));
 
-    expect(await screen.findByText('📚 Rekordbox export')).toBeTruthy();
+    expect(await screen.findByText('📚 Rekordbox export here')).toBeTruthy();
+    expect(screen.getByText('Open as library')).toBeTruthy();
+    // the export contents are not shown until they are asked for
+    expect(screen.queryByText('The Third Invasion')).toBeNull();
+  });
+
+  it('shows what the export contains once it is opened as a library', async () => {
+    renderExplorer();
+    await openLibraryView();
+
     expect(screen.getByText(/2 playlists/)).toBeTruthy();
     expect(screen.getByText(/3 tracks/)).toBeTruthy();
-
-    // the playlists and the tracks of the open one
     expect(screen.getByText('hhc')).toBeTruthy();
     expect(screen.getByText('Peak')).toBeTruthy();
     expect(screen.getByText('The Third Invasion')).toBeTruthy();
     expect(screen.getByText('AniMe feat. Dave Revan')).toBeTruthy();
     expect(screen.getByText('5:02')).toBeTruthy();
     expect(screen.getByText('174')).toBeTruthy();
-
-    // and not the raw export folders (the breadcrumb still shows where we are)
-    expect(screen.queryByText('PIONEER')).toBeNull();
-    expect(screen.queryByText('No audio files here')).toBeNull();
   });
 
   it('swaps the track list when another playlist is picked', async () => {
     renderExplorer();
+    await openLibraryView();
 
-    fireEvent.click(await screen.findByText('Peak'));
+    fireEvent.click(screen.getByText('Peak'));
 
     expect(await screen.findByText('Only One')).toBeTruthy();
     expect(screen.queryByText('The Third Invasion')).toBeNull();
@@ -132,21 +158,19 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
 
   it('keeps the folder listing one toggle away', async () => {
     renderExplorer();
+    await openLibraryView();
 
-    fireEvent.click(await screen.findByText('Files'));
+    fireEvent.click(screen.getByText('Files'));
 
-    expect(screen.getByText('📚 Rekordbox export detected here')).toBeTruthy();
+    expect(await screen.findByText('📚 Rekordbox export here')).toBeTruthy();
     expect(screen.queryByText('The Third Invasion')).toBeNull();
-
-    fireEvent.click(screen.getByText('Library view'));
-
-    expect(await screen.findByText('The Third Invasion')).toBeTruthy();
   });
 
   it('hands the playlist to the library dialog with usable file paths', async () => {
     renderExplorer();
+    await openLibraryView();
 
-    fireEvent.click(await screen.findByText('+ Library (2)'));
+    fireEvent.click(screen.getByText('+ Library (2)'));
 
     expect(await screen.findByText('2 file(s) in "hhc" (Rekordbox export)')).toBeTruthy();
   });
@@ -166,6 +190,34 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
       expect(window.api.findExportAt).toHaveBeenCalledWith('/home/radexito/music')
     );
     expect(screen.queryByText('📚 Rekordbox export')).toBeNull();
-    expect(screen.queryByText('Library view')).toBeNull();
+    expect(screen.queryByText('Open as library')).toBeNull();
+  });
+
+  it('marks an export folder one level up and opens it as a library', async () => {
+    window.api.browseDirectory.mockResolvedValue({
+      dirs: [
+        { name: 'id3', path: NESTED_ROOT },
+        { name: 'notes', path: `${EXPORT_ROOT}/notes` },
+      ],
+      files: [],
+    });
+    window.api.exportRoots.mockResolvedValue({
+      ok: true,
+      roots: { [NESTED_ROOT]: { software: 'rekordbox', label: 'Rekordbox' } },
+    });
+
+    renderExplorer();
+
+    // the export folder is marked, the ordinary one is not
+    const chip = await screen.findByText('Library');
+    expect(chip.getAttribute('title')).toMatch(/Rekordbox export/);
+    await waitFor(() => expect(window.api.exportRoots).toHaveBeenCalled());
+    expect(screen.getByText('id3')).toBeTruthy();
+    expect(screen.getByText('notes')).toBeTruthy();
+
+    fireEvent.click(chip);
+
+    await waitFor(() => expect(window.api.findExportAt).toHaveBeenCalledWith(NESTED_ROOT));
+    expect(await screen.findByText('📚 Rekordbox export')).toBeTruthy();
   });
 });
