@@ -158,8 +158,16 @@ function buildFiltersSQL(filters = []) {
           params[pk('v')] = `%${val}%`;
           clauses.push(`LOWER(${col}) LIKE @${pk('v')}`);
         } else if (f.op === 'starts with') {
-          params[pk('v')] = `${val}%`;
-          clauses.push(`LOWER(${col}) LIKE @${pk('v')}`);
+          // Matches the start of the whole tag AND the start of any name inside
+          // a comma credit, so "Ghost in Real Life" finds
+          // "Merage, Ghost in Real Life, Egzod". Spaces are stripped on both
+          // sides first: that absorbs ", ", ",  " and ",x" in one go, and a
+          // multi-word needle survives it.
+          const flat = val.replace(/\s+/g, '');
+          const norm = `LOWER(REPLACE(${col}, ' ', ''))`;
+          params[pk('v')] = `${flat}%`;
+          params[pk('e')] = `%,${flat}%`;
+          clauses.push(`(${norm} LIKE @${pk('v')} OR ${norm} LIKE @${pk('e')})`);
         } else if (f.op === 'is not') {
           params[pk('v')] = val;
           clauses.push(`LOWER(${col}) != @${pk('v')}`);
