@@ -57,8 +57,6 @@ function fakeFs(files = {}) {
   };
 }
 
-const fileUrl = (p) => (p.startsWith('file://') ? p : `file://${p}`);
-
 describe('usbRelativePath', () => {
   it('spells a file the way an export does', () => {
     expect(usbRelativePath(ROOT, `${ROOT}/music/a.mp3`)).toBe('/music/a.mp3');
