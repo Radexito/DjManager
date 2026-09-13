@@ -9,6 +9,7 @@ import {
   createContext,
   useContext,
   startTransition,
+  Fragment,
 } from 'react';
 import {
   DndContext,
@@ -27,7 +28,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
-import { parseQuery } from './searchParser.js';
+import { parseQuery, buildArtistQuery, splitArtists } from './searchParser.js';
 import TrackDetails from './TrackDetails.jsx';
 import RatingStars from './RatingStars.jsx';
 import BeatGridEditor from './BeatGridEditor.jsx';
@@ -146,13 +147,50 @@ function fmtDuration(secs) {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-function renderCell(t, colKey) {
+function renderCell(t, colKey, onArtistClick) {
   const bpmValue = t.bpm_override ?? t.bpm;
   switch (colKey) {
     case 'title':
       return t.title;
-    case 'artist':
-      return t.artist || 'Unknown';
+    case 'artist': {
+      const name = t.artist || 'Unknown';
+      // #505 — clicking the artist searches the library by them, like the
+      // artist in the player bar. Unknown/empty artists stay plain text.
+      if (!t.artist || !onArtistClick) return name;
+      // #505 — a credit can list several artists ("Sigma, Doctor P"). Each name
+      // is its own link, so a click narrows to one artist instead of searching
+      // the whole credit string.
+      const names = splitArtists(t.artist);
+      if (names.length < 2) {
+        return (
+          <span
+            className="cell-artist--clickable"
+            title={`Search: ARTIST is ${name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onArtistClick(name);
+            }}
+          >
+            {name}
+          </span>
+        );
+      }
+      return names.map((one, i) => (
+        <Fragment key={one}>
+          {i > 0 ? ', ' : null}
+          <span
+            className="cell-artist--clickable"
+            title={`Search: ARTIST contains ${one}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onArtistClick(one, true);
+            }}
+          >
+            {one}
+          </span>
+        </Fragment>
+      ));
+    }
     case 'bpm': {
       const display = bpmValue ?? '...';
       const hasGridShift = (t.beatgrid_offset ?? 0) !== 0;
@@ -256,6 +294,7 @@ function LibraryRow({
   onContextMenu,
   onRatingChange,
   onCueClick,
+  onArtistClick,
   onDragStart,
   visibleColumns,
   gridTemplate,
@@ -365,7 +404,7 @@ function LibraryRow({
           </div>
         ) : (
           <div key={col.key} className={cellClass(col.key, t)}>
-            {renderCell(t, col.key)}
+            {renderCell(t, col.key, onArtistClick)}
           </div>
         )
       )}
@@ -388,6 +427,7 @@ function SortableRow({
   onContextMenu,
   onRatingChange,
   onCueClick,
+  onArtistClick,
   visibleColumns,
   gridTemplate,
   minScrollWidth,
@@ -502,7 +542,7 @@ function SortableRow({
           </div>
         ) : (
           <div key={col.key} className={cellClass(col.key, t)}>
-            {renderCell(t, col.key)}
+            {renderCell(t, col.key, onArtistClick)}
           </div>
         )
       )}
@@ -585,6 +625,7 @@ function TrackTableBody({
   handleContextMenu,
   handleRatingChange,
   handleCueClick,
+  onArtistClick,
   handleTrackDragStart,
   visibleColumns,
   mediaPort,
@@ -679,6 +720,7 @@ function TrackTableBody({
           onContextMenu={handleContextMenu}
           onRatingChange={handleRatingChange}
           onCueClick={handleCueClick}
+          onArtistClick={onArtistClick}
           visibleColumns={visibleColumns}
           gridTemplate={gridTemplate}
           minScrollWidth={minScrollWidth}
@@ -839,6 +881,7 @@ function TrackTableBody({
             onContextMenu={handleContextMenu}
             onRatingChange={handleRatingChange}
             onCueClick={handleCueClick}
+            onArtistClick={onArtistClick}
             onDragStart={handleTrackDragStart}
             visibleColumns={visibleColumns}
             gridTemplate={gridTemplate}
@@ -875,6 +918,7 @@ function MusicLibrary({
   onSearchChange,
   openDetailsRequest,
   locateTrack,
+  onArtistSearch,
 }) {
   const isPlaylistView = selectedPlaylist !== 'music';
   const {
@@ -1924,6 +1968,21 @@ function MusicLibrary({
     setBeatGridEditorTrack(track);
   }, []);
 
+  // ── #505 — artist click searches the library by that artist ────────────────
+  // Same behaviour as clicking the artist in the player bar: the query goes
+  // through the normal search bar, so it composes with existing filter chips.
+  // Without a wired handler the cell stays plain text (no fake affordance).
+  const handleArtistClick = useMemo(() => {
+    if (!onArtistSearch && !onSearchChange) return undefined;
+    return (artist, fromCredit) => {
+      const query = buildArtistQuery(artist, { fromCredit });
+      if (!query) return;
+      // always an explicit boolean: App folds it into the query operator
+      if (onArtistSearch) onArtistSearch(artist, Boolean(fromCredit));
+      else onSearchChange(query);
+    };
+  }, [onArtistSearch, onSearchChange]);
+
   const handleDetailsSave = useCallback((result) => {
     if (Array.isArray(result)) {
       // bulk save: update each track in state
@@ -2578,6 +2637,7 @@ function MusicLibrary({
             handleContextMenu={handleContextMenu}
             handleRatingChange={handleRatingChange}
             handleCueClick={handleCueClick}
+            onArtistClick={handleArtistClick}
             handleTrackDragStart={handleTrackDragStart}
             visibleColumns={visibleColumns}
             mediaPort={mediaPort}
