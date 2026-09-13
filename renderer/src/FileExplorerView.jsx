@@ -1616,7 +1616,7 @@ export default function FileExplorerView({ style }) {
                       <span>{t.artist}</span>
                       <span>{t.duration ? fmtDuration(t.duration) : ''}</span>
                       <span>{t.bpm ?? ''}</span>
-                      <span>{t.key ?? ''}</span>
+                      <span>{t.key_camelot ?? t.key ?? ''}</span>
                     </div>
                   ))}
                   <div className="explorer-export-library__actions">

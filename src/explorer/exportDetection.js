@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { toCamelot } from '../audio/keyUtils.js';
 import path from 'node:path';
 
 /**
@@ -87,6 +88,7 @@ function readRekordboxManifest(root, fsImpl) {
         duration: Number.isFinite(Number(t.duration)) ? Number(t.duration) : null,
         bpm: Number.isFinite(Number(t.bpm)) ? Number(t.bpm) : null,
         key: t.key_raw || t.key || '',
+        key_camelot: camelotFromText(t.key_raw || t.key || ''),
         file_path: t.file_path || '',
         // The manifest stores paths relative to the export root ('/music/...'),
         // so a mounted export can be imported or previewed without guessing.
@@ -197,6 +199,24 @@ export function detectExports(root, fsImpl = fs) {
   }
 
   return results;
+}
+
+/**
+ * The manifest stores the key as text ('F# minor'), while the library and the
+ * rest of the Explorer store and show Camelot ('11A'). Convert on the way in so
+ * an export reads the same as everything else (#504).
+ *
+ * @param {string} key
+ * @returns {string|null}
+ */
+export function camelotFromText(key) {
+  const text = String(key ?? '').trim();
+  if (!text) return null;
+  if (/^([1-9]|1[0-2])[ab]$/i.test(text)) return text.toUpperCase();
+
+  const match = /^([A-G][#b]?)\s*(.*)$/.exec(text);
+  if (!match) return null;
+  return toCamelot(match[1], /min/i.test(match[2]) ? 'minor' : 'major') ?? null;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { detectExports, findExportRoot } from '../explorer/exportDetection.js';
+import { camelotFromText, detectExports, findExportRoot } from '../explorer/exportDetection.js';
 
 /**
  * Minimal in-memory filesystem for the injected fsImpl. Any write attempt
@@ -114,6 +114,7 @@ describe('detectExports', () => {
           duration: null,
           bpm: null,
           key: '',
+          key_camelot: null,
           file_path: '/music/Warehouse.mp3',
           absolute_path: path.join(ROOT, '/music/Warehouse.mp3'),
         },
@@ -125,6 +126,7 @@ describe('detectExports', () => {
           duration: null,
           bpm: null,
           key: '',
+          key_camelot: null,
           file_path: '/music/Second.mp3',
           absolute_path: path.join(ROOT, '/music/Second.mp3'),
         },
@@ -344,5 +346,59 @@ describe('findExportRoot', () => {
     expect(findExportRoot('', { fsImpl: makeFs() })).toBeNull();
     expect(findExportRoot(null, { fsImpl: makeFs() })).toBeNull();
     expect(findExportRoot(undefined, { fsImpl: makeFs() })).toBeNull();
+  });
+});
+
+describe('camelotFromText', () => {
+  it('converts the text keys a manifest carries', () => {
+    expect(camelotFromText('F# minor')).toBe('11A');
+    expect(camelotFromText('A minor')).toBe('8A');
+    expect(camelotFromText('C# minor')).toBe('12A');
+    expect(camelotFromText('C major')).toBe('8B');
+    expect(camelotFromText('F major')).toBe('7B');
+    expect(camelotFromText('E minor')).toBe('9A');
+    expect(camelotFromText('Eb minor')).toBe('2A');
+    expect(camelotFromText('Db major')).toBe('3B');
+  });
+
+  it('passes a key that is already Camelot through', () => {
+    expect(camelotFromText('11A')).toBe('11A');
+    expect(camelotFromText('8b')).toBe('8B');
+  });
+
+  it('returns null when there is nothing to convert', () => {
+    expect(camelotFromText('')).toBeNull();
+    expect(camelotFromText('   ')).toBeNull();
+    expect(camelotFromText(null)).toBeNull();
+    expect(camelotFromText(undefined)).toBeNull();
+    expect(camelotFromText('H minor')).toBeNull();
+  });
+
+  it('reads a manifest key into the library format', () => {
+    const fsImpl = makeFs({
+      dirs: [ROOT, path.dirname(manifestPath)],
+      files: {
+        [path.join(ROOT, 'PIONEER', 'rekordbox', 'export.pdb')]: 'binary',
+        [manifestPath]: JSON.stringify({
+          version: '1',
+          tracks: [
+            {
+              id: 1,
+              title: 'Warehouse',
+              artist: 'A',
+              duration: 200,
+              bpm: 128,
+              key_raw: 'F# minor',
+              file_path: '/music/Warehouse.mp3',
+            },
+          ],
+          playlists: [{ id: 'pl-1', name: 'Set', track_ids: [1] }],
+        }),
+      },
+    });
+
+    const rb = detectExports(ROOT, fsImpl).find((e) => e.software === 'rekordbox');
+    expect(rb.entries[0].tracks[0].key).toBe('F# minor');
+    expect(rb.entries[0].tracks[0].key_camelot).toBe('11A');
   });
 });

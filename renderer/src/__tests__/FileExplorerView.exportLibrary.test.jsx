@@ -50,6 +50,7 @@ const REKORDBOX = {
           duration: 302.7,
           bpm: 174,
           key: 'F# minor',
+          key_camelot: '11A',
           file_path: '/music/a.mp3',
           absolute_path: `${EXPORT_ROOT}/music/a.mp3`,
         },
@@ -61,6 +62,7 @@ const REKORDBOX = {
           duration: 120,
           bpm: 150,
           key: 'A minor',
+          key_camelot: '8A',
           file_path: '/music/b.mp3',
           absolute_path: `${EXPORT_ROOT}/music/b.mp3`,
         },
@@ -79,6 +81,7 @@ const REKORDBOX = {
           duration: 60,
           bpm: 160,
           key: 'C major',
+          key_camelot: '8B',
           file_path: '/music/c.mp3',
           absolute_path: `${EXPORT_ROOT}/music/c.mp3`,
         },
@@ -151,6 +154,9 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
     expect(screen.getByText('AniMe feat. Dave Revan')).toBeTruthy();
     expect(screen.getByText('5:02')).toBeTruthy();
     expect(screen.getByText('174')).toBeTruthy();
+    // the key reads the same as everywhere else in the app
+    expect(screen.getByText('11A')).toBeTruthy();
+    expect(screen.queryByText('F# minor')).toBeNull();
   });
 
   it('swaps the track list when another playlist is picked', async () => {
@@ -215,7 +221,9 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
 
     renderExplorer();
 
-    fireEvent.doubleClick(await screen.findByText('id3'));
+    // wait for the folder to be marked as an export before opening it
+    await screen.findByText('Library');
+    fireEvent.doubleClick(screen.getByText('id3'));
 
     expect(await screen.findByText('Open id3')).toBeTruthy();
     expect(dialogButton('Open as folder')).toBeTruthy();
@@ -242,7 +250,9 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
 
     renderExplorer();
 
-    fireEvent.doubleClick(await screen.findByText('id3'));
+    // wait for the folder to be marked as an export before opening it
+    await screen.findByText('Library');
+    fireEvent.doubleClick(screen.getByText('id3'));
     await screen.findByText('Open id3');
     fireEvent.click(dialogButton('Open as folder'));
 
@@ -263,7 +273,9 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
 
     renderExplorer();
 
-    fireEvent.doubleClick(await screen.findByText('id3'));
+    // wait for the folder to be marked as an export before opening it
+    await screen.findByText('Library');
+    fireEvent.doubleClick(screen.getByText('id3'));
     await screen.findByText('Open id3');
     fireEvent.click(dialogButton('Open as library'));
 
