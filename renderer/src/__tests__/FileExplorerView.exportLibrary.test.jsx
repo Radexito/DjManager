@@ -143,22 +143,20 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
       cues: {
         [`${EXPORT_ROOT}/music/199.mp3`]: [
           {
-            hotCue: 1,
-            letter: 'A',
-            memory: false,
+            hotCueNumber: 1,
+            hotCueIndex: 0,
             type: 'cue',
             positionMs: 1000,
-            loopMs: 0,
+            loopTimeMs: null,
             color: '#ff0000',
             label: 'Intro',
           },
           {
-            hotCue: 2,
-            letter: 'B',
-            memory: false,
+            hotCueNumber: 2,
+            hotCueIndex: 1,
             type: 'loop',
             positionMs: 60000,
-            loopMs: 4000,
+            loopTimeMs: 4000,
             color: '#00b4d8',
             label: '',
           },

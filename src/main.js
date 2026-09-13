@@ -144,7 +144,6 @@ import { initLogger, getLogDir, initRendererLogger, logRendererMessage } from '.
 import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
 import { scanVolumes, volumeSignature } from './explorer/volumes.js';
 import { detectExports, findExportRoot } from './explorer/exportDetection.js';
-import { readExportTrackCues } from './explorer/anlzCues.js';
 import { writeTrackBackToExport } from './explorer/exportSync.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
 import { readTrackCues, buildCueImportPlan } from './usb/anlzCueReader.js';
@@ -2280,8 +2279,8 @@ ipcMain.handle('explorer-export-cues', (_, payload) => {
   const cues = {};
   try {
     for (const track of tracks) {
-      if (!track?.path) continue;
-      cues[track.path] = readExportTrackCues(root, track.analyzePath);
+      if (!track?.path || !track?.usbFilePath) continue;
+      cues[track.path] = readTrackCues(root, track.usbFilePath);
     }
     return { ok: true, cues };
   } catch (err) {

@@ -54,15 +54,19 @@ function fmtCueTime(ms) {
   return `${m}:${s.toFixed(1).padStart(4, '0')}`;
 }
 
+/** 'A'…'P' for a hot cue, 'M' for a memory cue (the reader's -1 slot). */
+function cueLetter(cue) {
+  return cue.hotCueIndex >= 0 ? (CUE_LETTERS[cue.hotCueIndex] ?? '?') : 'M';
+}
+
 /** One line per cue for the tooltip: 'A 0:12.4 (loop 0:04.0) — Intro'. */
 function cuesTitleOf(cues, cueCount) {
   if (cues?.length) {
     return cues
       .map((c) => {
-        const name = c.letter ? `${c.letter}` : 'Memory';
-        const loop = c.type === 'loop' ? ` (loop ${fmtCueTime(c.loopMs)})` : '';
+        const loop = c.type === 'loop' ? ` (loop ${fmtCueTime(c.loopTimeMs)})` : '';
         const label = c.label ? ` — ${c.label}` : '';
-        return `${name} ${fmtCueTime(c.positionMs)}${loop}${label}`;
+        return `${cueLetter(c)} ${fmtCueTime(c.positionMs)}${loop}${label}`;
       })
       .join('\n');
   }
@@ -78,11 +82,11 @@ function CueCell({ cues, cueCount }) {
       <>
         {shown.map((cue, i) => (
           <span
-            key={`${cue.hotCue}-${cue.positionMs}-${i}`}
-            className={`cue-chip${cue.memory ? ' cue-chip--memory' : ''}`}
+            key={`${cue.hotCueIndex}-${cue.positionMs}-${i}`}
+            className={`cue-chip${cue.hotCueIndex < 0 ? ' cue-chip--memory' : ''}`}
             style={cue.color ? { borderColor: cue.color, color: cue.color } : undefined}
           >
-            {cue.letter ?? 'M'}
+            {cueLetter(cue)}
           </span>
         ))}
         {cues.length > shown.length && (
@@ -112,6 +116,7 @@ function exportSummaryLine(exp) {
 }
 
 const ALL_TRACKS_ID = 'all-tracks';
+const CUE_LETTERS = 'ABCDEFGHIJKLMNOP';
 
 /** An export track as one of the file items the listing already renders. */
 function exportTrackToItem(t, cues) {
@@ -848,14 +853,15 @@ export default function FileExplorerView({ style }) {
   useEffect(() => {
     if (!exportContext?.root || !activeExport) return () => {};
     const wanted = (shownExportPlaylist?.tracks ?? []).filter(
-      (t) => t.analyze_path && exportCues[t.absolute_path] === undefined
+      (t) => t.file_path && exportCues[t.absolute_path] === undefined
     );
     if (wanted.length === 0) return () => {};
     let cancelled = false;
     Promise.resolve(
       window.api.exportCues?.({
         root: exportContext.root,
-        tracks: wanted.map((t) => ({ path: t.absolute_path, analyzePath: t.analyze_path })),
+        // the reader locates the ANLZ from the export's own path spelling
+        tracks: wanted.map((t) => ({ path: t.absolute_path, usbFilePath: t.file_path })),
       })
     )
       .then((res) => {
