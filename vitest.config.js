@@ -43,6 +43,8 @@ export default defineConfig({
             'src/__tests__/mp4Tags.test.js',
             'src/__tests__/ytDlpManager.test.js',
             'src/__tests__/tidalDlManager.test.js',
+            'src/__tests__/tidalCollections.test.js',
+            'src/__tests__/tidalCollectionsScript.test.js',
             'src/__tests__/mediaServer.test.js',
             'src/__tests__/anlzWriter.test.js',
             'src/__tests__/waveformGenerator.test.js',

@@ -81,6 +81,9 @@ const SECTIONS = [
     items: [
       'Cloud Search looks up tracks on YouTube and TIDAL: pick the source and type (track, album, playlist, ...), search, select the results and download them into the library - progress is shown for every entry.',
       'TIDAL downloads need a one-time login: the TIDAL view starts a device-login flow (URL to open and confirm in your browser); the session is stored locally afterwards.',
+      'The TIDAL view also lists your own account collections in the "My collections" panel: Playlists, Mixes & Radio (including My Daily Discovery and the video mixes) and Favorites (tracks, albums, artists, videos). The ↓ button next to a collection downloads it in one go.',
+      'Downloading a collection saves its tracks to a playlist of the same name. Video items are skipped - DjManager imports audio tracks only.',
+      'Paste a TIDAL URL instead when you want to pick individual tracks first: albums and playlists open a selection step, single tracks and mixes start downloading straight away.',
       'The Download view lists supported sites (YouTube, SoundCloud, Bandcamp, Mixcloud, Vimeo, Twitch): paste a link to download that video, album or playlist through yt-dlp into the library.',
       'When a site requires a login or blocks downloads (403), set the yt-dlp cookies to your logged-in browser profile in Settings.',
     ],
