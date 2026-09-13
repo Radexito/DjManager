@@ -975,6 +975,10 @@ function MusicLibrary({
   const [bpmEditValue, setBpmEditValue] = useState(''); // value for inline Set BPM input
 
   const offsetRef = useRef(0);
+  // #528 — generation whose first page has not committed yet. While it is
+  // pending the refs already describe the NEW view but `tracks` still holds the
+  // previous view's rows, so a lazy page merged now would double the window.
+  const resetPendingRef = useRef(null);
   const windowStartRef = useRef(0); // global index of tracks[0] (windowed list)
   // Full natural-order track ids of the OPEN playlist (position order from SQL)
   // — DnD reorder needs the WHOLE order, not just the loaded window.
@@ -1182,12 +1186,20 @@ function MusicLibrary({
         }
         if (mode === 'append') {
           appendedPageRef.current = true;
-          setTracks((prev) => [...prev, ...rows]);
+          setTracks((prev) => {
+            const seen = new Set(prev.map((t) => t.id));
+            const fresh = rows.filter((r) => !seen.has(r.id));
+            return fresh.length ? [...prev, ...fresh] : prev;
+          });
           offsetRef.current = at + rows.length; // next append offset
         } else if (mode === 'prepend') {
           appendedPageRef.current = true;
           windowStartRef.current = at;
-          setTracks((prev) => [...rows, ...prev]);
+          setTracks((prev) => {
+            const seen = new Set(prev.map((t) => t.id));
+            const fresh = rows.filter((r) => !seen.has(r.id));
+            return fresh.length ? [...fresh, ...prev] : prev;
+          });
         } else {
           windowStartRef.current = at;
           setTracks(rows);
@@ -1205,6 +1217,7 @@ function MusicLibrary({
         }
       } finally {
         inflightRef.current -= 1;
+        if (!lazy && resetPendingRef.current === token) resetPendingRef.current = null;
         // Note: reset callers force loadingRef=false themselves; the counter
         // keeps it true while OTHER lazy fetches are still flying, so locate
         // waits for the scroll to settle.
@@ -1259,6 +1272,7 @@ function MusicLibrary({
       loadingRef.current = false;
       hasMoreRef.current = true;
       resetTokenRef.current += 1;
+      resetPendingRef.current = resetTokenRef.current;
       appendedPageRef.current = false;
       setHasMore(true);
       const t = setTimeout(() => loadPage({ at: 0, mode: 'reset' }), 0);
@@ -1273,6 +1287,7 @@ function MusicLibrary({
       loadingRef.current = false;
       hasMoreRef.current = true;
       resetTokenRef.current += 1;
+      resetPendingRef.current = resetTokenRef.current;
       appendedPageRef.current = false;
       setHasMore(true);
       const { filters, remaining } = parseQuery(search);
@@ -1324,6 +1339,7 @@ function MusicLibrary({
     // row to the follow effect, which fetches the full set in the new order
     // (sortByRef is already updated) and scrolls once it has committed.
     resetTokenRef.current += 1;
+    resetPendingRef.current = resetTokenRef.current;
     loadingRef.current = false;
     sortFollowNonceRef.current += 1;
     setSortFollow({ id: singleSel, nonce: sortFollowNonceRef.current });
@@ -1416,6 +1432,7 @@ function MusicLibrary({
     loadingRef.current = false;
     hasMoreRef.current = true;
     resetTokenRef.current += 1;
+    resetPendingRef.current = resetTokenRef.current;
     appendedPageRef.current = false; // a full reload is not a lazy append
     setHasMore(true);
     if (viewChanged) {
@@ -1895,7 +1912,8 @@ function MusicLibrary({
       }
       // Materialize the full set (matches the playing queue scope) and let the
       // re-run below do the scroll once the new rows are committed.
-      resetTokenRef.current += 1; // invalidate any in-flight page load
+      resetTokenRef.current += 1;
+      resetPendingRef.current = resetTokenRef.current; // invalidate any in-flight page load
       loadingRef.current = false; // ...and make sure that load can never get stuck
       windowStartRef.current = 0; // the full set starts at global index 0
       offsetRef.current = full.length;
@@ -2120,6 +2138,22 @@ function MusicLibrary({
     setToast({ msg, ok });
     toastTimerRef.current = setTimeout(() => setToast(null), 4000);
   }, []);
+
+  // #474 — write the analyzed BPM/key into the selected tracks' own file tags
+  const handleWriteBpmKeyTags = useCallback(async () => {
+    const targetIds = contextMenu?.targetIds ?? [];
+    setContextMenu(null);
+    if (targetIds.length === 0) return;
+    try {
+      const res = await window.api.writeBpmKeyTags({ trackIds: targetIds });
+      showToast(
+        `BPM & Key tags — written: ${res.written}, skipped: ${res.skipped}`,
+        res.written > 0
+      );
+    } catch (err) {
+      showToast(`BPM & Key tag write failed: ${err.message}`, false);
+    }
+  }, [contextMenu, showToast]);
 
   const handleNormalizeTracks = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
@@ -2405,6 +2439,9 @@ function MusicLibrary({
 
   const handleItemsRendered = useCallback(
     ({ startIndex, stopIndex }) => {
+      // #528 — a page fetched now would use the new view's filters while the
+      // window still holds the old view's rows: the merge doubles them.
+      if (resetPendingRef.current === resetTokenRef.current) return;
       // Keep the loaded window covering the visible range: append downward when
       // the viewport nears the bottom of the loaded rows, prepend upward when it
       // climbs back above a mid-list jump point. When the viewport has run far
@@ -3113,6 +3150,12 @@ function MusicLibrary({
                         </div>
                       </SubItem>
                     </SubItem>
+
+                    {/* ── Write BPM & Key tags (#474) ── */}
+                    <div className="context-menu-separator" />
+                    <div className="context-menu-item" onClick={handleWriteBpmKeyTags}>
+                      🏷️ Save BPM &amp; Key to file{selectionLabel}
+                    </div>
 
                     {/* ── Remove ── */}
                     {isPlaylistView ? (
