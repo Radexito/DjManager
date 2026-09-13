@@ -550,7 +550,7 @@
 .explorer-export-library__track-head,
 .explorer-export-library__track {
   display: grid;
-  grid-template-columns: 44px minmax(180px, 2fr) minmax(140px, 1.4fr) 64px 56px 90px;
+  grid-template-columns: 44px minmax(180px, 2fr) minmax(140px, 1.4fr) 64px 56px 76px 34px;
   gap: 10px;
   align-items: center;
   padding: 6px 12px;
@@ -616,4 +616,27 @@
 .cell-export-chip:hover {
   color: var(--bg-primary, #111);
   background: var(--accent, #4a90d9);
+}
+
+/* Add one export track to the library or to a playlist (#504). */
+.explorer-export-add {
+  margin-left: auto;
+  padding: 0 6px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted, #888);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.explorer-export-add:hover {
+  color: var(--accent, #4a90d9);
+  border-color: var(--accent, #4a90d9);
+}
+
+.explorer-export-library__row-action {
+  display: flex;
+  justify-content: flex-end;
 }

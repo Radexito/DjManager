@@ -159,6 +159,21 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
     expect(screen.queryByText('F# minor')).toBeNull();
   });
 
+  it('adds a single track from the library view to the library or a playlist', async () => {
+    renderExplorer();
+    await openLibraryView();
+
+    // the open playlist has two tracks, each with its own add action
+    const addButtons = screen.getAllByTitle('Add to library or a playlist');
+    expect(addButtons).toHaveLength(2);
+
+    fireEvent.click(addButtons[0]);
+
+    expect(
+      await screen.findByText('The Third Invasion — AniMe feat. Dave Revan (Rekordbox export)')
+    ).toBeTruthy();
+  });
+
   it('swaps the track list when another playlist is picked', async () => {
     renderExplorer();
     await openLibraryView();

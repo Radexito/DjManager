@@ -1072,6 +1072,21 @@ export default function FileExplorerView({ style }) {
     [displayItems, selectedPaths]
   );
 
+  // Hand one export track to the library dialog. Same dialog the folder flows
+  // use, so a single track can go into the library or into a playlist (#504).
+  const addExportTrack = useCallback((track, playlistName, softwareLabel) => {
+    const filePath = track?.absolute_path;
+    if (!filePath) return;
+    const name = track.title || basename(filePath);
+    setLinkDialog({
+      defaultName: playlistName || name,
+      paths: [filePath],
+      description: `${name}${track.artist ? ` — ${track.artist}` : ''}${
+        softwareLabel ? ` (${softwareLabel} export)` : ''
+      }`,
+    });
+  }, []);
+
   // Opening a folder as a library: same navigation, different view.
   const handleOpenAsLibrary = useCallback(
     (path) => {
@@ -1383,6 +1398,13 @@ export default function FileExplorerView({ style }) {
                                               {t.artist}
                                             </span>
                                           )}
+                                          <button
+                                            className="explorer-export-add"
+                                            title="Add to library or a playlist"
+                                            onClick={() => addExportTrack(t, pl.name, exp.label)}
+                                          >
+                                            ＋
+                                          </button>
                                         </div>
                                       ))}
                                     </div>
@@ -1606,6 +1628,7 @@ export default function FileExplorerView({ style }) {
                     <span>Time</span>
                     <span>BPM</span>
                     <span>Key</span>
+                    <span />
                   </div>
                   {(shownExportPlaylist?.tracks ?? []).map((t, i) => (
                     <div key={t.id ?? i} className="explorer-export-library__track">
@@ -1617,6 +1640,17 @@ export default function FileExplorerView({ style }) {
                       <span>{t.duration ? fmtDuration(t.duration) : ''}</span>
                       <span>{t.bpm ?? ''}</span>
                       <span>{t.key_camelot ?? t.key ?? ''}</span>
+                      <span className="explorer-export-library__row-action">
+                        <button
+                          className="explorer-export-add"
+                          title="Add to library or a playlist"
+                          onClick={() =>
+                            addExportTrack(t, shownExportPlaylist?.name, activeExport.label)
+                          }
+                        >
+                          ＋
+                        </button>
+                      </span>
                     </div>
                   ))}
                   <div className="explorer-export-library__actions">

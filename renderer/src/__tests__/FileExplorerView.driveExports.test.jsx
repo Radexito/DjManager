@@ -25,8 +25,20 @@ const REKORDBOX = {
       name: 'Warmup',
       trackCount: 2,
       tracks: [
-        { id: 1, title: 'Warehouse', artist: 'A', file_path: '/music/Warehouse.mp3' },
-        { id: 2, title: 'Second', artist: 'B', file_path: '/music/Second.mp3' },
+        {
+          id: 1,
+          title: 'Warehouse',
+          artist: 'A',
+          file_path: '/music/Warehouse.mp3',
+          absolute_path: 'E:\\music\\Warehouse.mp3',
+        },
+        {
+          id: 2,
+          title: 'Second',
+          artist: 'B',
+          file_path: '/music/Second.mp3',
+          absolute_path: 'E:\\music\\Second.mp3',
+        },
       ],
     },
   ],
@@ -73,6 +85,22 @@ describe('FileExplorerView - detected DJ exports per drive (#504)', () => {
     await waitFor(() => expect(window.api.detectDriveExports).toHaveBeenCalledWith('E:\\'));
     expect(await screen.findByText('Rekordbox export - 1 playlist / 2 tracks')).toBeTruthy();
     expect(screen.getByText('Serato export - 2 playlists')).toBeTruthy();
+  });
+
+  it('adds a single export track to the library or a playlist', async () => {
+    window.api.detectDriveExports.mockResolvedValue({ ok: true, exports: [REKORDBOX] });
+
+    renderExplorer();
+
+    fireEvent.click(await screen.findByText('Rekordbox export - 1 playlist / 2 tracks'));
+
+    expect(await screen.findByText('Warehouse')).toBeTruthy();
+    const addButtons = screen.getAllByTitle('Add to library or a playlist');
+    expect(addButtons).toHaveLength(2);
+
+    fireEvent.click(addButtons[0]);
+
+    expect(await screen.findByText('Warehouse — A (Rekordbox export)')).toBeTruthy();
   });
 
   it('expands a parsed export into its playlists and tracks', async () => {
