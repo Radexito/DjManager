@@ -11,6 +11,8 @@ import {
   getOpsForField,
   CAMELOT_KEYS,
   FIELDS,
+  splitArtists,
+  buildArtistQuery,
 } from '../searchParser.js';
 
 // ─── Camelot helpers ────────────────────────────────────────────────────────
@@ -339,5 +341,50 @@ describe('getSuggestions BITRATE', () => {
     const suggestions = getSuggestions('BITRATE >= ');
     expect(suggestions.length).toBeGreaterThan(0);
     expect(suggestions.some((s) => s.text.includes('320'))).toBe(true);
+  });
+});
+
+// ─── Artist credits (#505) ──────────────────────────────────────────────────
+
+describe('splitArtists', () => {
+  it('returns a single name untouched', () => {
+    expect(splitArtists('Doja Cat')).toEqual(['Doja Cat']);
+  });
+
+  it('splits a comma-separated credit', () => {
+    expect(splitArtists('Sigma, Doctor P')).toEqual(['Sigma', 'Doctor P']);
+  });
+
+  it('trims around the commas and drops empty parts', () => {
+    expect(splitArtists(' Boris S. ,,  DJ X , ')).toEqual(['Boris S.', 'DJ X']);
+  });
+
+  it('keeps a name that contains no comma as one entry', () => {
+    expect(splitArtists('A & B')).toEqual(['A & B']);
+  });
+
+  it('drops duplicates that differ only in case', () => {
+    expect(splitArtists('Sigma, sigma')).toEqual(['Sigma']);
+  });
+
+  it('handles empty input', () => {
+    expect(splitArtists('')).toEqual([]);
+    expect(splitArtists(null)).toEqual([]);
+    expect(splitArtists(undefined)).toEqual([]);
+    expect(splitArtists(',')).toEqual([]);
+  });
+});
+
+describe('buildArtistQuery', () => {
+  it('builds an exact clause for one name', () => {
+    expect(buildArtistQuery('Doja Cat')).toBe('ARTIST is Doja Cat');
+  });
+
+  it('degrades to free text when the name contains AND', () => {
+    expect(buildArtistQuery('Simon AND Garfunkel')).toBe('Simon AND Garfunkel');
+  });
+
+  it('returns an empty query for empty input', () => {
+    expect(buildArtistQuery('   ')).toBe('');
   });
 });

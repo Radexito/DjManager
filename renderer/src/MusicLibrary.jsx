@@ -9,6 +9,7 @@ import {
   createContext,
   useContext,
   startTransition,
+  Fragment,
 } from 'react';
 import {
   DndContext,
@@ -27,7 +28,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
-import { parseQuery, buildArtistQuery } from './searchParser.js';
+import { parseQuery, buildArtistQuery, splitArtists } from './searchParser.js';
 import TrackDetails from './TrackDetails.jsx';
 import RatingStars from './RatingStars.jsx';
 import BeatGridEditor from './BeatGridEditor.jsx';
@@ -156,18 +157,39 @@ function renderCell(t, colKey, onArtistClick) {
       // #505 — clicking the artist searches the library by them, like the
       // artist in the player bar. Unknown/empty artists stay plain text.
       if (!t.artist || !onArtistClick) return name;
-      return (
-        <span
-          className="cell-artist--clickable"
-          title={`Search: ARTIST is ${name}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onArtistClick(name);
-          }}
-        >
-          {name}
-        </span>
-      );
+      // #505 — a credit can list several artists ("Sigma, Doctor P"). Each name
+      // is its own link, so a click narrows to one artist instead of searching
+      // the whole credit string.
+      const names = splitArtists(t.artist);
+      if (names.length < 2) {
+        return (
+          <span
+            className="cell-artist--clickable"
+            title={`Search: ARTIST is ${name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onArtistClick(name);
+            }}
+          >
+            {name}
+          </span>
+        );
+      }
+      return names.map((one, i) => (
+        <Fragment key={one}>
+          {i > 0 ? ', ' : null}
+          <span
+            className="cell-artist--clickable"
+            title={`Search: ARTIST is ${one}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onArtistClick(one);
+            }}
+          >
+            {one}
+          </span>
+        </Fragment>
+      ));
     }
     case 'bpm': {
       const display = bpmValue ?? '...';

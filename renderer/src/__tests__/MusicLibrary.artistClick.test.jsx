@@ -81,6 +81,15 @@ const TRACKS = [
     duration: 200,
   },
   {
+    id: 4,
+    title: 'Track Four',
+    artist: 'Sigma, Doctor P',
+    bpm: 175,
+    key_camelot: '2a',
+    genres: '[]',
+    duration: 220,
+  },
+  {
     id: 3,
     title: 'Track Three',
     artist: '',
@@ -155,6 +164,45 @@ describe('artist cell click (#505)', () => {
     fireEvent.click(await screen.findByText('Artist A'));
 
     expect(onSearchChange).toHaveBeenCalledWith('ARTIST is Artist A');
+  });
+
+  it('splits a comma-separated credit into one link per artist', async () => {
+    const onArtistSearch = vi.fn();
+    render(<MusicLibrary selectedPlaylist="music" onArtistSearch={onArtistSearch} />);
+
+    const first = await screen.findByText('Sigma');
+    const second = await screen.findByText('Doctor P');
+
+    expect(first.className).toBe('cell-artist--clickable');
+    expect(second.className).toBe('cell-artist--clickable');
+    expect(second.getAttribute('title')).toBe('Search: ARTIST is Doctor P');
+
+    fireEvent.click(second);
+    expect(onArtistSearch).toHaveBeenCalledWith('Doctor P');
+
+    fireEvent.click(first);
+    expect(onArtistSearch).toHaveBeenLastCalledWith('Sigma');
+  });
+
+  it('searches one name of a split credit through the search box fallback', async () => {
+    const onSearchChange = vi.fn();
+    render(<MusicLibrary selectedPlaylist="music" onSearchChange={onSearchChange} />);
+
+    fireEvent.click(await screen.findByText('Doctor P'));
+
+    expect(onSearchChange).toHaveBeenCalledWith('ARTIST is Doctor P');
+  });
+
+  it('does not select the row when a split name is clicked', async () => {
+    const onArtistSearch = vi.fn();
+    const { container } = render(
+      <MusicLibrary selectedPlaylist="music" onArtistSearch={onArtistSearch} />
+    );
+
+    fireEvent.click(await screen.findByText('Doctor P'));
+
+    expect(container.querySelectorAll('.row--selected')).toHaveLength(0);
+    expect(screen.queryByText('Track Details')).not.toBeInTheDocument();
   });
 
   it('is not clickable at all without a handler', async () => {
