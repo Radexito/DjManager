@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  parseClause,
   parseQuery,
   filterToText,
   removeFilter,
@@ -186,6 +187,46 @@ describe('parseQuery', () => {
 });
 
 // ─── filterToText ────────────────────────────────────────────────────────────
+
+describe('starts with (text fields)', () => {
+  it('parses ARTIST starts with', () => {
+    expect(parseClause('ARTIST starts with Doj')).toEqual({
+      field: 'artist',
+      op: 'starts with',
+      value: 'Doj',
+    });
+  });
+
+  it('offers it for text fields but not for GENRE', () => {
+    expect(getOpsForField('artist')).toContain('starts with');
+    expect(getOpsForField('title')).toContain('starts with');
+    expect(getOpsForField('genre')).not.toContain('starts with');
+  });
+
+  it('does not swallow the exact operator', () => {
+    expect(parseClause('ARTIST is Doja Cat')).toEqual({
+      field: 'artist',
+      op: 'is',
+      value: 'Doja Cat',
+    });
+    expect(parseClause('ARTIST is not Doja Cat')).toEqual({
+      field: 'artist',
+      op: 'is not',
+      value: 'Doja Cat',
+    });
+  });
+
+  it('round-trips through filterToText', () => {
+    const f = { field: 'artist', op: 'starts with', value: 'Doj' };
+    expect(filterToText(f)).toBe('ARTIST starts with Doj');
+    expect(parseQuery(filterToText(f)).filters).toEqual([f]);
+  });
+
+  it('suggests the operator while typing', () => {
+    const suggestions = getSuggestions('ARTIST st');
+    expect(suggestions.some((s) => s.text === 'starts with')).toBe(true);
+  });
+});
 
 describe('filterToText', () => {
   it('renders range filter', () => {

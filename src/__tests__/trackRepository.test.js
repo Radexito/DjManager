@@ -112,6 +112,21 @@ describe('trackRepository', () => {
       expect(results[0].title).toBe('Deep House Banger');
     });
 
+    it('filters by TITLE starts with', () => {
+      addTrack(SAMPLE);
+      addTrack({
+        ...SAMPLE,
+        title: 'Deep House Banger',
+        file_hash: 'df2',
+        file_path: '/tmp/df2.mp3',
+      });
+      const results = getTracks({
+        filters: [{ field: 'title', op: 'starts with', value: 'deep ' }],
+      });
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('Deep House Banger');
+    });
+
     it('filters by TITLE is not', () => {
       addTrack(SAMPLE);
       addTrack({ ...SAMPLE, title: 'Other', file_hash: 'o2', file_path: '/tmp/o2.mp3' });

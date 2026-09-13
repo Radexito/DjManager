@@ -157,6 +157,9 @@ function buildFiltersSQL(filters = []) {
         } else if (f.op === 'contains') {
           params[pk('v')] = `%${val}%`;
           clauses.push(`LOWER(${col}) LIKE @${pk('v')}`);
+        } else if (f.op === 'starts with') {
+          params[pk('v')] = `${val}%`;
+          clauses.push(`LOWER(${col}) LIKE @${pk('v')}`);
         } else if (f.op === 'is not') {
           params[pk('v')] = val;
           clauses.push(`LOWER(${col}) != @${pk('v')}`);

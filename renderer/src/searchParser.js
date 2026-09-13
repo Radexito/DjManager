@@ -15,7 +15,11 @@ export const FIELDS = {
   bitrate: { type: 'number', label: 'BITRATE' },
 };
 
-const TEXT_OPS = ['is not', 'is', 'contains'];
+// Text fields share these. `starts with` exists so a half-typed name filters
+// while you type: `is` only matches once the whole value is in.
+const TEXT_OPS = ['is not', 'starts with', 'is', 'contains'];
+// GENRE holds a JSON array, so a prefix match over the raw column is meaningless.
+const GENRE_OPS = ['is not', 'is', 'contains'];
 const NUM_OPS = ['in range', '>=', '<=', '>', '<', 'is'];
 // longest first so the parser greedily matches "mode switch" before "mode"
 const KEY_OPS = ['mode switch', 'adjacent', 'matches', 'is'];
@@ -24,6 +28,7 @@ export function getOpsForField(fieldKey) {
   const t = FIELDS[fieldKey]?.type;
   if (t === 'number') return NUM_OPS;
   if (t === 'key') return KEY_OPS;
+  if (fieldKey === 'genre') return GENRE_OPS;
   return TEXT_OPS;
 }
 
@@ -268,6 +273,7 @@ function opDescription(fieldKey, op) {
     return map[op];
   }
   if (op === 'in range') return 'e.g. 130-140';
+  if (op === 'starts with') return 'matches anything beginning with it';
   return undefined;
 }
 
