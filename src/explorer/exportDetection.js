@@ -75,25 +75,28 @@ function readRekordboxManifest(root, fsImpl) {
   const playlists = Array.isArray(data.playlists) ? data.playlists : [];
   const tracksById = new Map(tracks.map((t) => [t.id, t]));
 
+  /** One manifest track, in the shape the rest of the app reads tracks in. */
+  const toTrack = (t) => ({
+    id: t.id,
+    title: t.title || '',
+    artist: t.artist || '',
+    album: t.album || '',
+    duration: Number.isFinite(Number(t.duration)) ? Number(t.duration) : null,
+    bpm: Number.isFinite(Number(t.bpm)) ? Number(t.bpm) : null,
+    key: t.key_raw || t.key || '',
+    key_camelot: camelotFromText(t.key_raw || t.key || ''),
+    file_path: t.file_path || '',
+    // The manifest stores paths relative to the export root ('/music/...'), so a
+    // mounted export can be imported or previewed without guessing.
+    absolute_path: t.file_path ? path.join(root, t.file_path) : '',
+  });
+
   const entries = playlists.map((pl) => {
     const trackIds = Array.isArray(pl.track_ids) ? pl.track_ids : [];
     const resolved = trackIds
       .map((id) => tracksById.get(id))
       .filter(Boolean)
-      .map((t) => ({
-        id: t.id,
-        title: t.title || '',
-        artist: t.artist || '',
-        album: t.album || '',
-        duration: Number.isFinite(Number(t.duration)) ? Number(t.duration) : null,
-        bpm: Number.isFinite(Number(t.bpm)) ? Number(t.bpm) : null,
-        key: t.key_raw || t.key || '',
-        key_camelot: camelotFromText(t.key_raw || t.key || ''),
-        file_path: t.file_path || '',
-        // The manifest stores paths relative to the export root ('/music/...'),
-        // so a mounted export can be imported or previewed without guessing.
-        absolute_path: t.file_path ? path.join(root, t.file_path) : '',
-      }));
+      .map(toTrack);
     return {
       id: pl.id,
       name: pl.name || 'Untitled playlist',
@@ -102,7 +105,12 @@ function readRekordboxManifest(root, fsImpl) {
     };
   });
 
-  return { trackCount: tracks.length, playlists: playlists.length, entries };
+  return {
+    trackCount: tracks.length,
+    playlists: playlists.length,
+    entries,
+    tracks: tracks.map(toTrack),
+  };
 }
 
 /**
@@ -139,6 +147,7 @@ export function detectExports(root, fsImpl = fs) {
       trackCount: manifest ? manifest.trackCount : null,
       playlists: manifest ? manifest.playlists : null,
       entries: manifest ? manifest.entries : [],
+      tracks: manifest ? manifest.tracks : [],
       note: manifest
         ? null
         : 'Track and playlist counts need a Rekordbox PDB parser (not implemented yet).',

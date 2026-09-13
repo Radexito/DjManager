@@ -100,7 +100,7 @@ describe('FileExplorerView - detected DJ exports per drive (#504)', () => {
 
     fireEvent.click(addButtons[0]);
 
-    expect(await screen.findByText('Warehouse — A (Rekordbox export)')).toBeTruthy();
+    expect(await screen.findByText('1 track(s) in "Warmup" (Rekordbox export)')).toBeTruthy();
   });
 
   it('expands a parsed export into its playlists and tracks', async () => {

@@ -1,7 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import FileExplorerView from '../FileExplorerView.jsx';
-import { PlayerProvider } from '../PlayerContext.jsx';
+
+// The player is not what this suite is about, but playing from a row is.
+const { playSpy } = vi.hoisted(() => ({ playSpy: vi.fn() }));
+vi.mock('../PlayerContext.jsx', () => ({
+  usePlayer: () => ({
+    play: playSpy,
+    currentTrack: null,
+    mediaPort: 19876,
+    patchCurrentTrack: vi.fn(),
+  }),
+}));
 
 // Render every virtualized row inline so rows are clickable in jsdom.
 vi.mock('react-window', () => ({
@@ -17,7 +27,6 @@ vi.mock('react-window', () => ({
   },
 }));
 
-// jsdom has no ResizeObserver; FileExplorerView uses one to size its virtualized list.
 globalThis.ResizeObserver =
   globalThis.ResizeObserver ||
   class {
@@ -29,6 +38,31 @@ globalThis.ResizeObserver =
 const EXPORT_ROOT = '/home/radexito/output_folder';
 const NESTED_ROOT = `${EXPORT_ROOT}/id3`;
 
+const track = (id, title, artist, key, camelot, bpm, duration) => ({
+  id,
+  title,
+  artist,
+  album: '',
+  duration,
+  bpm,
+  key,
+  key_camelot: camelot,
+  file_path: `/music/${id}.mp3`,
+  absolute_path: `${EXPORT_ROOT}/music/${id}.mp3`,
+});
+
+const T_INVASION = track(
+  199,
+  'The Third Invasion',
+  'AniMe feat. Dave Revan',
+  'F# minor',
+  '11A',
+  174,
+  302.7
+);
+const T_SECOND = track(200, 'Second Wind', 'B', 'A minor', '8A', 150, 120);
+const T_ONLY = track(201, 'Only One', 'C', 'C major', '8B', 160, 60);
+
 const REKORDBOX = {
   software: 'rekordbox',
   label: 'Rekordbox',
@@ -36,75 +70,13 @@ const REKORDBOX = {
   parsed: true,
   trackCount: 3,
   playlists: 2,
+  tracks: [T_INVASION, T_SECOND, T_ONLY],
   entries: [
-    {
-      id: 'pl-1',
-      name: 'hhc',
-      trackCount: 2,
-      tracks: [
-        {
-          id: 199,
-          title: 'The Third Invasion',
-          artist: 'AniMe feat. Dave Revan',
-          album: '',
-          duration: 302.7,
-          bpm: 174,
-          key: 'F# minor',
-          key_camelot: '11A',
-          file_path: '/music/a.mp3',
-          absolute_path: `${EXPORT_ROOT}/music/a.mp3`,
-        },
-        {
-          id: 200,
-          title: 'Second Wind',
-          artist: 'B',
-          album: '',
-          duration: 120,
-          bpm: 150,
-          key: 'A minor',
-          key_camelot: '8A',
-          file_path: '/music/b.mp3',
-          absolute_path: `${EXPORT_ROOT}/music/b.mp3`,
-        },
-      ],
-    },
-    {
-      id: 'pl-2',
-      name: 'Peak',
-      trackCount: 1,
-      tracks: [
-        {
-          id: 201,
-          title: 'Only One',
-          artist: 'C',
-          album: '',
-          duration: 60,
-          bpm: 160,
-          key: 'C major',
-          key_camelot: '8B',
-          file_path: '/music/c.mp3',
-          absolute_path: `${EXPORT_ROOT}/music/c.mp3`,
-        },
-      ],
-    },
+    { id: 'pl-1', name: 'hhc', trackCount: 2, tracks: [T_INVASION, T_SECOND] },
+    { id: 'pl-2', name: 'Peak', trackCount: 1, tracks: [T_ONLY] },
   ],
   note: null,
 };
-
-function renderExplorer() {
-  return render(
-    <PlayerProvider>
-      <FileExplorerView />
-    </PlayerProvider>
-  );
-}
-
-/** Buttons inside the open dialog: the banner behind it uses the same wording. */
-function dialogButton(label) {
-  const dialog = document.querySelector('.explorer-dialog');
-  if (!dialog) throw new Error('no open dialog');
-  return [...dialog.querySelectorAll('button')].find((b) => b.textContent.trim() === label);
-}
 
 /** The library view is a deliberate step, never the default. */
 async function openLibraryView() {
@@ -132,50 +104,40 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
   });
 
   it('stays on the folder listing and offers the library as a choice', async () => {
-    renderExplorer();
+    render(<FileExplorerView />);
 
     await waitFor(() => expect(window.api.findExportAt).toHaveBeenCalledWith(EXPORT_ROOT));
 
     expect(await screen.findByText('📚 Rekordbox export here')).toBeTruthy();
     expect(screen.getByText('Open as library')).toBeTruthy();
-    // the export contents are not shown until they are asked for
     expect(screen.queryByText('The Third Invasion')).toBeNull();
   });
 
-  it('shows what the export contains once it is opened as a library', async () => {
-    renderExplorer();
+  it('shows the export through the same listing a folder uses, all tracks first', async () => {
+    render(<FileExplorerView />);
     await openLibraryView();
 
-    expect(screen.getByText(/2 playlists/)).toBeTruthy();
-    expect(screen.getByText(/3 tracks/)).toBeTruthy();
+    // Rekordbox's collection first, then the playlists
+    expect(screen.getByText('All tracks')).toBeTruthy();
     expect(screen.getByText('hhc')).toBeTruthy();
     expect(screen.getByText('Peak')).toBeTruthy();
+    expect(screen.getByText(/2 playlists/)).toBeTruthy();
+
+    // every track of the export, with the metadata the manifest carries
     expect(screen.getByText('The Third Invasion')).toBeTruthy();
+    expect(screen.getByText('Second Wind')).toBeTruthy();
+    expect(screen.getByText('Only One')).toBeTruthy();
     expect(screen.getByText('AniMe feat. Dave Revan')).toBeTruthy();
     expect(screen.getByText('5:02')).toBeTruthy();
     expect(screen.getByText('174')).toBeTruthy();
-    // the key reads the same as everywhere else in the app
     expect(screen.getByText('11A')).toBeTruthy();
-    expect(screen.queryByText('F# minor')).toBeNull();
-  });
 
-  it('adds a single track from the library view to the library or a playlist', async () => {
-    renderExplorer();
-    await openLibraryView();
-
-    // the open playlist has two tracks, each with its own add action
-    const addButtons = screen.getAllByTitle('Add to library or a playlist');
-    expect(addButtons).toHaveLength(2);
-
-    fireEvent.click(addButtons[0]);
-
-    expect(
-      await screen.findByText('The Third Invasion — AniMe feat. Dave Revan (Rekordbox export)')
-    ).toBeTruthy();
+    // and the rows are the explorer's rows, play button included
+    expect(document.querySelectorAll('.index-play').length).toBeGreaterThan(0);
   });
 
   it('swaps the track list when another playlist is picked', async () => {
-    renderExplorer();
+    render(<FileExplorerView />);
     await openLibraryView();
 
     fireEvent.click(screen.getByText('Peak'));
@@ -185,7 +147,7 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
   });
 
   it('keeps the folder listing one toggle away', async () => {
-    renderExplorer();
+    render(<FileExplorerView />);
     await openLibraryView();
 
     fireEvent.click(screen.getByText('Files'));
@@ -194,13 +156,45 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
     expect(screen.queryByText('The Third Invasion')).toBeNull();
   });
 
-  it('hands the playlist to the library dialog with usable file paths', async () => {
-    renderExplorer();
+  it('plays a track the way the explorer does', async () => {
+    render(<FileExplorerView />);
     await openLibraryView();
 
-    fireEvent.click(screen.getByText('+ Library (2)'));
+    fireEvent.doubleClick(screen.getByText('The Third Invasion'));
 
-    expect(await screen.findByText('2 file(s) in "hhc" (Rekordbox export)')).toBeTruthy();
+    expect(playSpy).toHaveBeenCalledTimes(1);
+    expect(playSpy.mock.calls[0][0]).toMatchObject({
+      title: 'The Third Invasion',
+      bpm: 174,
+      key_camelot: '11A',
+      file_path: `${EXPORT_ROOT}/music/199.mp3`,
+    });
+  });
+
+  it('offers the explorer context menu on an export track', async () => {
+    render(<FileExplorerView />);
+    await openLibraryView();
+
+    fireEvent.contextMenu(screen.getByText('The Third Invasion'));
+
+    expect(await screen.findByText('➕ Add to library')).toBeTruthy();
+    expect(screen.getByText('➕ Add to playlist')).toBeTruthy();
+    expect(screen.getByText('▶ Play')).toBeTruthy();
+
+    fireEvent.click(screen.getByText('➕ Add to library'));
+
+    await waitFor(() =>
+      expect(window.api.linkAudioFiles).toHaveBeenCalledWith([`${EXPORT_ROOT}/music/199.mp3`], null)
+    );
+  });
+
+  it('adds a whole playlist from the sidebar', async () => {
+    render(<FileExplorerView />);
+    await openLibraryView();
+
+    fireEvent.click(screen.getByTitle('Add "All tracks" to the library'));
+
+    expect(await screen.findByText('3 track(s) in "All tracks" (Rekordbox export)')).toBeTruthy();
   });
 
   it('leaves a plain folder alone', async () => {
@@ -212,7 +206,7 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
       volumes: [{ id: 'linux:system', root: '/', label: '/', removable: false, system: true }],
     });
 
-    renderExplorer();
+    render(<FileExplorerView />);
 
     await waitFor(() =>
       expect(window.api.findExportAt).toHaveBeenCalledWith('/home/radexito/music')
@@ -234,9 +228,8 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
       roots: { [NESTED_ROOT]: { software: 'rekordbox', label: 'Rekordbox' } },
     });
 
-    renderExplorer();
+    render(<FileExplorerView />);
 
-    // wait for the folder to be marked as an export before opening it
     await screen.findByText('Library');
     fireEvent.doubleClick(screen.getByText('id3'));
 
@@ -263,9 +256,8 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
       roots: { [NESTED_ROOT]: { software: 'rekordbox', label: 'Rekordbox' } },
     });
 
-    renderExplorer();
+    render(<FileExplorerView />);
 
-    // wait for the folder to be marked as an export before opening it
     await screen.findByText('Library');
     fireEvent.doubleClick(screen.getByText('id3'));
     await screen.findByText('Open id3');
@@ -286,9 +278,8 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
       roots: { [NESTED_ROOT]: { software: 'rekordbox', label: 'Rekordbox' } },
     });
 
-    renderExplorer();
+    render(<FileExplorerView />);
 
-    // wait for the folder to be marked as an export before opening it
     await screen.findByText('Library');
     fireEvent.doubleClick(screen.getByText('id3'));
     await screen.findByText('Open id3');
@@ -310,7 +301,7 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
       roots: { [NESTED_ROOT]: { software: 'rekordbox', label: 'Rekordbox' } },
     });
 
-    renderExplorer();
+    render(<FileExplorerView />);
 
     // open a library on purpose...
     fireEvent.click(await screen.findByText('Library'));
@@ -339,12 +330,10 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
       roots: { [NESTED_ROOT]: { software: 'rekordbox', label: 'Rekordbox' } },
     });
 
-    renderExplorer();
+    render(<FileExplorerView />);
 
     // the export folder is marked, the ordinary one is not
-    const chip = await screen.findByText('Library');
-    expect(chip.getAttribute('title')).toMatch(/Rekordbox export/);
-    await waitFor(() => expect(window.api.exportRoots).toHaveBeenCalled());
+    const chip = await screen.findByTitle(/Rekordbox export/);
     expect(screen.getByText('id3')).toBeTruthy();
     expect(screen.getByText('notes')).toBeTruthy();
 
@@ -354,3 +343,10 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
     expect(await screen.findByText('📚 Rekordbox export')).toBeTruthy();
   });
 });
+
+/** Buttons inside the open dialog: the banner behind it uses the same wording. */
+function dialogButton(label) {
+  const dialog = document.querySelector('.explorer-dialog');
+  if (!dialog) throw new Error('no open dialog');
+  return [...dialog.querySelectorAll('button')].find((b) => b.textContent.trim() === label);
+}

@@ -436,9 +436,9 @@
 }
 
 /* ── Export library view (#504) ──────────────────────────────────────────────
-   Browsing a folder that holds a DJ-software export shows what the export
-   contains (its playlists and tracks) instead of the folders it is made of.
-   Read-only: nothing here writes to the drive. */
+   Browsing an export shows its collection the way Rekordbox does (All tracks,
+   then the playlists) and lists the tracks through the same rows as a folder:
+   double-click plays, right-click offers the usual file actions. Read only. */
 .explorer-export-library {
   display: flex;
   flex-direction: column;
@@ -509,16 +509,8 @@
 .explorer-export-library__playlist {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 12px;
-  background: none;
-  border: 0;
-  color: var(--text-primary, #e0e0e0);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
+  gap: 2px;
+  padding-right: 6px;
 }
 
 .explorer-export-library__playlist:hover {
@@ -527,6 +519,25 @@
 
 .explorer-export-library__playlist--active {
   background: var(--bg-tertiary, #333);
+}
+
+.explorer-export-library__playlist-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px 4px 7px 12px;
+  background: none;
+  border: 0;
+  color: var(--text-primary, #e0e0e0);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.explorer-export-library__playlist--active .explorer-export-library__playlist-main {
   color: var(--accent, #4a90d9);
 }
 
@@ -541,47 +552,29 @@
   color: var(--text-muted, #666);
 }
 
-.explorer-export-library__tracks {
+.explorer-export-library__playlist-add {
+  padding: 0 6px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted, #888);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.explorer-export-library__playlist-add:hover {
+  color: var(--accent, #4a90d9);
+  border-color: var(--accent, #4a90d9);
+}
+
+.explorer-export-library__list {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
-  overflow-y: auto;
-}
-
-.explorer-export-library__track-head,
-.explorer-export-library__track {
-  display: grid;
-  grid-template-columns: 44px minmax(180px, 2fr) minmax(140px, 1.4fr) 64px 56px 76px 34px;
-  gap: 10px;
-  align-items: center;
-  padding: 6px 12px;
-}
-
-.explorer-export-library__track-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  font-size: 12px;
-  color: var(--text-muted, #666);
-  background: var(--bg-secondary, #1a1a1a);
-  border-bottom: 1px solid var(--border, #2a2a2a);
-}
-
-.explorer-export-library__track {
-  font-size: 13px;
-  color: var(--text-primary, #e0e0e0);
-  border-bottom: 1px solid var(--border, #222);
-}
-
-.explorer-export-library__track span {
+  min-height: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.explorer-export-library__actions {
-  display: flex;
-  justify-content: flex-end;
-  padding: 10px 12px;
 }
 
 .explorer-export-banner {
@@ -595,48 +588,4 @@
   background: var(--bg-secondary, #1a1a1a);
   border-bottom: 1px solid var(--border, #2a2a2a);
   flex-shrink: 0;
-}
-
-.explorer-dir-row--export .cell-title-text {
-  color: var(--accent, #4a90d9);
-}
-
-.cell-export-chip {
-  margin-left: 8px;
-  padding: 1px 7px;
-  font-size: 11px;
-  line-height: 16px;
-  color: var(--accent, #4a90d9);
-  background: transparent;
-  border: 1px solid var(--accent, #4a90d9);
-  border-radius: 3px;
-  cursor: pointer;
-}
-
-.cell-export-chip:hover {
-  color: var(--bg-primary, #111);
-  background: var(--accent, #4a90d9);
-}
-
-/* Add one export track to the library or to a playlist (#504). */
-.explorer-export-add {
-  margin-left: auto;
-  padding: 0 6px;
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--text-muted, #888);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 3px;
-  cursor: pointer;
-}
-
-.explorer-export-add:hover {
-  color: var(--accent, #4a90d9);
-  border-color: var(--accent, #4a90d9);
-}
-
-.explorer-export-library__row-action {
-  display: flex;
-  justify-content: flex-end;
 }

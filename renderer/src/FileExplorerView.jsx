@@ -60,6 +60,25 @@ function exportSummaryLine(exp) {
   return `${exp.label} export - ${parts.length ? parts.join(' / ') : 'not parsed yet'}`;
 }
 
+const ALL_TRACKS_ID = 'all-tracks';
+
+/** An export track as one of the file items the listing already renders. */
+function exportTrackToItem(t) {
+  const filePath = t.absolute_path || t.file_path;
+  const item = { type: 'file', path: filePath, name: t.title || basename(t.file_path) };
+  item.track = {
+    ...fileToSyntheticTrack(item),
+    id: `export:${t.id ?? filePath}`,
+    title: item.name,
+    artist: t.artist || null,
+    album: t.album || null,
+    bpm: t.bpm ?? null,
+    key_camelot: t.key_camelot ?? null,
+    duration: t.duration ?? null,
+  };
+  return item;
+}
+
 function fileToSyntheticTrack(f) {
   const name = basename(f.path);
   const dot = name.lastIndexOf('.');
@@ -109,7 +128,10 @@ function ExplorerRow({
   if (!item) return <div style={style} />;
 
   const track =
-    tracksMap.get(item.path) ?? (item.type === 'file' ? fileToSyntheticTrack(item) : null);
+    tracksMap.get(item.path) ??
+    // An export track carries its own metadata (the manifest), so it renders like
+    // any other file row until it is linked into the library (#504).
+    (item.type === 'file' ? (item.track ?? fileToSyntheticTrack(item)) : null);
   const isSelected = selectedPaths.has(item.path);
   const isPlaying = item.type === 'file' && item.path === playingFilePath;
   const isLinked = track?.is_linked === 1;
@@ -199,6 +221,41 @@ function ExplorerRow({
       <div className="cell loudness numeric">{track?.loudness != null ? track.loudness : '—'}</div>
       <div className="cell duration numeric">{fmtDuration(track?.duration)}</div>
     </div>
+  );
+}
+
+// ── Listing ──────────────────────────────────────────────────────────────────
+// The header row and the virtualized rows, shared by a folder and by an export,
+// so both behave the same way: same columns, same selection, same context menu.
+
+function FileListPane({ containerRef, listRef, listHeight, loading, items, rowProps, emptyLabel }) {
+  return (
+    <>
+      <div className="header" style={{ gridTemplateColumns: GRID, minWidth: MIN_WIDTH }}>
+        {COLUMNS.map((col) => (
+          <div key={col.key} className="header-cell">
+            {col.label}
+          </div>
+        ))}
+      </div>
+
+      <div className="explorer-list-container" ref={containerRef}>
+        {loading && <div className="explorer-empty">Loading…</div>}
+        {!loading && items.length === 0 && <div className="explorer-empty">{emptyLabel}</div>}
+        {!loading && items.length > 0 && (
+          <List
+            listRef={listRef}
+            defaultHeight={listHeight}
+            rowCount={items.length}
+            rowHeight={ROW_HEIGHT}
+            width="100%"
+            overscanCount={8}
+            rowComponent={ExplorerRow}
+            rowProps={rowProps}
+          />
+        )}
+      </div>
+    </>
   );
 }
 
@@ -396,7 +453,7 @@ export default function FileExplorerView({ style }) {
   // What the user asked for when they entered a folder: 'library' only when they
   // chose it, so the view never sticks to the next folder that happens to be one.
   const libraryIntentRef = useRef(null);
-  const [openExportPlaylist, setOpenExportPlaylist] = useState(null);
+  const [openExportPlaylist, setOpenExportPlaylist] = useState(ALL_TRACKS_ID);
 
   const listRef = useRef();
   const containerRef = useRef();
@@ -684,27 +741,80 @@ export default function FileExplorerView({ style }) {
   }, [dirEntries.dirs]);
 
   const activeExport = exportContext?.exports?.[0] ?? null;
-  const exportPlaylists = activeExport?.entries ?? [];
+  const exportPlaylists = useMemo(() => activeExport?.entries ?? [], [activeExport]);
+
+  // Rekordbox shows the whole collection next to the playlists, so an export is
+  // browsed the same way here: All tracks first, then one entry per playlist.
+  const allExportTracks = useMemo(() => {
+    if (activeExport?.tracks?.length) return activeExport.tracks;
+    const seen = new Map();
+    for (const pl of exportPlaylists) {
+      for (const t of pl.tracks ?? []) if (!seen.has(t.id)) seen.set(t.id, t);
+    }
+    return [...seen.values()];
+  }, [activeExport, exportPlaylists]);
+
+  const sidebarEntries = useMemo(
+    () => [
+      {
+        id: ALL_TRACKS_ID,
+        name: 'All tracks',
+        tracks: allExportTracks,
+        trackCount: allExportTracks.length,
+      },
+      ...exportPlaylists,
+    ],
+    [allExportTracks, exportPlaylists]
+  );
+
   const shownExportPlaylist =
-    exportPlaylists.find((pl) => pl.id === openExportPlaylist) ?? exportPlaylists[0] ?? null;
+    sidebarEntries.find((pl) => pl.id === openExportPlaylist) ?? sidebarEntries[0] ?? null;
   const exportTrackPaths = (shownExportPlaylist?.tracks ?? [])
-    .map((t) => t.absolute_path)
+    .map((t) => t.absolute_path || t.file_path)
     .filter(Boolean);
 
-  // The library view is the default whenever an export is open, because that is
-  // what the folder actually is. A recursive scan wins, since that is explicit.
+  // The library view is the one the user asked for; the listing is the default.
   const showExportLibrary =
     !!activeExport && exportViewMode === 'library' && recursiveFiles === null;
+
+  const exportItems = useMemo(
+    () => (shownExportPlaylist?.tracks ?? []).map(exportTrackToItem),
+    [shownExportPlaylist]
+  );
 
   // ── Derived state ─────────────────────────────────────────────────────────
 
   const displayItems = useMemo(() => {
+    // An export is browsed through this very listing, so its tracks play, select
+    // and answer the context menu exactly like files in a folder (#504).
+    if (showExportLibrary) return exportItems;
     if (recursiveFiles !== null) return recursiveFiles.map((f) => ({ ...f, type: 'file' }));
     return [
       ...dirEntries.dirs.map((d) => ({ ...d, type: 'dir' })),
       ...dirEntries.files.map((f) => ({ ...f, type: 'file' })),
     ];
-  }, [dirEntries, recursiveFiles]);
+  }, [dirEntries, recursiveFiles, showExportLibrary, exportItems]);
+
+  // Are the export's files already in the library? Same lookup the folder listing
+  // does, so a track shows its linked state and the menu offers the right action.
+  useEffect(() => {
+    const paths = exportItems.map((item) => item.path).filter(Boolean);
+    if (paths.length === 0) return () => {};
+    let cancelled = false;
+    Promise.resolve(window.api.getTracksByPaths(paths))
+      .then((tracks) => {
+        if (cancelled || !tracks?.length) return;
+        setTracksMap((prev) => {
+          const next = new Map(prev);
+          tracks.forEach((t) => next.set(t.file_path, t));
+          return next;
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [exportItems]);
 
   // ── Keyboard: Ctrl+A selects all visible rows (mirrors MusicLibrary) ─────
   // MusicLibrary is unmounted while this tab is active, but other views stay
@@ -787,8 +897,12 @@ export default function FileExplorerView({ style }) {
       }
       const fileItems = displayItems.filter((x) => x.type === 'file');
       const idx = fileItems.findIndex((x) => x.path === item.path);
-      const trackForItem = tracksMap.get(item.path) ?? fileToSyntheticTrack(item);
-      const queue = fileItems.map((f) => tracksMap.get(f.path) ?? fileToSyntheticTrack(f));
+      // An export track carries its own metadata, so playing from a library view
+      // hands the player the same fields as playing a linked file (#504).
+      const trackForItem = tracksMap.get(item.path) ?? item.track ?? fileToSyntheticTrack(item);
+      const queue = fileItems.map(
+        (f) => tracksMap.get(f.path) ?? f.track ?? fileToSyntheticTrack(f)
+      );
 
       // Play immediately — no waiting regardless of link status
       play(trackForItem, queue, idx);
@@ -1072,16 +1186,15 @@ export default function FileExplorerView({ style }) {
     [displayItems, selectedPaths]
   );
 
-  // Hand one export track to the library dialog. Same dialog the folder flows
-  // use, so a single track can go into the library or into a playlist (#504).
-  const addExportTrack = useCallback((track, playlistName, softwareLabel) => {
-    const filePath = track?.absolute_path;
-    if (!filePath) return;
-    const name = track.title || basename(filePath);
+  // Hand an export selection to the library dialog. Same dialog the folder flows
+  // use, so tracks can go into the library or into a playlist (#504).
+  const addExportTracks = useCallback((tracks, name, softwareLabel) => {
+    const paths = (tracks ?? []).map((t) => t.absolute_path || t.file_path).filter(Boolean);
+    if (paths.length === 0) return;
     setLinkDialog({
-      defaultName: playlistName || name,
-      paths: [filePath],
-      description: `${name}${track.artist ? ` — ${track.artist}` : ''}${
+      defaultName: name || 'Export',
+      paths,
+      description: `${paths.length} track(s) in "${name ?? 'export'}"${
         softwareLabel ? ` (${softwareLabel} export)` : ''
       }`,
     });
@@ -1401,7 +1514,7 @@ export default function FileExplorerView({ style }) {
                                           <button
                                             className="explorer-export-add"
                                             title="Add to library or a playlist"
-                                            onClick={() => addExportTrack(t, pl.name, exp.label)}
+                                            onClick={() => addExportTracks([t], pl.name, exp.label)}
                                           >
                                             ＋
                                           </button>
@@ -1550,11 +1663,20 @@ export default function FileExplorerView({ style }) {
             onClick={() => {
               const folderName = currentPath ? basename(currentPath) : 'Folder';
               const paths =
-                selectedFileItems.length > 0 ? selectedFileItems.map((f) => f.path) : null;
+                selectedFileItems.length > 0
+                  ? selectedFileItems.map((f) => f.path)
+                  : showExportLibrary
+                    ? exportTrackPaths
+                    : null;
               const folderFileCount = displayItems.filter((x) => x.type === 'file').length;
-              const description = paths
-                ? `${paths.length} selected file(s) from "${folderName}"`
-                : `${folderFileCount} audio file(s) in "${folderName}"`;
+              const description =
+                selectedFileItems.length > 0
+                  ? `${paths.length} selected file(s) from "${folderName}"`
+                  : showExportLibrary
+                    ? `${paths.length} track(s) in "${
+                        shownExportPlaylist?.name ?? 'export'
+                      }" (${activeExport?.label ?? ''} export)`
+                    : `${folderFileCount} audio file(s) in "${folderName}"`;
               setLinkDialog({ defaultName: folderName, paths, description });
             }}
           >
@@ -1594,85 +1716,56 @@ export default function FileExplorerView({ style }) {
               </div>
             </div>
 
-            {exportPlaylists.length === 0 ? (
-              <div className="explorer-empty">
-                {activeExport.note ?? 'No readable track listing.'}
-              </div>
-            ) : (
-              <div className="explorer-export-library__body">
-                <div className="explorer-export-library__playlists">
-                  {exportPlaylists.map((pl) => (
+            <div className="explorer-export-library__body">
+              <div className="explorer-export-library__playlists">
+                {sidebarEntries.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className={`explorer-export-library__playlist${
+                      shownExportPlaylist?.id === entry.id
+                        ? ' explorer-export-library__playlist--active'
+                        : ''
+                    }`}
+                  >
                     <button
-                      key={pl.id}
-                      className={`explorer-export-library__playlist${
-                        shownExportPlaylist?.id === pl.id
-                          ? ' explorer-export-library__playlist--active'
-                          : ''
-                      }`}
-                      title={pl.name}
-                      onClick={() => setOpenExportPlaylist(pl.id)}
+                      className="explorer-export-library__playlist-main"
+                      title={entry.name}
+                      onClick={() => setOpenExportPlaylist(entry.id)}
                     >
-                      <span className="explorer-export-library__playlist-name">{pl.name}</span>
+                      <span className="explorer-export-library__playlist-name">{entry.name}</span>
                       <span className="explorer-export-library__playlist-count">
-                        {pl.trackCount}
+                        {entry.trackCount}
                       </span>
                     </button>
-                  ))}
-                </div>
-
-                <div className="explorer-export-library__tracks">
-                  <div className="explorer-export-library__track-head">
-                    <span>#</span>
-                    <span>Title</span>
-                    <span>Artist</span>
-                    <span>Time</span>
-                    <span>BPM</span>
-                    <span>Key</span>
-                    <span />
-                  </div>
-                  {(shownExportPlaylist?.tracks ?? []).map((t, i) => (
-                    <div key={t.id ?? i} className="explorer-export-library__track">
-                      <span>{i + 1}</span>
-                      <span title={t.absolute_path || t.file_path}>
-                        {t.title || basename(t.file_path)}
-                      </span>
-                      <span>{t.artist}</span>
-                      <span>{t.duration ? fmtDuration(t.duration) : ''}</span>
-                      <span>{t.bpm ?? ''}</span>
-                      <span>{t.key_camelot ?? t.key ?? ''}</span>
-                      <span className="explorer-export-library__row-action">
-                        <button
-                          className="explorer-export-add"
-                          title="Add to library or a playlist"
-                          onClick={() =>
-                            addExportTrack(t, shownExportPlaylist?.name, activeExport.label)
-                          }
-                        >
-                          ＋
-                        </button>
-                      </span>
-                    </div>
-                  ))}
-                  <div className="explorer-export-library__actions">
                     <button
-                      className="explorer-btn accent"
-                      disabled={exportTrackPaths.length === 0}
-                      onClick={() =>
-                        setLinkDialog({
-                          defaultName: shownExportPlaylist?.name ?? activeExport.label,
-                          paths: exportTrackPaths,
-                          description: `${exportTrackPaths.length} file(s) in "${
-                            shownExportPlaylist?.name ?? 'export'
-                          }" (${activeExport.label} export)`,
-                        })
-                      }
+                      className="explorer-export-library__playlist-add"
+                      title={`Add "${entry.name}" to the library`}
+                      onClick={() => addExportTracks(entry.tracks, entry.name, activeExport.label)}
                     >
-                      {`+ Library (${exportTrackPaths.length})`}
+                      ＋
                     </button>
                   </div>
-                </div>
+                ))}
               </div>
-            )}
+
+              <div className="explorer-export-library__list">
+                {exportItems.length === 0 ? (
+                  <div className="explorer-empty">
+                    {activeExport.note ?? 'No readable track listing.'}
+                  </div>
+                ) : (
+                  <FileListPane
+                    containerRef={containerRef}
+                    listRef={listRef}
+                    listHeight={listHeight}
+                    loading={false}
+                    items={exportItems}
+                    rowProps={rowProps}
+                    emptyLabel="No tracks here"
+                  />
+                )}
+              </div>
+            </div>
           </div>
         ) : (
           <>
@@ -1688,34 +1781,15 @@ export default function FileExplorerView({ style }) {
               </div>
             )}
 
-            {/* ── Header row ────────────────────────────────────────────────────── */}
-            <div className="header" style={{ gridTemplateColumns: GRID, minWidth: MIN_WIDTH }}>
-              {COLUMNS.map((col) => (
-                <div key={col.key} className="header-cell">
-                  {col.label}
-                </div>
-              ))}
-            </div>
-
-            {/* ── File list ─────────────────────────────────────────────────────── */}
-            <div className="explorer-list-container" ref={containerRef}>
-              {loading && <div className="explorer-empty">Loading…</div>}
-              {!loading && displayItems.length === 0 && (
-                <div className="explorer-empty">No audio files here</div>
-              )}
-              {!loading && displayItems.length > 0 && (
-                <List
-                  listRef={listRef}
-                  defaultHeight={listHeight}
-                  rowCount={displayItems.length}
-                  rowHeight={ROW_HEIGHT}
-                  width="100%"
-                  overscanCount={8}
-                  rowComponent={ExplorerRow}
-                  rowProps={rowProps}
-                />
-              )}
-            </div>
+            <FileListPane
+              containerRef={containerRef}
+              listRef={listRef}
+              listHeight={listHeight}
+              loading={loading}
+              items={displayItems}
+              rowProps={rowProps}
+              emptyLabel="No audio files here"
+            />
           </>
         )}
 
