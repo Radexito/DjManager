@@ -87,9 +87,12 @@ const SECTIONS = [
   },
   {
     title: 'Explorer & linked files',
-    keywords: 'filesystem drives usb folder link reference unavailable reconnect letter hot swap',
+    keywords:
+      'filesystem drives usb folder link reference unavailable multi selection count reconnect letter hot swap',
     items: [
       'Explorer browses the filesystem: select a folder or files with audio and Add to Library to link them (kept in place), or manage linked files and their availability.',
+      'Select several rows (Ctrl/Cmd+click, Shift+click for a range, Ctrl+A for everything) and right-click: import, create playlist and favourite actions run on every selected folder, with count-aware labels such as Import 3 folders (flat).',
+      'Actions that only make sense on a single row (Play, Edit Details, Prepare Track, Analysis) are shown disabled behind a "3 folders selected" header while several rows are selected, instead of silently acting on the row you clicked.',
       'Removable drives are listed separately, which keeps USB workflow quick. Linked tracks on a disconnected drive show as unavailable rather than disappearing, and when the drive returns under a different letter the linked paths are re-pointed automatically.',
       'Drives are re-detected automatically when one is plugged in, unplugged or comes back under a different letter: the folder you are browsing follows the drive instead of pointing at a stale path.',
     ],

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  parseClause,
   parseQuery,
   filterToText,
   removeFilter,
@@ -11,6 +12,8 @@ import {
   getOpsForField,
   CAMELOT_KEYS,
   FIELDS,
+  splitArtists,
+  buildArtistQuery,
 } from '../searchParser.js';
 
 // ─── Camelot helpers ────────────────────────────────────────────────────────
@@ -185,6 +188,46 @@ describe('parseQuery', () => {
 
 // ─── filterToText ────────────────────────────────────────────────────────────
 
+describe('starts with (text fields)', () => {
+  it('parses ARTIST starts with', () => {
+    expect(parseClause('ARTIST starts with Doj')).toEqual({
+      field: 'artist',
+      op: 'starts with',
+      value: 'Doj',
+    });
+  });
+
+  it('offers it for text fields but not for GENRE', () => {
+    expect(getOpsForField('artist')).toContain('starts with');
+    expect(getOpsForField('title')).toContain('starts with');
+    expect(getOpsForField('genre')).not.toContain('starts with');
+  });
+
+  it('does not swallow the exact operator', () => {
+    expect(parseClause('ARTIST is Doja Cat')).toEqual({
+      field: 'artist',
+      op: 'is',
+      value: 'Doja Cat',
+    });
+    expect(parseClause('ARTIST is not Doja Cat')).toEqual({
+      field: 'artist',
+      op: 'is not',
+      value: 'Doja Cat',
+    });
+  });
+
+  it('round-trips through filterToText', () => {
+    const f = { field: 'artist', op: 'starts with', value: 'Doj' };
+    expect(filterToText(f)).toBe('ARTIST starts with Doj');
+    expect(parseQuery(filterToText(f)).filters).toEqual([f]);
+  });
+
+  it('suggests the operator while typing', () => {
+    const suggestions = getSuggestions('ARTIST st');
+    expect(suggestions.some((s) => s.text === 'starts with')).toBe(true);
+  });
+});
+
 describe('filterToText', () => {
   it('renders range filter', () => {
     expect(filterToText({ field: 'bpm', op: 'range', from: 130, to: 140 })).toBe(
@@ -339,5 +382,55 @@ describe('getSuggestions BITRATE', () => {
     const suggestions = getSuggestions('BITRATE >= ');
     expect(suggestions.length).toBeGreaterThan(0);
     expect(suggestions.some((s) => s.text.includes('320'))).toBe(true);
+  });
+});
+
+// ─── Artist credits (#505) ──────────────────────────────────────────────────
+
+describe('splitArtists', () => {
+  it('returns a single name untouched', () => {
+    expect(splitArtists('Doja Cat')).toEqual(['Doja Cat']);
+  });
+
+  it('splits a comma-separated credit', () => {
+    expect(splitArtists('Sigma, Doctor P')).toEqual(['Sigma', 'Doctor P']);
+  });
+
+  it('trims around the commas and drops empty parts', () => {
+    expect(splitArtists(' Boris S. ,,  DJ X , ')).toEqual(['Boris S.', 'DJ X']);
+  });
+
+  it('keeps a name that contains no comma as one entry', () => {
+    expect(splitArtists('A & B')).toEqual(['A & B']);
+  });
+
+  it('drops duplicates that differ only in case', () => {
+    expect(splitArtists('Sigma, sigma')).toEqual(['Sigma']);
+  });
+
+  it('handles empty input', () => {
+    expect(splitArtists('')).toEqual([]);
+    expect(splitArtists(null)).toEqual([]);
+    expect(splitArtists(undefined)).toEqual([]);
+    expect(splitArtists(',')).toEqual([]);
+  });
+});
+
+describe('buildArtistQuery', () => {
+  it('builds an exact clause for one name', () => {
+    expect(buildArtistQuery('Doja Cat')).toBe('ARTIST is Doja Cat');
+  });
+
+  it('searches a name from a comma credit with contains', () => {
+    expect(buildArtistQuery('Egzod', { fromCredit: true })).toBe('ARTIST contains Egzod');
+    expect(buildArtistQuery('Egzod')).toBe('ARTIST is Egzod');
+  });
+
+  it('degrades to free text when the name contains AND', () => {
+    expect(buildArtistQuery('Simon AND Garfunkel')).toBe('Simon AND Garfunkel');
+  });
+
+  it('returns an empty query for empty input', () => {
+    expect(buildArtistQuery('   ')).toBe('');
   });
 });
