@@ -62,6 +62,7 @@ const SECTIONS = [
       'The volume icon opens a vertical slider on hover; clicking the icon mutes/unmutes. Output devices can be switched next to it.',
       'Click anywhere on the waveform to seek. The bar can be made taller by dragging its top edge; drag the thin separators to re-balance the zones.',
       'The clock icon opens playback history. Clicking the track title jumps to the list it is playing from: the playlist it belongs to, or the Music list scrolled to that track.',
+      'Playback history keeps the last 50 tracks and is remembered across restarts; replaying the same track back to back adds a single entry.',
       'Media keys of your OS (play/pause/next/previous) control the player as well.',
     ],
   },
@@ -81,6 +82,9 @@ const SECTIONS = [
     items: [
       'Cloud Search looks up tracks on YouTube and TIDAL: pick the source and type (track, album, playlist, ...), search, select the results and download them into the library - progress is shown for every entry.',
       'TIDAL downloads need a one-time login: the TIDAL view starts a device-login flow (URL to open and confirm in your browser); the session is stored locally afterwards.',
+      'The TIDAL view also lists your own account collections in the "My collections" panel: Playlists, Mixes & Radio (including My Daily Discovery and the video mixes) and Favorites (tracks, albums, artists, videos). The ↓ button next to a collection downloads it in one go.',
+      'Downloading a collection saves its tracks to a playlist of the same name. Video items are skipped - DjManager imports audio tracks only.',
+      'Paste a TIDAL URL instead when you want to pick individual tracks first: albums and playlists open a selection step, single tracks and mixes start downloading straight away.',
       'The Download view lists supported sites (YouTube, SoundCloud, Bandcamp, Mixcloud, Vimeo, Twitch): paste a link to download that video, album or playlist through yt-dlp into the library.',
       'When a site requires a login or blocks downloads (403), set the yt-dlp cookies to your logged-in browser profile in Settings.',
     ],
@@ -88,9 +92,11 @@ const SECTIONS = [
   {
     title: 'Explorer & linked files',
     keywords:
-      'filesystem drives usb folder link reference unavailable rekordbox serato engine traktor export detect',
+      'filesystem drives usb folder link reference unavailable multi selection count rekordbox serato engine traktor export detect',
     items: [
       'Explorer browses the filesystem: select a folder or files with audio and Add to Library to link them (kept in place), or manage linked files and their availability.',
+      'Select several rows (Ctrl/Cmd+click, Shift+click for a range, Ctrl+A for everything) and right-click: import, create playlist and favourite actions run on every selected folder, with count-aware labels such as Import 3 folders (flat).',
+      'Actions that only make sense on a single row (Play, Edit Details, Prepare Track, Analysis) are shown disabled behind a "3 folders selected" header while several rows are selected, instead of silently acting on the row you clicked.',
       'Removable drives are listed separately, which keeps USB workflow quick. Linked tracks on a disconnected drive show as unavailable rather than disappearing.',
       "Selecting a drive also lists the DJ software exports found on it (Rekordbox, Serato, Engine DJ, Traktor). Expanding an export shows its playlists and tracks when a readable source exists (DjManager's own export-manifest.json is read first); formats with no reader yet say so instead of showing invented counts.",
       'DJ export detection is read-only and never modifies the drive. Use the refresh button on a drive row to scan that drive again.',
