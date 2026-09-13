@@ -2420,7 +2420,6 @@ ipcMain.handle(
             targetLufs,
             targetDevice,
             forceMp3,
-            blind,
           });
           usbPaths.set(t.id, usbPath);
           if (meta) usbMeta.set(t.id, meta);
@@ -2585,7 +2584,6 @@ ipcMain.handle(
             targetLufs,
             targetDevice,
             forceMp3,
-            blind,
           });
           usbPaths.set(t.id, usbPath);
           if (meta) usbMeta.set(t.id, meta);
