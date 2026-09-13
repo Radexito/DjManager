@@ -918,6 +918,7 @@ function MusicLibrary({
   onSearchChange,
   openDetailsRequest,
   locateTrack,
+  onImportUsbCues,
   onArtistSearch,
 }) {
   const isPlaylistView = selectedPlaylist !== 'music';
@@ -3174,8 +3175,19 @@ function MusicLibrary({
                       </SubItem>
                     </SubItem>
 
-                    {/* ── Write BPM & Key tags (#474) ── */}
+                    {/* ── Cue points from hardware (#259) ── */}
                     <div className="context-menu-separator" />
+                    <div
+                      className="context-menu-item"
+                      onClick={() => {
+                        setContextMenu(null);
+                        onImportUsbCues?.();
+                      }}
+                    >
+                      🎧 Import cue points from USB
+                    </div>
+
+                    {/* ── Write BPM & Key tags (#474) ── */}
                     <div className="context-menu-item" onClick={handleWriteBpmKeyTags}>
                       🏷️ Save BPM &amp; Key to file{selectionLabel}
                     </div>
