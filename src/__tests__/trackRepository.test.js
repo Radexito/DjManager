@@ -112,6 +112,65 @@ describe('trackRepository', () => {
       expect(results[0].title).toBe('Deep House Banger');
     });
 
+    it('filters by ARTIST starts with, including inside a credit', () => {
+      addTrack({
+        ...SAMPLE,
+        artist: 'Merage, Ghost in Real Life, Egzod',
+        file_hash: 'c1',
+        file_path: '/tmp/c1.mp3',
+      });
+      addTrack({
+        ...SAMPLE,
+        artist: 'Ghost in Real Life',
+        file_hash: 'c2',
+        file_path: '/tmp/c2.mp3',
+      });
+      addTrack({ ...SAMPLE, artist: 'Egzod', file_hash: 'c3', file_path: '/tmp/c3.mp3' });
+
+      const credit = getTracks({
+        filters: [{ field: 'artist', op: 'starts with', value: 'Ghost in Real' }],
+      });
+      expect(credit.map((t) => t.artist).sort()).toEqual([
+        'Ghost in Real Life',
+        'Merage, Ghost in Real Life, Egzod',
+      ]);
+
+      // start of the whole tag, first name of a credit, and a later name
+      const whole = getTracks({
+        filters: [{ field: 'artist', op: 'starts with', value: 'Merage' }],
+      });
+      expect(whole).toHaveLength(1);
+      expect(whole[0].artist).toBe('Merage, Ghost in Real Life, Egzod');
+
+      const later = getTracks({
+        filters: [{ field: 'artist', op: 'starts with', value: 'Egzod' }],
+      });
+      expect(later.map((t) => t.artist).sort()).toEqual([
+        'Egzod',
+        'Merage, Ghost in Real Life, Egzod',
+      ]);
+
+      // a name that only appears mid-word is not a prefix
+      expect(
+        getTracks({ filters: [{ field: 'artist', op: 'starts with', value: 'Real' }] })
+      ).toHaveLength(0);
+    });
+
+    it('filters by TITLE starts with', () => {
+      addTrack(SAMPLE);
+      addTrack({
+        ...SAMPLE,
+        title: 'Deep House Banger',
+        file_hash: 'df2',
+        file_path: '/tmp/df2.mp3',
+      });
+      const results = getTracks({
+        filters: [{ field: 'title', op: 'starts with', value: 'deep ' }],
+      });
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('Deep House Banger');
+    });
+
     it('filters by TITLE is not', () => {
       addTrack(SAMPLE);
       addTrack({ ...SAMPLE, title: 'Other', file_hash: 'o2', file_path: '/tmp/o2.mp3' });

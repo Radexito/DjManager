@@ -15,7 +15,11 @@ export const FIELDS = {
   bitrate: { type: 'number', label: 'BITRATE' },
 };
 
-const TEXT_OPS = ['is not', 'is', 'contains'];
+// Text fields share these. `starts with` exists so a half-typed name filters
+// while you type: `is` only matches once the whole value is in.
+const TEXT_OPS = ['is not', 'starts with', 'is', 'contains'];
+// GENRE holds a JSON array, so a prefix match over the raw column is meaningless.
+const GENRE_OPS = ['is not', 'is', 'contains'];
 const NUM_OPS = ['in range', '>=', '<=', '>', '<', 'is'];
 // longest first so the parser greedily matches "mode switch" before "mode"
 const KEY_OPS = ['mode switch', 'adjacent', 'matches', 'is'];
@@ -24,6 +28,7 @@ export function getOpsForField(fieldKey) {
   const t = FIELDS[fieldKey]?.type;
   if (t === 'number') return NUM_OPS;
   if (t === 'key') return KEY_OPS;
+  if (fieldKey === 'genre') return GENRE_OPS;
   return TEXT_OPS;
 }
 
@@ -268,6 +273,7 @@ function opDescription(fieldKey, op) {
     return map[op];
   }
   if (op === 'in range') return 'e.g. 130-140';
+  if (op === 'starts with') return 'matches anything beginning with it';
   return undefined;
 }
 
@@ -317,4 +323,57 @@ function getValueHints(fieldKey, op, base, partialValue = '') {
   const hint = hints[fieldKey]?.[op];
   if (!hint) return [];
   return [{ type: 'hint', text: hint, insertText: base + hint, description: `e.g. ${hint}` }];
+}
+
+// ─── Query builders (clickable UI affordances) ────────────────────────────────
+
+/** The search bar splits clauses on " AND ", so those separators are unsafe. */
+const AND_SEPARATOR_RE = /\s+AND\s+/i;
+
+/**
+ * A tag can list several artists in one string ("Sigma, Doctor P"). Split it into
+ * individual names so the clickable artist cells offer one link per artist
+ * instead of one link for the whole credit string.
+ *
+ * Trims each name, drops empty parts (trailing commas) and ignores duplicates
+ * that differ only in case - the first spelling wins.
+ */
+export function splitArtists(artist) {
+  const raw = String(artist ?? '').trim();
+  if (!raw) return [];
+  if (!raw.includes(',')) return [raw];
+
+  const seen = new Set();
+  const names = [];
+  for (const part of raw.split(',')) {
+    const name = part.trim();
+    if (!name) continue;
+    const dedupe = name.toLowerCase();
+    if (seen.has(dedupe)) continue;
+    seen.add(dedupe);
+    names.push(name);
+  }
+  return names;
+}
+
+/**
+ * Query that searches the library for one artist, used by the clickable artist
+ * cells (Music/playlist tables) and the player bar. Uppercase label matches how
+ * the search bar renders a committed chip, and multi-word names work because a
+ * text field consumes the rest of the clause.
+ *
+ * A name containing " AND " cannot be expressed as a field clause (the query
+ * would split into two clauses), so it degrades to free text - which still
+ * matches the artist column, because `_text` searches artist names too.
+ *
+ * `fromCredit` marks a name that came out of a comma-separated credit. Those are
+ * searched with `contains`: a name pulled out of "Merage, Ghost in Real Life,
+ * Egzod" is almost never a whole tag on its own, so exact `is` returns an empty
+ * list - the collab tracks it came from are exactly what the user wants.
+ */
+export function buildArtistQuery(artist, { fromCredit = false } = {}) {
+  const name = String(artist ?? '').trim();
+  if (!name) return '';
+  if (AND_SEPARATOR_RE.test(name)) return name;
+  return `ARTIST ${fromCredit ? 'contains' : 'is'} ${name}`;
 }
