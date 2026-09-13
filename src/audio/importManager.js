@@ -28,6 +28,7 @@ import {
 import { generateCuePoints } from './cueGen.js';
 import { getCuePoints, addCuePoint } from '../db/cuePointRepository.js';
 import { generateWaveformOverview } from './waveformGenerator.js';
+import { writeBpmKeyTags } from './id3Writer.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -60,7 +61,7 @@ export function cancelAnalysis(trackId) {
 
 // ─── File hashing ────────────────────────────────────────────────────────────
 
-function hashFile(filePath) {
+export function hashFile(filePath) {
   const hash = crypto.createHash('sha1');
   const stream = fs.createReadStream(filePath);
 
@@ -69,6 +70,66 @@ function hashFile(filePath) {
     stream.on('end', () => resolve(hash.digest('hex')));
     stream.on('error', reject);
   });
+}
+
+// ─── #474: mirror analyzed BPM/key into the file's own tags ───────────────────
+// Settings (all off by default):
+//   metadata_autowrite_library — auto-write for imported (managed) files
+//   metadata_autowrite_linked  — auto-write for linked (user-owned) files
+//   metadata_overwrite_tags    — overwrite differing tags; off = fill missing only
+// Writing tags rewrites the file, which changes its content hash — the stored
+// file_hash is refreshed after a successful write so dedup stays correct.
+
+function settingFlag(key) {
+  return getSetting(key, 'false') === 'true';
+}
+
+/**
+ * Write one track's analyzed BPM/key into its file tags.
+ * Shared by the analysis hook and the manual "Save BPM & Key" action.
+ * @param {number} trackId
+ * @param {{ overwrite?: boolean }} [opts]  defaults to the metadata_overwrite_tags setting
+ * @returns {Promise<{ trackId: number, ok: boolean, reason?: string, wrote?: string[], error?: string }>}
+ */
+export async function writeBpmKeyTagsForTrack(trackId, { overwrite = null } = {}) {
+  const track = getTrackById(trackId);
+  if (!track?.file_path) return { trackId, ok: false, reason: 'no-track' };
+
+  const bpm = track.bpm_override ?? track.bpm ?? null;
+  const key = track.key_camelot ?? null;
+  if (bpm == null && !key) return { trackId, ok: false, reason: 'no-values' };
+
+  const useOverwrite =
+    overwrite == null ? settingFlag('metadata_overwrite_tags') : Boolean(overwrite);
+  const res = await writeBpmKeyTags(track.file_path, { bpm, key, overwrite: useOverwrite });
+
+  if (res.ok && (res.wrote?.length ?? 0) > 0) {
+    try {
+      updateTrack(trackId, { file_hash: await hashFile(track.file_path) });
+    } catch (err) {
+      console.warn(`[metadata] could not refresh file_hash for track ${trackId}:`, err.message);
+    }
+  }
+  return { trackId, ...res };
+}
+
+/** Auto-write after analysis — no-op unless the matching target setting is on. */
+async function autoWriteBpmKeyTags(trackId) {
+  const track = getTrackById(trackId);
+  if (!track) return;
+  const enabled = track.is_linked
+    ? settingFlag('metadata_autowrite_linked')
+    : settingFlag('metadata_autowrite_library');
+  if (!enabled) return;
+
+  const res = await writeBpmKeyTagsForTrack(trackId);
+  if (!res.ok && !['no-values', 'already-current', 'unsupported-format'].includes(res.reason)) {
+    console.warn(
+      `[metadata] BPM/key tag write skipped for track ${trackId}:`,
+      res.reason,
+      res.error ?? ''
+    );
+  }
 }
 
 // The oldest library (lowest id — seeded as "Default" by the #390 migration)
@@ -434,6 +495,13 @@ export function spawnAnalysis(trackId, filePath, { silent = false } = {}) {
     }
 
     updateTrack(trackId, update);
+
+    // #474 — mirror the analyzed BPM/key into the file's own tags when the
+    // matching auto-write setting is on (fire-and-forget — never blocks
+    // analysis progress or the track-updated event).
+    autoWriteBpmKeyTags(trackId).catch((err) =>
+      console.warn(`[metadata] BPM/key tag write failed for track ${trackId}:`, err.message)
+    );
 
     // Generate waveform overview for in-app seek bar (fire-and-forget — does not
     // block analysis progress or track-updated event)

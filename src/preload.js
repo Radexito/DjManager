@@ -232,6 +232,7 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('cloud-search', { source, query, types, limit }),
   cloudSearchPreview: (payload) => ipcRenderer.invoke('cloud-search-preview', payload),
   tidalDownloadUrl: (opts) => ipcRenderer.invoke('tidal-download-url', opts),
+  writeBpmKeyTags: ({ trackIds }) => ipcRenderer.invoke('write-bpm-key-tags', { trackIds }),
   onTidalProgress: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('tidal-progress', handler);
