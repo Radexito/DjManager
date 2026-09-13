@@ -263,6 +263,7 @@ contextBridge.exposeInMainWorld('api', {
   browseDirectory: (dirPath) => ipcRenderer.invoke('browse-directory', dirPath),
   selectExplorerFolder: () => ipcRenderer.invoke('select-explorer-folder'),
   detectDriveExports: (driveRoot) => ipcRenderer.invoke('detect-drive-exports', driveRoot),
+  findExportAt: (startDir) => ipcRenderer.invoke('explorer-find-export', startDir),
   getTracksByPaths: (filePaths) => ipcRenderer.invoke('get-tracks-by-paths', filePaths),
   explorerStartRecursive: (dirPath) => ipcRenderer.invoke('explorer-start-recursive', dirPath),
   explorerCancelRecursive: () => ipcRenderer.invoke('explorer-cancel-recursive'),
@@ -305,6 +306,13 @@ contextBridge.exposeInMainWorld('api', {
   updateAnalyzer: () => ipcRenderer.invoke('update-analyzer'),
   updateAllDeps: () => ipcRenderer.invoke('update-all-deps'),
   retryDeps: () => ipcRenderer.invoke('retry-deps'),
+  // Drive/volume list changed while the app was running (#504): a stick was
+  // plugged in, unplugged, or came back under another letter or mount point.
+  onDrivesUpdated: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('drives-updated', handler);
+    return () => ipcRenderer.removeListener('drives-updated', handler);
+  },
   onDepsProgress: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('deps-progress', handler);

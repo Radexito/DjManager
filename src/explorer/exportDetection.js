@@ -83,7 +83,14 @@ function readRekordboxManifest(root, fsImpl) {
         id: t.id,
         title: t.title || '',
         artist: t.artist || '',
+        album: t.album || '',
+        duration: Number.isFinite(Number(t.duration)) ? Number(t.duration) : null,
+        bpm: Number.isFinite(Number(t.bpm)) ? Number(t.bpm) : null,
+        key: t.key_raw || t.key || '',
         file_path: t.file_path || '',
+        // The manifest stores paths relative to the export root ('/music/...'),
+        // so a mounted export can be imported or previewed without guessing.
+        absolute_path: t.file_path ? path.join(root, t.file_path) : '',
       }));
     return {
       id: pl.id,
@@ -190,4 +197,28 @@ export function detectExports(root, fsImpl = fs) {
   }
 
   return results;
+}
+
+/**
+ * Walks up from `startDir` looking for a DJ-software export, nearest first.
+ *
+ * The Explorer calls this for the folder a user actually opened: opening the
+ * export folder itself or any folder inside it should offer the same library
+ * view, and a stick's export is often a level or two below its mount point.
+ *
+ * @param {string} startDir directory to inspect, then its parents
+ * @param {{maxDepth?: number, fsImpl?: object}} [opts] maxDepth defaults to 6
+ * @returns {{root: string, exports: object[]}|null} null when nothing is found
+ */
+export function findExportRoot(startDir, { maxDepth = 6, fsImpl = fs } = {}) {
+  if (typeof startDir !== 'string' || startDir.length === 0) return null;
+  let current = startDir;
+  for (let depth = 0; depth <= maxDepth; depth++) {
+    const exports = detectExports(current, fsImpl);
+    if (exports.length > 0) return { root: current, exports };
+    const parent = path.dirname(current);
+    if (!parent || parent === current) return null;
+    current = parent;
+  }
+  return null;
 }

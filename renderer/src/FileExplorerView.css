@@ -434,3 +434,165 @@
   gap: 8px;
   margin-top: 6px;
 }
+
+/* ── Export library view (#504) ──────────────────────────────────────────────
+   Browsing a folder that holds a DJ-software export shows what the export
+   contains (its playlists and tracks) instead of the folders it is made of.
+   Read-only: nothing here writes to the drive. */
+.explorer-export-library {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.explorer-export-library__banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  background: var(--bg-secondary, #1a1a1a);
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  flex-shrink: 0;
+}
+
+.explorer-export-library__heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.explorer-export-library__title {
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+}
+
+.explorer-export-library__meta {
+  font-size: 12px;
+  color: var(--text-muted, #666);
+}
+
+.explorer-export-library__path {
+  font-size: 11px;
+  color: var(--text-muted, #555);
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-export-library__modes {
+  display: flex;
+  gap: 6px;
+}
+
+.explorer-export-library__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.explorer-export-library__playlists {
+  width: 220px;
+  flex: 0 0 220px;
+  border-right: 1px solid var(--border, #2a2a2a);
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.explorer-export-library__playlist {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  background: none;
+  border: 0;
+  color: var(--text-primary, #e0e0e0);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.explorer-export-library__playlist:hover {
+  background: var(--bg-hover, #2d2d2d);
+}
+
+.explorer-export-library__playlist--active {
+  background: var(--bg-tertiary, #333);
+  color: var(--accent, #4a90d9);
+}
+
+.explorer-export-library__playlist-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-export-library__playlist-count {
+  font-size: 12px;
+  color: var(--text-muted, #666);
+}
+
+.explorer-export-library__tracks {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.explorer-export-library__track-head,
+.explorer-export-library__track {
+  display: grid;
+  grid-template-columns: 44px minmax(180px, 2fr) minmax(140px, 1.4fr) 64px 56px 90px;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 12px;
+}
+
+.explorer-export-library__track-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-size: 12px;
+  color: var(--text-muted, #666);
+  background: var(--bg-secondary, #1a1a1a);
+  border-bottom: 1px solid var(--border, #2a2a2a);
+}
+
+.explorer-export-library__track {
+  font-size: 13px;
+  color: var(--text-primary, #e0e0e0);
+  border-bottom: 1px solid var(--border, #222);
+}
+
+.explorer-export-library__track span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-export-library__actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 12px;
+}
+
+.explorer-export-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text-secondary, #aaa);
+  background: var(--bg-secondary, #1a1a1a);
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  flex-shrink: 0;
+}

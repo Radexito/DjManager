@@ -142,8 +142,8 @@ import {
 } from './deps.js';
 import { initLogger, getLogDir, initRendererLogger, logRendererMessage } from './logger.js';
 import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
-import { detectWindowsDrives } from './explorer/drives.js';
-import { detectExports } from './explorer/exportDetection.js';
+import { scanVolumes, volumeSignature } from './explorer/volumes.js';
+import { detectExports, findExportRoot } from './explorer/exportDetection.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
@@ -475,6 +475,7 @@ async function initApp() {
   await startMediaServer();
   console.log('Creating window.');
   createWindow();
+  startDriveWatcher();
 
   // Skip dep download in E2E tests — binary not needed for UI tests and the
   // pending download blocks app.close(), causing afterEach timeouts.
@@ -2123,21 +2124,65 @@ ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlis
 
 // ── File Explorer v2 IPC ───────────────────────────────────────────────────────
 
-ipcMain.handle('get-computer-root', () => {
+/**
+ * Drives and mounted volumes as the Explorer needs them right now: Windows
+ * drive roots (C:\, D:\ ...) plus a normalised volume list for both platforms,
+ * so the drive pane can render one shape and the watcher has one thing to
+ * compare (#504). Called on load and on every poll, so the two always agree.
+ */
+function scanDrives() {
   const home = os.homedir();
-  let root;
-  let drives = [];
-  if (process.platform === 'win32') {
-    root = path.parse(home).root || 'C:\\';
-    // #473: enumerate ALL present drives so the Explorer can switch from C:
-    // to any other volume (D:, E:, ...).
-    drives = detectWindowsDrives();
-    if (!drives.includes(root)) drives.unshift(root);
-  } else {
-    root = '/';
+  const snapshot = scanVolumes({ platform: process.platform, homeDir: home });
+  return {
+    root: snapshot.root ?? '/',
+    home,
+    drives: snapshot.drives,
+    volumes: snapshot.volumes,
+  };
+}
+
+ipcMain.handle('get-computer-root', () => scanDrives());
+
+// ── Volume watcher ──────────────────────────────────────────────────────────
+//
+// The drive list used to be fetched once when the Explorer mounted, so a stick
+// plugged in while the app was running never showed up and an unplugged one
+// stayed clickable. Polling is deliberate: it keeps working while the window is
+// unfocused, which is exactly when a long export or download is running, and it
+// needs neither udev on Linux nor device notifications on Windows.
+const DRIVE_POLL_INTERVAL_MS = 7000;
+let driveWatcher = null;
+
+/** Rescan and, when something appeared, disappeared or moved, tell the renderer. */
+function checkDrivesChanged() {
+  if (!driveWatcher) return null;
+  let snapshot;
+  try {
+    snapshot = scanDrives();
+  } catch (err) {
+    console.error('[drives] rescan failed:', err.message);
+    return null;
   }
-  return { root, home, drives };
-});
+
+  const signature = volumeSignature(snapshot.volumes);
+  if (signature === driveWatcher.signature) return null;
+  driveWatcher.signature = signature;
+
+  const payload = { drives: snapshot.drives, volumes: snapshot.volumes };
+  console.log(
+    `[drives] change: ${snapshot.drives.length} drive(s), ${snapshot.volumes.length} volume(s)`
+  );
+  if (global.mainWindow) global.mainWindow.webContents.send('drives-updated', payload);
+  return payload;
+}
+
+function startDriveWatcher() {
+  if (driveWatcher) return;
+  driveWatcher = { timer: null, signature: volumeSignature(scanDrives().volumes) };
+  driveWatcher.timer = setInterval(checkDrivesChanged, DRIVE_POLL_INTERVAL_MS);
+  // Never hold the event loop open on quit.
+  if (typeof driveWatcher.timer.unref === 'function') driveWatcher.timer.unref();
+}
 
 ipcMain.handle('get-tracks-by-paths', (_, filePaths) => {
   return getTracksByPaths(filePaths);
@@ -2150,6 +2195,20 @@ ipcMain.handle('detect-drive-exports', (_, driveRoot) => {
     return { ok: true, exports: detectExports(driveRoot) };
   } catch (err) {
     return { ok: false, error: err.message, exports: [] };
+  }
+});
+
+// Same detection, but starting from the folder the user opened and walking up:
+// browsing into an export (or a folder inside it) should be able to show what
+// the export contains instead of the folders it is made of (#504).
+ipcMain.handle('explorer-find-export', (_, startDir) => {
+  try {
+    const found = findExportRoot(startDir);
+    return found
+      ? { ok: true, root: found.root, exports: found.exports }
+      : { ok: true, root: null, exports: [] };
+  } catch (err) {
+    return { ok: false, error: err.message, root: null, exports: [] };
   }
 });
 

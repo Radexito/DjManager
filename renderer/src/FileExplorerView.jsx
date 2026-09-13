@@ -353,11 +353,23 @@ export default function FileExplorerView({ style }) {
   const [recursiveFiles, setRecursiveFiles] = useState(null);
   const [recursiveScanning, setRecursiveScanning] = useState(false);
 
+  // Mounted volumes, both platforms (#504): Windows hands back one volume per
+  // drive letter, Linux one per mount point, so the pane renders a single list
+  // and the watcher further down can tell when it changed.
+  const [volumes, setVolumes] = useState([]);
+
   // Detected DJ-software exports per drive (#504) - read-only inspection,
   // cached by drive root so navigating inside a drive does not rescan.
   const [driveExports, setDriveExports] = useState({});
   const [driveExportsScanning, setDriveExportsScanning] = useState({});
   const [expandedExport, setExpandedExport] = useState(null); // `${driveRoot}|${software}`
+
+  // Export found at (or above) the folder that is open. When there is one the
+  // pane shows a library view of it (its playlists and tracks) instead of the
+  // folders it happens to be made of, with a toggle back to the file listing.
+  const [exportContext, setExportContext] = useState(null); // { path, root, exports }
+  const [exportViewMode, setExportViewMode] = useState('library'); // 'library' | 'files'
+  const [openExportPlaylist, setOpenExportPlaylist] = useState(null);
 
   const listRef = useRef();
   const containerRef = useRef();
@@ -372,10 +384,11 @@ export default function FileExplorerView({ style }) {
   // ── Init ──────────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    window.api.getComputerRoot().then(({ root, home, drives }) => {
+    window.api.getComputerRoot().then(({ root, home, drives, volumes }) => {
       setFsRoot(root);
       setHomeDir(home);
       setDrives(drives ?? []);
+      setVolumes(volumes ?? []);
       setCurrentPath(home ?? root);
     });
     window.api.getPlaylists().then(setPlaylists);
@@ -548,16 +561,90 @@ export default function FileExplorerView({ style }) {
     }
   }, []);
 
-  const activeDrive = useMemo(
-    () => drives.find((d) => currentPath === d || (currentPath?.startsWith(d) ?? false)) ?? null,
-    [drives, currentPath]
-  );
+  // What the drive pane lists. Windows sends drive roots, Linux sends mount
+  // points; on Linux only the mounts a user can act on survive the filter (the
+  // system root, plus removable media), which keeps swap, the package cache and
+  // the other system subvolumes out of the pane.
+  const mountRows = useMemo(() => {
+    if (volumes.length === 0) {
+      return drives.map((root) => ({ id: root, root, label: root, removable: false }));
+    }
+    const linux = volumes.some((v) => String(v.id ?? '').startsWith('linux:'));
+    return volumes
+      .filter((v) => !linux || v.system || v.removable)
+      .map((v) => ({
+        id: v.id ?? v.root,
+        root: v.root,
+        label: v.label || v.root,
+        removable: !!v.removable,
+      }));
+  }, [volumes, drives]);
 
-  // Scan the selected drive once; the refresh button on the drive row rescans.
+  // The mount the current path lives on. The longest matching root wins, so a
+  // stick mounted under /run/media beats the filesystem root.
+  const activeDrive = useMemo(() => {
+    let best = null;
+    for (const mount of mountRows) {
+      if (currentPath !== mount.root && !(currentPath?.startsWith(mount.root) ?? false)) continue;
+      if (!best || mount.root.length > best.length) best = mount.root;
+    }
+    return best;
+  }, [mountRows, currentPath]);
+
+  // Scan the selected mount once; the refresh button on the row rescans.
   useEffect(() => {
     if (!activeDrive || driveExports[activeDrive] !== undefined) return;
     detectDriveExports(activeDrive);
   }, [activeDrive, driveExports, detectDriveExports]);
+
+  // A volume that appeared, disappeared or came back somewhere else while the
+  // app was running (#504). Without this the pane kept whatever it saw on mount:
+  // a stick plugged in mid-session never showed up, an unplugged one stayed
+  // clickable and its export list stayed stale.
+  useEffect(() => {
+    const unsubscribe = window.api.onDrivesUpdated?.((payload) => {
+      setDrives(payload?.drives ?? []);
+      setVolumes(payload?.volumes ?? []);
+    });
+    return () => unsubscribe?.();
+  }, []);
+
+  // Is the open folder an export (or inside one)? Detection walks up from the
+  // folder, so opening the export itself and opening a folder inside it both
+  // land on the same view.
+  useEffect(() => {
+    let cancelled = false;
+    if (!currentPath) {
+      setExportContext(null);
+      return () => {};
+    }
+    Promise.resolve(window.api.findExportAt?.(currentPath))
+      .then((res) => {
+        if (cancelled) return;
+        setExportContext(
+          res?.exports?.length ? { path: currentPath, root: res.root, exports: res.exports } : null
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setExportContext(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentPath]);
+
+  const activeExport = exportContext?.exports?.[0] ?? null;
+  const exportPlaylists = activeExport?.entries ?? [];
+  const shownExportPlaylist =
+    exportPlaylists.find((pl) => pl.id === openExportPlaylist) ?? exportPlaylists[0] ?? null;
+  const exportTrackPaths = (shownExportPlaylist?.tracks ?? [])
+    .map((t) => t.absolute_path)
+    .filter(Boolean);
+
+  // The library view is the default whenever an export is open, because that is
+  // what the folder actually is. A recursive scan wins, since that is explicit.
+  const showExportLibrary =
+    !!activeExport && exportViewMode === 'library' && recursiveFiles === null;
 
   // ── Derived state ─────────────────────────────────────────────────────────
 
@@ -1128,36 +1215,43 @@ export default function FileExplorerView({ style }) {
     >
       {/* ── Favourites sidebar ────────────────────────────────────────────── */}
       <div className="explorer-favourites">
-        {drives.length > 1 && (
+        {mountRows.length > 1 && (
           <>
             <div className="explorer-favourites__header">Drives</div>
-            {drives.map((d) => {
-              const isActiveDrive = currentPath === d || (currentPath?.startsWith(d) ?? false);
-              const exports = driveExports[d];
-              const scanning = driveExportsScanning[d];
+            {mountRows.map((mount) => {
+              const isActiveMount = activeDrive === mount.root;
+              const exports = driveExports[mount.root];
+              const scanning = driveExportsScanning[mount.root];
               return (
-                <Fragment key={d}>
+                <Fragment key={mount.id}>
                   <div
                     className={`explorer-favourites__item${
-                      isActiveDrive ? ' explorer-favourites__item--active' : ''
+                      isActiveMount ? ' explorer-favourites__item--active' : ''
                     }`}
-                    title={d}
-                    onClick={() => navigateTo(d)}
+                    title={mount.root}
+                    onClick={() => navigateTo(mount.root)}
                   >
-                    <span className="explorer-favourites__icon">💽</span>
-                    <span className="explorer-favourites__name">{d}</span>
+                    <span className="explorer-favourites__icon">
+                      {mount.removable ? '🔌' : '💽'}
+                    </span>
+                    <span className="explorer-favourites__name">{mount.label}</span>
+                    {mount.removable && (
+                      <span className="explorer-favourites__badge" title="Removable drive">
+                        USB
+                      </span>
+                    )}
                     <button
                       className="explorer-favourites__remove"
                       title="Rescan this drive for DJ software exports"
                       onClick={(e) => {
                         e.stopPropagation();
-                        detectDriveExports(d);
+                        detectDriveExports(mount.root);
                       }}
                     >
                       ↻
                     </button>
                   </div>
-                  {isActiveDrive && (
+                  {isActiveMount && (
                     <div className="explorer-drive-exports">
                       {scanning && (
                         <div className="explorer-drive-exports__empty">
@@ -1168,7 +1262,7 @@ export default function FileExplorerView({ style }) {
                         <div className="explorer-drive-exports__empty">No DJ exports found</div>
                       )}
                       {(exports ?? []).map((exp) => {
-                        const key = `${d}|${exp.software}`;
+                        const key = `${mount.root}|${exp.software}`;
                         const open = expandedExport === key;
                         return (
                           <div key={key} className="explorer-drive-export">
@@ -1370,34 +1464,140 @@ export default function FileExplorerView({ style }) {
           </div>
         )}
 
-        {/* ── Header row ────────────────────────────────────────────────────── */}
-        <div className="header" style={{ gridTemplateColumns: GRID, minWidth: MIN_WIDTH }}>
-          {COLUMNS.map((col) => (
-            <div key={col.key} className="header-cell">
-              {col.label}
+        {showExportLibrary ? (
+          <div className="explorer-export-library">
+            <div className="explorer-export-library__banner">
+              <div className="explorer-export-library__heading">
+                <span className="explorer-export-library__title">
+                  📚 {activeExport.label} export
+                </span>
+                <span className="explorer-export-library__meta">
+                  {`${exportPlaylists.length} playlist${exportPlaylists.length === 1 ? '' : 's'}`}
+                  {activeExport.trackCount != null
+                    ? ` · ${activeExport.trackCount} track${activeExport.trackCount === 1 ? '' : 's'}`
+                    : ''}
+                </span>
+                <span className="explorer-export-library__path" title={exportContext.root}>
+                  {exportContext.root}
+                </span>
+              </div>
+              <div className="explorer-export-library__modes">
+                <button className="explorer-btn active">Library</button>
+                <button className="explorer-btn" onClick={() => setExportViewMode('files')}>
+                  Files
+                </button>
+              </div>
             </div>
-          ))}
-        </div>
 
-        {/* ── File list ─────────────────────────────────────────────────────── */}
-        <div className="explorer-list-container" ref={containerRef}>
-          {loading && <div className="explorer-empty">Loading…</div>}
-          {!loading && displayItems.length === 0 && (
-            <div className="explorer-empty">No audio files here</div>
-          )}
-          {!loading && displayItems.length > 0 && (
-            <List
-              listRef={listRef}
-              defaultHeight={listHeight}
-              rowCount={displayItems.length}
-              rowHeight={ROW_HEIGHT}
-              width="100%"
-              overscanCount={8}
-              rowComponent={ExplorerRow}
-              rowProps={rowProps}
-            />
-          )}
-        </div>
+            {exportPlaylists.length === 0 ? (
+              <div className="explorer-empty">
+                {activeExport.note ?? 'No readable track listing.'}
+              </div>
+            ) : (
+              <div className="explorer-export-library__body">
+                <div className="explorer-export-library__playlists">
+                  {exportPlaylists.map((pl) => (
+                    <button
+                      key={pl.id}
+                      className={`explorer-export-library__playlist${
+                        shownExportPlaylist?.id === pl.id
+                          ? ' explorer-export-library__playlist--active'
+                          : ''
+                      }`}
+                      title={pl.name}
+                      onClick={() => setOpenExportPlaylist(pl.id)}
+                    >
+                      <span className="explorer-export-library__playlist-name">{pl.name}</span>
+                      <span className="explorer-export-library__playlist-count">
+                        {pl.trackCount}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="explorer-export-library__tracks">
+                  <div className="explorer-export-library__track-head">
+                    <span>#</span>
+                    <span>Title</span>
+                    <span>Artist</span>
+                    <span>Time</span>
+                    <span>BPM</span>
+                    <span>Key</span>
+                  </div>
+                  {(shownExportPlaylist?.tracks ?? []).map((t, i) => (
+                    <div key={t.id ?? i} className="explorer-export-library__track">
+                      <span>{i + 1}</span>
+                      <span title={t.absolute_path || t.file_path}>
+                        {t.title || basename(t.file_path)}
+                      </span>
+                      <span>{t.artist}</span>
+                      <span>{t.duration ? fmtDuration(t.duration) : ''}</span>
+                      <span>{t.bpm ?? ''}</span>
+                      <span>{t.key ?? ''}</span>
+                    </div>
+                  ))}
+                  <div className="explorer-export-library__actions">
+                    <button
+                      className="explorer-btn accent"
+                      disabled={exportTrackPaths.length === 0}
+                      onClick={() =>
+                        setLinkDialog({
+                          defaultName: shownExportPlaylist?.name ?? activeExport.label,
+                          paths: exportTrackPaths,
+                          description: `${exportTrackPaths.length} file(s) in "${
+                            shownExportPlaylist?.name ?? 'export'
+                          }" (${activeExport.label} export)`,
+                        })
+                      }
+                    >
+                      {`+ Library (${exportTrackPaths.length})`}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            {activeExport && (
+              <div className="explorer-export-banner">
+                <span>📚 {activeExport.label} export detected here</span>
+                <button className="explorer-btn" onClick={() => setExportViewMode('library')}>
+                  Library view
+                </button>
+              </div>
+            )}
+
+            {/* ── Header row ────────────────────────────────────────────────────── */}
+            <div className="header" style={{ gridTemplateColumns: GRID, minWidth: MIN_WIDTH }}>
+              {COLUMNS.map((col) => (
+                <div key={col.key} className="header-cell">
+                  {col.label}
+                </div>
+              ))}
+            </div>
+
+            {/* ── File list ─────────────────────────────────────────────────────── */}
+            <div className="explorer-list-container" ref={containerRef}>
+              {loading && <div className="explorer-empty">Loading…</div>}
+              {!loading && displayItems.length === 0 && (
+                <div className="explorer-empty">No audio files here</div>
+              )}
+              {!loading && displayItems.length > 0 && (
+                <List
+                  listRef={listRef}
+                  defaultHeight={listHeight}
+                  rowCount={displayItems.length}
+                  rowHeight={ROW_HEIGHT}
+                  width="100%"
+                  overscanCount={8}
+                  rowComponent={ExplorerRow}
+                  rowProps={rowProps}
+                />
+              )}
+            </div>
+          </>
+        )}
 
         {/* ── Context menu ──────────────────────────────────────────────────── */}
         {contextMenu && (

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { detectExports } from '../explorer/exportDetection.js';
+import { detectExports, findExportRoot } from '../explorer/exportDetection.js';
 
 /**
  * Minimal in-memory filesystem for the injected fsImpl. Any write attempt
@@ -106,8 +106,28 @@ describe('detectExports', () => {
       expect(rb.entries).toHaveLength(2);
       expect(rb.entries[0]).toMatchObject({ id: 'pl-1', name: 'Warmup', trackCount: 2 });
       expect(rb.entries[0].tracks).toEqual([
-        { id: 1, title: 'Warehouse', artist: 'A', file_path: '/music/Warehouse.mp3' },
-        { id: 2, title: 'Second', artist: 'B', file_path: '/music/Second.mp3' },
+        {
+          id: 1,
+          title: 'Warehouse',
+          artist: 'A',
+          album: '',
+          duration: null,
+          bpm: null,
+          key: '',
+          file_path: '/music/Warehouse.mp3',
+          absolute_path: path.join(ROOT, '/music/Warehouse.mp3'),
+        },
+        {
+          id: 2,
+          title: 'Second',
+          artist: 'B',
+          album: '',
+          duration: null,
+          bpm: null,
+          key: '',
+          file_path: '/music/Second.mp3',
+          absolute_path: path.join(ROOT, '/music/Second.mp3'),
+        },
       ]);
       expect(rb.entries[1]).toMatchObject({ name: 'Peak', trackCount: 1 });
     });
@@ -256,5 +276,73 @@ describe('detectExports', () => {
     // below proves detection performed zero mutating filesystem calls.
     expect(() => detectExports(ROOT, fsImpl)).not.toThrow();
     expect(detectExports(ROOT, fsImpl)).toHaveLength(1);
+  });
+});
+
+describe('findExportRoot', () => {
+  const STICK = '/run/media/radexito/Ventoy';
+  const EXPORT = path.join(STICK, 'dj-export');
+  const NESTED = path.join(EXPORT, 'id3', 'music');
+  const manifest = path.join(EXPORT, 'PIONEER', 'rekordbox', 'export-manifest.json');
+
+  // Detection keys off the PIONEER markers; the manifest only adds the counts.
+  const fsWithExport = (root) =>
+    makeFs({
+      dirs: [STICK, root, path.dirname(manifest), NESTED],
+      files: {
+        [path.join(root, 'PIONEER', 'rekordbox', 'export.pdb')]: 'binary',
+        [manifest]: MANIFEST,
+      },
+    });
+
+  it('finds the export when the folder itself is the export root', () => {
+    const found = findExportRoot(EXPORT, { fsImpl: fsWithExport(EXPORT) });
+    expect(found.root).toBe(EXPORT);
+    expect(found.exports).toHaveLength(1);
+    expect(found.exports[0].software).toBe('rekordbox');
+  });
+
+  it('walks up so a folder inside the export still resolves', () => {
+    const found = findExportRoot(NESTED, { fsImpl: fsWithExport(EXPORT) });
+    expect(found.root).toBe(EXPORT);
+  });
+
+  it('returns the nearest export, not an outer one', () => {
+    const outer = '/media/outer';
+    const inner = path.join(outer, 'inner');
+    const innerManifest = path.join(inner, 'PIONEER', 'rekordbox', 'export-manifest.json');
+    const outerManifest = path.join(outer, 'PIONEER', 'rekordbox', 'export-manifest.json');
+    const fsImpl = makeFs({
+      dirs: [outer, inner, path.dirname(innerManifest), path.dirname(outerManifest)],
+      files: {
+        [path.join(inner, 'PIONEER', 'rekordbox', 'export.pdb')]: 'binary',
+        [path.join(outer, 'PIONEER', 'rekordbox', 'export.pdb')]: 'binary',
+        [innerManifest]: MANIFEST,
+        [outerManifest]: MANIFEST,
+      },
+    });
+
+    expect(findExportRoot(inner, { fsImpl }).root).toBe(inner);
+  });
+
+  it('returns null when nothing above the folder is an export', () => {
+    expect(
+      findExportRoot('/home/radexito/music', { fsImpl: makeFs({ dirs: ['/home/radexito/music'] }) })
+    ).toBeNull();
+  });
+
+  it('gives up after maxDepth levels', () => {
+    const deep = path.join(STICK, 'a', 'b', 'c');
+    const fsImpl = makeFs({
+      dirs: [STICK, deep, EXPORT, path.dirname(manifest)],
+      files: { [path.join(EXPORT, 'PIONEER', 'rekordbox', 'export.pdb')]: 'binary' },
+    });
+    expect(findExportRoot(deep, { fsImpl, maxDepth: 1 })).toBeNull();
+  });
+
+  it('handles empty and missing input', () => {
+    expect(findExportRoot('', { fsImpl: makeFs() })).toBeNull();
+    expect(findExportRoot(null, { fsImpl: makeFs() })).toBeNull();
+    expect(findExportRoot(undefined, { fsImpl: makeFs() })).toBeNull();
   });
 });
