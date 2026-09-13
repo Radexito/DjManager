@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import Sidebar from './Sidebar.jsx';
 import MusicLibrary from './MusicLibrary.jsx';
+import { buildArtistQuery } from './searchParser.js';
 import DownloadView from './DownloadView.jsx';
 import TidalDownloadView from './TidalDownloadView.jsx';
 import CloudSearchView from './CloudSearchView.jsx';
@@ -46,9 +47,11 @@ function App() {
     });
   }, []);
 
-  const handleArtistSearch = (artist) => {
+  const handleArtistSearch = (artist, fromCredit) => {
     setSelectedPlaylistId('music');
-    setSearch(`ARTIST is ${artist}`);
+    // buildArtistQuery owns the operator choice: `is` for a whole tag,
+    // `contains` for a name split out of a credit (#505).
+    setSearch(buildArtistQuery(artist, { fromCredit: Boolean(fromCredit) }));
   };
 
   const handleLocateTrack = (trackId) => {
@@ -248,6 +251,7 @@ function App() {
                     openDetailsRequest={openDetailsRequest}
                     locateTrack={locateTrackRequest}
                     onImportUsbCues={() => setCueImportRoot('')}
+                    onArtistSearch={handleArtistSearch}
                   />
                 )}
             </div>

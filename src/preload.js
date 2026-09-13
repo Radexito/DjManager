@@ -238,10 +238,14 @@ contextBridge.exposeInMainWorld('api', {
   tidalInstall: () => ipcRenderer.invoke('tidal-install'),
   tidalFetchInfo: (url) => ipcRenderer.invoke('tidal-fetch-info', url),
   tidalLogin: () => ipcRenderer.invoke('tidal-login'),
+  tidalListCollections: () => ipcRenderer.invoke('tidal-list-collections'),
+  tidalCollectionTracks: (opts) => ipcRenderer.invoke('tidal-collection-tracks', opts),
+  tidalDownloadCollection: (opts) => ipcRenderer.invoke('tidal-download-collection', opts),
   cloudSearch: ({ source, query, types, limit }) =>
     ipcRenderer.invoke('cloud-search', { source, query, types, limit }),
   cloudSearchPreview: (payload) => ipcRenderer.invoke('cloud-search-preview', payload),
   tidalDownloadUrl: (opts) => ipcRenderer.invoke('tidal-download-url', opts),
+  writeBpmKeyTags: ({ trackIds }) => ipcRenderer.invoke('write-bpm-key-tags', { trackIds }),
   onTidalProgress: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('tidal-progress', handler);
