@@ -116,6 +116,7 @@ describe('detectExports', () => {
           key: '',
           key_camelot: null,
           file_path: '/music/Warehouse.mp3',
+          analyze_path: '',
           absolute_path: path.join(ROOT, '/music/Warehouse.mp3'),
         },
         {
@@ -128,6 +129,7 @@ describe('detectExports', () => {
           key: '',
           key_camelot: null,
           file_path: '/music/Second.mp3',
+          analyze_path: '',
           absolute_path: path.join(ROOT, '/music/Second.mp3'),
         },
       ]);

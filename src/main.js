@@ -144,6 +144,7 @@ import { initLogger, getLogDir, initRendererLogger, logRendererMessage } from '.
 import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
 import { scanVolumes, volumeSignature } from './explorer/volumes.js';
 import { detectExports, findExportRoot } from './explorer/exportDetection.js';
+import { readExportTrackCues } from './explorer/anlzCues.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
@@ -2201,6 +2202,23 @@ ipcMain.handle('detect-drive-exports', (_, driveRoot) => {
 // Same detection, but starting from the folder the user opened and walking up:
 // browsing into an export (or a folder inside it) should be able to show what
 // the export contains instead of the folders it is made of (#504).
+// Cues out of an export's ANLZ files - hot cues, memory cues, labels and
+// colours - so a stick can be inspected before anything is imported (#504).
+ipcMain.handle('explorer-export-cues', (_, payload) => {
+  const root = payload?.root;
+  const tracks = Array.isArray(payload?.tracks) ? payload.tracks.slice(0, 300) : [];
+  const cues = {};
+  try {
+    for (const track of tracks) {
+      if (!track?.path) continue;
+      cues[track.path] = readExportTrackCues(root, track.analyzePath);
+    }
+    return { ok: true, cues };
+  } catch (err) {
+    return { ok: false, error: err.message, cues };
+  }
+});
+
 // The folders in a listing that are themselves a DJ-software export, so the
 // Explorer can mark them in the parent and offer the library view up front.
 // One stat pass per folder on the main side, and only for what is on screen.

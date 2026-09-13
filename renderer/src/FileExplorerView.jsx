@@ -25,12 +25,13 @@ const COLUMNS = [
   { key: 'artist', label: 'Artist', width: 'minmax(90px,1.5fr)' },
   { key: 'bpm', label: 'BPM', width: '62px' },
   { key: 'key_camelot', label: 'Key', width: '52px' },
+  { key: 'cues', label: 'Cues', width: '78px' },
   { key: 'loudness', label: 'Loudness', width: '90px' },
   { key: 'duration', label: 'Duration', width: '65px' },
 ];
 
 const GRID = COLUMNS.map((c) => c.width).join(' ');
-const MIN_WIDTH = 680;
+const MIN_WIDTH = 758;
 const ROW_HEIGHT = 50;
 
 function fmtDuration(secs) {
@@ -42,6 +43,56 @@ function fmtDuration(secs) {
 
 function basename(p) {
   return p.replace(/.*[\\/]/, '');
+}
+
+/** m:ss.d, the way a cue position reads on a CDJ. */
+function fmtCueTime(ms) {
+  if (!Number.isFinite(ms)) return '';
+  const total = ms / 1000;
+  const m = Math.floor(total / 60);
+  const s = total - m * 60;
+  return `${m}:${s.toFixed(1).padStart(4, '0')}`;
+}
+
+/** One line per cue for the tooltip: 'A 0:12.4 (loop 0:04.0) — Intro'. */
+function cuesTitleOf(cues, cueCount) {
+  if (cues?.length) {
+    return cues
+      .map((c) => {
+        const name = c.letter ? `${c.letter}` : 'Memory';
+        const loop = c.type === 'loop' ? ` (loop ${fmtCueTime(c.loopMs)})` : '';
+        const label = c.label ? ` — ${c.label}` : '';
+        return `${name} ${fmtCueTime(c.positionMs)}${loop}${label}`;
+      })
+      .join('\n');
+  }
+  if (cueCount > 0) return `${cueCount} cue point(s)`;
+  return 'No cue points';
+}
+
+/** Export cues as chips, or the library's own cue count when there is one. */
+function CueCell({ cues, cueCount }) {
+  if (cues?.length) {
+    const shown = cues.slice(0, 4);
+    return (
+      <>
+        {shown.map((cue, i) => (
+          <span
+            key={`${cue.hotCue}-${cue.positionMs}-${i}`}
+            className={`cue-chip${cue.memory ? ' cue-chip--memory' : ''}`}
+            style={cue.color ? { borderColor: cue.color, color: cue.color } : undefined}
+          >
+            {cue.letter ?? 'M'}
+          </span>
+        ))}
+        {cues.length > shown.length && (
+          <span className="cue-chip cue-chip--more">{`+${cues.length - shown.length}`}</span>
+        )}
+      </>
+    );
+  }
+  if (cueCount > 0) return <span className="cue-dot cue-dot--has">◆</span>;
+  return <span className="cue-dot cue-dot--empty">◇</span>;
 }
 
 function exportCountLabel(n, noun) {
@@ -63,7 +114,7 @@ function exportSummaryLine(exp) {
 const ALL_TRACKS_ID = 'all-tracks';
 
 /** An export track as one of the file items the listing already renders. */
-function exportTrackToItem(t) {
+function exportTrackToItem(t, cues) {
   const filePath = t.absolute_path || t.file_path;
   const item = { type: 'file', path: filePath, name: t.title || basename(t.file_path) };
   item.track = {
@@ -75,6 +126,9 @@ function exportTrackToItem(t) {
     bpm: t.bpm ?? null,
     key_camelot: t.key_camelot ?? null,
     duration: t.duration ?? null,
+    // From the export's ANLZ files, so the stick reads as it does on the deck.
+    cues: cues ?? null,
+    cue_count: cues?.length ?? 0,
   };
   return item;
 }
@@ -174,6 +228,7 @@ function ExplorerRow({
         <div className="cell artist" />
         <div className="cell bpm numeric" />
         <div className="cell key_camelot numeric" />
+        <div className="cell cues" />
         <div className="cell loudness numeric" />
         <div className="cell duration numeric" />
       </div>
@@ -218,6 +273,9 @@ function ExplorerRow({
       <div className="cell artist">{track?.artist || '—'}</div>
       <div className="cell bpm numeric">{bpmVal != null ? bpmVal : '—'}</div>
       <div className="cell key_camelot numeric">{track?.key_camelot ?? '—'}</div>
+      <div className="cell cues" title={cuesTitleOf(item.track?.cues, track?.cue_count)}>
+        <CueCell cues={item.track?.cues} cueCount={track?.cue_count} />
+      </div>
       <div className="cell loudness numeric">{track?.loudness != null ? track.loudness : '—'}</div>
       <div className="cell duration numeric">{fmtDuration(track?.duration)}</div>
     </div>
@@ -449,6 +507,7 @@ export default function FileExplorerView({ style }) {
   // not a replacement for the folder (#504).
   const [exportViewMode, setExportViewMode] = useState('files'); // 'files' | 'library'
   const [exportFolders, setExportFolders] = useState({}); // dir path -> { software, label }
+  const [exportCues, setExportCues] = useState({}); // track path -> cue points from ANLZ
   const [folderChoice, setFolderChoice] = useState(null); // { name, path, label }
   // What the user asked for when they entered a folder: 'library' only when they
   // chose it, so the view never sticks to the next folder that happens to be one.
@@ -778,9 +837,35 @@ export default function FileExplorerView({ style }) {
     !!activeExport && exportViewMode === 'library' && recursiveFiles === null;
 
   const exportItems = useMemo(
-    () => (shownExportPlaylist?.tracks ?? []).map(exportTrackToItem),
-    [shownExportPlaylist]
+    () =>
+      (shownExportPlaylist?.tracks ?? []).map((t) =>
+        exportTrackToItem(t, exportCues[t.absolute_path])
+      ),
+    [shownExportPlaylist, exportCues]
   );
+
+  // Cues live in the export's ANLZ files, one read per track, once per session.
+  useEffect(() => {
+    if (!exportContext?.root || !activeExport) return () => {};
+    const wanted = (shownExportPlaylist?.tracks ?? []).filter(
+      (t) => t.analyze_path && exportCues[t.absolute_path] === undefined
+    );
+    if (wanted.length === 0) return () => {};
+    let cancelled = false;
+    Promise.resolve(
+      window.api.exportCues?.({
+        root: exportContext.root,
+        tracks: wanted.map((t) => ({ path: t.absolute_path, analyzePath: t.analyze_path })),
+      })
+    )
+      .then((res) => {
+        if (!cancelled && res?.cues) setExportCues((prev) => ({ ...prev, ...res.cues }));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [exportContext, activeExport, shownExportPlaylist, exportCues]);
 
   // ── Derived state ─────────────────────────────────────────────────────────
 

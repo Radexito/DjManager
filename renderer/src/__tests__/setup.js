@@ -140,6 +140,7 @@ window.api = {
   detectDriveExports: vi.fn().mockResolvedValue({ ok: true, exports: [] }),
   findExportAt: vi.fn().mockResolvedValue({ ok: true, root: null, exports: [] }),
   exportRoots: vi.fn().mockResolvedValue({ ok: true, roots: {} }),
+  exportCues: vi.fn().mockResolvedValue({ ok: true, cues: {} }),
   getTracksByPaths: vi.fn().mockResolvedValue([]),
   explorerStartRecursive: vi.fn().mockResolvedValue(undefined),
   explorerCancelRecursive: vi.fn().mockResolvedValue(undefined),

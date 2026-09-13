@@ -49,6 +49,7 @@ const track = (id, title, artist, key, camelot, bpm, duration) => ({
   key_camelot: camelot,
   file_path: `/music/${id}.mp3`,
   absolute_path: `${EXPORT_ROOT}/music/${id}.mp3`,
+  analyze_path: '/PIONEER/USBANLZ/P077/00016B47/ANLZ0000.DAT',
 });
 
 const T_INVASION = track(
@@ -134,6 +135,49 @@ describe('FileExplorerView - library view of a detected export (#504)', () => {
 
     // and the rows are the explorer's rows, play button included
     expect(document.querySelectorAll('.index-play').length).toBeGreaterThan(0);
+  });
+
+  it('shows the cues it read from the export files', async () => {
+    window.api.exportCues.mockResolvedValue({
+      ok: true,
+      cues: {
+        [`${EXPORT_ROOT}/music/199.mp3`]: [
+          {
+            hotCue: 1,
+            letter: 'A',
+            memory: false,
+            type: 'cue',
+            positionMs: 1000,
+            loopMs: 0,
+            color: '#ff0000',
+            label: 'Intro',
+          },
+          {
+            hotCue: 2,
+            letter: 'B',
+            memory: false,
+            type: 'loop',
+            positionMs: 60000,
+            loopMs: 4000,
+            color: '#00b4d8',
+            label: '',
+          },
+        ],
+      },
+    });
+
+    render(<FileExplorerView />);
+    await openLibraryView();
+
+    await waitFor(() => expect(window.api.exportCues).toHaveBeenCalled());
+    await screen.findByText('A');
+
+    const chips = [...document.querySelectorAll('.cue-chip')].map((c) => c.textContent);
+    expect(chips).toEqual(['A', 'B']);
+
+    const cell = screen.getByText('A').closest('.cell');
+    expect(cell.getAttribute('title')).toContain('A 0:01.0');
+    expect(cell.getAttribute('title')).toContain('B 1:00.0 (loop 0:04.0)');
   });
 
   it('swaps the track list when another playlist is picked', async () => {

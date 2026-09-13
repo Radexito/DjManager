@@ -589,3 +589,29 @@
   border-bottom: 1px solid var(--border, #2a2a2a);
   flex-shrink: 0;
 }
+
+/* Cues of an export, read from its ANLZ files (#504). */
+.cell.cues {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.cue-chip {
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 15px;
+  border: 1px solid var(--border, #555);
+  border-radius: 3px;
+  color: var(--text-secondary, #aaa);
+}
+
+.cue-chip--memory {
+  border-style: dashed;
+}
+
+.cue-chip--more {
+  border-color: transparent;
+  color: var(--text-muted, #777);
+}

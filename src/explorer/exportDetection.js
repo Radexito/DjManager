@@ -86,6 +86,9 @@ function readRekordboxManifest(root, fsImpl) {
     key: t.key_raw || t.key || '',
     key_camelot: camelotFromText(t.key_raw || t.key || ''),
     file_path: t.file_path || '',
+    // Where the ANLZ analysis (cues, beat grid) for this track lives, relative
+    // to the export root, so the export's cues can be read without a DB row.
+    analyze_path: t.analyzePath || '',
     // The manifest stores paths relative to the export root ('/music/...'), so a
     // mounted export can be imported or previewed without guessing.
     absolute_path: t.file_path ? path.join(root, t.file_path) : '',
