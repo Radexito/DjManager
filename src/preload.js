@@ -227,6 +227,7 @@ contextBridge.exposeInMainWorld('api', {
   tidalFetchInfo: (url) => ipcRenderer.invoke('tidal-fetch-info', url),
   tidalLogin: () => ipcRenderer.invoke('tidal-login'),
   tidalListCollections: () => ipcRenderer.invoke('tidal-list-collections'),
+  tidalCollectionTracks: (opts) => ipcRenderer.invoke('tidal-collection-tracks', opts),
   tidalDownloadCollection: (opts) => ipcRenderer.invoke('tidal-download-collection', opts),
   cloudSearch: ({ source, query, types, limit }) =>
     ipcRenderer.invoke('cloud-search', { source, query, types, limit }),

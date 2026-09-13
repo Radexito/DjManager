@@ -439,3 +439,14 @@
   border-radius: 2px;
   transition: width 0.3s ease;
 }
+
+/* Video entries resolve but download as .mp4/.ts, which the audio import cannot
+   read, so they are listed and skipped rather than silently dropped (#508). */
+.dl-entry--video {
+  opacity: 0.55;
+}
+.dl-entry-video-badge {
+  font-size: 0.72rem;
+  color: #de5a9a;
+  white-space: nowrap;
+}

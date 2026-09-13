@@ -22,13 +22,23 @@ function collectionKey(col) {
 
 /**
  * Tree panel listing the logged-in TIDAL account's collections (playlists,
- * mixes & radio including My Daily Discovery and video mixes, favorites) with
- * a download action per collection. Loads through window.api.tidalListCollections.
+ * mixes & radio including My Daily Discovery and video mixes, favorites).
+ * Loads through window.api.tidalListCollections.
+ *
+ * Two actions per row: the caret expands nested branches, the name opens the
+ * collection as a selectable track list (`onOpen`), and the arrow downloads the
+ * whole thing in one go (`onDownload`).
  *
  * Branches start expanded: the user asked for the account tree, and collapsing
  * is remembered per branch in the local `collapsed` set.
  */
-export default function TidalCollectionsPanel({ onDownload, busyKey, disabled = false }) {
+export default function TidalCollectionsPanel({
+  onDownload,
+  onOpen,
+  busyKey,
+  openKey,
+  disabled = false,
+}) {
   const [collections, setCollections] = useState(null);
   const [warnings, setWarnings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -112,9 +122,12 @@ export default function TidalCollectionsPanel({ onDownload, busyKey, disabled = 
           </button>
           <button
             type="button"
-            className="tidal-tree-label"
-            onClick={() => children.length > 0 && toggle(key)}
-            title={col.subtitle || col.title}
+            className={`tidal-tree-label${
+              openKey === key ? ' tidal-tree-label--open' : ''
+            }${busyKey === key ? ' tidal-tree-label--busy' : ''}`}
+            onClick={() => onOpen?.(col)}
+            disabled={disabled}
+            title={`Show the tracks in ${col.title}`}
           >
             <span className="tidal-tree-title">{col.title}</span>
             {col.subtitle ? <span className="tidal-tree-subtitle">{col.subtitle}</span> : null}
@@ -198,7 +211,7 @@ export default function TidalCollectionsPanel({ onDownload, busyKey, disabled = 
 
       {!loading && !error && groups.length > 0 && (
         <div className="tidal-collections-note">
-          Downloading a collection adds its tracks to a playlist of the same name.
+          Click a name to pick individual tracks, or ↓ to download the whole collection.
         </div>
       )}
     </div>

@@ -72,6 +72,7 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
   const [installLog, setInstallLog] = useState([]);
   const [installError, setInstallError] = useState(null);
   const [collectionBusy, setCollectionBusy] = useState(null); // `${type}:${id}` being downloaded
+  const [openCollectionKey, setOpenCollectionKey] = useState(null); // `${type}:${id}` listed
 
   const inputRef = useRef(null);
 
@@ -337,13 +338,24 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
     setLoading(true);
     setResult(null);
 
-    const res = await window.api.tidalDownloadUrl({
-      url,
-      selectedEntries,
-      linkTrackIds,
-      existingPlaylistId: playlistId || null,
-      newPlaylistName: !playlistId && playlistName?.trim() ? playlistName.trim() : null,
-    });
+    // A collection carries its own type/id instead of a URL; everything else
+    // about the download is identical (shared main-process routine).
+    const res = info.collection
+      ? await window.api.tidalDownloadCollection({
+          type: info.collection.type,
+          id: info.collection.id,
+          title: info.title,
+          selectedEntries,
+          existingPlaylistId: playlistId || null,
+          newPlaylistName: !playlistId && playlistName?.trim() ? playlistName.trim() : null,
+        })
+      : await window.api.tidalDownloadUrl({
+          url,
+          selectedEntries,
+          linkTrackIds,
+          existingPlaylistId: playlistId || null,
+          newPlaylistName: !playlistId && playlistName?.trim() ? playlistName.trim() : null,
+        });
 
     setLoading(false);
     setResult(res);
@@ -403,6 +415,124 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
     ]
   );
 
+  // ── open a collection as a selectable track list ────────────────────────────
+  // The tree's name opens the collection, the ↓ button still downloads it whole.
+  // Resolution happens in main (tidal-collection-tracks); the entries then take
+  // the regular select step, so tracks are picked exactly like in the URL flow.
+  const handleOpenCollection = useCallback(
+    async (col) => {
+      const key = `${col.type}:${col.id}`;
+      if (collectionBusy === key) return;
+      setCollectionBusy(key);
+      setOpenCollectionKey(key);
+      setFetchError(null);
+      setResult(null);
+      setTrackStatuses([]);
+      setLibraryMap(new Map());
+      setPlaylistMemberUrls(new Set());
+      setSelectedIndices(new Set());
+      setLinkIndices(new Set());
+
+      try {
+        const res = await window.api.tidalCollectionTracks({ type: col.type, id: col.id });
+        if (!res?.ok) {
+          setFetchError(res?.error ?? 'Could not load that collection.');
+          setOpenCollectionKey(null);
+          return;
+        }
+
+        const entries = res.entries ?? [];
+        const title = res.title || col.title;
+        setPlaylistInfo({
+          type: res.type || col.type,
+          title,
+          entries,
+          collection: { type: col.type, id: col.id },
+        });
+
+        // Which entries are already in the library, and which of those are
+        // already in the playlist this download would write to?
+        const newLibraryMap = new Map();
+        try {
+          const checks = entries
+            .filter((e) => e.url || e.id)
+            .map((e) => ({ url: e.url, id: String(e.id) }));
+          if (checks.length > 0) {
+            const found = await window.api.checkDuplicateUrls(checks);
+            for (const { url: u, trackId } of found) {
+              if (u) newLibraryMap.set(u, trackId);
+            }
+          }
+        } catch {
+          // non-fatal: treat everything as new
+        }
+
+        const pls = await window.api.getPlaylists().catch(() => []);
+        setPlaylists(pls);
+        const match = pls.find((p) => p.name.toLowerCase() === title.toLowerCase());
+        setTargetPlaylistId(match?.id ?? null);
+        setTargetPlaylistName(match ? '' : title);
+
+        const newMemberUrls = new Set();
+        if (match) {
+          try {
+            const memberRows = await window.api.getPlaylistSourceUrls(match.id);
+            const memberTrackIds = new Set(memberRows.map((r) => r.trackId));
+            for (const entry of entries) {
+              const libTid = newLibraryMap.get(entry.url);
+              if (libTid && memberTrackIds.has(libTid)) newMemberUrls.add(entry.url);
+            }
+          } catch {
+            // non-fatal
+          }
+        }
+
+        setLibraryMap(newLibraryMap);
+        setPlaylistMemberUrls(newMemberUrls);
+        // Everything selectable starts ticked: downloading the lot is the common
+        // case, the boxes are there to drop the few tracks that are not wanted.
+        setSelectedIndices(
+          new Set(
+            entries
+              .filter((e) => e.mediaType !== 'video' && !newLibraryMap.has(e.url))
+              .map((e) => e.index)
+          )
+        );
+        setLinkIndices(
+          new Set(
+            entries
+              .filter(
+                (e) =>
+                  e.mediaType !== 'video' && newLibraryMap.has(e.url) && !newMemberUrls.has(e.url)
+              )
+              .map((e) => e.index)
+          )
+        );
+        setStep('select');
+      } catch (err) {
+        setFetchError(err?.message ?? 'Could not load that collection.');
+        setOpenCollectionKey(null);
+      } finally {
+        setCollectionBusy(null);
+      }
+    },
+    [
+      collectionBusy,
+      setFetchError,
+      setLibraryMap,
+      setLinkIndices,
+      setPlaylistInfo,
+      setPlaylistMemberUrls,
+      setPlaylists,
+      setResult,
+      setSelectedIndices,
+      setStep,
+      setTargetPlaylistId,
+      setTargetPlaylistName,
+      setTrackStatuses,
+    ]
+  );
+
   // ── toggle selection ────────────────────────────────────────────────────────
   const handleToggleEntry = useCallback(
     (index, entry) => {
@@ -429,9 +559,11 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
 
   const handleToggleAll = useCallback(() => {
     if (!playlistInfo) return;
-    const downloadable = playlistInfo.entries.filter((e) => !libraryMap.has(e.url));
-    const linkable = playlistInfo.entries.filter(
-      (e) => libraryMap.has(e.url) && !playlistMemberUrls.has(e.url)
+    const downloadable = playlistInfo.entries.filter(
+      (e) => e.mediaType !== 'video' && !libraryMap.has(e.url)
+    );
+    const linkable = playlistInfo.entries.filter((e) =>
+      e.mediaType === 'video' ? false : libraryMap.has(e.url) && !playlistMemberUrls.has(e.url)
     );
     const allDownSelected = downloadable.every((e) => selectedIndices.has(e.index));
     const allLinkSelected = linkable.every((e) => linkIndices.has(e.index));
@@ -605,7 +737,9 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
         <div className="tidal-browse-layout">
           <TidalCollectionsPanel
             onDownload={handleDownloadCollection}
+            onOpen={handleOpenCollection}
             busyKey={collectionBusy}
+            openKey={openCollectionKey}
             disabled={collectionBusy !== null}
           />
 
@@ -699,8 +833,11 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
   // ── render: step — select ─────────────────────────────────────────────────
   if (step === 'select') {
     const entries = playlistInfo?.entries ?? [];
-    const downloadable = entries.filter((e) => !libraryMap.has(e.url));
-    const linkable = entries.filter((e) => libraryMap.has(e.url) && !playlistMemberUrls.has(e.url));
+    const videoCount = entries.filter((e) => e.mediaType === 'video').length;
+    const downloadable = entries.filter((e) => e.mediaType !== 'video' && !libraryMap.has(e.url));
+    const linkable = entries.filter(
+      (e) => e.mediaType !== 'video' && libraryMap.has(e.url) && !playlistMemberUrls.has(e.url)
+    );
     const allDownSelected = downloadable.every((e) => selectedIndices.has(e.index));
     const allLinkSelected = linkable.every((e) => linkIndices.has(e.index));
     const allSelected =
@@ -718,6 +855,7 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
             {entries.length} track{entries.length !== 1 ? 's' : ''}
             {libraryMap.size > 0 ? ` · ${libraryMap.size} in library` : ''}
             {playlistMemberUrls.size > 0 ? ` · ${playlistMemberUrls.size} in playlist` : ''}
+            {videoCount > 0 ? ` · ${videoCount} video${videoCount !== 1 ? 's' : ''} skipped` : ''}
             {' · '}select which to download
           </p>
         </div>
@@ -759,6 +897,7 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
           </div>
           <div className="dl-entries">
             {entries.map((entry) => {
+              const isVideo = entry.mediaType === 'video';
               const inLibrary = libraryMap.has(entry.url);
               const inPlaylist = playlistMemberUrls.has(entry.url);
               const checked = inLibrary
@@ -767,20 +906,26 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
               return (
                 <label
                   key={entry.index}
-                  className={`dl-entry${inLibrary ? ' dl-entry--library' : ''}`}
+                  className={`dl-entry${inLibrary ? ' dl-entry--library' : ''}${
+                    isVideo ? ' dl-entry--video' : ''
+                  }`}
                 >
                   <input
                     type="checkbox"
-                    checked={checked}
-                    disabled={inPlaylist}
-                    onChange={() => !inPlaylist && handleToggleEntry(entry.index, entry)}
+                    checked={isVideo ? false : checked}
+                    disabled={isVideo || inPlaylist}
+                    onChange={() =>
+                      !isVideo && !inPlaylist && handleToggleEntry(entry.index, entry)
+                    }
                   />
                   <span className="dl-entry-num">{entry.index + 1}</span>
                   <span className="dl-entry-info">
                     <span className="dl-entry-title">{entry.title}</span>
                     {entry.artist && <span className="dl-entry-artist">{entry.artist}</span>}
                   </span>
-                  {inPlaylist ? (
+                  {isVideo ? (
+                    <span className="dl-entry-video-badge">video, skipped</span>
+                  ) : inPlaylist ? (
                     <span className="dl-entry-library-badge dl-entry-playlist-badge">
                       ✓ In playlist
                     </span>
@@ -798,7 +943,14 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
         </div>
 
         <div className="dl-select-actions">
-          <button type="button" className="dl-back-btn" onClick={resetToUrl}>
+          <button
+            type="button"
+            className="dl-back-btn"
+            onClick={() => {
+              setOpenCollectionKey(null);
+              resetToUrl();
+            }}
+          >
             ← Back
           </button>
           <button

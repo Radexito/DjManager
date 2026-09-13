@@ -1805,19 +1805,53 @@ ipcMain.handle('tidal-list-collections', async () => {
   }
 });
 
+// Resolves a collection into its individual entries WITHOUT downloading, so the
+// browser can show them in the same selection table the URL flow uses (#508).
+ipcMain.handle('tidal-collection-tracks', async (_event, { type, id } = {}) => {
+  if (!type || !id) return { ok: false, error: 'Missing collection type or id', entries: [] };
+
+  try {
+    const res = await fetchTidalCollectionTracks(type, id);
+    if (!res.ok) return { ...res, entries: [] };
+    const entries = res.entries ?? [];
+    console.log(`[tidal-collection-tracks] ${type}:${id} entries=${entries.length}`);
+    return {
+      ok: true,
+      title: res.title,
+      type: res.type,
+      entries,
+      total: res.total,
+      truncated: res.truncated === true,
+      videoCount: entries.filter((e) => e.mediaType === 'video').length,
+    };
+  } catch (err) {
+    console.error('[tidal-collection-tracks] error:', err.message);
+    return { ok: false, error: err.message, entries: [] };
+  }
+});
+
 ipcMain.handle(
   'tidal-download-collection',
-  async (_event, { type, id, title, existingPlaylistId, newPlaylistName } = {}) => {
+  async (
+    _event,
+    { type, id, title, selectedEntries, existingPlaylistId, newPlaylistName } = {}
+  ) => {
     if (!type || !id) return { ok: false, error: 'Missing collection type or id' };
 
     try {
-      // Resolve the collection into individual track/video entries, then reuse
-      // the shared download path (same tdn invocation, same progressive import).
-      const resolved = await fetchTidalCollectionTracks(type, id);
+      // The browser may hand back the tracks the user ticked; without them the
+      // whole collection is resolved. Both paths go through the same split, so
+      // videos are dropped and the indices stay contiguous.
+      const picked =
+        Array.isArray(selectedEntries) && selectedEntries.length > 0 ? selectedEntries : null;
+      const resolved = picked
+        ? { ok: true, title, entries: picked }
+        : await fetchTidalCollectionTracks(type, id);
       if (!resolved.ok) return resolved;
 
       // Videos download as .mp4/.ts, which the audio importer cannot read.
-      const { tracks, videoCount } = splitTidalCollectionEntries(resolved.entries);
+      const { tracks, videoCount: splitVideos } = splitTidalCollectionEntries(resolved.entries);
+      const videoCount = Math.max(splitVideos, picked ? 0 : Number(resolved.videoCount) || 0);
       const collectionTitle = resolved.title || title || id;
 
       if (tracks.length === 0) {

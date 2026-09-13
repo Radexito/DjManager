@@ -181,3 +181,12 @@
   line-height: 1.4;
   color: var(--text-secondary, #777);
 }
+
+/* The collection currently shown as a track list (#508) */
+.tidal-tree-label--open {
+  color: #85c4d4;
+  font-weight: 600;
+}
+.tidal-tree-label--busy {
+  opacity: 0.6;
+}

@@ -264,6 +264,23 @@ describe('splitTidalCollectionEntries', () => {
     expect(splitTidalCollectionEntries([])).toEqual({ tracks: [], videoCount: 0 });
     expect(splitTidalCollectionEntries(undefined)).toEqual({ tracks: [], videoCount: 0 });
   });
+
+  // #508 follow-up: the browser sends only the entries the user ticked, which
+  // arrive with gaps in their indices. They must come out contiguous or the
+  // progressive download rows land on the wrong titles.
+  it('compacts a hand-picked subset into contiguous indices', () => {
+    const { tracks, videoCount } = splitTidalCollectionEntries([
+      { index: 2, id: 'picked-a', mediaType: 'track' },
+      { index: 5, id: 'picked-video', mediaType: 'video' },
+      { index: 9, id: 'picked-b', mediaType: 'track' },
+    ]);
+
+    expect(videoCount).toBe(1);
+    expect(tracks.map((t) => [t.id, t.index])).toEqual([
+      ['picked-a', 0],
+      ['picked-b', 1],
+    ]);
+  });
 });
 
 describe('fetchTidalCollections', () => {
