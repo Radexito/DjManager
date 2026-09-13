@@ -59,6 +59,7 @@ export default defineConfig({
             'src/__tests__/exportDetection.test.js',
             'src/__tests__/volumes.test.js',
             'src/__tests__/anlzCues.test.js',
+            'src/__tests__/exportSync.test.js',
           ],
         },
       },

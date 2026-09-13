@@ -145,6 +145,7 @@ import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtil
 import { scanVolumes, volumeSignature } from './explorer/volumes.js';
 import { detectExports, findExportRoot } from './explorer/exportDetection.js';
 import { readExportTrackCues } from './explorer/anlzCues.js';
+import { writeTrackBackToExport } from './explorer/exportSync.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
@@ -894,6 +895,8 @@ ipcMain.handle('adjust-bpm', (_, { trackIds, factor }) => {
     if (base == null) continue;
     const newBpm = Math.round(base * factor * 10) / 10;
     updateTrack(id, { bpm_override: newBpm });
+    // Preparing a track changes what a deck should show for it.
+    scheduleExportSync(id);
     results.push({ id, bpm_override: newBpm });
   }
   return results;
@@ -906,6 +909,7 @@ ipcMain.handle('add-cue-point', (_, { trackId, positionMs, label, color, hotCueI
   // Adding a sequentially-named cue shifts the positional order — renumber the
   // following auto-named cues so names stay unique (#253).
   renumberSequentialCuesAfter(trackId, id);
+  scheduleExportSync(trackId);
   return { id };
 });
 
@@ -917,11 +921,14 @@ ipcMain.handle('update-cue-point', (_, { id, label, color, hotCueIndex, enabled 
   if (before && typeof label === 'string') {
     renumberSequentialCuesAfter(before.track_id, id);
   }
+  if (before) scheduleExportSync(before.track_id);
   return { ok: true };
 });
 
 ipcMain.handle('delete-cue-point', (_, id) => {
+  const cue = getCuePointById(id);
   deleteCuePoint(id);
+  if (cue) scheduleExportSync(cue.track_id);
   return { ok: true };
 });
 
@@ -931,8 +938,68 @@ ipcMain.handle('generate-cue-points', (_, trackId) => {
   deleteAllCuePoints(trackId);
   const generated = generateCuePoints(track);
   generated.forEach((cue) => addCuePoint({ trackId, ...cue }));
+  scheduleExportSync(trackId);
   return getCuePoints(trackId);
 });
+
+// ── Writing a prepared track back into its export ────────────────────────────
+// Cues, beat grid and BPM are edited in the app, but a track that lives inside
+// one of our exports is read by a deck from that folder. Every such edit is
+// mirrored there (ANLZ + manifest) so preparing a track and playing it off the
+// stick agree (#504). Failures are logged, never raised: the edit itself stands.
+const exportSyncQueue = new Map(); // trackId -> { running, queued }
+
+function scheduleExportSync(trackId) {
+  if (trackId == null) return;
+  const state = exportSyncQueue.get(trackId) ?? { running: false, queued: false };
+  exportSyncQueue.set(trackId, state);
+  if (state.running) {
+    state.queued = true;
+    return;
+  }
+
+  state.running = true;
+  void (async () => {
+    try {
+      do {
+        state.queued = false;
+        await syncTrackToExport(trackId);
+      } while (state.queued);
+    } finally {
+      state.running = false;
+      exportSyncQueue.delete(trackId);
+    }
+  })();
+}
+
+async function syncTrackToExport(trackId) {
+  try {
+    const track = getTrackById(trackId);
+    if (!track?.file_path) return;
+    const found = findExportRoot(path.dirname(track.file_path));
+    if (!found) return; // not inside an export, nothing to mirror
+
+    const result = await writeTrackBackToExport({
+      exportRoot: found.root,
+      filePath: track.file_path,
+      track,
+      cuePoints: getCuePoints(trackId).filter((c) => c.enabled !== 0),
+      writeAnlz,
+      ffmpegPath: getFfmpegRuntimePath(),
+    });
+
+    if (result.ok) {
+      console.log(
+        `[export] track ${trackId} written back to ${found.root} as ${result.usbFilePath}` +
+          (result.manifestUpdated ? ' (manifest updated)' : '')
+      );
+    } else if (result.reason !== 'no-manifest' && result.reason !== 'not-in-export') {
+      console.warn(`[export] write-back skipped for track ${trackId}: ${result.reason}`);
+    }
+  } catch (err) {
+    console.warn(`[export] write-back failed for track ${trackId}:`, err.message);
+  }
+}
 
 ipcMain.handle('generate-cue-points-library', (_, { overwrite = false } = {}) => {
   const tracks = getTracks({ limit: 999999 });
