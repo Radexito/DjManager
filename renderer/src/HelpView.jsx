@@ -62,6 +62,7 @@ const SECTIONS = [
       'The volume icon opens a vertical slider on hover; clicking the icon mutes/unmutes. Output devices can be switched next to it.',
       'Click anywhere on the waveform to seek. The bar can be made taller by dragging its top edge; drag the thin separators to re-balance the zones.',
       'The clock icon opens playback history. Clicking the track title jumps to the list it is playing from: the playlist it belongs to, or the Music list scrolled to that track.',
+      'Playback history keeps the last 50 tracks and is remembered across restarts; replaying the same track back to back adds a single entry.',
       'Media keys of your OS (play/pause/next/previous) control the player as well.',
     ],
   },
