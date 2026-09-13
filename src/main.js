@@ -2303,7 +2303,12 @@ async function writeExportTags(destPath, track, blind = false) {
   const key = track.key_camelot || track.key_raw || null;
   if (bpm == null && !key) return;
   try {
-    const res = await writeBpmKeyTags(destPath, { bpm, key, overwrite: false });
+    // User decision 2026-09-13: an export MIRRORS the library — the BPM/key that
+    // mixxx-analyzer put in the DB must win over whatever the source file carries
+    // (a Traktor-tagged source otherwise ships its own notation, e.g. "12d", while
+    // the library says "7B"). Identical values are still skipped, and a value the
+    // library does not have is never stripped from the file.
+    const res = await writeBpmKeyTags(destPath, { bpm, key, overwrite: true });
     if (res?.ok === false && res.reason && !['no-values', 'already-current'].includes(res.reason)) {
       console.warn(`BPM/key tag write failed for ${path.basename(destPath)}: ${res.reason}`);
     }
