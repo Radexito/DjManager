@@ -325,6 +325,32 @@ function getValueHints(fieldKey, op, base, partialValue = '') {
 const AND_SEPARATOR_RE = /\s+AND\s+/i;
 
 /**
+ * A tag can list several artists in one string ("Sigma, Doctor P"). Split it into
+ * individual names so the clickable artist cells offer one link per artist
+ * instead of one link for the whole credit string.
+ *
+ * Trims each name, drops empty parts (trailing commas) and ignores duplicates
+ * that differ only in case - the first spelling wins.
+ */
+export function splitArtists(artist) {
+  const raw = String(artist ?? '').trim();
+  if (!raw) return [];
+  if (!raw.includes(',')) return [raw];
+
+  const seen = new Set();
+  const names = [];
+  for (const part of raw.split(',')) {
+    const name = part.trim();
+    if (!name) continue;
+    const dedupe = name.toLowerCase();
+    if (seen.has(dedupe)) continue;
+    seen.add(dedupe);
+    names.push(name);
+  }
+  return names;
+}
+
+/**
  * Query that searches the library for one artist, used by the clickable artist
  * cells (Music/playlist tables) and the player bar. Uppercase label matches how
  * the search bar renders a committed chip, and multi-word names work because a
