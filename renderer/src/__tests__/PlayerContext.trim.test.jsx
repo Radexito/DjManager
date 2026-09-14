@@ -256,6 +256,32 @@ describe('PlayerProvider — trim range (#463)', () => {
     expect(result.current.queueIndex).toBe(1);
   });
 
+  it('arms the stop when the trim is applied while the track is paused', async () => {
+    const { result } = await renderReady();
+    const queue = [TRACK_PLAIN, TRACK_TRIMMED];
+    await act(async () => {
+      result.current.play(queue[0], queue, 0);
+    });
+    const audio = result.current.audioRef.current;
+    // Paused: the element is loaded but not running (the user stopped it to edit).
+    Object.defineProperty(audio, 'paused', { configurable: true, get: () => true });
+
+    act(() => {
+      result.current.patchCurrentTrack(2, { trim_start_ms: 10_000, trim_end_ms: 20_000 });
+    });
+
+    // Pressing play again has to honour the range that was just saved, without
+    // restarting the track first.
+    Object.defineProperty(audio, 'paused', { configurable: true, get: () => false });
+    audio.currentTime = 21;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+
+    expect(result.current.currentTrack?.id).toBe(1);
+    expect(result.current.queueIndex).toBe(1);
+  });
+
   it('does not arm anything when the patched trim is unchanged', async () => {
     const { result } = await renderReady();
     await act(async () => {

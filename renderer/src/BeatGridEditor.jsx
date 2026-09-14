@@ -357,8 +357,18 @@ function drawOverview(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function BeatGridEditor({ track, onClose, onApply }) {
-  const { currentTrack, isPlaying, currentTime, duration, togglePlay, play, seek, stop } =
-    usePlayer();
+  const {
+    currentTrack,
+    isPlaying,
+    currentTime,
+    duration,
+    togglePlay,
+    play,
+    seek,
+    stop,
+    queue,
+    patchCurrentTrack,
+  } = usePlayer();
 
   const [offset, setOffset] = useState(track.beatgrid_offset ?? 0);
   // bpmInput is the live-preview BPM — drives the beatgrid immediately
@@ -766,13 +776,19 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
       const startSec = startMs / 1000;
       currentTimeSecRef.current = startSec;
       lastTimeUpdateRef.current = performance.now();
-      play(track, [track], 0, null, null);
+      // Play INSIDE the queue the user is working in whenever this track is part of
+      // it: starting it as a one-track queue meant the trim end (or the natural end)
+      // had no next track to move on to, so it just paused (report 2026-09-14).
+      const list = Array.isArray(queue) ? queue : [];
+      const index = list.findIndex((t) => t.id === track.id);
+      if (index >= 0) play(track, list, index, null, null);
+      else play(track, [track], 0, null, null);
       // play() resets audio.src, clearing currentTime to 0. Defer the seek by
       // one frame so the element has initialised before we set currentTime.
       if (startSec > 0) requestAnimationFrame(() => seekRef.current(startSec));
       userScrollingRef.current = false;
     }
-  }, [isThisTrack, togglePlay, play, track]);
+  }, [isThisTrack, togglePlay, play, track, queue]);
 
   // ── Nudge ─────────────────────────────────────────────────────────────────
   const nudge = (deltaMs) => setOffset((prev) => prev + deltaMs);
@@ -801,6 +817,32 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
     setTrimStart(null);
     setTrimEnd(null);
   };
+
+  // Live preview (#463): the player has to honour the PENDING range while the
+  // editor is open — the user sets OUT and expects the track to stop there as soon
+  // as it plays, without saving first (report 2026-09-14). patchCurrentTrack only
+  // touches the loaded track, so editing an unloaded row changes nothing.
+  const savedTrimRef = useRef({
+    start: track.trim_start_ms ?? null,
+    end: track.trim_end_ms ?? null,
+  });
+  useEffect(() => {
+    if (!isThisTrack) return;
+    patchCurrentTrack(track.id, { trim_start_ms: trimStart, trim_end_ms: trimEnd });
+  }, [isThisTrack, patchCurrentTrack, track.id, trimStart, trimEnd]);
+
+  // Closing without Apply drops the preview: the player must go back to the range
+  // the library actually holds, or a discarded edit would keep affecting playback.
+  useEffect(() => {
+    const id = track.id;
+    const savedTrim = savedTrimRef.current;
+    return () => {
+      patchCurrentTrack(id, {
+        trim_start_ms: savedTrim.start,
+        trim_end_ms: savedTrim.end,
+      });
+    };
+  }, [patchCurrentTrack, track.id]);
 
   // ── TAP tempo ─────────────────────────────────────────────────────────────
   const handleTap = useCallback(() => {

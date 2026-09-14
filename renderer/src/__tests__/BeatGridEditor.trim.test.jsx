@@ -10,10 +10,12 @@ const player = {
   isPlaying: false,
   currentTime: 0,
   duration: 0,
+  queue: [],
   togglePlay: vi.fn(),
   play: vi.fn(),
   seek: vi.fn(),
   stop: vi.fn(),
+  patchCurrentTrack: vi.fn(),
 };
 
 vi.mock('../PlayerContext.jsx', () => ({
@@ -25,6 +27,7 @@ function resetPlayer(overrides = {}) {
   player.isPlaying = false;
   player.currentTime = 0;
   player.duration = 0;
+  player.queue = [];
   Object.assign(player, overrides);
 }
 
@@ -302,5 +305,80 @@ describe('BeatGridEditor — detail waveform drag (#463 drag lock)', () => {
 
     fireEvent(canvas, pointerEvent('pointermove', { clientX: 20, buttons: 1 }));
     expect(player.seek).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('BeatGridEditor — trim preview + queue (#463 follow-up)', () => {
+  it('previews the pending trim on the loaded track without saving', () => {
+    player.currentTime = 30;
+    renderEditor();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set IN' }));
+
+    expect(player.patchCurrentTrack).toHaveBeenLastCalledWith(7, {
+      trim_start_ms: 30_000,
+      trim_end_ms: null,
+    });
+  });
+
+  it('does not touch the player when the edited track is not loaded', () => {
+    player.currentTrack = { id: 99 };
+    player.currentTime = 30;
+    renderEditor();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set IN' }));
+
+    expect(player.patchCurrentTrack).not.toHaveBeenCalled();
+  });
+
+  it('restores the saved range when the editor is closed without applying', () => {
+    player.currentTime = 30;
+    const { unmount } = renderEditor({ trim_start_ms: 20_000, trim_end_ms: 40_000 });
+    fireEvent.click(screen.getByRole('button', { name: 'Set IN' }));
+    expect(player.patchCurrentTrack).toHaveBeenLastCalledWith(7, {
+      trim_start_ms: 30_000,
+      trim_end_ms: 40_000,
+    });
+
+    unmount();
+
+    expect(player.patchCurrentTrack).toHaveBeenLastCalledWith(7, {
+      trim_start_ms: 20_000,
+      trim_end_ms: 40_000,
+    });
+  });
+
+  it('plays the track inside the current queue so the end moves on', () => {
+    const neighbour = { ...TRACK, id: 8, title: 'Next' };
+    const other = { ...TRACK, id: 9, title: 'Earlier' };
+    player.currentTrack = { id: 99 }; // this track is not the loaded one
+    player.queue = [other, TRACK, neighbour];
+    renderEditor();
+
+    fireEvent.click(document.querySelector('.bge-play-overlay'));
+
+    expect(player.play).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 7 }),
+      player.queue,
+      1,
+      null,
+      null
+    );
+  });
+
+  it('falls back to a one-track queue when the track is not in the queue', () => {
+    player.currentTrack = { id: 99 };
+    player.queue = [{ ...TRACK, id: 8 }];
+    renderEditor();
+
+    fireEvent.click(document.querySelector('.bge-play-overlay'));
+
+    expect(player.play).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 7 }),
+      [expect.objectContaining({ id: 7 })],
+      0,
+      null,
+      null
+    );
   });
 });

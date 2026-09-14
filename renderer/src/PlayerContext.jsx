@@ -203,12 +203,13 @@ export function PlayerProvider({ children }) {
       trimStopArmedRef.current = false;
       return;
     }
-    // A trim that lands while the track is already PLAYING must bite immediately:
-    // playAtIndex() arms the stop only at the next start, so setting OUT in the
-    // Prepare Track editor and pressing Apply used to let playback run straight
-    // past the new end until the track was started again (user report 2026-09-14).
-    if (changed && !audio.paused) trimStopArmedRef.current = true;
-  }, [currentTrack, audio]);
+    // A trim that lands on the loaded track must bite from that moment on, playing
+    // or paused: playAtIndex() arms the stop only at the next start, so setting OUT
+    // and pressing Apply used to let playback run straight past the new end until
+    // the track was started again (user report 2026-09-14). An UNCHANGED trim never
+    // re-arms, so auditioning past the end still works after an explicit seek.
+    if (changed) trimStopArmedRef.current = true;
+  }, [currentTrack]);
 
   // Stable play-at-index — exposed via ref so handleEnded can call it without stale closure
   const playAtIndexRef = useRef(null);
