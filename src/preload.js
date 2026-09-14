@@ -180,6 +180,18 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('watch-status', handler);
     return () => ipcRenderer.removeListener('watch-status', handler);
   },
+  // #267 — folder-tracked playlists
+  createFolderPlaylist: (opts) => ipcRenderer.invoke('create-folder-playlist', opts),
+  refreshFolderPlaylist: (playlistId) => ipcRenderer.invoke('refresh-folder-playlist', playlistId),
+  refreshFolderPlaylists: () => ipcRenderer.invoke('refresh-folder-playlists'),
+  removeFolderPlaylistTracks: (opts) => ipcRenderer.invoke('remove-folder-playlist-tracks', opts),
+  stopFolderPlaylist: (playlistId) => ipcRenderer.invoke('stop-folder-playlist', playlistId),
+  setFolderPlaylistRecursive: (opts) => ipcRenderer.invoke('set-folder-playlist-recursive', opts),
+  onFolderPlaylistUpdated: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('folder-playlist-updated', handler);
+    return () => ipcRenderer.removeListener('folder-playlist-updated', handler);
+  },
   onImportProgress: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('import-progress', handler);

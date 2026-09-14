@@ -42,6 +42,9 @@ function SettingsModal({ onClose }) {
   const [watchFolders, setWatchFolders] = useState([]);
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState(null);
+  // #267 — folder-tracked playlists (managed in the sidebar / explorer)
+  const [folderPlaylists, setFolderPlaylists] = useState([]);
+  const [folderRefresh, setFolderRefresh] = useState(null);
   // #474 — write analyzed BPM & key into the file's own tags
   const [autoWriteLibrary, setAutoWriteLibrary] = useState(false);
   const [autoWriteLinked, setAutoWriteLinked] = useState(false);
@@ -156,6 +159,11 @@ function SettingsModal({ onClose }) {
         setWatchFolders([]);
       }
     });
+    // #267 — how many playlists follow a folder
+    window.api
+      .getPlaylists()
+      .then((list) => setFolderPlaylists((list ?? []).filter((p) => p.folder_path)))
+      .catch(() => setFolderPlaylists([]));
   }, []);
   // #256 — live scan/import status for the Folder Watch section
   useEffect(() => {
@@ -279,6 +287,22 @@ function SettingsModal({ onClose }) {
     } finally {
       setScanning(false);
     }
+  };
+
+  // #267 — re-scan every folder-tracked playlist in one go.
+  const handleRefreshFolderPlaylists = async () => {
+    setFolderRefresh({ running: true });
+    const results = (await window.api.refreshFolderPlaylists()) ?? [];
+    const ok = results.filter((r) => r?.ok);
+    const missing = results.filter((r) => r?.missing?.length);
+    setFolderRefresh({
+      running: false,
+      done: results.length,
+      added: ok.reduce((sum, r) => sum + (r.added ?? 0), 0),
+      linked: ok.reduce((sum, r) => sum + (r.linked ?? 0), 0),
+      failed: results.length - ok.length,
+      missing: missing.length,
+    });
   };
 
   // #474 — BPM/key tag writing settings
@@ -818,6 +842,54 @@ function SettingsModal({ onClose }) {
                       : scanResult.event === 'scan-failed'
                         ? `Scan failed: ${scanResult.error}`
                         : `Found ${scanResult.found ?? 0} file(s) — imported ${scanResult.imported ?? 0}, skipped ${scanResult.skipped ?? 0}, failed ${scanResult.failed ?? 0}`}
+                  </p>
+                )}
+
+                {/* #267 — playlists that follow a folder */}
+                <div className="settings-group-title" style={{ marginTop: '1rem' }}>
+                  Folder-tracked playlists
+                </div>
+                <p className="settings-group-desc">
+                  A playlist can follow a folder instead of holding a fixed list: right-click the
+                  folder in Explorer and pick “Track folder as a playlist” (with or without
+                  sub-folders). New files are imported and added as they appear, watched whether or
+                  not the toggle above is on. The folder is re-scanned on every launch, and a track
+                  whose file went missing is never removed without asking. The 📁 marker in the
+                  sidebar shows which playlists are tracked; their right-click menu can refresh the
+                  folder or stop tracking it.
+                </p>
+                <p className="settings-group-desc">
+                  {folderPlaylists.length === 0
+                    ? 'No playlist is tracking a folder yet.'
+                    : `${folderPlaylists.length} playlist(s) tracking a folder: ${folderPlaylists
+                        .map((p) => `${p.name} → ${p.folder_path}`)
+                        .join(' · ')}`}
+                </p>
+
+                <div className="settings-row settings-row-action">
+                  <div>
+                    <div className="settings-action-label">Refresh tracked folders</div>
+                    <div className="settings-action-desc">
+                      Re-scan every folder-tracked playlist now.
+                    </div>
+                  </div>
+                  <button
+                    className="btn-secondary"
+                    onClick={handleRefreshFolderPlaylists}
+                    disabled={folderPlaylists.length === 0 || folderRefresh?.running}
+                  >
+                    {folderRefresh?.running ? 'Refreshing…' : 'Refresh all'}
+                  </button>
+                </div>
+
+                {folderRefresh && !folderRefresh.running && (
+                  <p className="settings-group-desc">
+                    {`Refreshed ${folderRefresh.done} playlist(s): ${folderRefresh.linked} linked, ${folderRefresh.added} added` +
+                      (folderRefresh.missing
+                        ? `, ${folderRefresh.missing} with missing files`
+                        : '') +
+                      (folderRefresh.failed ? `, ${folderRefresh.failed} unreachable` : '') +
+                      '.'}
                   </p>
                 )}
               </div>

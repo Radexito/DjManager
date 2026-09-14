@@ -130,6 +130,20 @@ export function buildExplorerContextMenu({
       paths
     );
 
+    // #267 — a folder-tracked playlist keeps itself in sync: new files are
+    // imported and added as they appear, instead of a one-off snapshot.
+    sep();
+    item(
+      'watch-folder-playlist',
+      `📁 Track folder ${countPhrase(n, 'as a playlist', `× ${n} as playlists`)}`,
+      paths
+    );
+    item(
+      'watch-folder-playlist-recursive',
+      `📁 Track folder + sub-folders ${countPhrase(n, 'as a playlist', `× ${n} as playlists`)}`,
+      paths
+    );
+
     if (brokenDirPaths.length) {
       sep();
       item(

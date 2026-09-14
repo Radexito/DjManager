@@ -49,6 +49,10 @@ import {
   reorderPlaylistTracks,
   getPlaylistsForTrack,
   getPlaylistTracks,
+  getFolderPlaylists,
+  setPlaylistFolder,
+  clearPlaylistFolder,
+  markPlaylistFolderSynced,
 } from './db/playlistRepository.js';
 import {
   addTrack,
@@ -94,7 +98,8 @@ import {
   scanFoldersForNewTracks,
   writeBpmKeyTagsForTrack,
 } from './audio/importManager.js';
-import { createLibraryWatcher } from './library/libraryWatcher.js';
+import { createLibraryWatcher, listAudioFiles } from './library/libraryWatcher.js';
+import { planFolderSync, isInsideFolder } from './library/folderPlaylistSync.js';
 import {
   listLibraries,
   createLibrary,
@@ -498,6 +503,11 @@ async function initApp() {
           console.error('[watcher] startup scan failed:', err.message)
         );
       }
+      // #267 — a folder-tracked playlist re-syncs on every launch, whatever the
+      // autoscan setting says: that is the whole point of tracking a folder.
+      refreshFolderPlaylists().catch((err) =>
+        console.error('[folder-playlist] startup refresh failed:', err.message)
+      );
       // #259 — notice a Rekordbox stick being plugged in and offer a cue import
       startUsbCueWatch();
     })
@@ -572,6 +582,57 @@ ipcMain.handle('get-watch-state', () => ({
   enabled: watchFoldersEnabled(),
   scanning: watchScanRunning,
 }));
+// #267 — folder-tracked playlists: the playlist mirrors the folder.
+ipcMain.handle(
+  'create-folder-playlist',
+  async (_, { folderPath, name, recursive = false } = {}) => {
+    if (!folderPath || !fs.existsSync(folderPath)) {
+      return { ok: false, error: 'folder-missing', folder: folderPath ?? null };
+    }
+    const playlistName = (name || '').trim() || path.basename(folderPath) || 'Watched folder';
+    let id;
+    try {
+      id = createPlaylist(playlistName, null, null);
+    } catch (err) {
+      return {
+        ok: false,
+        error: err.code === 'DUPLICATE_PLAYLIST_NAME' ? 'duplicate-name' : 'failed',
+        message: err.message,
+      };
+    }
+    setPlaylistFolder(id, folderPath, recursive);
+    if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+    restartLibraryWatcher();
+    const sync = await syncFolderPlaylist(id);
+    return { ok: true, playlistId: id, name: playlistName, recursive, ...sync };
+  }
+);
+ipcMain.handle('refresh-folder-playlist', (_, playlistId) => syncFolderPlaylist(playlistId));
+ipcMain.handle('refresh-folder-playlists', () => refreshFolderPlaylists());
+ipcMain.handle('remove-folder-playlist-tracks', (_, { playlistId, trackIds = [] } = {}) => {
+  for (const trackId of trackIds) removeTrackFromPlaylist(playlistId, trackId);
+  if (trackIds.length > 0) {
+    send('library-updated');
+    // The sidebar counts come from the playlists list, so tell it to re-read.
+    if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+  }
+  return { ok: true, playlistId, removed: trackIds.length };
+});
+ipcMain.handle('stop-folder-playlist', (_, playlistId) => {
+  clearPlaylistFolder(playlistId);
+  restartLibraryWatcher();
+  return { ok: true, playlistId };
+});
+ipcMain.handle(
+  'set-folder-playlist-recursive',
+  async (_, { playlistId, recursive = false } = {}) => {
+    const playlist = getPlaylist(playlistId);
+    if (!playlist?.folder_path) return { ok: false, playlistId, error: 'not-a-folder-playlist' };
+    setPlaylistFolder(playlistId, playlist.folder_path, recursive);
+    restartLibraryWatcher();
+    return syncFolderPlaylist(playlistId);
+  }
+);
 // `libraryId` defaults to the current "import target" library when omitted —
 // most existing call sites predate multi-library support and don't pass one.
 ipcMain.handle('get-library-path', (_, libraryId) =>
@@ -1955,18 +2016,45 @@ function restartLibraryWatcher() {
   libraryWatcher?.close();
   libraryWatcher = null;
 
-  if (!watchFoldersEnabled()) return;
-  const folders = getWatchFolders();
+  // The global ingest list is opt-in (#256); a folder-tracked playlist (#267) is
+  // its own promise to follow that folder, so it is always watched while the app
+  // runs. One watcher covers both — a folder can be in both lists.
+  const ingestFolders = watchFoldersEnabled() ? getWatchFolders() : [];
+  const folders = [...new Set([...ingestFolders, ...folderPlaylistFolders()])];
   if (folders.length === 0) return;
 
   libraryWatcher = createLibraryWatcher({
     folders,
     onNewFile: async (filePath) => {
-      const id = await importAudioFile(filePath, {});
-      if (id) {
-        send('library-updated');
-        send('watch-status', { event: 'imported', filePath });
+      // #267 — a file inside a tracked folder is linked (its path stays put, so
+      // the mirror keeps matching) and joins its playlist(s) at once. Anything
+      // else is a plain ingest, which keeps its managed copy in the library.
+      const targets = playlistsForFile(filePath);
+      let id = null;
+      if (targets.length > 0) {
+        const res = await linkAudioFile(filePath);
+        if (!res?.id) return;
+        id = res.id;
+        if (!res.duplicate) spawnAnalysis(id, filePath);
+        for (const pl of targets) {
+          try {
+            addTrackToPlaylist(pl.id, id);
+          } catch (err) {
+            console.warn(`[folder-playlist] add to ${pl.id} failed:`, err.message);
+          }
+          send('folder-playlist-updated', {
+            playlistId: pl.id,
+            event: 'added',
+            added: 1,
+            filePath,
+          });
+        }
+      } else {
+        id = await importAudioFile(filePath, {});
       }
+      if (!id) return;
+      send('library-updated');
+      send('watch-status', { event: 'imported', filePath });
     },
     onError: (err, folder) => console.warn(`[watcher] ${folder ?? ''} ${err.message}`),
   });
@@ -1995,6 +2083,130 @@ async function scanWatchFolders() {
   } finally {
     watchScanRunning = false;
   }
+}
+
+// ── Folder-tracked playlists (#267) ───────────────────────────────────────────
+//
+// A playlist whose `folder_path` is set mirrors that folder: its tracks are the
+// audio files in the folder. New files are imported and added (live via the
+// watcher, and on every scan/startup); files that disappeared are reported and
+// only removed once the user confirms — a moved file should not silently leave
+// the playlist.
+
+let folderPlaylistRunning = false;
+
+function folderPlaylistFolders() {
+  return getFolderPlaylists()
+    .map((p) => p.folder_path)
+    .filter(Boolean);
+}
+
+/** Folder-tracked playlists whose folder contains this file. */
+function playlistsForFile(filePath) {
+  return getFolderPlaylists().filter((p) =>
+    isInsideFolder(filePath, p.folder_path, { recursive: p.folder_recursive === 1 })
+  );
+}
+
+/**
+ * Mirror one folder-tracked playlist: import what is new, add it to the
+ * playlist, and report (never remove) what went missing.
+ */
+async function syncFolderPlaylist(playlistId, { importNew = true } = {}) {
+  const playlist = getPlaylist(playlistId);
+  if (!playlist || !playlist.folder_path) {
+    return { ok: false, playlistId, error: 'not-a-folder-playlist' };
+  }
+  const folder = playlist.folder_path;
+  const recursive = playlist.folder_recursive === 1;
+  if (!fs.existsSync(folder)) {
+    return { ok: false, playlistId, folder, error: 'folder-missing' };
+  }
+
+  const files = await listAudioFiles([folder], { maxDepth: recursive ? 8 : 0 });
+
+  // #267 — the folder stays the source of truth: its files are LINKED (their
+  // paths do not move), not copied into the library. That is what lets the
+  // playlist keep mirroring the folder, and what makes a deleted or moved file
+  // show up as missing instead of leaving a stale copy behind.
+  let linked = 0;
+  if (importNew && files.length > 0) {
+    const known = new Set(getTracksByPaths(files).map((t) => t.file_path));
+    for (const file of files.filter((f) => !known.has(f))) {
+      try {
+        const res = await linkAudioFile(file);
+        if (res?.id && !res.duplicate) {
+          linked++;
+          spawnAnalysis(res.id, file);
+        }
+      } catch (err) {
+        console.warn(`[folder-playlist] link failed for ${file}:`, err.message);
+      }
+    }
+  }
+
+  const rows = files.length > 0 ? getTracksByPaths(files) : [];
+  const byPath = new Map(rows.map((t) => [path.resolve(t.file_path), t]));
+  const playlistTracks = getPlaylistTracks(playlistId);
+  const plan = planFolderSync({
+    folderFiles: files,
+    playlistTracks,
+    folder,
+  });
+
+  const addIds = plan.add.map((f) => byPath.get(path.resolve(f))?.id).filter(Boolean);
+  if (addIds.length > 0) addTracksToPlaylist(playlistId, addIds);
+  markPlaylistFolderSynced(playlistId);
+
+  // Give the confirmation dialog enough to read: a bare file path is not
+  // something anyone wants to tick through.
+  const trackById = new Map(playlistTracks.map((t) => [t.id, t]));
+  const missing = plan.missing.map((m) => ({
+    ...m,
+    title: trackById.get(m.id)?.title ?? '',
+    artist: trackById.get(m.id)?.artist ?? '',
+  }));
+
+  const result = {
+    ok: true,
+    playlistId,
+    folder,
+    recursive,
+    found: files.length,
+    linked,
+    added: addIds.length,
+    unchanged: plan.unchanged,
+    missing,
+  };
+  if (linked > 0 || addIds.length > 0) {
+    send('library-updated');
+    send('folder-playlist-updated', { playlistId, event: 'synced', ...result });
+  }
+  console.log(
+    `[folder-playlist] #${playlistId} ${folder}: ${files.length} file(s), ` +
+      `${linked} linked, ${addIds.length} added, ${missing.length} missing`
+  );
+  return result;
+}
+
+/** Refresh every folder-tracked playlist (startup + manual "Refresh all"). */
+async function refreshFolderPlaylists() {
+  if (folderPlaylistRunning) return [];
+  folderPlaylistRunning = true;
+  const results = [];
+  try {
+    for (const pl of getFolderPlaylists()) {
+      try {
+        results.push(await syncFolderPlaylist(pl.id));
+      } catch (err) {
+        console.error(`[folder-playlist] refresh #${pl.id} failed:`, err.message);
+        results.push({ ok: false, playlistId: pl.id, error: err.message });
+      }
+    }
+  } finally {
+    folderPlaylistRunning = false;
+  }
+  return results;
 }
 
 // ── File Explorer IPC ──────────────────────────────────────────────────────────
