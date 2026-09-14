@@ -16,6 +16,7 @@ const OP_LABELS = {
   is: 'is',
   'is not': 'is not',
   contains: 'contains',
+  'starts with': 'starts with',
   '>': '>',
   '<': '<',
   '>=': '≥',
