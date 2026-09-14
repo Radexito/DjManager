@@ -633,34 +633,12 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
   const dragRef = useRef(null);
   const wasPlayingRef = useRef(false); // remember if track was playing when grabbed
 
-  const onDetailMouseDown = (e) => {
-    if (e.target !== detailCanvasRef.current) return;
-    userScrollingRef.current = true;
-    wasPlayingRef.current = isThisTrackRef.current && isPlayingRef.current;
-    dragRef.current = { startX: e.clientX, startCenter: viewCenterRef.current, dragged: false };
-
-    // Pause on grab (vinyl-stop) — no seek, position unchanged
-    if (wasPlayingRef.current) togglePlay();
-  };
-
-  // Mouse move: update view position visually only — no seek (prevents audio stutter)
-  const onMouseMove = useCallback((e) => {
+  // Finish a drag: seek to the scrubbed position and drop the drag state. Safe to
+  // call when nothing is being dragged — every "the pointer went away" path lands
+  // here (pointerup, pointercancel, window blur, a move with no button held).
+  const endDetailDrag = useCallback(() => {
     if (!dragRef.current) return;
-    const canvas = detailCanvasRef.current;
-    if (!canvas) return;
-    const deltaPx = dragRef.current.startX - e.clientX;
-    // Only count as a real drag after >4 px to filter out click micro-movement
-    if (Math.abs(deltaPx) > 4) dragRef.current.dragged = true;
-    if (!dragRef.current.dragged) return;
-    const pxPerMs = canvas.offsetWidth / viewMsRef.current;
-    const deltaMs = deltaPx / pxPerMs;
-    const maxCenter = trackDurationMsRef.current || 600_000;
-    viewCenterRef.current = Math.max(0, Math.min(maxCenter, dragRef.current.startCenter + deltaMs));
-  }, []);
-
-  // Mouse up: if user dragged, seek to the scrubbed position
-  const onMouseUp = () => {
-    if (dragRef.current?.dragged && isThisTrackRef.current) {
+    if (dragRef.current.dragged && isThisTrackRef.current) {
       const targetSec = viewCenterRef.current / 1000;
       seekRef.current(targetSec);
       currentTimeSecRef.current = targetSec;
@@ -669,7 +647,64 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
     dragRef.current = null;
     wasPlayingRef.current = false;
     userScrollingRef.current = false;
+  }, []);
+
+  // Pointer events WITH capture: the canvas keeps receiving moves and the release
+  // even when the pointer leaves the window. The old mouse handlers only ran while
+  // the cursor was over the overlay, so a release outside it left the drag alive:
+  // the waveform stayed glued to the cursor and the next click was needed to let
+  // go (user report 2026-09-14 — the pan must live exactly as long as the button).
+  const onDetailPointerDown = (e) => {
+    if (e.target !== detailCanvasRef.current || e.button !== 0) return;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    userScrollingRef.current = true;
+    wasPlayingRef.current = isThisTrackRef.current && isPlayingRef.current;
+    dragRef.current = { startX: e.clientX, startCenter: viewCenterRef.current, dragged: false };
+
+    // Pause on grab (vinyl-stop) — no seek, position unchanged
+    if (wasPlayingRef.current) togglePlay();
   };
+
+  // Pointer move: update view position visually only — no seek (prevents audio stutter)
+  const onDetailPointerMove = useCallback(
+    (e) => {
+      if (!dragRef.current) return;
+      // No button held = the release was never delivered to us; end the drag here
+      // instead of panning on hover.
+      if (e.buttons === 0) {
+        endDetailDrag();
+        return;
+      }
+      const canvas = detailCanvasRef.current;
+      if (!canvas) return;
+      const deltaPx = dragRef.current.startX - e.clientX;
+      // Only count as a real drag after >4 px to filter out click micro-movement
+      if (Math.abs(deltaPx) > 4) dragRef.current.dragged = true;
+      if (!dragRef.current.dragged) return;
+      const pxPerMs = canvas.offsetWidth / viewMsRef.current;
+      const deltaMs = deltaPx / pxPerMs;
+      const maxCenter = trackDurationMsRef.current || 600_000;
+      viewCenterRef.current = Math.max(
+        0,
+        Math.min(maxCenter, dragRef.current.startCenter + deltaMs)
+      );
+    },
+    [endDetailDrag]
+  );
+
+  // Safety net: a release we never see (alt-tab, window blur, pointercancel) must
+  // end the drag rather than leave the waveform following the cursor.
+  useEffect(() => {
+    const finish = () => endDetailDrag();
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    window.addEventListener('blur', finish);
+    return () => {
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      window.removeEventListener('blur', finish);
+    };
+  }, [endDetailDrag]);
 
   // ── Wheel to zoom ─────────────────────────────────────────────────────────
   const onDetailWheel = useCallback((e) => {
@@ -922,12 +957,7 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
   const viewMs = ZOOM_LEVELS[zoomIdx];
 
   return (
-    <div
-      className="bge-overlay"
-      onMouseMove={onMouseMove}
-      onMouseUp={onMouseUp}
-      onMouseLeave={onMouseUp}
-    >
+    <div className="bge-overlay">
       <div className="bge-modal">
         {/* Header */}
         <div className="bge-header">
@@ -978,7 +1008,10 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
           <canvas
             ref={detailCanvasRef}
             className="bge-canvas"
-            onMouseDown={onDetailMouseDown}
+            onPointerDown={onDetailPointerDown}
+            onPointerMove={onDetailPointerMove}
+            onPointerUp={endDetailDrag}
+            onPointerCancel={endDetailDrag}
             title="Click to seek · Drag to scrub · Scroll to zoom"
           />
           <div className="bge-canvas-hint">

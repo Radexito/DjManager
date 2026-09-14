@@ -247,3 +247,60 @@ describe('BeatGridEditor — trim controls (#463)', () => {
     expect(onClose).toHaveBeenCalled();
   });
 });
+
+// jsdom has no PointerEvent constructor; React dispatches by event NAME, so a
+// MouseEvent carrying the pointer fields exercises the same handlers.
+function pointerEvent(type, { clientX = 0, buttons = 0, button = 0 } = {}) {
+  return new MouseEvent(type, { bubbles: true, clientX, buttons, button });
+}
+
+describe('BeatGridEditor — detail waveform drag (#463 drag lock)', () => {
+  it('pans only while the button is held and seeks once on release', () => {
+    player.currentTime = 10;
+    renderEditor();
+    const canvas = document.querySelector('.bge-canvas');
+
+    fireEvent(canvas, pointerEvent('pointerdown', { clientX: 200, buttons: 1 }));
+    fireEvent(canvas, pointerEvent('pointermove', { clientX: 100, buttons: 1 }));
+    expect(player.seek).not.toHaveBeenCalled();
+    fireEvent(canvas, pointerEvent('pointerup', { clientX: 100 }));
+
+    expect(player.seek).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets go as soon as a move arrives with no button held (release seen nowhere)', () => {
+    player.currentTime = 10;
+    renderEditor();
+    const canvas = document.querySelector('.bge-canvas');
+
+    fireEvent(canvas, pointerEvent('pointerdown', { clientX: 200, buttons: 1 }));
+    fireEvent(canvas, pointerEvent('pointermove', { clientX: 100, buttons: 1 }));
+    // The release happened where no listener of ours could see it: the next move
+    // arrives with the button already up. The pan must end here, not follow the
+    // cursor until the next click.
+    fireEvent(canvas, pointerEvent('pointermove', { clientX: 40, buttons: 0 }));
+
+    expect(player.seek).toHaveBeenCalledTimes(1);
+
+    // …and further hover moves must not pan or seek again.
+    fireEvent(canvas, pointerEvent('pointermove', { clientX: 20, buttons: 0 }));
+    expect(player.seek).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends the pan when the window loses focus mid-drag', () => {
+    player.currentTime = 10;
+    renderEditor();
+    const canvas = document.querySelector('.bge-canvas');
+
+    fireEvent(canvas, pointerEvent('pointerdown', { clientX: 200, buttons: 1 }));
+    fireEvent(canvas, pointerEvent('pointermove', { clientX: 100, buttons: 1 }));
+    act(() => {
+      window.dispatchEvent(new Event('blur'));
+    });
+
+    expect(player.seek).toHaveBeenCalledTimes(1);
+
+    fireEvent(canvas, pointerEvent('pointermove', { clientX: 20, buttons: 1 }));
+    expect(player.seek).toHaveBeenCalledTimes(1);
+  });
+});

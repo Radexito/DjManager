@@ -189,10 +189,26 @@ export function PlayerProvider({ children }) {
   // Set by seek() — playAtIndex() uses it so its fallback "start at trim start"
   // never fights a deliberate seek (e.g. the editor starting from the playhead).
   const explicitSeekRef = useRef(false);
+  // Signature of the trim the player is currently using ("start:end" or null).
+  // Lets the effect below tell "the row was patched with a NEW trim" apart from
+  // an unrelated re-render of the same track row.
+  const trimSignatureRef = useRef(null);
   useEffect(() => {
-    trimRangeRef.current = trackTrimRange(currentTrack);
-    if (!trimRangeRef.current) trimStopArmedRef.current = false;
-  }, [currentTrack]);
+    const trim = trackTrimRange(currentTrack);
+    trimRangeRef.current = trim;
+    const signature = trim ? `${trim.startMs}:${trim.endMs}` : null;
+    const changed = signature !== trimSignatureRef.current;
+    trimSignatureRef.current = signature;
+    if (!trim) {
+      trimStopArmedRef.current = false;
+      return;
+    }
+    // A trim that lands while the track is already PLAYING must bite immediately:
+    // playAtIndex() arms the stop only at the next start, so setting OUT in the
+    // Prepare Track editor and pressing Apply used to let playback run straight
+    // past the new end until the track was started again (user report 2026-09-14).
+    if (changed && !audio.paused) trimStopArmedRef.current = true;
+  }, [currentTrack, audio]);
 
   // Stable play-at-index — exposed via ref so handleEnded can call it without stale closure
   const playAtIndexRef = useRef(null);

@@ -230,4 +230,55 @@ describe('PlayerProvider — trim range (#463)', () => {
     expect(result.current.currentTrack?.id).toBe(1);
     expect(audio.currentTime).toBe(30);
   });
+
+  it('arms the trim stop when a trim is applied to the playing track (#463 follow-up)', async () => {
+    const { result } = await renderReady();
+    const queue = [TRACK_PLAIN, TRACK_TRIMMED];
+    await act(async () => {
+      result.current.play(queue[0], queue, 0);
+    });
+    const audio = result.current.audioRef.current;
+    await makePlaying(audio);
+
+    // Prepare Track → Apply patches the playing row. The track had no trim when
+    // playback started, so the stop has to arm on the patch, not only on the next
+    // play — otherwise OUT is ignored and the track runs to the end of the file.
+    act(() => {
+      result.current.patchCurrentTrack(2, { trim_start_ms: 10_000, trim_end_ms: 20_000 });
+    });
+
+    audio.currentTime = 21;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+
+    expect(result.current.currentTrack?.id).toBe(1);
+    expect(result.current.queueIndex).toBe(1);
+  });
+
+  it('does not arm anything when the patched trim is unchanged', async () => {
+    const { result } = await renderReady();
+    await act(async () => {
+      result.current.play(TRACK_TRIMMED, [TRACK_TRIMMED], 0);
+    });
+    const audio = result.current.audioRef.current;
+    await makePlaying(audio);
+
+    // Auditioning outside the range disarms the stop…
+    act(() => {
+      result.current.seek(90);
+    });
+    // …and an unrelated patch carrying the SAME trim must not re-arm it.
+    act(() => {
+      result.current.patchCurrentTrack(1, { bpm_override: 128 });
+    });
+    audio.currentTime = 61;
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+
+    expect(result.current.isPlaying).toBe(true);
+    expect(result.current.currentTrack?.id).toBe(1);
+  });
 });
