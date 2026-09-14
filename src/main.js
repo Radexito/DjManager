@@ -142,7 +142,9 @@ import {
 } from './deps.js';
 import { initLogger, getLogDir, initRendererLogger, logRendererMessage } from './logger.js';
 import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
-import { detectWindowsDrives } from './explorer/drives.js';
+import { scanVolumes, volumeSignature } from './explorer/volumes.js';
+import { detectExports, findExportRoot } from './explorer/exportDetection.js';
+import { writeTrackBackToExport } from './explorer/exportSync.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
 import { readTrackCues, buildCueImportPlan } from './usb/anlzCueReader.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
@@ -475,6 +477,7 @@ async function initApp() {
   await startMediaServer();
   console.log('Creating window.');
   createWindow();
+  startDriveWatcher();
 
   // Skip dep download in E2E tests — binary not needed for UI tests and the
   // pending download blocks app.close(), causing afterEach timeouts.
@@ -894,6 +897,8 @@ ipcMain.handle('adjust-bpm', (_, { trackIds, factor }) => {
     if (base == null) continue;
     const newBpm = Math.round(base * factor * 10) / 10;
     updateTrack(id, { bpm_override: newBpm });
+    // Preparing a track changes what a deck should show for it.
+    scheduleExportSync(id);
     results.push({ id, bpm_override: newBpm });
   }
   return results;
@@ -906,6 +911,7 @@ ipcMain.handle('add-cue-point', (_, { trackId, positionMs, label, color, hotCueI
   // Adding a sequentially-named cue shifts the positional order — renumber the
   // following auto-named cues so names stay unique (#253).
   renumberSequentialCuesAfter(trackId, id);
+  scheduleExportSync(trackId);
   return { id };
 });
 
@@ -917,11 +923,14 @@ ipcMain.handle('update-cue-point', (_, { id, label, color, hotCueIndex, enabled 
   if (before && typeof label === 'string') {
     renumberSequentialCuesAfter(before.track_id, id);
   }
+  if (before) scheduleExportSync(before.track_id);
   return { ok: true };
 });
 
 ipcMain.handle('delete-cue-point', (_, id) => {
+  const cue = getCuePointById(id);
   deleteCuePoint(id);
+  if (cue) scheduleExportSync(cue.track_id);
   return { ok: true };
 });
 
@@ -931,8 +940,68 @@ ipcMain.handle('generate-cue-points', (_, trackId) => {
   deleteAllCuePoints(trackId);
   const generated = generateCuePoints(track);
   generated.forEach((cue) => addCuePoint({ trackId, ...cue }));
+  scheduleExportSync(trackId);
   return getCuePoints(trackId);
 });
+
+// ── Writing a prepared track back into its export ────────────────────────────
+// Cues, beat grid and BPM are edited in the app, but a track that lives inside
+// one of our exports is read by a deck from that folder. Every such edit is
+// mirrored there (ANLZ + manifest) so preparing a track and playing it off the
+// stick agree (#504). Failures are logged, never raised: the edit itself stands.
+const exportSyncQueue = new Map(); // trackId -> { running, queued }
+
+function scheduleExportSync(trackId) {
+  if (trackId == null) return;
+  const state = exportSyncQueue.get(trackId) ?? { running: false, queued: false };
+  exportSyncQueue.set(trackId, state);
+  if (state.running) {
+    state.queued = true;
+    return;
+  }
+
+  state.running = true;
+  void (async () => {
+    try {
+      do {
+        state.queued = false;
+        await syncTrackToExport(trackId);
+      } while (state.queued);
+    } finally {
+      state.running = false;
+      exportSyncQueue.delete(trackId);
+    }
+  })();
+}
+
+async function syncTrackToExport(trackId) {
+  try {
+    const track = getTrackById(trackId);
+    if (!track?.file_path) return;
+    const found = findExportRoot(path.dirname(track.file_path));
+    if (!found) return; // not inside an export, nothing to mirror
+
+    const result = await writeTrackBackToExport({
+      exportRoot: found.root,
+      filePath: track.file_path,
+      track,
+      cuePoints: getCuePoints(trackId).filter((c) => c.enabled !== 0),
+      writeAnlz,
+      ffmpegPath: getFfmpegRuntimePath(),
+    });
+
+    if (result.ok) {
+      console.log(
+        `[export] track ${trackId} written back to ${found.root} as ${result.usbFilePath}` +
+          (result.manifestUpdated ? ' (manifest updated)' : '')
+      );
+    } else if (result.reason !== 'no-manifest' && result.reason !== 'not-in-export') {
+      console.warn(`[export] write-back skipped for track ${trackId}: ${result.reason}`);
+    }
+  } catch (err) {
+    console.warn(`[export] write-back failed for track ${trackId}:`, err.message);
+  }
+}
 
 ipcMain.handle('generate-cue-points-library', (_, { overwrite = false } = {}) => {
   const tracks = getTracks({ limit: 999999 });
@@ -2125,24 +2194,127 @@ ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlis
 
 // ── File Explorer v2 IPC ───────────────────────────────────────────────────────
 
-ipcMain.handle('get-computer-root', () => {
+/**
+ * Drives and mounted volumes as the Explorer needs them right now: Windows
+ * drive roots (C:\, D:\ ...) plus a normalised volume list for both platforms,
+ * so the drive pane can render one shape and the watcher has one thing to
+ * compare (#504). Called on load and on every poll, so the two always agree.
+ */
+function scanDrives() {
   const home = os.homedir();
-  let root;
-  let drives = [];
-  if (process.platform === 'win32') {
-    root = path.parse(home).root || 'C:\\';
-    // #473: enumerate ALL present drives so the Explorer can switch from C:
-    // to any other volume (D:, E:, ...).
-    drives = detectWindowsDrives();
-    if (!drives.includes(root)) drives.unshift(root);
-  } else {
-    root = '/';
+  const snapshot = scanVolumes({ platform: process.platform, homeDir: home });
+  return {
+    root: snapshot.root ?? '/',
+    home,
+    drives: snapshot.drives,
+    volumes: snapshot.volumes,
+  };
+}
+
+ipcMain.handle('get-computer-root', () => scanDrives());
+
+// ── Volume watcher ──────────────────────────────────────────────────────────
+//
+// The drive list used to be fetched once when the Explorer mounted, so a stick
+// plugged in while the app was running never showed up and an unplugged one
+// stayed clickable. Polling is deliberate: it keeps working while the window is
+// unfocused, which is exactly when a long export or download is running, and it
+// needs neither udev on Linux nor device notifications on Windows.
+const DRIVE_POLL_INTERVAL_MS = 7000;
+let driveWatcher = null;
+
+/** Rescan and, when something appeared, disappeared or moved, tell the renderer. */
+function checkDrivesChanged() {
+  if (!driveWatcher) return null;
+  let snapshot;
+  try {
+    snapshot = scanDrives();
+  } catch (err) {
+    console.error('[drives] rescan failed:', err.message);
+    return null;
   }
-  return { root, home, drives };
-});
+
+  const signature = volumeSignature(snapshot.volumes);
+  if (signature === driveWatcher.signature) return null;
+  driveWatcher.signature = signature;
+
+  const payload = { drives: snapshot.drives, volumes: snapshot.volumes };
+  console.log(
+    `[drives] change: ${snapshot.drives.length} drive(s), ${snapshot.volumes.length} volume(s)`
+  );
+  if (global.mainWindow) global.mainWindow.webContents.send('drives-updated', payload);
+  return payload;
+}
+
+function startDriveWatcher() {
+  if (driveWatcher) return;
+  driveWatcher = { timer: null, signature: volumeSignature(scanDrives().volumes) };
+  driveWatcher.timer = setInterval(checkDrivesChanged, DRIVE_POLL_INTERVAL_MS);
+  // Never hold the event loop open on quit.
+  if (typeof driveWatcher.timer.unref === 'function') driveWatcher.timer.unref();
+}
 
 ipcMain.handle('get-tracks-by-paths', (_, filePaths) => {
   return getTracksByPaths(filePaths);
+});
+
+// #504: read-only scan of a drive for DJ-software exports (Rekordbox, Serato,
+// Engine DJ, Traktor). Never writes to the drive.
+ipcMain.handle('detect-drive-exports', (_, driveRoot) => {
+  try {
+    return { ok: true, exports: detectExports(driveRoot) };
+  } catch (err) {
+    return { ok: false, error: err.message, exports: [] };
+  }
+});
+
+// Same detection, but starting from the folder the user opened and walking up:
+// browsing into an export (or a folder inside it) should be able to show what
+// the export contains instead of the folders it is made of (#504).
+// Cues out of an export's ANLZ files - hot cues, memory cues, labels and
+// colours - so a stick can be inspected before anything is imported (#504).
+ipcMain.handle('explorer-export-cues', (_, payload) => {
+  const root = payload?.root;
+  const tracks = Array.isArray(payload?.tracks) ? payload.tracks.slice(0, 300) : [];
+  const cues = {};
+  try {
+    for (const track of tracks) {
+      if (!track?.path || !track?.usbFilePath) continue;
+      cues[track.path] = readTrackCues(root, track.usbFilePath);
+    }
+    return { ok: true, cues };
+  } catch (err) {
+    return { ok: false, error: err.message, cues };
+  }
+});
+
+// The folders in a listing that are themselves a DJ-software export, so the
+// Explorer can mark them in the parent and offer the library view up front.
+// One stat pass per folder on the main side, and only for what is on screen.
+ipcMain.handle('explorer-export-roots', (_, dirs) => {
+  const roots = {};
+  try {
+    for (const dir of Array.isArray(dirs) ? dirs.slice(0, 500) : []) {
+      const exports = detectExports(dir);
+      if (exports.length > 0) {
+        roots[dir] = { software: exports[0].software, label: exports[0].label };
+      }
+    }
+    return { ok: true, roots };
+  } catch (err) {
+    return { ok: false, error: err.message, roots: {} };
+  }
+});
+
+ipcMain.handle('explorer-find-export', (_, startDir) => {
+  try {
+    const found = findExportRoot(startDir);
+    return found
+      ? { ok: true, root: found.root, exports: found.exports }
+      : { ok: true, root: null, exports: [] };
+  } catch (err) {
+    return { ok: false, error: err.message, root: null, exports: [] };
+  }
 });
 
 let activeRecursiveWalker = null;

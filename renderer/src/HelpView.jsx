@@ -91,12 +91,15 @@ const SECTIONS = [
   },
   {
     title: 'Explorer & linked files',
-    keywords: 'filesystem drives usb folder link reference unavailable multi selection count',
+    keywords:
+      'filesystem drives usb folder link reference unavailable multi selection count rekordbox serato engine traktor export detect',
     items: [
       'Explorer browses the filesystem: select a folder or files with audio and Add to Library to link them (kept in place), or manage linked files and their availability.',
       'Select several rows (Ctrl/Cmd+click, Shift+click for a range, Ctrl+A for everything) and right-click: import, create playlist and favourite actions run on every selected folder, with count-aware labels such as Import 3 folders (flat).',
       'Actions that only make sense on a single row (Play, Edit Details, Prepare Track, Analysis) are shown disabled behind a "3 folders selected" header while several rows are selected, instead of silently acting on the row you clicked.',
       'Removable drives are listed separately, which keeps USB workflow quick. Linked tracks on a disconnected drive show as unavailable rather than disappearing.',
+      "Selecting a drive also lists the DJ software exports found on it (Rekordbox, Serato, Engine DJ, Traktor). Expanding an export shows its playlists and tracks when a readable source exists (DjManager's own export-manifest.json is read first); formats with no reader yet say so instead of showing invented counts.",
+      'DJ export detection is read-only and never modifies the drive. Use the refresh button on a drive row to scan that drive again.',
     ],
   },
   {

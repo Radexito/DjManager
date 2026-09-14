@@ -107,6 +107,101 @@
   background: var(--bg-tertiary, #333);
 }
 
+/* ── Detected DJ exports under a drive (#504) ───────────────────────────── */
+
+.explorer-drive-exports {
+  display: flex;
+  flex-direction: column;
+  margin: 0 4px 4px 14px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border, #2a2a2a);
+  flex-shrink: 0;
+}
+
+.explorer-drive-exports__empty {
+  padding: 3px 4px;
+  font-size: 10px;
+  color: var(--text-muted, #666);
+  line-height: 1.4;
+}
+
+.explorer-drive-export {
+  display: flex;
+  flex-direction: column;
+}
+
+.explorer-drive-export__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 3px 4px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 11px;
+  color: var(--text-secondary, #aaa);
+  border-radius: 3px;
+}
+
+.explorer-drive-export__head:hover {
+  background: var(--bg-hover, #2d2d2d);
+  color: var(--text-primary, #e0e0e0);
+}
+
+.explorer-drive-export__caret {
+  flex-shrink: 0;
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+.explorer-drive-export__name {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.explorer-drive-export__body {
+  padding: 2px 4px 4px 14px;
+}
+
+.explorer-drive-export__note {
+  font-size: 10px;
+  color: var(--text-muted, #666);
+  line-height: 1.4;
+}
+
+.explorer-drive-export__playlist {
+  margin-bottom: 4px;
+}
+
+.explorer-drive-export__playlist-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary, #aaa);
+  margin-bottom: 1px;
+}
+
+.explorer-drive-export__track {
+  display: flex;
+  flex-direction: column;
+  font-size: 10px;
+  color: var(--text-muted, #777);
+  line-height: 1.35;
+  overflow: hidden;
+}
+
+.explorer-drive-export__track-title,
+.explorer-drive-export__track-artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-drive-export__track-artist {
+  color: var(--text-muted, #555);
+}
+
 /* ── Toolbar ────────────────────────────────────────────────────────────── */
 
 .explorer-toolbar {
@@ -338,4 +433,185 @@
   justify-content: flex-end;
   gap: 8px;
   margin-top: 6px;
+}
+
+/* ── Export library view (#504) ──────────────────────────────────────────────
+   Browsing an export shows its collection the way Rekordbox does (All tracks,
+   then the playlists) and lists the tracks through the same rows as a folder:
+   double-click plays, right-click offers the usual file actions. Read only. */
+.explorer-export-library {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.explorer-export-library__banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  background: var(--bg-secondary, #1a1a1a);
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  flex-shrink: 0;
+}
+
+.explorer-export-library__heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.explorer-export-library__title {
+  font-weight: 600;
+  color: var(--text-primary, #e0e0e0);
+}
+
+.explorer-export-library__meta {
+  font-size: 12px;
+  color: var(--text-muted, #666);
+}
+
+.explorer-export-library__path {
+  font-size: 11px;
+  color: var(--text-muted, #555);
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-export-library__modes {
+  display: flex;
+  gap: 6px;
+}
+
+.explorer-export-library__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.explorer-export-library__playlists {
+  width: 220px;
+  flex: 0 0 220px;
+  border-right: 1px solid var(--border, #2a2a2a);
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.explorer-export-library__playlist {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+}
+
+.explorer-export-library__playlist:hover {
+  background: var(--bg-hover, #2d2d2d);
+}
+
+.explorer-export-library__playlist--active {
+  background: var(--bg-tertiary, #333);
+}
+
+.explorer-export-library__playlist-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px 4px 7px 12px;
+  background: none;
+  border: 0;
+  color: var(--text-primary, #e0e0e0);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.explorer-export-library__playlist--active .explorer-export-library__playlist-main {
+  color: var(--accent, #4a90d9);
+}
+
+.explorer-export-library__playlist-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-export-library__playlist-count {
+  font-size: 12px;
+  color: var(--text-muted, #666);
+}
+
+.explorer-export-library__playlist-add {
+  padding: 0 6px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted, #888);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.explorer-export-library__playlist-add:hover {
+  color: var(--accent, #4a90d9);
+  border-color: var(--accent, #4a90d9);
+}
+
+.explorer-export-library__list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.explorer-export-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text-secondary, #aaa);
+  background: var(--bg-secondary, #1a1a1a);
+  border-bottom: 1px solid var(--border, #2a2a2a);
+  flex-shrink: 0;
+}
+
+/* Cues of an export, read from its ANLZ files (#504). */
+.cell.cues {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.cue-chip {
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 15px;
+  border: 1px solid var(--border, #555);
+  border-radius: 3px;
+  color: var(--text-secondary, #aaa);
+}
+
+.cue-chip--memory {
+  border-style: dashed;
+}
+
+.cue-chip--more {
+  border-color: transparent;
+  color: var(--text-muted, #777);
 }
