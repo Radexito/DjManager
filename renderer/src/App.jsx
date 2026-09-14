@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import Sidebar from './Sidebar.jsx';
 import MusicLibrary from './MusicLibrary.jsx';
+import { buildArtistQuery } from './searchParser.js';
 import DownloadView from './DownloadView.jsx';
 import TidalDownloadView from './TidalDownloadView.jsx';
 import CloudSearchView from './CloudSearchView.jsx';
@@ -9,6 +10,7 @@ import FileExplorerView from './FileExplorerView.jsx';
 import HelpView from './HelpView.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import ExportModal from './ExportModal.jsx';
+import UsbCueImport from './UsbCueImport.jsx';
 import PlayerBar from './PlayerBar.jsx';
 import TopBar from './TopBar.jsx';
 import { PlayerProvider } from './PlayerContext.jsx';
@@ -34,10 +36,22 @@ function App() {
   // "Show track in Music" — the player-bar title while playing from the
   // all-tracks view asks the library to jump to that track.
   const [locateTrackRequest, setLocateTrackRequest] = useState(null);
+  // #259 — cue import from a Rekordbox stick: null = closed, '' = pick a folder
+  const [cueImportRoot, setCueImportRoot] = useState(null);
 
-  const handleArtistSearch = (artist) => {
+  // Ask once per inserted stick that actually carries new cues.
+  useEffect(() => {
+    if (!window.api?.onUsbCuesDetected) return undefined;
+    return window.api.onUsbCuesDetected(({ usbRoot }) => {
+      setCueImportRoot((current) => (current === null ? usbRoot : current));
+    });
+  }, []);
+
+  const handleArtistSearch = (artist, fromCredit) => {
     setSelectedPlaylistId('music');
-    setSearch(`ARTIST is ${artist}`);
+    // buildArtistQuery owns the operator choice: `is` for a whole tag,
+    // `contains` for a name split out of a credit (#505).
+    setSearch(buildArtistQuery(artist, { fromCredit: Boolean(fromCredit) }));
   };
 
   const handleLocateTrack = (trackId) => {
@@ -236,6 +250,8 @@ function App() {
                     onSearchChange={setSearch}
                     openDetailsRequest={openDetailsRequest}
                     locateTrack={locateTrackRequest}
+                    onImportUsbCues={() => setCueImportRoot('')}
+                    onArtistSearch={handleArtistSearch}
                   />
                 )}
             </div>
@@ -253,6 +269,9 @@ function App() {
               initialMode={exportState.mode}
               onClose={() => setExportState(null)}
             />
+          )}
+          {cueImportRoot !== null && (
+            <UsbCueImport usbRoot={cueImportRoot} onClose={() => setCueImportRoot(null)} />
           )}
           {zoomLevel !== null && zoomLevel !== 1.0 && (
             <button
