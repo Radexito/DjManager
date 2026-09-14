@@ -347,4 +347,51 @@ describe('ExportModal', () => {
       );
     });
   });
+
+  // ── Trim ranges option (#463) ────────────────────────────────────────────────
+
+  it('offers the trim-ranges option checked by default', () => {
+    render(<ExportModal {...defaultProps} />);
+
+    expect(screen.getByLabelText(/Apply trim ranges/)).toBeChecked();
+  });
+
+  it('sends applyTrim: false when the trim option is switched off', async () => {
+    window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
+    window.api.checkUsbFormat.mockResolvedValueOnce({
+      needsFormat: false,
+      fs: 'fat32',
+      fsLabel: 'FAT32',
+      device: '/dev/sdb1',
+    });
+
+    render(<ExportModal {...defaultProps} />);
+    fireEvent.click(screen.getByLabelText(/Apply trim ranges/));
+    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+
+    await waitFor(() => {
+      expect(window.api.exportRekordbox).toHaveBeenCalledWith(
+        expect.objectContaining({ applyTrim: false })
+      );
+    });
+  });
+
+  it('sends applyTrim: true when the option is left alone (export all)', async () => {
+    window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
+    window.api.checkUsbFormat.mockResolvedValueOnce({
+      needsFormat: false,
+      fs: 'fat32',
+      fsLabel: 'FAT32',
+      device: '/dev/sdb1',
+    });
+
+    render(<ExportModal {...defaultProps} />);
+    fireEvent.click(screen.getByText('Export All'));
+
+    await waitFor(() => {
+      expect(window.api.exportAll).toHaveBeenCalledWith(
+        expect.objectContaining({ applyTrim: true })
+      );
+    });
+  });
 });
