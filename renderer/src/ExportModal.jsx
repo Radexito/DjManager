@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import FormatConfirmModal from './FormatConfirmModal.jsx';
+import { applyVolumeRenames } from './volumeRenames.js';
 import './ExportModal.css';
 
 const STEPS = {
@@ -60,6 +61,10 @@ function ExportModal({ onClose, playlistId, initialMode }) {
   const [mode, setMode] = useState(initialMode ?? null);
   const [usbInfo, setUsbInfo] = useState(null);
   const [usbRoot, setUsbRoot] = useState(null);
+  // Stable identity of the picked volume (#514). The letter alone is not enough:
+  // the drive can come back under a different one before the export starts, so we
+  // remember `{ id, root }` and let the main process resolve the current letter.
+  const [usbVolume, setUsbVolume] = useState(null);
   const [progress, setProgress] = useState(null); // { msg, pct }
   const [formatProgress, setFormatProgress] = useState(null);
   const [result, setResult] = useState(null);
@@ -91,11 +96,33 @@ function ExportModal({ onClose, playlistId, initialMode }) {
     };
   }, []);
 
+  // #514: if the picked drive comes back under another letter while this dialog
+  // is open, follow it so the shown path (and the export) stays on the right disk.
+  // The volume root captured at pick time is kept in sync too, otherwise the main
+  // process could no longer tie the updated path back to its volume.
+  useEffect(() => {
+    const unsub = window.api.onDrivesUpdated((payload) => {
+      const renames = payload?.letterChanged ?? [];
+      if (renames.length === 0) return;
+      setUsbRoot((prev) => applyVolumeRenames(prev, renames));
+      setUsbVolume((prev) => {
+        if (!prev?.root) return prev;
+        const root = applyVolumeRenames(prev.root, renames);
+        return root === prev.root ? prev : { ...prev, root };
+      });
+    });
+    return unsub;
+  }, []);
+
   const pickFolder = async (exportMode) => {
     setMode(exportMode);
     const dir = await window.api.openDirDialog();
     if (!dir) return;
     setUsbRoot(dir);
+    // Remember which volume was picked, not just its letter, so a swap between
+    // picking the drive and starting the export can still be resolved (#514).
+    const volume = await window.api.getVolumeForPath(dir);
+    setUsbVolume(volume ?? null);
     setStep(STEPS.checkingFormat);
     const info = await window.api.checkUsbFormat(dir);
     setUsbInfo(info);
@@ -106,7 +133,7 @@ function ExportModal({ onClose, playlistId, initialMode }) {
     } else if (info.needsFormat) {
       setStep(STEPS.needsFormat);
     } else {
-      startExport(exportMode, dir);
+      startExport(exportMode, dir, volume ?? null);
     }
   };
 
@@ -118,16 +145,18 @@ function ExportModal({ onClose, playlistId, initialMode }) {
       setStep(STEPS.error);
       return;
     }
-    startExport(mode, usbRoot);
+    startExport(mode, usbRoot, usbVolume);
   };
 
-  const startExport = async (exportMode, dir) => {
+  const startExport = async (exportMode, dir, volume = usbVolume) => {
     setStep(STEPS.exporting);
     setProgress({ msg: 'Starting…', pct: 0 });
     let res;
     if (exportMode === 'rekordbox') {
       res = await window.api.exportRekordbox({
         usbRoot: dir,
+        usbVolumeId: volume?.id ?? null,
+        usbVolumeRoot: volume?.root ?? null,
         playlistId: playlistId ?? null,
         useNormalized,
         targetDevice: targetDevice || null,
@@ -136,6 +165,8 @@ function ExportModal({ onClose, playlistId, initialMode }) {
     } else {
       res = await window.api.exportAll({
         usbRoot: dir,
+        usbVolumeId: volume?.id ?? null,
+        usbVolumeRoot: volume?.root ?? null,
         playlistId: playlistId ?? null,
         useNormalized,
         targetDevice: targetDevice || null,

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import ExportModal from '../ExportModal.jsx';
 
 describe('ExportModal', () => {
@@ -324,6 +324,117 @@ describe('ExportModal', () => {
     await waitFor(() => {
       expect(window.api.exportRekordbox).toHaveBeenCalledWith(
         expect.objectContaining({ targetDevice: 'xdj-rx2', forceMp3: true })
+      );
+    });
+  });
+
+  // #514: the picked drive is remembered by volume id, not just by letter, so the
+  // main process can follow it when Windows reassigns the letter before the export.
+  it('passes the picked volume id to exportRekordbox', async () => {
+    window.api.openDirDialog.mockResolvedValueOnce('E:\\');
+    window.api.getVolumeForPath.mockResolvedValueOnce({ id: 'win32:vol:1a2b3c4d', root: 'E:\\' });
+    window.api.checkUsbFormat.mockResolvedValueOnce({
+      needsFormat: false,
+      fs: 'fat32',
+      fsLabel: 'FAT32',
+      device: 'E:',
+    });
+
+    render(<ExportModal {...defaultProps} />);
+    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+
+    await waitFor(() => {
+      expect(window.api.getVolumeForPath).toHaveBeenCalledWith('E:\\');
+      expect(window.api.exportRekordbox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          usbRoot: 'E:\\',
+          usbVolumeId: 'win32:vol:1a2b3c4d',
+          usbVolumeRoot: 'E:\\',
+        })
+      );
+    });
+  });
+
+  // #514: the drive can be replugged while the dialog is open, so the shown mount
+  // point (and the eventual export) must follow it to the new letter.
+  it('follows the picked drive when it returns under a new letter', async () => {
+    const subscribers = [];
+    window.api.onDrivesUpdated.mockImplementation((cb) => {
+      subscribers.push(cb);
+      return () => {};
+    });
+    window.api.openDirDialog.mockResolvedValueOnce('E:\\Music');
+    window.api.getVolumeForPath.mockResolvedValueOnce({ id: 'win32:vol:1a2b3c4d', root: 'E:\\' });
+    window.api.checkUsbFormat.mockResolvedValueOnce({
+      needsFormat: true,
+      removable: true,
+      fs: 'btrfs',
+      fsLabel: 'btrfs',
+      device: 'E:',
+    });
+
+    render(<ExportModal {...defaultProps} />);
+    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/E:\\Music/)).toBeInTheDocument();
+    });
+
+    act(() => {
+      subscribers.forEach((cb) =>
+        cb({ letterChanged: [{ id: 'win32:vol:1a2b3c4d', from: 'E:\\', to: 'D:\\' }] })
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/D:\\Music/)).toBeInTheDocument();
+    });
+  });
+
+  it('sends the re-lettered volume root when the export starts after a swap', async () => {
+    const subscribers = [];
+    window.api.onDrivesUpdated.mockImplementation((cb) => {
+      subscribers.push(cb);
+      return () => {};
+    });
+    window.api.openDirDialog.mockResolvedValueOnce('E:\\Music');
+    window.api.getVolumeForPath.mockResolvedValueOnce({ id: 'win32:vol:1a2b3c4d', root: 'E:\\' });
+    window.api.checkUsbFormat.mockResolvedValueOnce({
+      needsFormat: true,
+      removable: true,
+      fs: 'btrfs',
+      fsLabel: 'btrfs',
+      device: 'E:',
+    });
+
+    render(<ExportModal {...defaultProps} />);
+    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Export Anyway')).toBeInTheDocument();
+    });
+
+    act(() => {
+      subscribers.forEach((cb) =>
+        cb({ letterChanged: [{ id: 'win32:vol:1a2b3c4d', from: 'E:\\', to: 'D:\\' }] })
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/D:\\Music/)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('Export Anyway'));
+
+    await waitFor(() => {
+      expect(window.api.exportRekordbox).toHaveBeenCalledWith(
+        expect.objectContaining({
+          usbRoot: 'D:\\Music',
+          usbVolumeId: 'win32:vol:1a2b3c4d',
+          // The pick-time volume root must follow the rename too, or the main
+          // process can no longer tie the path back to its volume (#514).
+          usbVolumeRoot: 'D:\\',
+        })
       );
     });
   });
