@@ -140,6 +140,18 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('cue-points-updated', handler);
     return () => ipcRenderer.removeListener('cue-points-updated', handler);
   },
+  // #259 — cue points set on a CDJ, read back from a Rekordbox USB.
+  // `mode` is 'extend' (add + refresh, never delete) or 'replace' (mirror the
+  // stick, dropping library cues it does not carry).
+  scanUsbCues: ({ usbRoot, mode = 'extend' }) =>
+    ipcRenderer.invoke('scan-usb-cues', { usbRoot, mode }),
+  importUsbCues: ({ usbRoot, mode = 'extend' }) =>
+    ipcRenderer.invoke('import-usb-cues', { usbRoot, mode }),
+  onUsbCuesDetected: (callback) => {
+    const handler = (_, payload) => callback(payload);
+    ipcRenderer.on('usb-cues-detected', handler);
+    return () => ipcRenderer.removeListener('usb-cues-detected', handler);
+  },
   onNormalizeProgress: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('normalize-progress', handler);
@@ -226,10 +238,14 @@ contextBridge.exposeInMainWorld('api', {
   tidalInstall: () => ipcRenderer.invoke('tidal-install'),
   tidalFetchInfo: (url) => ipcRenderer.invoke('tidal-fetch-info', url),
   tidalLogin: () => ipcRenderer.invoke('tidal-login'),
+  tidalListCollections: () => ipcRenderer.invoke('tidal-list-collections'),
+  tidalCollectionTracks: (opts) => ipcRenderer.invoke('tidal-collection-tracks', opts),
+  tidalDownloadCollection: (opts) => ipcRenderer.invoke('tidal-download-collection', opts),
   cloudSearch: ({ source, query, types, limit }) =>
     ipcRenderer.invoke('cloud-search', { source, query, types, limit }),
   cloudSearchPreview: (payload) => ipcRenderer.invoke('cloud-search-preview', payload),
   tidalDownloadUrl: (opts) => ipcRenderer.invoke('tidal-download-url', opts),
+  writeBpmKeyTags: ({ trackIds }) => ipcRenderer.invoke('write-bpm-key-tags', { trackIds }),
   onTidalProgress: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('tidal-progress', handler);

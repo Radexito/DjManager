@@ -83,6 +83,8 @@ function ExportModal({ onClose, playlistId, initialMode }) {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [useNormalized, setUseNormalized] = useState(true);
+  // #463: optional — a trimmed track can be exported as the whole file instead.
+  const [applyTrim, setApplyTrim] = useState(true);
   const [targetDevice, setTargetDevice] = useState('');
   const [forceMp3, setForceMp3] = useState(false);
   // #258 — "Real DJ mode": exported USB carries no waveforms/BPM. Persisted as
@@ -160,6 +162,7 @@ function ExportModal({ onClose, playlistId, initialMode }) {
         usbRoot: dir,
         playlistId: playlistId ?? null,
         useNormalized,
+        applyTrim,
         targetDevice: targetDevice || null,
         forceMp3,
         blindMode,
@@ -169,6 +172,7 @@ function ExportModal({ onClose, playlistId, initialMode }) {
         usbRoot: dir,
         playlistId: playlistId ?? null,
         useNormalized,
+        applyTrim,
         targetDevice: targetDevice || null,
         forceMp3,
         blindMode,
@@ -218,6 +222,14 @@ function ExportModal({ onClose, playlistId, initialMode }) {
               />
               <span>Apply loudness normalization to exported files</span>
             </label>
+            <label className="export-normalized-option">
+              <input
+                type="checkbox"
+                checked={applyTrim}
+                onChange={(e) => setApplyTrim(e.target.checked)}
+              />
+              <span>Apply trim ranges (IN/OUT) to exported files (off exports the whole file)</span>
+            </label>
             <ExportFormatOptions
               targetDevice={targetDevice}
               setTargetDevice={setTargetDevice}
@@ -263,6 +275,14 @@ function ExportModal({ onClose, playlistId, initialMode }) {
                 onChange={(e) => setUseNormalized(e.target.checked)}
               />
               <span>Apply loudness normalization to exported files</span>
+            </label>
+            <label className="export-normalized-option">
+              <input
+                type="checkbox"
+                checked={applyTrim}
+                onChange={(e) => setApplyTrim(e.target.checked)}
+              />
+              <span>Apply trim ranges (IN/OUT) to exported files (off exports the whole file)</span>
             </label>
             <ExportFormatOptions
               targetDevice={targetDevice}

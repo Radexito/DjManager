@@ -7,10 +7,10 @@ import {
   useEffect,
   useLayoutEffect,
 } from 'react';
+import { trackTrimRange } from './trackTrim.js';
+import { appendHistoryEntry, loadHistory, persistHistory } from './playbackHistory.js';
 
 const PlayerContext = createContext(null);
-
-const HISTORY_MAX = 50;
 
 export function PlayerProvider({ children }) {
   const audioRef = useRef(null);
@@ -42,9 +42,15 @@ export function PlayerProvider({ children }) {
   const [repeat, setRepeat] = useState('none'); // 'none' | 'all' | 'one'
   const [outputDeviceId, setOutputDeviceId] = useState('');
   const [volume, setVolumeState] = useState(1.0);
-  const [history, setHistory] = useState([]); // ring buffer, newest first
+  const [history, setHistory] = useState(loadHistory); // ring buffer, newest first, persisted (#507)
   const [playbackError, setPlaybackError] = useState(null); // { message } | null — surfaced by PlayerBar
   const [unavailableLinkedIds, setUnavailableLinkedIds] = useState(() => new Set());
+
+  // #507: keep the persisted copy in sync with the in-memory ring buffer. Runs
+  // on mount too, which rewrites exactly what was just hydrated - harmless.
+  useEffect(() => {
+    persistHistory(history);
+  }, [history]);
 
   // Port of the local HTTP media server (started in main process before window opens).
   const mediaPortRef = useRef(null);
@@ -173,6 +179,38 @@ export function PlayerProvider({ children }) {
   // Generation counter — incremented on every track switch so stale play() rejections are ignored
   const playGenRef = useRef(0);
 
+  // ── Trim range (#463) ─────────────────────────────────────────────────────
+  // Usable range of the current track (ms), or null when it has no trim.
+  const trimRangeRef = useRef(null);
+  // True while playback should stop on its own at the trim end. An explicit
+  // seek past the trim end disarms it (that is how the Prepare Track editor
+  // auditions the region outside the range).
+  const trimStopArmedRef = useRef(false);
+  // Set by seek() — playAtIndex() uses it so its fallback "start at trim start"
+  // never fights a deliberate seek (e.g. the editor starting from the playhead).
+  const explicitSeekRef = useRef(false);
+  // Signature of the trim the player is currently using ("start:end" or null).
+  // Lets the effect below tell "the row was patched with a NEW trim" apart from
+  // an unrelated re-render of the same track row.
+  const trimSignatureRef = useRef(null);
+  useEffect(() => {
+    const trim = trackTrimRange(currentTrack);
+    trimRangeRef.current = trim;
+    const signature = trim ? `${trim.startMs}:${trim.endMs}` : null;
+    const changed = signature !== trimSignatureRef.current;
+    trimSignatureRef.current = signature;
+    if (!trim) {
+      trimStopArmedRef.current = false;
+      return;
+    }
+    // A trim that lands on the loaded track must bite from that moment on, playing
+    // or paused: playAtIndex() arms the stop only at the next start, so setting OUT
+    // and pressing Apply used to let playback run straight past the new end until
+    // the track was started again (user report 2026-09-14). An UNCHANGED trim never
+    // re-arms, so auditioning past the end still works after an explicit seek.
+    if (changed) trimStopArmedRef.current = true;
+  }, [currentTrack]);
+
   // Stable play-at-index — exposed via ref so handleEnded can call it without stale closure
   const playAtIndexRef = useRef(null);
   // `next` is defined further down (after playAtIndex) but playAtIndex's own
@@ -229,18 +267,24 @@ export function PlayerProvider({ children }) {
       // Always ensure exactly one leading slash (Unix paths already start with '/', Windows 'C:/...' don't)
       const src = `http://127.0.0.1:${port}/${encodedPath.replace(/^\//, '')}?t=${gen}`; // cache-bust: same file reloaded = fresh pipeline
 
-      // Push currently playing track to history before switching
+      // Push currently playing track to history before switching (#507):
+      // no duplicate for a back-to-back replay, capped and persisted.
       if (currentTrackRef.current) {
-        setHistory((prev) => {
-          const next = [currentTrackRef.current, ...prev];
-          return next.length > HISTORY_MAX ? next.slice(0, HISTORY_MAX) : next;
-        });
+        setHistory((prev) => appendHistoryEntry(prev, currentTrackRef.current));
       }
       console.log('[diag] playAtIndex src =', src);
       // Build Web Audio graph on first play (must be inside user gesture so ctx starts running)
       buildAudioGraph();
       audio.pause(); // cleanly stop current pipeline before swapping source
+      // #463: playback of a trimmed track starts at its trim start. Assigning
+      // currentTime before the metadata is loaded sets the element's default
+      // playback start position, so nothing has to wait for `loadedmetadata`.
+      const trim = trackTrimRange(track);
+      trimRangeRef.current = trim;
+      trimStopArmedRef.current = trim != null;
+      explicitSeekRef.current = false;
       audio.src = src;
+      if (trim) audio.currentTime = trim.startMs / 1000;
       // Resume AudioContext — called within the same user gesture, so it works reliably
       if (audioCtxRef.current?.state === 'suspended') {
         try {
@@ -259,6 +303,18 @@ export function PlayerProvider({ children }) {
         .then(() => {
           console.log('[diag] play() resolved OK  readyState=', audio.readyState);
           skipStreakRef.current = 0;
+          // #463 fallback: not every container honours a currentTime assigned
+          // before its metadata arrives. If playback really did start at the
+          // top of the file (and the user did not seek on purpose), jump to
+          // the trim start instead.
+          if (
+            trim &&
+            gen === playGenRef.current &&
+            !explicitSeekRef.current &&
+            audio.currentTime < trim.startMs / 1000 - 0.5
+          ) {
+            audio.currentTime = trim.startMs / 1000;
+          }
         })
         .catch((err) => {
           // AbortError is expected when we switch tracks before play() resolves
@@ -303,19 +359,19 @@ export function PlayerProvider({ children }) {
 
   // Register audio event listeners once
   useEffect(() => {
-    const onTimeUpdate = () => setCurrentTime(audio.currentTime);
-    const onDurationChange = () => setDuration(isNaN(audio.duration) ? 0 : audio.duration);
-    const onPlay = () => setIsPlaying(true);
-    const onPause = () => setIsPlaying(false);
-    const onEnded = () => {
+    // Shared by the natural 'ended' event and the trim-out stop (#463).
+    const advanceAfterTrack = (fromTrimEnd = false) => {
       const q = queueRef.current;
       const idx = idxRef.current;
       const rep = repeatRef.current;
       const shuf = shuffleRef.current;
       const plId = currentPlaylistIdRef.current;
       const plName = currentPlaylistNameRef.current;
+      const trim = trimRangeRef.current;
+      const startSec = trim ? trim.startMs / 1000 : 0;
       if (rep === 'one') {
-        audio.currentTime = 0;
+        audio.currentTime = startSec;
+        trimStopArmedRef.current = trim != null;
         audio.play().catch((err) => {
           if (err.name !== 'AbortError') console.error(err);
         });
@@ -328,9 +384,35 @@ export function PlayerProvider({ children }) {
       } else if (rep === 'all' && q.length > 0) {
         playAtIndexRef.current(q, 0, plId, plName);
       } else {
+        // #463: after a natural 'ended' the element has already stopped, but the
+        // trim-out stop interrupts a still-playing element — pause it, or the
+        // audio would keep running past the end of the usable range.
+        if (fromTrimEnd) audio.pause();
         setIsPlaying(false);
       }
     };
+
+    // #463: the trim end is the end of the usable range. Checked from
+    // 'timeupdate' AND a 50 ms poll: timeupdate is throttled to ~4/s (a quarter
+    // second of unwanted outro would still play) and stops entirely while the
+    // window is hidden, even though the audio keeps going.
+    const checkTrimEnd = () => {
+      const trim = trimRangeRef.current;
+      if (!trim || !trimStopArmedRef.current || audio.paused) return;
+      if (audio.currentTime >= trim.endMs / 1000 - 0.05) {
+        trimStopArmedRef.current = false;
+        advanceAfterTrack(true);
+      }
+    };
+
+    const onTimeUpdate = () => {
+      setCurrentTime(audio.currentTime);
+      checkTrimEnd();
+    };
+    const onDurationChange = () => setDuration(isNaN(audio.duration) ? 0 : audio.duration);
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
+    const onEnded = () => advanceAfterTrack();
 
     const onError = () => {
       const code = audio.error?.code;
@@ -352,7 +434,10 @@ export function PlayerProvider({ children }) {
     audio.addEventListener('pause', onPause);
     audio.addEventListener('ended', onEnded);
     audio.addEventListener('timeupdate', onTimeUpdate);
+    // #463: tight trim-out poll (timeupdate alone is too coarse / stalls hidden)
+    const trimWatch = setInterval(checkTrimEnd, 50);
     return () => {
+      clearInterval(trimWatch);
       audio.removeEventListener('error', onError);
       audio.removeEventListener('timeupdate', onTimeUpdate);
       audio.removeEventListener('durationchange', onDurationChange);
@@ -405,15 +490,19 @@ export function PlayerProvider({ children }) {
   });
 
   const prev = useCallback(() => {
-    if (audio.currentTime > 3) {
-      audio.currentTime = 0;
+    // #463: "restart this track" means restart at its trim start
+    const trim = trimRangeRef.current;
+    const startSec = trim ? trim.startMs / 1000 : 0;
+    if (audio.currentTime > startSec + 3) {
+      audio.currentTime = startSec;
+      trimStopArmedRef.current = trim != null;
     } else {
       const q = queueRef.current;
       const idx = idxRef.current;
       const plId = currentPlaylistIdRef.current;
       const plName = currentPlaylistNameRef.current;
       if (idx > 0) playAtIndexRef.current(q, idx - 1, plId, plName);
-      else audio.currentTime = 0;
+      else audio.currentTime = startSec;
     }
   }, [audio]);
 
@@ -425,6 +514,13 @@ export function PlayerProvider({ children }) {
           `readyState=${audio.readyState}  networkState=${audio.networkState}`
       );
       audio.currentTime = time;
+      // #463: a seek is a deliberate override. Jumping past the trim end
+      // disarms the automatic stop (that is how Prepare Track auditions the
+      // region outside the range and how the editor starts from the playhead);
+      // seeking back inside the range re-arms it.
+      explicitSeekRef.current = true;
+      const trim = trimRangeRef.current;
+      trimStopArmedRef.current = trim != null && time < trim.endMs / 1000;
     },
     [audio]
   );
@@ -434,6 +530,9 @@ export function PlayerProvider({ children }) {
   const stop = useCallback(() => {
     audio.pause();
     audio.src = '';
+    trimRangeRef.current = null;
+    trimStopArmedRef.current = false;
+    explicitSeekRef.current = false;
     setCurrentTrack(null);
     setQueue([]);
     setQueueIndex(0);

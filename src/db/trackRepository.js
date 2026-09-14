@@ -40,6 +40,8 @@ const ALLOWED_TRACK_COLUMNS = new Set([
   'source_link',
   'library_id',
   'is_linked',
+  'trim_start_ms',
+  'trim_end_ms',
 ]);
 
 // ─── Camelot helpers (mirrors renderer/src/searchParser.js) ─────────────────
@@ -157,6 +159,17 @@ function buildFiltersSQL(filters = []) {
         } else if (f.op === 'contains') {
           params[pk('v')] = `%${val}%`;
           clauses.push(`LOWER(${col}) LIKE @${pk('v')}`);
+        } else if (f.op === 'starts with') {
+          // Matches the start of the whole tag AND the start of any name inside
+          // a comma credit, so "Ghost in Real Life" finds
+          // "Merage, Ghost in Real Life, Egzod". Spaces are stripped on both
+          // sides first: that absorbs ", ", ",  " and ",x" in one go, and a
+          // multi-word needle survives it.
+          const flat = val.replace(/\s+/g, '');
+          const norm = `LOWER(REPLACE(${col}, ' ', ''))`;
+          params[pk('v')] = `${flat}%`;
+          params[pk('e')] = `%,${flat}%`;
+          clauses.push(`(${norm} LIKE @${pk('v')} OR ${norm} LIKE @${pk('e')})`);
         } else if (f.op === 'is not') {
           params[pk('v')] = val;
           clauses.push(`LOWER(${col}) != @${pk('v')}`);
@@ -213,6 +226,7 @@ export function addTrack(track) {
       year, label, genres, bpm,
       source_url, source_platform, source_quality, source_link,
       user_tags, has_artwork, artwork_path, is_linked, library_id,
+      trim_start_ms, trim_end_ms,
       created_at
     ) VALUES (
       @title, @artist, @album, @duration,
@@ -220,6 +234,7 @@ export function addTrack(track) {
       @year, @label, @genres, @bpm,
       @source_url, @source_platform, @source_quality, @source_link,
       @user_tags, @has_artwork, @artwork_path, @is_linked, @library_id,
+      @trim_start_ms, @trim_end_ms,
       @created_at
     )
   `);
@@ -246,6 +261,9 @@ export function addTrack(track) {
     artwork_path: track.artwork_path ?? null,
     is_linked: track.is_linked ?? 0,
     library_id: track.library_id ?? null,
+    // #463: NULL = no trim on that side (play/export the whole file)
+    trim_start_ms: track.trim_start_ms ?? null,
+    trim_end_ms: track.trim_end_ms ?? null,
     created_at: Date.now(),
   });
 

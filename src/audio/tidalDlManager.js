@@ -251,6 +251,330 @@ except Exception as e:
     sys.exit(1)
 `;
 
+// Embedded Python script for listing the logged-in account's collections
+// (playlists, mixes & radio, favorites) via tidalapi. Uses the same OAuth
+// session/token as every other script here, so no second login is needed.
+export const COLLECTIONS_SCRIPT = `
+import sys, json
+try:
+    import tidalapi
+except ImportError:
+    print(json.dumps({'ok': False, 'error': 'tidalapi not installed'}))
+    sys.exit(1)
+
+if len(sys.argv) < 2:
+    print(json.dumps({'ok': False, 'error': 'Usage: script.py <token_path>'}))
+    sys.exit(1)
+
+token_path = sys.argv[1]
+
+try:
+    with open(token_path) as f:
+        token = json.load(f)
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': 'Token error: ' + str(e)}))
+    sys.exit(1)
+
+try:
+    session = tidalapi.Session()
+    session.load_oauth_session(
+        token.get('token_type', 'Bearer'),
+        token['access_token'],
+        token.get('refresh_token')
+    )
+    if not session.check_login():
+        print(json.dumps({'ok': False, 'error': 'Not logged in to TIDAL'}))
+        sys.exit(1)
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': 'Session error: ' + str(e)}))
+    sys.exit(1)
+
+collections = []
+warnings = []
+
+def add(cid, ctype, title, group, parent_id='', subtitle='', count=0, mix_type=''):
+    cid = str(cid or '')
+    if not cid or not ctype:
+        return
+    collections.append({
+        'id': cid,
+        'type': ctype,
+        'title': title or cid,
+        'group': group,
+        'parentId': parent_id or '',
+        'subtitle': subtitle or '',
+        'count': int(count or 0),
+        'mixType': mix_type or '',
+    })
+
+def safe(label, func, fallback):
+    try:
+        return func()
+    except Exception as e:
+        warnings.append(label + ': ' + str(e))
+        return fallback
+
+def paginate(func, page=100, cap=2000):
+    out = []
+    offset = 0
+    while len(out) < cap:
+        batch = func(limit=page, offset=offset)
+        if not batch:
+            break
+        out.extend(batch)
+        if len(batch) < page:
+            break
+        offset += page
+    return out
+
+# -- Playlists: created and favorited, mirroring the tdn GUI "Playlists" node --
+def load_playlists():
+    found = {}
+
+    def absorb(func):
+        for pl in safe('playlists', func, []) or []:
+            pid = str(getattr(pl, 'id', '') or '')
+            if pid and pid not in found:
+                found[pid] = pl
+
+    absorb(lambda: session.user.favorites.playlists_paginated())
+    absorb(lambda: paginate(session.user.playlist_and_favorite_playlists, page=50))
+    return list(found.values())
+
+for pl in load_playlists():
+    count = (getattr(pl, 'num_tracks', 0) or 0) + (getattr(pl, 'num_videos', 0) or 0)
+    add(
+        getattr(pl, 'id', ''),
+        'playlist',
+        getattr(pl, 'name', ''),
+        'playlists',
+        count=count,
+    )
+
+# -- Mixes & radio: My Mix 1-8, My Daily Discovery, My Video Mix 1-6 ----------
+def load_mixes():
+    out = []
+    page = session.mixes()
+    for category in getattr(page, 'categories', None) or []:
+        out.extend(list(getattr(category, 'items', None) or []))
+    if out:
+        return out
+    return list(session.user.favorites.mixes() or [])
+
+seen_mixes = set()
+for mx in safe('mixes', load_mixes, []) or []:
+    mix_id = str(getattr(mx, 'id', '') or '')
+    if not mix_id or mix_id in seen_mixes:
+        continue
+    seen_mixes.add(mix_id)
+    mix_type = getattr(mx, 'mix_type', None)
+    if mix_type is not None and hasattr(mix_type, 'value'):
+        mix_type = mix_type.value
+    subtitle = getattr(mx, 'sub_title', '') or getattr(mx, 'short_subtitle', '') or ''
+    add(mix_id, 'mix', getattr(mx, 'title', ''), 'mixes', subtitle=subtitle, mix_type=mix_type or '')
+
+# -- Favorites: tracks / albums / artists / videos / mixes -------------------
+fav = getattr(session.user, 'favorites', None)
+
+FAVORITE_KINDS = [
+    ('tracks', 'Favorite tracks', 'get_tracks_count'),
+    ('albums', 'Favorite albums', 'get_albums_count'),
+    ('artists', 'Favorite artists', 'get_artists_count'),
+    ('videos', 'Favorite videos', 'get_videos_count'),
+    ('mixes', 'Favorite mixes & radio', ''),
+]
+
+def favorite_count(method_name):
+    if fav is None or not method_name:
+        return 0
+    count_method = getattr(fav, method_name, None)
+    if count_method is None:
+        return 0
+    return safe('favorites', count_method, 0) or 0
+
+if fav is not None:
+    for kind, label, count_method in FAVORITE_KINDS:
+        add(kind, 'favorites', label, 'favorites', count=favorite_count(count_method))
+
+    # Individual favorite artists, nested under the "Favorite artists" node.
+    fav_artists = safe('favorite artists', lambda: fav.artists_paginated(), []) or []
+    for artist in fav_artists[:200]:
+        add(
+            getattr(artist, 'id', ''),
+            'artist',
+            getattr(artist, 'name', ''),
+            'favorites',
+            parent_id='artists',
+        )
+
+print(json.dumps({'ok': True, 'collections': collections, 'warnings': warnings}))
+`;
+
+// Embedded Python script that resolves one collection (by type + id) into the
+// individual track/video entries the download path needs. Same session/token
+// handling as every other script in this file.
+export const COLLECTION_TRACKS_SCRIPT = `
+import sys, json
+try:
+    import tidalapi
+except ImportError:
+    print(json.dumps({'ok': False, 'error': 'tidalapi not installed'}))
+    sys.exit(1)
+
+if len(sys.argv) < 4:
+    print(json.dumps({'ok': False, 'error': 'Usage: script.py <type> <id> <token_path> [limit]'}))
+    sys.exit(1)
+
+ctype = sys.argv[1]
+cid = sys.argv[2]
+token_path = sys.argv[3]
+limit = int(sys.argv[4]) if len(sys.argv) > 4 else 500
+
+try:
+    with open(token_path) as f:
+        token = json.load(f)
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': 'Token error: ' + str(e)}))
+    sys.exit(1)
+
+try:
+    session = tidalapi.Session()
+    session.load_oauth_session(
+        token.get('token_type', 'Bearer'),
+        token['access_token'],
+        token.get('refresh_token')
+    )
+    if not session.check_login():
+        print(json.dumps({'ok': False, 'error': 'Not logged in to TIDAL'}))
+        sys.exit(1)
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': 'Session error: ' + str(e)}))
+    sys.exit(1)
+
+def is_video(media):
+    video_class = getattr(tidalapi, 'Video', None)
+    return isinstance(media, video_class) if isinstance(video_class, type) else False
+
+def paginate(func, page=100, cap=5000):
+    out = []
+    offset = 0
+    while len(out) < cap:
+        batch = func(limit=page, offset=offset)
+        if not batch:
+            break
+        out.extend(batch)
+        if len(batch) < page:
+            break
+        offset += page
+    return out
+
+def media_title(media):
+    return getattr(media, 'name', None) or getattr(media, 'title', None) or str(getattr(media, 'id', ''))
+
+def media_artist(media):
+    artist = getattr(media, 'artist', None)
+    name = getattr(artist, 'name', '') if artist is not None else ''
+    if name:
+        return name
+    artists = getattr(media, 'artists', None) or []
+    names = [n for n in (getattr(a, 'name', '') for a in artists) if n]
+    return ', '.join(names)
+
+def media_url(media):
+    url = getattr(media, 'share_url', '') or ''
+    if url:
+        return url
+    mid = str(getattr(media, 'id', ''))
+    if is_video(media):
+        return 'https://tidal.com/browse/video/' + mid
+    return 'https://tidal.com/browse/track/' + mid
+
+def to_entry(media, idx):
+    return {
+        'index': idx,
+        'id': str(getattr(media, 'id', '')),
+        'title': media_title(media),
+        'artist': media_artist(media),
+        'duration': int(getattr(media, 'duration', 0) or 0),
+        'url': media_url(media),
+        'mediaType': 'video' if is_video(media) else 'track',
+    }
+
+def resolve():
+    if ctype == 'track':
+        media = session.track(int(cid))
+        artist = media_artist(media)
+        title = (artist + ' - ' + media_title(media)) if artist else media_title(media)
+        return title, [media]
+    if ctype == 'video':
+        media = session.video(int(cid))
+        return media_title(media), [media]
+    if ctype == 'album':
+        media = session.album(int(cid))
+        return media.name, list(media.tracks())
+    if ctype == 'playlist':
+        media = session.playlist(cid)
+        return media.name, paginate(media.items)
+    if ctype == 'mix':
+        media = session.mix(cid)
+        return (getattr(media, 'title', '') or 'TIDAL Mix'), list(media.items())
+    if ctype == 'artist':
+        media = session.artist(int(cid))
+        return media.name, list(media.get_top_tracks(limit=50))
+    if ctype == 'favorites':
+        fav = session.user.favorites
+        if cid == 'tracks':
+            return 'Favorite tracks', list(fav.tracks_paginated())
+        if cid == 'videos':
+            return 'Favorite videos', list(fav.videos_paginated())
+        if cid == 'albums':
+            out = []
+            for album in fav.albums_paginated():
+                out.extend(list(album.tracks()))
+            return 'Favorite albums', out
+        if cid == 'artists':
+            out = []
+            for artist in fav.artists_paginated():
+                out.extend(list(artist.get_top_tracks(limit=10)))
+            return 'Favorite artists', out
+        if cid == 'mixes':
+            out = []
+            for mix in fav.mixes():
+                mix_id = str(getattr(mix, 'id', '') or '')
+                if not mix_id:
+                    continue
+                try:
+                    # Favorite mixes come back as MixV2 placeholders without
+                    # their items - resolve each one through session.mix().
+                    out.extend(list(session.mix(mix_id).items()))
+                except Exception:
+                    continue
+            return 'Favorite mixes & radio', out
+        raise ValueError('Unknown favorites collection: ' + cid)
+    raise ValueError('Unsupported collection type: ' + ctype)
+
+try:
+    title, media_items = resolve()
+except Exception as e:
+    print(json.dumps({'ok': False, 'error': str(e)}))
+    sys.exit(1)
+
+total = len(media_items)
+truncated = total > limit
+entries = [to_entry(m, i) for i, m in enumerate(media_items[:limit])]
+
+print(json.dumps({
+    'ok': True,
+    'type': ctype,
+    'id': cid,
+    'title': title,
+    'entries': entries,
+    'total': total,
+    'truncated': truncated,
+    'videoCount': sum(1 for e in entries if e['mediaType'] == 'video'),
+}))
+`;
+
 // Strip ANSI escape codes from terminal output
 function stripAnsi(str) {
   return str.replace(/\x1B\[[0-9;]*[mGKHFABCDST]/g, '');
@@ -505,6 +829,296 @@ export async function getTidalPreviewUrl(url) {
     });
     proc.on('error', (err) => {
       resolve({ ok: false, error: err.message });
+    });
+  });
+}
+
+/**
+ * Argument vector for the collections-list script.
+ * Exported so the argument building can be unit tested without spawning python.
+ * @param {string} scriptPath
+ * @param {string} tokenPath
+ * @returns {string[]}
+ */
+export function buildCollectionsArgs(scriptPath, tokenPath) {
+  return [scriptPath, tokenPath];
+}
+
+/**
+ * Argument vector for the collection-tracks resolver script.
+ * @param {string} scriptPath
+ * @param {string} type  Collection type: playlist | mix | album | artist | favorites | track | video
+ * @param {string} id    Collection id (for `favorites`: tracks | albums | artists | videos)
+ * @param {string} tokenPath
+ * @param {number} [limit]  Maximum number of entries to return (default 500)
+ * @returns {string[]}
+ */
+export function buildCollectionTracksArgs(scriptPath, type, id, tokenPath, limit = 500) {
+  return [scriptPath, String(type), String(id), tokenPath, String(limit)];
+}
+
+/**
+ * Parse the JSON payload an embedded TIDAL script printed to stdout.
+ * Falls back to an error object carrying stderr/stdout so callers never throw.
+ * @param {string} stdout
+ * @param {string} stderr
+ * @returns {object}
+ */
+export function parseTidalScriptOutput(stdout, stderr) {
+  const out = (stdout ?? '').trim();
+  try {
+    return JSON.parse(out);
+  } catch {
+    return { ok: false, error: (stderr ?? '').trim() || out || 'Failed to parse response' };
+  }
+}
+
+/**
+ * Normalize the raw collections payload into a stable shape for the renderer.
+ * @param {object} raw
+ * @returns {{ ok: boolean, collections: Array, warnings: string[], error?: string }}
+ */
+export function normalizeTidalCollections(raw) {
+  if (!raw || raw.ok !== true) {
+    return {
+      ok: false,
+      error: raw?.error ?? 'Failed to list TIDAL collections',
+      collections: [],
+      warnings: [],
+    };
+  }
+  const collections = (Array.isArray(raw.collections) ? raw.collections : [])
+    .map((c) => ({
+      id: c?.id !== undefined && c?.id !== null ? String(c.id).trim() : '',
+      type: c?.type ? String(c.type).trim() : '',
+      title: c?.title ? String(c.title) : '',
+      group: c?.group ? String(c.group) : 'other',
+      parentId: c?.parentId ? String(c.parentId) : null,
+      subtitle: c?.subtitle ? String(c.subtitle) : '',
+      mixType: c?.mixType ? String(c.mixType) : '',
+      count: Number.isFinite(c?.count) ? c.count : 0,
+    }))
+    // A collection without an id or a type cannot be resolved for download.
+    .filter((c) => c.id && c.type)
+    .map((c) => ({ ...c, title: c.title || c.id }));
+  return {
+    ok: true,
+    collections,
+    warnings: Array.isArray(raw.warnings) ? raw.warnings : [],
+  };
+}
+
+/**
+ * Normalize the raw collection-tracks payload into download entries.
+ * `mediaType` is 'track' or 'video' - tdn saves videos as .mp4/.ts, which the
+ * DjManager audio importer cannot read, so the download path must drop them.
+ * @param {object} raw
+ * @returns {{ ok: boolean, entries: Array, title: string, type: string, truncated: boolean, total: number, error?: string }}
+ */
+export function normalizeTidalCollectionTracks(raw) {
+  if (!raw || raw.ok !== true) {
+    return {
+      ok: false,
+      error: raw?.error ?? 'Failed to load the TIDAL collection',
+      entries: [],
+      title: '',
+      type: '',
+      truncated: false,
+      total: 0,
+      videoCount: 0,
+    };
+  }
+  const entries = (Array.isArray(raw.entries) ? raw.entries : [])
+    .map((e, i) => ({
+      index: Number.isInteger(e?.index) ? e.index : i,
+      id: e?.id !== undefined && e?.id !== null ? String(e.id) : '',
+      title: e?.title ? String(e.title) : '',
+      artist: e?.artist ? String(e.artist) : '',
+      duration: Number.isFinite(e?.duration) ? e.duration : 0,
+      url: e?.url ? String(e.url) : '',
+      mediaType: e?.mediaType === 'video' ? 'video' : 'track',
+    }))
+    .filter((e) => e.id);
+  return {
+    ok: true,
+    entries,
+    title: raw.title ? String(raw.title) : '',
+    type: raw.type ? String(raw.type) : '',
+    truncated: raw.truncated === true,
+    total: Number.isFinite(raw.total) ? raw.total : entries.length,
+    videoCount: Number.isFinite(raw.videoCount)
+      ? raw.videoCount
+      : entries.filter((e) => e.mediaType === 'video').length,
+  };
+}
+
+/**
+ * Re-index entries from 0 in their current order.
+ *
+ * The download path reports progress positionally: the file reported by
+ * `onFileReady` is matched to the entry at the same position, and the renderer
+ * writes the Nth update into the Nth status row. Entry indices therefore must
+ * be contiguous - a user-deselected selection (0, 2, 5) would otherwise leave
+ * rows stuck on "pending" and overwrite the wrong titles.
+ *
+ * @param {Array} entries
+ * @returns {Array}
+ */
+export function reindexTidalEntries(entries) {
+  return (entries ?? []).map((entry, i) => ({ ...entry, index: i }));
+}
+
+/**
+ * Split resolved collection entries into the audio tracks DjManager can import
+ * and the video items it cannot (tdn saves videos as .mp4/.ts).
+ *
+ * The audio entries are RE-INDEXED from 0 for the same positional-mapping
+ * reason as `reindexTidalEntries`.
+ *
+ * @param {Array} entries
+ * @returns {{ tracks: Array, videoCount: number }}
+ */
+export function splitTidalCollectionEntries(entries) {
+  const audio = [];
+  let videoCount = 0;
+  for (const entry of entries ?? []) {
+    if (entry?.mediaType === 'video') videoCount += 1;
+    else audio.push(entry);
+  }
+  return { tracks: reindexTidalEntries(audio), videoCount };
+}
+
+/**
+ * List the logged-in TIDAL account's collections (playlists, mixes & radio,
+ * favorites) using the existing tdn OAuth session/token.
+ * @returns {Promise<{ ok: boolean, collections: Array, warnings: string[], error?: string }>}
+ */
+export async function fetchTidalCollections() {
+  const pythonPath = findTidalPython();
+  if (!pythonPath) {
+    return {
+      ok: false,
+      error: 'Python interpreter not found. Ensure tidal-dl-ng is installed.',
+      collections: [],
+      warnings: [],
+    };
+  }
+
+  const tokenPath = getTokenPath();
+  if (!fs.existsSync(tokenPath)) {
+    return {
+      ok: false,
+      error: 'Not logged in to TIDAL. Please connect your account first.',
+      collections: [],
+      warnings: [],
+    };
+  }
+
+  const scriptPath = path.join(os.tmpdir(), 'dj_manager_tidal_collections.py');
+  try {
+    fs.writeFileSync(scriptPath, COLLECTIONS_SCRIPT.trimStart());
+  } catch (e) {
+    return {
+      ok: false,
+      error: `Failed to write collections script: ${e.message}`,
+      collections: [],
+      warnings: [],
+    };
+  }
+
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+
+    const proc = spawn(pythonPath, buildCollectionsArgs(scriptPath, tokenPath), {
+      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    proc.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    proc.on('close', () => {
+      resolve(normalizeTidalCollections(parseTidalScriptOutput(stdout, stderr)));
+    });
+
+    proc.on('error', (err) => {
+      resolve({ ok: false, error: err.message, collections: [], warnings: [] });
+    });
+  });
+}
+
+/**
+ * Resolve one TIDAL collection into individual track/video entries.
+ * @param {string} type   playlist | mix | album | artist | favorites | track | video
+ * @param {string} id     Collection id (for `favorites`: tracks | albums | artists | videos)
+ * @param {{ limit?: number }} [opts]
+ * @returns {Promise<{ ok: boolean, entries: Array, title: string, truncated: boolean, error?: string }>}
+ */
+export async function fetchTidalCollectionTracks(type, id, opts = {}) {
+  const fallback = { entries: [], title: '', type: '', truncated: false, total: 0 };
+
+  if (!type || id === undefined || id === null || id === '') {
+    return { ok: false, error: 'Missing collection type or id', ...fallback };
+  }
+
+  const pythonPath = findTidalPython();
+  if (!pythonPath) {
+    return {
+      ok: false,
+      error: 'Python interpreter not found. Ensure tidal-dl-ng is installed.',
+      ...fallback,
+    };
+  }
+
+  const tokenPath = getTokenPath();
+  if (!fs.existsSync(tokenPath)) {
+    return {
+      ok: false,
+      error: 'Not logged in to TIDAL. Please connect your account first.',
+      ...fallback,
+    };
+  }
+
+  const scriptPath = path.join(os.tmpdir(), 'dj_manager_tidal_collection_tracks.py');
+  try {
+    fs.writeFileSync(scriptPath, COLLECTION_TRACKS_SCRIPT.trimStart());
+  } catch (e) {
+    return { ok: false, error: `Failed to write collection script: ${e.message}`, ...fallback };
+  }
+
+  const limit = opts.limit ?? 500;
+
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+
+    const proc = spawn(
+      pythonPath,
+      buildCollectionTracksArgs(scriptPath, type, id, tokenPath, limit),
+      {
+        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }
+    );
+
+    proc.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    proc.on('close', () => {
+      resolve(normalizeTidalCollectionTracks(parseTidalScriptOutput(stdout, stderr)));
+    });
+
+    proc.on('error', (err) => {
+      resolve({ ok: false, error: err.message, ...fallback });
     });
   });
 }
