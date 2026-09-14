@@ -79,6 +79,8 @@ describe('buildExplorerContextMenu - folders', () => {
       '📁 Import folder (recursive)',
       '➕ Create playlist (flat)',
       '➕ Create playlist (recursive)',
+      '📁 Track folder as a playlist',
+      '📁 Track folder + sub-folders as a playlist',
     ]);
     expect(itemOf(model, 'import-flat').paths).toEqual([clicked.path]);
   });
@@ -98,11 +100,15 @@ describe('buildExplorerContextMenu - folders', () => {
       '📁 Import 3 folders (recursive)',
       '➕ Create 3 playlists (flat)',
       '➕ Create 3 playlists (recursive)',
+      '📁 Track folder × 3 as playlists',
+      '📁 Track folder + sub-folders × 3 as playlists',
     ]);
     expect(itemOf(model, 'import-flat').paths).toEqual(dirs.map((d) => d.path));
     expect(itemOf(model, 'import-recursive').paths).toEqual(dirs.map((d) => d.path));
     expect(itemOf(model, 'create-playlist-flat').paths).toEqual(dirs.map((d) => d.path));
     expect(itemOf(model, 'create-playlist-recursive').paths).toEqual(dirs.map((d) => d.path));
+    expect(itemOf(model, 'watch-folder-playlist').paths).toEqual(dirs.map((d) => d.path));
+    expect(itemOf(model, 'watch-folder-playlist-recursive').paths).toEqual(dirs.map((d) => d.path));
   });
 
   it('splits Add/Remove Favourites into count-aware entries per state', () => {

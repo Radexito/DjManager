@@ -251,6 +251,26 @@ button.normalize-progress-wrap.ytdlp-progress-clickable:focus-visible {
   margin-left: 0;
 }
 
+/* #267 — folder-tracked playlists: the 📁 marker and the sync notice. */
+.playlist-folder-icon {
+  flex-shrink: 0;
+  font-size: 11px;
+  margin-right: 2px;
+  opacity: 0.85;
+}
+
+.folder-sync-notice {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #9ec5fe;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+
 .playlist-count {
   font-size: 11px;
   color: #666;
