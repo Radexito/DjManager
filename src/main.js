@@ -104,7 +104,7 @@ import {
 } from './db/libraryRepository.js';
 import { getDbPath, setDbPath } from './db/dbLocation.js';
 import { convertAudio } from './audio/ffmpeg.js';
-import { trackTrimRange, shiftBeatgridForTrim, shiftCuePointsForTrim } from './audio/trackTrim.js';
+import { exportTrimRange, shiftBeatgridForTrim, shiftCuePointsForTrim } from './audio/trackTrim.js';
 
 import {
   searchMusicBrainz,
@@ -2370,6 +2370,7 @@ async function copyTrackToUsb(
     targetDevice = null,
     forceMp3 = false,
     blind = false,
+    applyTrim = true,
   } = {}
 ) {
   const srcPath = track.file_path;
@@ -2397,8 +2398,9 @@ async function copyTrackToUsb(
         ? targetLufs - sourceLoudness
         : 0;
     const sourceBitrateKbps = track.bitrate ? track.bitrate / 1000 : null;
-    // #463: a trimmed track is exported as just its usable range
-    const trim = trackTrimRange(track);
+    // #463: a trimmed track is exported as just its usable range — unless the
+    // export asked for the whole file (applyTrim: false).
+    const trim = exportTrimRange(track, applyTrim);
 
     if (targetFormat || gainDb !== 0 || trim) {
       await convertAudio(srcPath, destPath, {
@@ -2441,9 +2443,13 @@ async function copyTrackToUsb(
  * - beatgrid       beat grid JSON re-based onto the trimmed timeline
  * - cuePoints      cue rows re-based onto the trimmed timeline (cues outside
  *                  the range are dropped — they cannot be represented)
+ *
+ * `applyTrim: false` (the export option) means "write the whole file": the
+ * caller gets null and every trim-derived adjustment (duration, beat grid, cue
+ * shift, waveform source) falls back to the untrimmed values.
  */
-function resolveExportTrim(track, usbRoot, usbFilePath, cuePoints = []) {
-  const range = trackTrimRange(track);
+function resolveExportTrim(track, usbRoot, usbFilePath, cuePoints = [], applyTrim = true) {
+  const range = exportTrimRange(track, applyTrim);
   if (!range) return null;
 
   const usbAbsPath = usbFilePath ? path.join(usbRoot, usbFilePath.replace(/^[/\\]/, '')) : null;
@@ -2456,8 +2462,8 @@ function resolveExportTrim(track, usbRoot, usbFilePath, cuePoints = []) {
 }
 
 /** Length in seconds of the audio an export writes for this track (#463). */
-function exportDurationSec(track) {
-  const trim = trackTrimRange(track);
+function exportDurationSec(track, applyTrim = true) {
+  const trim = exportTrimRange(track, applyTrim);
   if (trim) return (trim.endMs - trim.startMs) / 1000;
   return track.duration ?? null;
 }
@@ -2715,6 +2721,7 @@ ipcMain.handle(
       useNormalized = false,
       targetDevice = null,
       forceMp3 = false,
+      applyTrim = true,
     }
   ) => {
     try {
@@ -2738,8 +2745,8 @@ ipcMain.handle(
       const copyTargets = tracks.filter(
         (t) =>
           !reuseExistingUsbTrack(existingTracks, t.id, new Map(), {
-            trimStartMs: t.trim_start_ms ?? null,
-            trimEndMs: t.trim_end_ms ?? null,
+            trimStartMs: applyTrim === false ? null : (t.trim_start_ms ?? null),
+            trimEndMs: applyTrim === false ? null : (t.trim_end_ms ?? null),
           })
       );
       const copyTotal = copyTargets.length;
@@ -2763,8 +2770,8 @@ ipcMain.handle(
       for (let i = 0; i < tracks.length; i++) {
         const t = tracks[i];
         const reused = reuseExistingUsbTrack(existingTracks, t.id, usedNames, {
-          trimStartMs: t.trim_start_ms ?? null,
-          trimEndMs: t.trim_end_ms ?? null,
+          trimStartMs: applyTrim === false ? null : (t.trim_start_ms ?? null),
+          trimEndMs: applyTrim === false ? null : (t.trim_end_ms ?? null),
         });
         if (reused) {
           usbPaths.set(t.id, reused.path);
@@ -2775,6 +2782,7 @@ ipcMain.handle(
             targetLufs,
             targetDevice,
             forceMp3,
+            applyTrim,
           });
           usbPaths.set(t.id, usbPath);
           if (meta) usbMeta.set(t.id, meta);
@@ -2801,7 +2809,7 @@ ipcMain.handle(
         const cues = getCuePoints(t.id).filter((c) => c.enabled !== 0);
         // #463: re-base the beat grid / cues and read the waveform from the
         // trimmed copy, so the exported ANLZ describes the exported audio.
-        const trim = resolveExportTrim(t, usbRoot, usbFilePath, cues);
+        const trim = resolveExportTrim(t, usbRoot, usbFilePath, cues, applyTrim);
         try {
           await writeAnlz({
             usbFilePath,
@@ -2832,9 +2840,9 @@ ipcMain.handle(
         // #463: the exported file is the trimmed range, so the PDB row must
         // report the trimmed length. The trim itself is stored in the manifest
         // so a later trim change forces a re-copy instead of reusing stale audio.
-        duration: exportDurationSec(t) ?? 0,
-        trim_start_ms: t.trim_start_ms ?? null,
-        trim_end_ms: t.trim_end_ms ?? null,
+        duration: exportDurationSec(t, applyTrim) ?? 0,
+        trim_start_ms: applyTrim === false ? null : (t.trim_start_ms ?? null),
+        trim_end_ms: applyTrim === false ? null : (t.trim_end_ms ?? null),
         bpm: t.bpm_override ?? t.bpm ?? 0,
         key_raw: t.key_raw || '',
         file_path: usbPaths.get(t.id) || '',
@@ -2893,6 +2901,7 @@ ipcMain.handle(
       useNormalized = false,
       targetDevice = null,
       forceMp3 = false,
+      applyTrim = true,
     }
   ) => {
     try {
@@ -2917,8 +2926,8 @@ ipcMain.handle(
       const copyTargets = allTracks.filter(
         (t) =>
           !reuseExistingUsbTrack(existingTracks, t.id, new Map(), {
-            trimStartMs: t.trim_start_ms ?? null,
-            trimEndMs: t.trim_end_ms ?? null,
+            trimStartMs: applyTrim === false ? null : (t.trim_start_ms ?? null),
+            trimEndMs: applyTrim === false ? null : (t.trim_end_ms ?? null),
           })
       );
       const copyTotal = copyTargets.length;
@@ -2942,8 +2951,8 @@ ipcMain.handle(
       for (let i = 0; i < allTracks.length; i++) {
         const t = allTracks[i];
         const reused = reuseExistingUsbTrack(existingTracks, t.id, usedNames, {
-          trimStartMs: t.trim_start_ms ?? null,
-          trimEndMs: t.trim_end_ms ?? null,
+          trimStartMs: applyTrim === false ? null : (t.trim_start_ms ?? null),
+          trimEndMs: applyTrim === false ? null : (t.trim_end_ms ?? null),
         });
         if (reused) {
           usbPaths.set(t.id, reused.path);
@@ -2954,6 +2963,7 @@ ipcMain.handle(
             targetLufs,
             targetDevice,
             forceMp3,
+            applyTrim,
           });
           usbPaths.set(t.id, usbPath);
           if (meta) usbMeta.set(t.id, meta);
@@ -2979,7 +2989,7 @@ ipcMain.handle(
         for (const t of tracks) {
           const usbPath = usbPaths.get(t.id);
           if (!usbPath) continue;
-          const duration = Math.floor(exportDurationSec(t) ?? -1);
+          const duration = Math.floor(exportDurationSec(t, applyTrim) ?? -1);
           const label = [t.artist, t.title].filter(Boolean).join(' - ') || path.basename(usbPath);
           lines.push(`#EXTINF:${duration},${label}`);
           lines.push(usbPath);
@@ -3000,7 +3010,7 @@ ipcMain.handle(
         const cues = getCuePoints(t.id).filter((c) => c.enabled !== 0);
         // #463: re-base the beat grid / cues and read the waveform from the
         // trimmed copy, so the exported ANLZ describes the exported audio.
-        const trim = resolveExportTrim(t, usbRoot, usbFilePath, cues);
+        const trim = resolveExportTrim(t, usbRoot, usbFilePath, cues, applyTrim);
         try {
           await writeAnlz({
             usbFilePath,
@@ -3028,9 +3038,9 @@ ipcMain.handle(
         title: t.title || '',
         artist: t.artist || '',
         album: t.album || '',
-        duration: exportDurationSec(t) ?? 0,
-        trim_start_ms: t.trim_start_ms ?? null,
-        trim_end_ms: t.trim_end_ms ?? null,
+        duration: exportDurationSec(t, applyTrim) ?? 0,
+        trim_start_ms: applyTrim === false ? null : (t.trim_start_ms ?? null),
+        trim_end_ms: applyTrim === false ? null : (t.trim_end_ms ?? null),
         bpm: t.bpm_override ?? t.bpm ?? 0,
         key_raw: t.key_raw || '',
         file_path: usbPaths.get(t.id) || '',

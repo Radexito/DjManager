@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 import {
   clampTrimRange,
   trackTrimRange,
+  exportTrimRange,
   trimColumns,
   shiftBeatgridForTrim,
   shiftCuePointsForTrim,
@@ -235,5 +236,30 @@ describe('shiftCuePointsForTrim — moving cues onto the trimmed timeline', () =
 
   it('returns the cues untouched when there is no trim start', () => {
     expect(shiftCuePointsForTrim(cues, 0, null)).toBe(cues);
+  });
+});
+
+describe('exportTrimRange — the export option (#463)', () => {
+  const trimmed = { id: 1, duration: 180, trim_start_ms: 30_000, trim_end_ms: 90_000 };
+
+  it('returns the trim range by default', () => {
+    expect(exportTrimRange(trimmed)).toEqual({ startMs: 30_000, endMs: 90_000 });
+  });
+
+  it('returns null when the export asked for the whole file', () => {
+    expect(exportTrimRange(trimmed, false)).toBeNull();
+    // …and stays null for an untrimmed track either way
+    expect(exportTrimRange({ id: 2, duration: 180 }, false)).toBeNull();
+  });
+
+  it('ignores garbage in the flag (only an explicit false opts out)', () => {
+    expect(exportTrimRange(trimmed, true)).toEqual({ startMs: 30_000, endMs: 90_000 });
+    expect(exportTrimRange(trimmed, undefined)).toEqual({ startMs: 30_000, endMs: 90_000 });
+  });
+
+  it('treats a whole-file range as no trim regardless of the flag', () => {
+    const whole = { id: 3, duration: 180, trim_start_ms: 0, trim_end_ms: 180_000 };
+    expect(exportTrimRange(whole, true)).toBeNull();
+    expect(exportTrimRange(whole, false)).toBeNull();
   });
 });

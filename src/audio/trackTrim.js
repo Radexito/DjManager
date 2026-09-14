@@ -72,6 +72,19 @@ export function trackTrimRange(track) {
 }
 
 /**
+ * The trim range an EXPORT applies (#463). The library keeps its trim either
+ * way; the export can opt out with `applyTrim: false`, which writes the whole
+ * file — nothing cut off the top, no silence carved off the tail.
+ *
+ * @param {object|null} track
+ * @param {boolean} [applyTrim=true]
+ * @returns {{ startMs: number, endMs: number } | null}
+ */
+export function exportTrimRange(track, applyTrim = true) {
+  return applyTrim === false ? null : trackTrimRange(track);
+}
+
+/**
  * Serialize pending trim settings into the `tracks` columns (#463) — the
  * inverse of trackTrimRange(). Clamps to the file and, crucially, keeps an
  * UNSET side NULL: "no end set" must stay distinguishable from "end pinned to
