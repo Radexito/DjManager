@@ -34,10 +34,25 @@ import { writeBpmKeyTags } from './id3Writer.js';
 const execFileAsync = promisify(execFile);
 
 // ─── Analysis progress tracking ─────────────────────────────────────────────
+//
+// Analyses run a few at a time. Spawning one worker (plus its analyzer child
+// process) per file starved the machine on a big folder and made the progress
+// bar crawl, so jobs wait in a queue and start as slots come free.
 
-let analysisActive = 0; // workers currently running
-let analysisTotal = 0; // total spawned in the current batch
-let analysisDone = 0; // completed in the current batch
+const MAX_ANALYSIS_WORKERS = 4;
+// Spawns that arrive within this window join the batch in flight instead of
+// starting a new one, so importing a folder counts 1/24 … 24/24 rather than
+// restarting at 1/1 for every file.
+const ANALYSIS_BATCH_IDLE_MS = 2000;
+
+let analysisActive = 0; // workers running right now
+let analysisTotal = 0; // jobs in the current batch
+let analysisDone = 0; // jobs of the batch that finished
+let analysisBatchTouchedAt = 0; // when the current batch last changed
+
+function touchAnalysisBatch() {
+  analysisBatchTouchedAt = Date.now();
+}
 
 function sendAnalysisProgress() {
   if (!global.mainWindow) return;
@@ -45,18 +60,78 @@ function sendAnalysisProgress() {
     active: analysisActive,
     total: analysisTotal,
     done: analysisDone,
-    finished: analysisActive === 0,
+    finished: analysisActive === 0 && analysisQueue.length === 0,
   });
 }
 
-// Map of trackId → Worker for active analysis jobs (enables cancellation)
+// trackId → { worker, silent, settled } for the jobs that are running.
 const activeAnalysisWorkers = new Map();
+// Jobs waiting for a free slot: { trackId, filePath, silent }.
+let analysisQueue = [];
+
+/**
+ * Close out a job exactly once. A cancelled worker is dropped from the batch
+ * (total goes down) while a worker that finished is counted as done, so a
+ * re-analysed track can never leave the bar stuck part-way.
+ */
+function finishAnalysis(trackId, { completed = true } = {}) {
+  const entry = activeAnalysisWorkers.get(trackId);
+  if (!entry || entry.settled) return false;
+  entry.settled = true;
+  activeAnalysisWorkers.delete(trackId);
+  analysisActive = Math.max(0, analysisActive - 1);
+  touchAnalysisBatch();
+  if (!entry.silent) {
+    if (completed) analysisDone++;
+    else analysisTotal = Math.max(0, analysisTotal - 1);
+    sendAnalysisProgress();
+  }
+  pumpAnalysis();
+  return true;
+}
+
+function pumpAnalysis() {
+  while (analysisActive < MAX_ANALYSIS_WORKERS && analysisQueue.length > 0) {
+    startAnalysisJob(analysisQueue.shift());
+  }
+}
+
+/**
+ * Forget every queued and running job. Unit tests use it to start from a known
+ * state; nothing in the app calls it.
+ */
+export function resetAnalysisState() {
+  for (const entry of activeAnalysisWorkers.values()) entry.worker.terminate?.();
+  activeAnalysisWorkers.clear();
+  analysisQueue = [];
+  analysisActive = 0;
+  analysisTotal = 0;
+  analysisDone = 0;
+  analysisBatchTouchedAt = 0;
+}
 
 export function cancelAnalysis(trackId) {
-  const worker = activeAnalysisWorkers.get(trackId);
-  if (!worker) return false;
-  worker.terminate();
+  const queued = analysisQueue.findIndex((job) => job.trackId === trackId);
+  if (queued !== -1) {
+    const [job] = analysisQueue.splice(queued, 1);
+    if (!job.silent) {
+      analysisTotal = Math.max(0, analysisTotal - 1);
+      sendAnalysisProgress();
+    }
+    return true;
+  }
+
+  const entry = activeAnalysisWorkers.get(trackId);
+  if (!entry) return false;
+  entry.settled = true;
   activeAnalysisWorkers.delete(trackId);
+  analysisActive = Math.max(0, analysisActive - 1);
+  if (!entry.silent) {
+    analysisTotal = Math.max(0, analysisTotal - 1);
+    sendAnalysisProgress();
+  }
+  entry.worker.terminate();
+  pumpAnalysis();
   return true;
 }
 
@@ -421,52 +496,58 @@ function parseTags(ffprobeData) {
   };
 }
 
+/**
+ * Queue an analysis. A fresh analysis replaces any pending or running one for
+ * the same track, and the batch counters reset when the queue is empty.
+ */
 export function spawnAnalysis(trackId, filePath, { silent = false } = {}) {
-  // Cancel any existing analysis for this track before spawning a new one
   cancelAnalysis(trackId);
 
-  // Track this worker in the batch counter; reset totals when starting fresh.
-  // Silent re-analyses (e.g. post-normalization) don't affect the progress bar.
-  if (!silent) {
-    if (analysisActive === 0) {
-      analysisTotal = 0;
-      analysisDone = 0;
-    }
-    analysisActive++;
-    analysisTotal++;
-    sendAnalysisProgress();
-  }
+  analysisQueue.push({ trackId, filePath, silent });
 
+  if (!silent) {
+    // A spawn that lands while nothing else is queued or running, and the last
+    // batch has gone quiet, starts a fresh count; otherwise it joins that batch.
+    if (analysisActive === 0 && analysisQueue.length === 1) {
+      if (Date.now() - analysisBatchTouchedAt > ANALYSIS_BATCH_IDLE_MS) {
+        analysisTotal = 0;
+        analysisDone = 0;
+      }
+    }
+    analysisTotal++;
+  }
+  touchAnalysisBatch();
+  sendAnalysisProgress();
+  pumpAnalysis();
+}
+
+/** Run one queued analysis in a worker thread. */
+function startAnalysisJob({ trackId, filePath, silent }) {
   const worker = new Worker(new URL('./analysisWorker.js', import.meta.url), {
     workerData: { filePath, trackId, analyzerPath: getAnalyzerRuntimePath() },
   });
 
-  activeAnalysisWorkers.set(trackId, worker);
+  activeAnalysisWorkers.set(trackId, { worker, silent, settled: false });
+  analysisActive++;
+  sendAnalysisProgress();
 
   worker.on('error', (err) => {
-    activeAnalysisWorkers.delete(trackId);
     console.error(`Analysis worker error for track ID ${trackId}:`, err.message);
-    if (!silent) {
-      analysisActive--;
-      analysisDone++;
-      sendAnalysisProgress();
-    }
+    finishAnalysis(trackId);
   });
 
   worker.on('exit', (code) => {
-    activeAnalysisWorkers.delete(trackId);
     if (code !== 0)
       console.warn(`Analysis worker exited with code ${code} for track ID ${trackId}`);
+    // A worker that died without a message still has to leave the batch, or the
+    // progress bar never reaches the end.
+    finishAnalysis(trackId);
   });
 
   worker.on('message', ({ ok, result, error }) => {
     if (!ok) {
       console.error(`Analysis failed for track ID ${trackId}:`, error);
-      if (!silent) {
-        analysisActive--;
-        analysisDone++;
-        sendAnalysisProgress();
-      }
+      finishAnalysis(trackId);
       return;
     }
     console.log(`Analysis finished for track ID ${trackId}:`, result);
@@ -522,12 +603,9 @@ export function spawnAnalysis(trackId, filePath, { silent = false } = {}) {
       global.mainWindow.webContents.send('track-updated', { trackId, analysis: update });
     }
 
-    // Mark this worker as done (silent re-analyses don't affect the counter)
-    if (!silent) {
-      analysisActive--;
-      analysisDone++;
-      sendAnalysisProgress();
-    }
+    // Free the slot (silent re-analyses stay out of the counter) and pull the
+    // next queued job in.
+    finishAnalysis(trackId);
 
     // Auto-generate cue points: only when setting is enabled and track has no cue points yet
     const autoCue = getSetting('auto_cue_on_import', 'false') === 'true';

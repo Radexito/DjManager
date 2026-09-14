@@ -182,6 +182,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   // #267 — folder-tracked playlists
   createFolderPlaylist: (opts) => ipcRenderer.invoke('create-folder-playlist', opts),
+  setPlaylistFolder: (opts) => ipcRenderer.invoke('set-playlist-folder', opts),
   refreshFolderPlaylist: (playlistId) => ipcRenderer.invoke('refresh-folder-playlist', playlistId),
   refreshFolderPlaylists: () => ipcRenderer.invoke('refresh-folder-playlists'),
   removeFolderPlaylistTracks: (opts) => ipcRenderer.invoke('remove-folder-playlist-tracks', opts),

@@ -126,6 +126,36 @@ function Sidebar({
     loadPlaylists();
   };
 
+  // Attach a folder to a playlist (or point a tracked one somewhere else).
+  const handlePointPlaylistAtFolder = async (playlistId) => {
+    setPlaylistMenu(null);
+    const pl = playlists.find((p) => p.id === playlistId);
+    const dir = await window.api.openDirDialog();
+    if (!dir) return;
+    const res = await window.api.setPlaylistFolder({
+      playlistId,
+      folderPath: dir,
+      recursive: pl?.folder_recursive === 1,
+    });
+    if (!res?.ok) {
+      const why =
+        res?.error === 'missing-folder'
+          ? 'that folder is not reachable right now'
+          : (res?.error ?? 'failed');
+      setFolderNotice(`Could not track the folder: ${why}`);
+      return;
+    }
+    loadPlaylists();
+    if (res.missing?.length) {
+      setFolderMissing({ playlistId, name: pl?.name ?? '', missing: res.missing });
+    } else {
+      setFolderNotice(
+        `Now tracking ${dir}: +${res.added ?? 0} added, ${res.linked ?? 0} linked, ` +
+          `${res.found ?? 0} file(s) in the folder.`
+      );
+    }
+  };
+
   const handleRemoveMissing = async (trackIds) => {
     const pending = folderMissing;
     setFolderMissing(null);
@@ -745,7 +775,7 @@ function Sidebar({
             📦 Export All to USB…
           </div>
           <div className="context-menu-separator" />
-          {playlists.find((p) => p.id === playlistMenu.id)?.folder_path && (
+          {playlists.find((p) => p.id === playlistMenu.id)?.folder_path ? (
             <>
               <div
                 className="context-menu-item"
@@ -767,12 +797,25 @@ function Sidebar({
               </div>
               <div
                 className="context-menu-item"
+                onClick={() => handlePointPlaylistAtFolder(playlistMenu.id)}
+              >
+                📁 Change tracked folder…
+              </div>
+              <div
+                className="context-menu-item"
                 onClick={() => handleStopFolderPlaylist(playlistMenu.id)}
               >
                 ⏹ Stop tracking folder
               </div>
               <div className="context-menu-separator" />
             </>
+          ) : (
+            <div
+              className="context-menu-item"
+              onClick={() => handlePointPlaylistAtFolder(playlistMenu.id)}
+            >
+              📁 Track a folder…
+            </div>
           )}
           <div
             className="context-menu-item context-menu-item--danger"

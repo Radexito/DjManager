@@ -621,7 +621,20 @@ ipcMain.handle('remove-folder-playlist-tracks', (_, { playlistId, trackIds = [] 
 ipcMain.handle('stop-folder-playlist', (_, playlistId) => {
   clearPlaylistFolder(playlistId);
   restartLibraryWatcher();
+  if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
   return { ok: true, playlistId };
+});
+// Give an existing playlist a folder to follow, or point it at a new one.
+ipcMain.handle('set-playlist-folder', async (_, { playlistId, folderPath, recursive } = {}) => {
+  const playlist = getPlaylist(playlistId);
+  if (!playlist) return { ok: false, error: 'unknown-playlist' };
+  if (!folderPath) return { ok: false, error: 'no-folder' };
+  if (!fs.existsSync(folderPath)) return { ok: false, error: 'missing-folder', folder: folderPath };
+  const useRecursive = recursive ?? playlist.folder_recursive === 1;
+  setPlaylistFolder(playlistId, folderPath, useRecursive);
+  restartLibraryWatcher();
+  if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+  return syncFolderPlaylist(playlistId);
 });
 ipcMain.handle(
   'set-folder-playlist-recursive',
