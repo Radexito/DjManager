@@ -147,5 +147,10 @@
     "better-sqlite3": "^13.0.2",
     "react-virtualized": "^9.22.6",
     "react-window": "^2.3.0"
+  },
+  "overrides": {
+    "@electron/rebuild": {
+      "node-abi": "^4.35.0"
+    }
   }
 }
