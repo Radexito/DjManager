@@ -57,6 +57,7 @@ export default defineConfig({
             'src/__tests__/drives.test.js',
             'src/__tests__/ffmpegConvert.test.js',
             'src/__tests__/exportReuse.test.js',
+            'src/__tests__/exportPlan.test.js',
             'src/__tests__/trackTrim.test.js',
           ],
         },
