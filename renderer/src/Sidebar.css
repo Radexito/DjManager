@@ -260,6 +260,7 @@ button.normalize-progress-wrap.ytdlp-progress-clickable:focus-visible {
 }
 
 .folder-sync-notice {
+  cursor: pointer;
   font-size: 11.5px;
   line-height: 1.4;
   color: #9ec5fe;

@@ -58,6 +58,17 @@ function Sidebar({
   const [folderMissing, setFolderMissing] = useState(null); // { playlistId, name, missing }
   const [folderNotice, setFolderNotice] = useState('');
 
+  // The folder notice is a transient status line, not a panel: every other
+  // progress/status in this component clears itself, and a notice that stayed
+  // forever was the odd one out (report 2026-09-26). The effect re-runs when the
+  // text changes, so a second notice restarts the countdown instead of
+  // inheriting the first one's remaining time.
+  useEffect(() => {
+    if (!folderNotice) return undefined;
+    const id = setTimeout(() => setFolderNotice(''), 6000);
+    return () => clearTimeout(id);
+  }, [folderNotice]);
+
   const loadPlaylists = useCallback(async () => {
     const list = await window.api.getPlaylists();
     setPlaylists(list);
@@ -509,7 +520,15 @@ function Sidebar({
       </div>
 
       <div className="fixed-bottom-section">
-        {folderNotice && <div className="folder-sync-notice">{folderNotice}</div>}
+        {folderNotice && (
+          <div
+            className="folder-sync-notice"
+            onClick={() => setFolderNotice('')}
+            title="Click to dismiss"
+          >
+            {folderNotice}
+          </div>
+        )}
         {importProgress.total > 0 && (
           <div className="import-progress">
             Importing {importProgress.completed} / {importProgress.total}…
