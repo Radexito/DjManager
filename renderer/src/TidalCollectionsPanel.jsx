@@ -25,9 +25,10 @@ function collectionKey(col) {
  * mixes & radio including My Daily Discovery and video mixes, favorites).
  * Loads through window.api.tidalListCollections.
  *
- * Two actions per row: the caret expands nested branches, the name opens the
- * collection as a selectable track list (`onOpen`), and the arrow downloads the
- * whole thing in one go (`onDownload`).
+ * Two actions per row: the caret expands nested branches, and both the name
+ * (`onOpen`) and the ↓ arrow (`onDownload`) open the collection as a selectable
+ * track list, so a collection is never downloaded whole without asking. The
+ * download arrow is just the same picker reached from the other side of the row.
  *
  * Branches start expanded: the user asked for the account tree, and collapsing
  * is remembered per branch in the local `collapsed` set.
@@ -138,7 +139,7 @@ export default function TidalCollectionsPanel({
             className="tidal-tree-download"
             onClick={() => onDownload(col)}
             disabled={disabled || busy}
-            title={`Download ${col.title}`}
+            title={`Download ${col.title} - pick the tracks first`}
             aria-label={`Download ${col.title}`}
           >
             {busy ? '…' : '↓'}
@@ -211,7 +212,7 @@ export default function TidalCollectionsPanel({
 
       {!loading && !error && groups.length > 0 && (
         <div className="tidal-collections-note">
-          Click a name to pick individual tracks, or ↓ to download the whole collection.
+          Click a name or ↓ to pick the tracks to download. Nothing downloads until you start it.
         </div>
       )}
     </div>
