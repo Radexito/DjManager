@@ -238,7 +238,8 @@ contextBridge.exposeInMainWorld('api', {
   tidalInstall: () => ipcRenderer.invoke('tidal-install'),
   tidalFetchInfo: (url) => ipcRenderer.invoke('tidal-fetch-info', url),
   tidalLogin: () => ipcRenderer.invoke('tidal-login'),
-  tidalListCollections: () => ipcRenderer.invoke('tidal-list-collections'),
+  // `{ force: true }` bypasses the main-process collections cache.
+  tidalListCollections: (opts) => ipcRenderer.invoke('tidal-list-collections', opts),
   tidalCollectionTracks: (opts) => ipcRenderer.invoke('tidal-collection-tracks', opts),
   tidalDownloadCollection: (opts) => ipcRenderer.invoke('tidal-download-collection', opts),
   cloudSearch: ({ source, query, types, limit }) =>
