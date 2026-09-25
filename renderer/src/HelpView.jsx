@@ -45,11 +45,12 @@ const SECTIONS = [
   },
   {
     title: 'Cue points & beat grid',
-    keywords: 'prepare track waveform grid hot cue memory nudge tap bpm zoom trim start end',
+    keywords: 'prepare track waveform grid hot cue memory nudge tap bpm zoom trim start end swap',
     items: [
       'Click a track cue column or use "Prepare Track" to open the Beat Grid Editor.',
       'Nudge the grid with the arrow keys (Shift = bigger step) or drag the waveform; set BPM with the field or tap T to tap the tempo.',
       'Add, rename and delete hot cues and memory cues directly on the detail waveform.',
+      'Click a cue badge to move that cue to another hot cue letter. If the letter is already used the editor asks to confirm the swap: the cue you edited takes the letter and the other cue takes over the old slot. When the edited cue was a memory cue, the other cue becomes a memory cue.',
       'Trim: press Set IN / Set OUT to mark the usable start and end at the playhead. Both markers are drawn on the waveform and on the overview strip; Clear trim (or the ↺ buttons) removes them and restores full-track playback.',
       'Space plays/pauses while editing, +/= and - zoom the waveform, Enter applies and closes.',
       'Cues, grid and BPM are written to USB exports so Rekordbox sees them on CDJs.',
