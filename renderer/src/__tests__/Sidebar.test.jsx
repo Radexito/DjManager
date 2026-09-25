@@ -18,7 +18,6 @@ describe('Sidebar', () => {
   const defaultProps = {
     selectedMenuItemId: 'music',
     onMenuSelect: vi.fn(),
-    onExportPlaylistRekordboxUsb: vi.fn(),
     onExportPlaylistAll: vi.fn(),
   };
 
@@ -97,11 +96,11 @@ describe('Sidebar', () => {
     fireEvent.contextMenu(screen.getByText('Techno Set'));
 
     expect(screen.getByText(/Rename/)).toBeInTheDocument();
-    expect(screen.getByText(/Export as M3U/)).toBeInTheDocument();
+    expect(screen.getByText(/Export All to USB/)).toBeInTheDocument();
     expect(screen.getByText(/Delete playlist/)).toBeInTheDocument();
   });
 
-  it('context menu includes "Export Rekordbox USB…" and "Export All to USB…"', async () => {
+  it('context menu offers only "Export All to USB…" as an export entry', async () => {
     window.api.getPlaylists.mockResolvedValueOnce([
       { id: 1, name: 'Techno Set', color: null, track_count: 0, total_duration: 0 },
     ]);
@@ -110,25 +109,10 @@ describe('Sidebar', () => {
     await waitFor(() => screen.getByText('Techno Set'));
     fireEvent.contextMenu(screen.getByText('Techno Set'));
 
-    expect(screen.getByText(/Export Rekordbox USB/)).toBeInTheDocument();
     expect(screen.getByText(/Export All to USB/)).toBeInTheDocument();
-  });
-
-  it('calls onExportPlaylistRekordboxUsb with playlist id when "Export Rekordbox USB…" is clicked', async () => {
-    const onExportPlaylistRekordboxUsb = vi.fn();
-    window.api.getPlaylists.mockResolvedValueOnce([
-      { id: 42, name: 'My Set', color: null, track_count: 0, total_duration: 0 },
-    ]);
-
-    renderSidebar({
-      ...defaultProps,
-      onExportPlaylistRekordboxUsb,
-    });
-    await waitFor(() => screen.getByText('My Set'));
-    fireEvent.contextMenu(screen.getByText('My Set'));
-    fireEvent.click(screen.getByText(/Export Rekordbox USB/));
-
-    expect(onExportPlaylistRekordboxUsb).toHaveBeenCalledWith(42);
+    // The standalone M3U and Rekordbox USB exports are gone for good
+    expect(screen.queryByText(/Export as M3U/)).toBeNull();
+    expect(screen.queryByText(/Export Rekordbox USB/)).toBeNull();
   });
 
   it('calls onExportPlaylistAll with playlist id when "Export All to USB…" is clicked', async () => {
@@ -200,7 +184,6 @@ describe('Sidebar — import dialog playlist association', () => {
   const defaultProps = {
     selectedMenuItemId: 'music',
     onMenuSelect: vi.fn(),
-    onExportPlaylistRekordboxUsb: vi.fn(),
     onExportPlaylistAll: vi.fn(),
   };
 
@@ -274,7 +257,6 @@ describe('Sidebar — normalization progress bar', () => {
   const defaultProps = {
     selectedMenuItemId: 'music',
     onMenuSelect: vi.fn(),
-    onExportPlaylistRekordboxUsb: vi.fn(),
     onExportPlaylistAll: vi.fn(),
   };
 

@@ -73,7 +73,7 @@ const SECTIONS = [
     keywords: 'create rename color delete m3u export order drag',
     items: [
       'Create a playlist with the + button above the playlist list; type a name and press Enter.',
-      'Right-click a playlist to rename, color-code, export or delete it. Export writes an M3U file, a Rekordbox USB copy of the playlist, or the full track set (ALL).',
+      'Right-click a playlist to rename, color-code, export or delete it. Export All creates a Rekordbox USB folder with the playlist tracks, the Rekordbox database and M3U playlists.',
       'Drag library rows onto a playlist to add tracks; drag rows inside a playlist to reorder it.',
       'Playing from a playlist marks the current track there; the player bar title then jumps back to that playlist.',
     ],
