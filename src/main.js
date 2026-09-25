@@ -123,13 +123,13 @@ import {
   startLogin as tidalStartLogin,
   downloadTidal,
   fetchTidalInfo,
-  fetchTidalCollections,
   fetchTidalCollectionTracks,
   splitTidalCollectionEntries,
   reindexTidalEntries,
   searchTidal,
   getTidalPreviewUrl,
 } from './audio/tidalDlManager.js';
+import { listTidalCollections } from './audio/tidalDlCollectionsCache.js';
 import { generateWaveformOverview, generateEditorWaveform } from './audio/waveformGenerator.js';
 import { ensureDeps, getFfmpegRuntimePath } from './deps.js';
 import {
@@ -1798,10 +1798,17 @@ async function runTidalDownload({
 
 ipcMain.handle('tidal-download-url', async (_event, opts) => runTidalDownload(opts ?? {}));
 
-ipcMain.handle('tidal-list-collections', async () => {
+// The listing spawns the tdn Python CLI (~20 s on a cold interpreter), so it is
+// cached in the main process and only refetched when the renderer asks for a
+// forced refresh (the panel's Reload action).
+ipcMain.handle('tidal-list-collections', async (_event, opts) => {
+  const force = opts?.force === true;
   try {
-    const res = await fetchTidalCollections();
-    console.log(`[tidal-list-collections] ok=${res.ok} count=${res.collections?.length ?? 0}`);
+    const res = await listTidalCollections({ force });
+    console.log(
+      `[tidal-list-collections] ok=${res.ok} count=${res.collections?.length ?? 0} ` +
+        `source=${res.cached ? 'cache' : 'tdn'} force=${force}`
+    );
     return res;
   } catch (err) {
     console.error('[tidal-list-collections] error:', err.message);
