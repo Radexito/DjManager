@@ -193,6 +193,13 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('folder-playlist-updated', handler);
     return () => ipcRenderer.removeListener('folder-playlist-updated', handler);
   },
+  // #516 — the sync's own counter: how many of the folder's files have landed.
+  // `null` clears the line, like the other progress streams' end event.
+  onFolderSyncProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('folder-sync-progress', handler);
+    return () => ipcRenderer.removeListener('folder-sync-progress', handler);
+  },
   onImportProgress: (callback) => {
     const handler = (_, data) => callback(data);
     ipcRenderer.on('import-progress', handler);

@@ -113,6 +113,8 @@ window.api = {
   onPlaylistsUpdated: vi.fn().mockImplementation(noop),
   // #267 — folder-tracked playlists
   onFolderPlaylistUpdated: vi.fn().mockImplementation(noop),
+  // #516 — the sync's own counter (null clears it)
+  onFolderSyncProgress: vi.fn().mockImplementation(noop),
   createFolderPlaylist: vi.fn().mockResolvedValue({ ok: true, added: 0, imported: 0 }),
   refreshFolderPlaylist: vi
     .fn()
