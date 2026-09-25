@@ -152,6 +152,7 @@ import { initLogger, getLogDir, initRendererLogger, logRendererMessage } from '.
 import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
 import { detectWindowsDrives } from './explorer/drives.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
+import { resolveBlindMode, applyBlindMode } from './usb/blindMode.js';
 import { readTrackCues, buildCueImportPlan } from './usb/anlzCueReader.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
@@ -2314,129 +2315,140 @@ ipcMain.handle('get-explorer-track-metadata', async (_, filePath) => {
   }
 });
 
-ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlistName }) => {
-  try {
-    const total = filePaths.length;
-    send('export-explorer-progress', { msg: `Exporting ${total} tracks to USB…`, pct: 0 });
-
-    const usedNames = new Map();
-    const pdbTracks = [];
-    const anlzPaths = new Map();
-
-    for (let i = 0; i < filePaths.length; i++) {
-      const srcPath = filePaths[i];
-      const ext = path.extname(srcPath);
-
-      // Extract metadata
-      let meta = {
-        title: path.basename(srcPath, ext),
-        artist: '',
-        album: '',
-        bpm: null,
-        key_raw: '',
-        duration: 0,
-        bitrate: 0,
-      };
-      try {
-        const { ffprobe: runFfprobe } = await import('./audio/ffmpeg.js');
-        const data = await runFfprobe(srcPath);
-        const tags = data.format?.tags || {};
-        const stream = data.streams?.find((s) => s.codec_type === 'audio') || {};
-        const bpmTag = tags.bpm || tags.BPM || tags.TBPM || tags['tbpm'];
-        meta = {
-          title: tags.title || path.basename(srcPath, ext),
-          artist: tags.artist || '',
-          album: tags.album || '',
-          bpm: bpmTag ? parseFloat(bpmTag) || null : null,
-          key_raw: tags.key || tags.KEY || tags.initialkey || tags.INITIALKEY || '',
-          duration: parseFloat(data.format?.duration) || 0,
-          bitrate: parseInt(stream.bit_rate || data.format?.bit_rate || 0, 10) || 0,
-        };
-      } catch {}
-
-      // Copy to USB /music/
-      const rawBase =
-        [meta.artist, meta.title].filter(Boolean).join(' - ') || path.basename(srcPath, ext);
-      const safeBase = rawBase.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
-      let filename = `${safeBase}${ext}`;
-      let n = 1;
-      while (usedNames.has(filename.toLowerCase())) {
-        filename = `${safeBase} (${n++})${ext}`;
-      }
-      usedNames.set(filename.toLowerCase(), true);
-
-      const destDir = path.join(usbRoot, 'music');
-      fs.mkdirSync(destDir, { recursive: true });
-      const destPath = path.join(destDir, filename);
-      if (!fs.existsSync(destPath)) fs.copyFileSync(srcPath, destPath);
-      const usbFilePath = `/music/${filename}`;
-
-      // Write minimal ANLZ (path + beatgrid only, no waveform for speed)
-      try {
-        const anlzDat = await writeAnlz({
-          usbFilePath,
-          sourceFilePath: null,
-          beatgrid: null,
-          bpm: meta.bpm || 0,
-          beatgridOffset: 0,
-          usbRoot,
-          ffmpegPath: getFfmpegRuntimePath(),
-          cuePoints: [],
-        });
-        anlzPaths.set(i, anlzDat);
-      } catch {}
-
-      let fileSize = 0;
-      try {
-        fileSize = fs.statSync(destPath).size;
-      } catch {}
-
-      pdbTracks.push({
-        id: i + 1,
-        title: meta.title,
-        artist: meta.artist,
-        album: meta.album,
-        duration: meta.duration,
-        bpm: meta.bpm || 0,
-        key_raw: meta.key_raw,
-        file_path: usbFilePath,
-        track_number: i + 1,
-        year: '',
-        label: '',
-        genres: [],
-        file_size: fileSize,
-        bitrate: meta.bitrate,
-        comments: '',
-        rating: 0,
-        analyzePath: anlzPaths.get(i) || '',
-      });
-
-      const pct = Math.round(((i + 1) / total) * 90);
-      send('export-explorer-progress', { msg: `Copying ${i + 1}/${total}: ${filename}`, pct });
-    }
-
-    send('export-explorer-progress', { msg: 'Writing PDB database…', pct: 92 });
-
-    const pdbPlaylists = playlistName
-      ? [{ id: 1, name: playlistName, track_ids: pdbTracks.map((t) => t.id) }]
-      : [];
-
-    const outputPath = path.join(usbRoot, 'PIONEER', 'rekordbox', 'export.pdb');
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    writePdb({ tracks: pdbTracks, playlists: pdbPlaylists }, outputPath);
-
-    send('export-explorer-progress', { msg: 'Writing settings files…', pct: 96 });
+ipcMain.handle(
+  'export-explorer-to-usb',
+  async (_, { filePaths, usbRoot, playlistName, blindMode = null }) => {
+    const blind = resolveBlindMode(blindMode, getSetting);
     try {
-      await writeSettingFiles(usbRoot);
-    } catch {}
+      const total = filePaths.length;
+      send('export-explorer-progress', { msg: `Exporting ${total} tracks to USB…`, pct: 0 });
 
-    send('export-explorer-progress', null);
-    return { ok: true, trackCount: pdbTracks.length, usbRoot };
-  } catch (err) {
-    send('export-explorer-progress', null);
-    return { ok: false, error: err.message };
+      const usedNames = new Map();
+      const pdbTracks = [];
+      const anlzPaths = new Map();
+
+      for (let i = 0; i < filePaths.length; i++) {
+        const srcPath = filePaths[i];
+        const ext = path.extname(srcPath);
+
+        // Extract metadata
+        let meta = {
+          title: path.basename(srcPath, ext),
+          artist: '',
+          album: '',
+          bpm: null,
+          key_raw: '',
+          duration: 0,
+          bitrate: 0,
+        };
+        try {
+          const { ffprobe: runFfprobe } = await import('./audio/ffmpeg.js');
+          const data = await runFfprobe(srcPath);
+          const tags = data.format?.tags || {};
+          const stream = data.streams?.find((s) => s.codec_type === 'audio') || {};
+          const bpmTag = tags.bpm || tags.BPM || tags.TBPM || tags['tbpm'];
+          meta = {
+            title: tags.title || path.basename(srcPath, ext),
+            artist: tags.artist || '',
+            album: tags.album || '',
+            bpm: bpmTag ? parseFloat(bpmTag) || null : null,
+            key_raw: tags.key || tags.KEY || tags.initialkey || tags.INITIALKEY || '',
+            duration: parseFloat(data.format?.duration) || 0,
+            bitrate: parseInt(stream.bit_rate || data.format?.bit_rate || 0, 10) || 0,
+          };
+        } catch {}
+
+        // Copy to USB /music/
+        const rawBase =
+          [meta.artist, meta.title].filter(Boolean).join(' - ') || path.basename(srcPath, ext);
+        const safeBase = rawBase.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+        let filename = `${safeBase}${ext}`;
+        let n = 1;
+        while (usedNames.has(filename.toLowerCase())) {
+          filename = `${safeBase} (${n++})${ext}`;
+        }
+        usedNames.set(filename.toLowerCase(), true);
+
+        const destDir = path.join(usbRoot, 'music');
+        fs.mkdirSync(destDir, { recursive: true });
+        const destPath = path.join(destDir, filename);
+        if (!fs.existsSync(destPath)) fs.copyFileSync(srcPath, destPath);
+        const usbFilePath = `/music/${filename}`;
+
+        // Write minimal ANLZ (path + beatgrid only, no waveform for speed).
+        // #258 — in blind mode the same file is written with an empty grid.
+        try {
+          const anlzDat = await writeAnlz({
+            usbFilePath,
+            sourceFilePath: null,
+            beatgrid: null,
+            bpm: meta.bpm || 0,
+            beatgridOffset: 0,
+            usbRoot,
+            ffmpegPath: getFfmpegRuntimePath(),
+            cuePoints: [],
+            blind,
+          });
+          anlzPaths.set(i, anlzDat);
+        } catch {}
+
+        let fileSize = 0;
+        try {
+          fileSize = fs.statSync(destPath).size;
+        } catch {}
+
+        pdbTracks.push(
+          applyBlindMode(
+            {
+              id: i + 1,
+              title: meta.title,
+              artist: meta.artist,
+              album: meta.album,
+              duration: meta.duration,
+              bpm: meta.bpm || 0,
+              key_raw: meta.key_raw,
+              file_path: usbFilePath,
+              track_number: i + 1,
+              year: '',
+              label: '',
+              genres: [],
+              file_size: fileSize,
+              bitrate: meta.bitrate,
+              comments: '',
+              rating: 0,
+              analyzePath: anlzPaths.get(i) || '',
+            },
+            blind
+          )
+        );
+
+        const pct = Math.round(((i + 1) / total) * 90);
+        send('export-explorer-progress', { msg: `Copying ${i + 1}/${total}: ${filename}`, pct });
+      }
+
+      send('export-explorer-progress', { msg: 'Writing PDB database…', pct: 92 });
+
+      const pdbPlaylists = playlistName
+        ? [{ id: 1, name: playlistName, track_ids: pdbTracks.map((t) => t.id) }]
+        : [];
+
+      const outputPath = path.join(usbRoot, 'PIONEER', 'rekordbox', 'export.pdb');
+      fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+      writePdb({ tracks: pdbTracks, playlists: pdbPlaylists }, outputPath);
+
+      send('export-explorer-progress', { msg: 'Writing settings files…', pct: 96 });
+      try {
+        await writeSettingFiles(usbRoot);
+      } catch {}
+
+      send('export-explorer-progress', null);
+      return { ok: true, trackCount: pdbTracks.length, usbRoot };
+    } catch (err) {
+      send('export-explorer-progress', null);
+      return { ok: false, error: err.message };
+    }
   }
-});
+);
 
 // ── File Explorer v2 IPC ───────────────────────────────────────────────────────
 
@@ -3035,9 +3047,12 @@ ipcMain.handle(
       useNormalized = false,
       targetDevice = null,
       forceMp3 = false,
+      blindMode = null,
       applyTrim = true,
     }
   ) => {
+    // #258 — "Real DJ mode": no waveforms/BPM on the exported USB
+    const blind = resolveBlindMode(blindMode, getSetting);
     try {
       const targetLufs = useNormalized ? Number(getSetting('normalize_target_lufs', '-9')) : null;
       const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
@@ -3124,6 +3139,8 @@ ipcMain.handle(
         // #463: re-base the beat grid / cues and read the waveform from the
         // trimmed copy, so the exported ANLZ describes the exported audio.
         const trim = resolveExportTrim(t, usbRoot, usbFilePath, cues, applyTrim);
+        // #258 — blind mode still writes the ANLZ (so the player does not
+        // analyse the track itself) but with no waveform and an empty grid.
         try {
           await writeAnlz({
             usbFilePath,
@@ -3134,6 +3151,7 @@ ipcMain.handle(
             usbRoot,
             ffmpegPath: getFfmpegRuntimePath(),
             cuePoints: trim ? trim.cuePoints : cues,
+            blind,
           });
         } catch (err) {
           console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
@@ -3146,31 +3164,36 @@ ipcMain.handle(
 
       // 4. Build PDB tracks for the current export
       send('export-rekordbox-progress', { msg: 'Writing Rekordbox database…', pct: 70 });
-      const newPdbTracks = tracks.map((t) => ({
-        id: t.id,
-        title: t.title || '',
-        artist: t.artist || '',
-        album: t.album || '',
-        // #463: the exported file is the trimmed range, so the PDB row must
-        // report the trimmed length. The trim itself is stored in the manifest
-        // so a later trim change forces a re-copy instead of reusing stale audio.
-        duration: exportDurationSec(t, applyTrim) ?? 0,
-        trim_start_ms: applyTrim === false ? null : (t.trim_start_ms ?? null),
-        trim_end_ms: applyTrim === false ? null : (t.trim_end_ms ?? null),
-        bpm: t.bpm_override ?? t.bpm ?? 0,
-        key_raw: t.key_raw || '',
-        file_path: usbPaths.get(t.id) || '',
-        track_number: t.track_number || 0,
-        year: t.year || '',
-        label: t.label || '',
-        genres: t.genres ? JSON.parse(t.genres) : [],
-        file_size: usbMeta.get(t.id)?.fileSize ?? t.file_size ?? 0,
-        bitrate: usbMeta.get(t.id)?.bitrate ?? t.bitrate ?? 0,
-        comments: t.comments || '',
-        rating: t.rating || 0,
-        replay_gain: t.replay_gain ?? null,
-        analyzePath: anlzPaths.get(t.id) || '',
-      }));
+      const newPdbTracks = tracks.map((t) =>
+        applyBlindMode(
+          {
+            id: t.id,
+            title: t.title || '',
+            artist: t.artist || '',
+            album: t.album || '',
+            // #463: the exported file is the trimmed range, so the PDB row must
+            // report the trimmed length. The trim itself is stored in the manifest
+            // so a later trim change forces a re-copy instead of reusing stale audio.
+            duration: exportDurationSec(t, applyTrim) ?? 0,
+            trim_start_ms: applyTrim === false ? null : (t.trim_start_ms ?? null),
+            trim_end_ms: applyTrim === false ? null : (t.trim_end_ms ?? null),
+            bpm: t.bpm_override ?? t.bpm ?? 0,
+            key_raw: t.key_raw || '',
+            file_path: usbPaths.get(t.id) || '',
+            track_number: t.track_number || 0,
+            year: t.year || '',
+            label: t.label || '',
+            genres: t.genres ? JSON.parse(t.genres) : [],
+            file_size: usbMeta.get(t.id)?.fileSize ?? t.file_size ?? 0,
+            bitrate: usbMeta.get(t.id)?.bitrate ?? t.bitrate ?? 0,
+            comments: t.comments || '',
+            rating: t.rating || 0,
+            replay_gain: t.replay_gain ?? null,
+            analyzePath: anlzPaths.get(t.id) || '',
+          },
+          blind
+        )
+      );
 
       const newPdbPlaylists = allPlaylists.map((pl) => ({
         id: pl.id,
@@ -3215,9 +3238,12 @@ ipcMain.handle(
       useNormalized = false,
       targetDevice = null,
       forceMp3 = false,
+      blindMode = null,
       applyTrim = true,
     }
   ) => {
+    // #258 — "Real DJ mode": no waveforms/BPM on the exported USB
+    const blind = resolveBlindMode(blindMode, getSetting);
     try {
       const targetLufs = useNormalized ? Number(getSetting('normalize_target_lufs', '-9')) : null;
       const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
@@ -3316,6 +3342,8 @@ ipcMain.handle(
       }
 
       // Write ANLZ beat grids + waveforms (only for tracks in the current export)
+      // #258 — blind mode still writes the ANLZ, just with no waveform and an
+      // empty grid (skipping it makes the player analyse the track itself).
       send('export-all-progress', { msg: 'Writing beat grids & waveforms…', pct: 50 });
       for (let i = 0; i < allTracks.length; i++) {
         const t = allTracks[i];
@@ -3325,6 +3353,8 @@ ipcMain.handle(
         // #463: re-base the beat grid / cues and read the waveform from the
         // trimmed copy, so the exported ANLZ describes the exported audio.
         const trim = resolveExportTrim(t, usbRoot, usbFilePath, cues, applyTrim);
+        // #258 — blind mode still writes the ANLZ (so the player does not
+        // analyse the track itself) but with no waveform and an empty grid.
         try {
           await writeAnlz({
             usbFilePath,
@@ -3335,6 +3365,7 @@ ipcMain.handle(
             usbRoot,
             ffmpegPath: getFfmpegRuntimePath(),
             cuePoints: trim ? trim.cuePoints : cues,
+            blind,
           });
         } catch (err) {
           console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
@@ -3347,33 +3378,38 @@ ipcMain.handle(
 
       // Write PDB — merge with existing manifest
       send('export-all-progress', { msg: 'Writing Rekordbox database…', pct: 70 });
-      const newPdbTracks = allTracks.map((t) => ({
-        id: t.id,
-        title: t.title || '',
-        artist: t.artist || '',
-        album: t.album || '',
-        duration: exportDurationSec(t, applyTrim) ?? 0,
-        trim_start_ms: applyTrim === false ? null : (t.trim_start_ms ?? null),
-        trim_end_ms: applyTrim === false ? null : (t.trim_end_ms ?? null),
-        bpm: t.bpm_override ?? t.bpm ?? 0,
-        key_raw: t.key_raw || '',
-        file_path: usbPaths.get(t.id) || '',
-        track_number: t.track_number || 0,
-        year: t.year || '',
-        label: t.label || '',
-        genres: t.genres ? JSON.parse(t.genres) : [],
-        file_size: usbMeta.get(t.id)?.fileSize ?? t.file_size ?? 0,
-        bitrate: usbMeta.get(t.id)?.bitrate ?? t.bitrate ?? 0,
-        comments: t.comments || '',
-        rating: t.rating || 0,
-        replay_gain: t.replay_gain ?? null,
-        analyzePath: (() => {
-          const usbFP = usbPaths.get(t.id);
-          if (!usbFP) return '';
-          const folder = getAnlzFolder(usbFP).replace(/\\/g, '/');
-          return folder ? `/${folder}/ANLZ0000.DAT` : '';
-        })(),
-      }));
+      const newPdbTracks = allTracks.map((t) =>
+        applyBlindMode(
+          {
+            id: t.id,
+            title: t.title || '',
+            artist: t.artist || '',
+            album: t.album || '',
+            duration: exportDurationSec(t, applyTrim) ?? 0,
+            trim_start_ms: applyTrim === false ? null : (t.trim_start_ms ?? null),
+            trim_end_ms: applyTrim === false ? null : (t.trim_end_ms ?? null),
+            bpm: t.bpm_override ?? t.bpm ?? 0,
+            key_raw: t.key_raw || '',
+            file_path: usbPaths.get(t.id) || '',
+            track_number: t.track_number || 0,
+            year: t.year || '',
+            label: t.label || '',
+            genres: t.genres ? JSON.parse(t.genres) : [],
+            file_size: usbMeta.get(t.id)?.fileSize ?? t.file_size ?? 0,
+            bitrate: usbMeta.get(t.id)?.bitrate ?? t.bitrate ?? 0,
+            comments: t.comments || '',
+            rating: t.rating || 0,
+            replay_gain: t.replay_gain ?? null,
+            analyzePath: (() => {
+              const usbFP = usbPaths.get(t.id);
+              if (!usbFP) return '';
+              const folder = getAnlzFolder(usbFP).replace(/\\/g, '/');
+              return folder ? `/${folder}/ANLZ0000.DAT` : '';
+            })(),
+          },
+          blind
+        )
+      );
       const newPdbPlaylists = allPlaylists.map((pl) => ({
         id: pl.id,
         name: pl.name,
