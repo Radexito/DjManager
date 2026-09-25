@@ -12,6 +12,29 @@ function formatTime(s) {
 }
 
 /**
+ * Rendered width of an element, in CSS px. getBoundingClientRect wins because
+ * it keeps sub-pixel precision (the +2px tolerance below is sub-pixel sized);
+ * offsetWidth/scrollWidth are the fallbacks for engines without a layout rect.
+ */
+function frameWidth(el) {
+  const rect = el.getBoundingClientRect();
+  if (rect && rect.width > 0) return rect.width;
+  return el.offsetWidth || el.scrollWidth || 0;
+}
+
+/**
+ * The gap the marquee stylesheet puts AFTER each copy (padding-right on
+ * .player-scroll-text in the --on state). It only exists while the marquee is
+ * running, so it must be taken out of the measurement: otherwise turning the
+ * marquee on would itself make the text wider and the decision could never
+ * flip back.
+ */
+function marqueeGap(el) {
+  if (typeof getComputedStyle !== 'function') return 0;
+  return parseFloat(getComputedStyle(el).paddingRight) || 0;
+}
+
+/**
  * Full-text row that shows EVERYTHING: when the text fits, it sits still;
  * when it overflows, it auto-scrolls (marquee) instead of ellipsizing.
  * Pauses on hover. Short names (e.g. "Armin van Buuren") never scroll —
@@ -25,13 +48,22 @@ function ScrollText({ className = '', children, ...rest }) {
   const measure = () => {
     const el = rootRef.current;
     if (!el) return;
-    const sw = el.scrollWidth;
-    const cw = el.clientWidth;
-    const o = sw > cw + 2; // +2: don't scroll for a sub-pixel overflow
+    // Decide from ONE copy of the text, never from the container: while the
+    // marquee runs the container holds two copies (the second is aria-hidden),
+    // so its scrollWidth is roughly double the text and a title that fits once
+    // would keep the marquee alive forever.
+    const textEl = el.querySelector('.player-scroll-text');
+    const avail = el.clientWidth; // usable width of the container
+    if (!textEl || avail <= 0) return;
+    const gap = marqueeGap(textEl); // 0 when idle, 28px while marqueeing
+    const textW = Math.max(0, frameWidth(textEl) - gap); // one copy, gap excluded
+    const o = textW > avail + 2; // +2: don't scroll for a sub-pixel overflow
     setOver((prev) => (prev === o ? prev : o));
     if (o) {
-      // Constant-ish speed (~55px/s), bounded so very long titles don't crawl
-      setDur(Math.min(45, Math.max(7, Math.round(sw / 55))));
+      // Constant-ish speed (~55px/s) over the distance the keyframe really
+      // moves (-50% of the track = one copy including its gap), bounded so very
+      // long titles don't crawl
+      setDur(Math.min(45, Math.max(7, Math.round((textW + gap) / 55))));
     }
   };
 
