@@ -150,6 +150,14 @@ import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
 import { resolveExportFormat } from './usb/deviceFormats.js';
 import { reuseExistingUsbTrack } from './usb/exportReuse.js';
+import {
+  EXPORT_ACTION,
+  planExportActions,
+  describeExportPlan,
+  describeCopyProgress,
+  describeConvertProgress,
+  exportReuseTrim,
+} from './usb/exportPlan.js';
 import { getResetCleanupTargets, startResetCleanup } from './resetCleanup.js';
 import {
   getCuePoints,
@@ -2742,17 +2750,21 @@ ipcMain.handle(
 
       // Load existing manifest so we can merge with previously exported tracks/playlists
       const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
-      const copyTargets = tracks.filter(
-        (t) =>
-          !reuseExistingUsbTrack(existingTracks, t.id, new Map(), {
-            trimStartMs: applyTrim === false ? null : (t.trim_start_ms ?? null),
-            trimEndMs: applyTrim === false ? null : (t.trim_end_ms ?? null),
-          })
-      );
-      const copyTotal = copyTargets.length;
+      // What this export will actually do to every file, decided up front with the
+      // same inputs `copyTrackToUsb()` uses — so the progress text cannot claim to
+      // be "copying" while ffmpeg is re-encoding.
+      const plan = planExportActions(tracks, {
+        useNormalized,
+        targetLufs,
+        targetDevice,
+        forceMp3,
+        applyTrim,
+        existingTracks,
+      });
+      const planMsg = describeExportPlan(plan);
 
       send('export-rekordbox-progress', {
-        msg: `Exporting ${total} tracks…`,
+        msg: planMsg,
         pct: 0,
       });
 
@@ -2766,13 +2778,18 @@ ipcMain.handle(
       // 2. Copy files to USB, build USB path map
       const usbPaths = new Map(); // trackId → USB path
       const usbMeta = new Map(); // trackId → { fileSize, bitrate } override, only set on re-encode
+      const copyStartedAt = Date.now();
       let copiedCount = 0;
+      let convertedCount = 0;
+      let progressMsg = planMsg;
       for (let i = 0; i < tracks.length; i++) {
         const t = tracks[i];
-        const reused = reuseExistingUsbTrack(existingTracks, t.id, usedNames, {
-          trimStartMs: applyTrim === false ? null : (t.trim_start_ms ?? null),
-          trimEndMs: applyTrim === false ? null : (t.trim_end_ms ?? null),
-        });
+        const reused = reuseExistingUsbTrack(
+          existingTracks,
+          t.id,
+          usedNames,
+          exportReuseTrim(t, applyTrim)
+        );
         if (reused) {
           usbPaths.set(t.id, reused.path);
           if (reused.meta) usbMeta.set(t.id, reused.meta);
@@ -2786,13 +2803,27 @@ ipcMain.handle(
           });
           usbPaths.set(t.id, usbPath);
           if (meta) usbMeta.set(t.id, meta);
-          copiedCount += 1;
+          const entry = plan.byId.get(t.id);
+          const elapsedMs = Date.now() - copyStartedAt;
+          if (entry?.action === EXPORT_ACTION.CONVERT) {
+            convertedCount += 1;
+            progressMsg = describeConvertProgress({
+              done: convertedCount,
+              total: plan.totals.convert,
+              reasons: entry.reasons,
+              elapsedMs,
+            });
+          } else {
+            copiedCount += 1;
+            progressMsg = describeCopyProgress({
+              done: copiedCount,
+              total: plan.totals.copy,
+              elapsedMs,
+            });
+          }
         }
-        const copyMsg = copyTotal
-          ? `Copying files… ${copiedCount}/${copyTotal}`
-          : 'Copying files… all tracks already on USB';
         send('export-rekordbox-progress', {
-          msg: copyMsg,
+          msg: progressMsg,
           pct: Math.round(((i + 1) / total) * 40),
         });
       }
@@ -2923,17 +2954,21 @@ ipcMain.handle(
 
       // Load existing manifest for merging
       const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
-      const copyTargets = allTracks.filter(
-        (t) =>
-          !reuseExistingUsbTrack(existingTracks, t.id, new Map(), {
-            trimStartMs: applyTrim === false ? null : (t.trim_start_ms ?? null),
-            trimEndMs: applyTrim === false ? null : (t.trim_end_ms ?? null),
-          })
-      );
-      const copyTotal = copyTargets.length;
+      // What this export will actually do to every file, decided up front with the
+      // same inputs `copyTrackToUsb()` uses — so the progress text cannot claim to
+      // be "copying" while ffmpeg is re-encoding.
+      const plan = planExportActions(allTracks, {
+        useNormalized,
+        targetLufs,
+        targetDevice,
+        forceMp3,
+        applyTrim,
+        existingTracks,
+      });
+      const planMsg = describeExportPlan(plan);
 
       send('export-all-progress', {
-        msg: `Exporting ${total} tracks…`,
+        msg: planMsg,
         pct: 0,
       });
 
@@ -2947,13 +2982,18 @@ ipcMain.handle(
       // Copy files once
       const usbPaths = new Map();
       const usbMeta = new Map(); // trackId → { fileSize, bitrate } override, only set on re-encode
+      const copyStartedAt = Date.now();
       let copiedCount = 0;
+      let convertedCount = 0;
+      let progressMsg = planMsg;
       for (let i = 0; i < allTracks.length; i++) {
         const t = allTracks[i];
-        const reused = reuseExistingUsbTrack(existingTracks, t.id, usedNames, {
-          trimStartMs: applyTrim === false ? null : (t.trim_start_ms ?? null),
-          trimEndMs: applyTrim === false ? null : (t.trim_end_ms ?? null),
-        });
+        const reused = reuseExistingUsbTrack(
+          existingTracks,
+          t.id,
+          usedNames,
+          exportReuseTrim(t, applyTrim)
+        );
         if (reused) {
           usbPaths.set(t.id, reused.path);
           if (reused.meta) usbMeta.set(t.id, reused.meta);
@@ -2967,13 +3007,27 @@ ipcMain.handle(
           });
           usbPaths.set(t.id, usbPath);
           if (meta) usbMeta.set(t.id, meta);
-          copiedCount += 1;
+          const entry = plan.byId.get(t.id);
+          const elapsedMs = Date.now() - copyStartedAt;
+          if (entry?.action === EXPORT_ACTION.CONVERT) {
+            convertedCount += 1;
+            progressMsg = describeConvertProgress({
+              done: convertedCount,
+              total: plan.totals.convert,
+              reasons: entry.reasons,
+              elapsedMs,
+            });
+          } else {
+            copiedCount += 1;
+            progressMsg = describeCopyProgress({
+              done: copiedCount,
+              total: plan.totals.copy,
+              elapsedMs,
+            });
+          }
         }
-        const copyMsg = copyTotal
-          ? `Copying files… ${copiedCount}/${copyTotal}`
-          : 'Copying files… all tracks already on USB';
         send('export-all-progress', {
-          msg: copyMsg,
+          msg: progressMsg,
           pct: Math.round(((i + 1) / total) * 35),
         });
       }

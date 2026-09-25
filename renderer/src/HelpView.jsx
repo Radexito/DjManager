@@ -110,6 +110,7 @@ const SECTIONS = [
       'The export writes cue points, beat grid, BPM and automatic gain so CDJs (e.g. CDJ-3000) load the track ready to mix.',
       'Tracks with a trim range (Set IN / Set OUT in Prepare Track) are exported as just that range: the copied file, its waveform and its Rekordbox entry all cover the trim only.',
       'Exporting again to a drive that already has the playlist reuses the existing path/name instead of creating duplicates.',
+      'Loudness normalization re-encodes every exported file (roughly 6 s for a 5 minute track, about a minute for a 92 minute DJ mix), so a normalized export is far slower than a plain copy. The progress line says whether it is copying or converting, why, and how long the phase has been running.',
       'A supported format action is available for USB sticks that need a fresh Rekordbox layout.',
     ],
   },
