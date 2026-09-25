@@ -100,6 +100,8 @@ import {
 } from './audio/importManager.js';
 import { createLibraryWatcher, listAudioFiles } from './library/libraryWatcher.js';
 import { planFolderSync, isInsideFolder } from './library/folderPlaylistSync.js';
+import { mapWithConcurrency } from './library/concurrency.js';
+import { createFolderSyncProgress } from './library/folderSyncProgress.js';
 import {
   listLibraries,
   createLibrary,
@@ -2121,9 +2123,18 @@ function playlistsForFile(filePath) {
   );
 }
 
+/** How many files the sync links at once — the same width the analysis queue uses. */
+const FOLDER_SYNC_LINK_CONCURRENCY = 4;
+
 /**
  * Mirror one folder-tracked playlist: import what is new, add it to the
  * playlist, and report (never remove) what went missing.
+ *
+ * #516 — the sync reports its own progress (`folder-sync-progress`) instead of
+ * leaning on the analysis counter, links several files at once, and adds each
+ * linked track to the playlist on the progress cadence so the open view fills in
+ * as the folder is walked. `planFolderSync` stays the authority for what ended up
+ * missing/unchanged.
  */
 async function syncFolderPlaylist(playlistId, { importNew = true } = {}) {
   const playlist = getPlaylist(playlistId);
@@ -2136,70 +2147,128 @@ async function syncFolderPlaylist(playlistId, { importNew = true } = {}) {
     return { ok: false, playlistId, folder, error: 'folder-missing' };
   }
 
-  const files = await listAudioFiles([folder], { maxDepth: recursive ? 8 : 0 });
-
-  // #267 — the folder stays the source of truth: its files are LINKED (their
-  // paths do not move), not copied into the library. That is what lets the
-  // playlist keep mirroring the folder, and what makes a deleted or moved file
-  // show up as missing instead of leaving a stale copy behind.
-  let linked = 0;
-  if (importNew && files.length > 0) {
-    const known = new Set(getTracksByPaths(files).map((t) => t.file_path));
-    for (const file of files.filter((f) => !known.has(f))) {
-      try {
-        const res = await linkAudioFile(file);
-        if (res?.id && !res.duplicate) {
-          linked++;
-          spawnAnalysis(res.id, file);
-        }
-      } catch (err) {
-        console.warn(`[folder-playlist] link failed for ${file}:`, err.message);
-      }
+  // Linked tracks waiting for their playlist row. They land on the progress
+  // cadence, so the list fills in while the folder is still being walked instead
+  // of arriving in one lump at the end. `INSERT OR IGNORE` makes a double add
+  // harmless, and the final plan pass is what decides what is still missing.
+  let pendingTrackIds = [];
+  let added = 0;
+  const flushLinked = () => {
+    if (pendingTrackIds.length === 0) return;
+    const ids = pendingTrackIds;
+    pendingTrackIds = [];
+    try {
+      addTracksToPlaylist(playlistId, ids);
+      added += ids.length;
+    } catch (err) {
+      console.warn(`[folder-playlist] add to #${playlistId} failed:`, err.message);
     }
-  }
+  };
 
-  const rows = files.length > 0 ? getTracksByPaths(files) : [];
-  const byPath = new Map(rows.map((t) => [path.resolve(t.file_path), t]));
-  const playlistTracks = getPlaylistTracks(playlistId);
-  const plan = planFolderSync({
-    folderFiles: files,
-    playlistTracks,
-    folder,
+  const progress = createFolderSyncProgress({
+    playlistId,
+    emit: (data) => {
+      // Every progress flush also drains what has linked so far, so the counter
+      // and the list refresh share one throttle.
+      if (data) flushLinked();
+      send('folder-sync-progress', data);
+    },
   });
 
-  const addIds = plan.add.map((f) => byPath.get(path.resolve(f))?.id).filter(Boolean);
-  if (addIds.length > 0) addTracksToPlaylist(playlistId, addIds);
-  markPlaylistFolderSynced(playlistId);
+  let linked = 0;
+  let failed = 0;
+  try {
+    const files = await listAudioFiles([folder], { maxDepth: recursive ? 8 : 0 });
 
-  // Give the confirmation dialog enough to read: a bare file path is not
-  // something anyone wants to tick through.
-  const trackById = new Map(playlistTracks.map((t) => [t.id, t]));
-  const missing = plan.missing.map((m) => ({
-    ...m,
-    title: trackById.get(m.id)?.title ?? '',
-    artist: trackById.get(m.id)?.artist ?? '',
-  }));
+    // #267 — the folder stays the source of truth: its files are LINKED (their
+    // paths do not move), not copied into the library. That is what lets the
+    // playlist keep mirroring the folder, and what makes a deleted or moved file
+    // show up as missing instead of leaving a stale copy behind.
+    if (importNew && files.length > 0) {
+      const known = new Set(getTracksByPaths(files).map((t) => t.file_path));
+      const newFiles = files.filter((f) => !known.has(f));
+      if (newFiles.length > 0) {
+        progress.start(newFiles.length);
+        const { errors } = await mapWithConcurrency(
+          newFiles,
+          async (file) => {
+            const res = await linkAudioFile(file);
+            if (res?.id && !res.duplicate) {
+              linked++;
+              pendingTrackIds.push(res.id);
+              spawnAnalysis(res.id, file);
+            }
+            return res;
+          },
+          {
+            limit: FOLDER_SYNC_LINK_CONCURRENCY,
+            onSettled: (file) => progress.step(file),
+          }
+        );
+        for (const { item, error } of errors) {
+          console.warn(`[folder-playlist] link failed for ${item}:`, error?.message ?? error);
+        }
+        failed = errors.length;
+        flushLinked();
+        progress.setPhase('adding');
+      }
+    }
 
-  const result = {
-    ok: true,
-    playlistId,
-    folder,
-    recursive,
-    found: files.length,
-    linked,
-    added: addIds.length,
-    unchanged: plan.unchanged,
-    missing,
-  };
-  if (linked > 0 || addIds.length > 0) {
-    send('library-updated');
-    send('folder-playlist-updated', { playlistId, event: 'synced', ...result });
+    const rows = files.length > 0 ? getTracksByPaths(files) : [];
+    const byPath = new Map(rows.map((t) => [path.resolve(t.file_path), t]));
+    const playlistTracks = getPlaylistTracks(playlistId);
+    const plan = planFolderSync({
+      folderFiles: files,
+      playlistTracks,
+      folder,
+    });
+
+    // Whatever the incremental pass did not already take in — the plan stays the
+    // authority for what the mirror is still missing.
+    const addIds = plan.add.map((f) => byPath.get(path.resolve(f))?.id).filter(Boolean);
+    if (addIds.length > 0) {
+      addTracksToPlaylist(playlistId, addIds);
+      added += addIds.length;
+    }
+    markPlaylistFolderSynced(playlistId);
+
+    // Give the confirmation dialog enough to read: a bare file path is not
+    // something anyone wants to tick through.
+    const trackById = new Map(playlistTracks.map((t) => [t.id, t]));
+    const missing = plan.missing.map((m) => ({
+      ...m,
+      title: trackById.get(m.id)?.title ?? '',
+      artist: trackById.get(m.id)?.artist ?? '',
+    }));
+
+    const result = {
+      ok: true,
+      playlistId,
+      folder,
+      recursive,
+      found: files.length,
+      linked,
+      failed,
+      added,
+      unchanged: plan.unchanged,
+      missing,
+    };
+    if (linked > 0 || addIds.length > 0) {
+      send('library-updated');
+      send('folder-playlist-updated', { playlistId, event: 'synced', ...result });
+    }
+    console.log(
+      `[folder-playlist] #${playlistId} ${folder}: ${files.length} file(s), ` +
+        `${linked} linked, ${added} added, ${missing.length} missing` +
+        (failed > 0 ? `, ${failed} failed` : '')
+    );
+    return result;
+  } finally {
+    // Whatever happened (a failed link, a folder that vanished mid-walk), the
+    // counter must not be left on screen.
+    flushLinked();
+    progress.finish();
   }
-  console.log(
-    `[folder-playlist] #${playlistId} ${folder}: ${files.length} file(s), ` +
-      `${linked} linked, ${addIds.length} added, ${missing.length} missing`
-  );
-  return result;
 }
 
 /** Refresh every folder-tracked playlist (startup + manual "Refresh all"). */
