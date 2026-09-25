@@ -28,8 +28,8 @@ USB_ROOT/
 
 Audio files themselves aren't shown in the tree above since their location is
 convention-dependent: native Rekordbox exports place them under
-`Contents/<artist>/<album>/track.mp3`, while third-party tools (including this
-application) place them under `/music/` or any other user-chosen path. Only the
+`Contents/<artist>/<album>/track.mp3`. This application keeps its audio in a
+flat `Contents/` folder, matching Rekordbox's folder name. Only the
 USB-relative path recorded in `export.pdb`/ANLZ files matters to the CDJ — the
 directory layout of the audio itself is not otherwise constrained.
 
@@ -99,7 +99,7 @@ PPTH → PVBR → PQTZ → PWAV → PWV2 → PCOB × 2
 | 12     | 4        | `len_path` — byte count of UTF-16BE string **including** null terminator |
 | 16     | len_path | Path as UTF-16BE, null-terminated                                        |
 
-Path is the USB-relative track path, e.g. `/music/Artist - Title.mp3`.
+Path is the USB-relative track path, e.g. `/Contents/Artist - Title.mp3`.
 
 ### PVBR — VBR Seek Index ⚠️ REQUIRED
 
@@ -462,7 +462,7 @@ Key fields in a track row (`type = 0`):
 | ------------- | ---------------- | ------------------------------------------------------- |
 | `analyzePath` | DeviceSQL string | ANLZ folder path, e.g. `/PIONEER/USBANLZ/P036/00006A74` |
 | `filename`    | DeviceSQL string | Filename only, e.g. `Artist - Title.mp3`                |
-| `filePath`    | DeviceSQL string | Full USB path, e.g. `/music/Artist - Title.mp3`         |
+| `filePath`    | DeviceSQL string | Full USB path, e.g. `/Contents/Artist - Title.mp3`      |
 | `bpm`         | u32              | BPM × 100                                               |
 | `duration`    | u32              | Duration in seconds                                     |
 | `sampleRate`  | u32              | e.g. 44100                                              |
@@ -538,7 +538,7 @@ CREATE TABLE content(
   releaseDate varchar,
   dateCreated varchar,              -- 'YYYY-MM-DD'
   dateAdded varchar,                -- 'YYYY-MM-DD'
-  path varchar,                     -- USB-relative path, e.g. '/music/filename.mp3'
+  path varchar,                     -- USB-relative path, e.g. '/Contents/filename.mp3'
   fileName varchar,
   fileSize integer,                 -- bytes
   fileType integer,                 -- 1=MP3, 11=WAV
@@ -655,7 +655,7 @@ CREATE TABLE recommendedLike(content_id_1 integer, content_id_2 integer, rating 
 
 - **Per-track manual gain slider** — stored only in `master.db` on the PC, never exported to USB. CDJ auto-gain normalisation comes entirely from `Unnamed7`/`Unnamed8` in `export.pdb`.
 - **Waveform / beatgrid / key analysis** — stored in ANLZ files. `content.analysisDataFilePath` points to `ANLZ0000.DAT` on USB.
-- **Audio files** — stored under `{usbRoot}/music/`.
+- **Audio files** — stored under `{usbRoot}/Contents/`.
 
 ### Implementation notes
 

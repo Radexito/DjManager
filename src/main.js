@@ -142,7 +142,13 @@ import {
   updateAll,
 } from './deps.js';
 import { initLogger, getLogDir, initRendererLogger, logRendererMessage } from './logger.js';
-import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
+import {
+  detectFilesystem,
+  formatDrive,
+  describeFilesystem,
+  usbAudioDir,
+  usbAudioPath,
+} from './usb/usbUtils.js';
 import { detectWindowsDrives } from './explorer/drives.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
 import { readTrackCues, buildCueImportPlan } from './usb/anlzCueReader.js';
@@ -2040,7 +2046,7 @@ ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlis
         };
       } catch {}
 
-      // Copy to USB /music/
+      // Copy to USB /Contents/
       const rawBase =
         [meta.artist, meta.title].filter(Boolean).join(' - ') || path.basename(srcPath, ext);
       const safeBase = rawBase.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
@@ -2051,11 +2057,11 @@ ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlis
       }
       usedNames.set(filename.toLowerCase(), true);
 
-      const destDir = path.join(usbRoot, 'music');
+      const destDir = usbAudioDir(usbRoot);
       fs.mkdirSync(destDir, { recursive: true });
       const destPath = path.join(destDir, filename);
       if (!fs.existsSync(destPath)) fs.copyFileSync(srcPath, destPath);
-      const usbFilePath = `/music/${filename}`;
+      const usbFilePath = usbAudioPath(filename);
 
       // Write minimal ANLZ (path + beatgrid only, no waveform for speed)
       try {
@@ -2355,7 +2361,7 @@ ipcMain.handle('format-usb', async (_, { device, mountPoint }) => {
 });
 
 /**
- * Copies a track's audio file to {usbRoot}/music/, returns { path, meta }.
+ * Copies a track's audio file to {usbRoot}/Contents/, returns { path, meta }.
  * `meta` is non-null only when the file was re-encoded to a different format,
  * in which case it carries the real output fileSize/bitrate for the PDB row
  * (the source DB values no longer apply once the container/codec changes).
@@ -2386,7 +2392,7 @@ async function copyTrackToUsb(
   }
   usedNames.set(finalName.toLowerCase(), true);
 
-  const destDir = path.join(usbRoot, 'music');
+  const destDir = usbAudioDir(usbRoot);
   fs.mkdirSync(destDir, { recursive: true });
   const destPath = path.join(destDir, finalName);
 
@@ -2428,7 +2434,7 @@ async function copyTrackToUsb(
     await writeExportTags(destPath, track, blind);
   }
 
-  return { path: `/music/${finalName}`, meta };
+  return { path: usbAudioPath(finalName), meta };
 }
 
 /**
