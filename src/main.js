@@ -150,6 +150,7 @@ import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
 import { resolveExportFormat } from './usb/deviceFormats.js';
 import { reuseExistingUsbTrack } from './usb/exportReuse.js';
+import { planExportRollback, applyExportRollback } from './usb/exportRollback.js';
 import { getResetCleanupTargets, startResetCleanup } from './resetCleanup.js';
 import {
   getCuePoints,
@@ -2355,10 +2356,13 @@ ipcMain.handle('format-usb', async (_, { device, mountPoint }) => {
 });
 
 /**
- * Copies a track's audio file to {usbRoot}/music/, returns { path, meta }.
+ * Copies a track's audio file to {usbRoot}/music/, returns { path, meta, created }.
  * `meta` is non-null only when the file was re-encoded to a different format,
  * in which case it carries the real output fileSize/bitrate for the PDB row
  * (the source DB values no longer apply once the container/codec changes).
+ * `created` is true only when this call wrote the file; a file already on the
+ * stick is left untouched and reports `created: false`, so a cancelled run can
+ * tell its own additions apart from a previous export's files.
  */
 async function copyTrackToUsb(
   track,
@@ -2391,6 +2395,7 @@ async function copyTrackToUsb(
   const destPath = path.join(destDir, finalName);
 
   let meta = null;
+  let created = false;
   if (!fs.existsSync(destPath) && fs.existsSync(srcPath)) {
     const sourceLoudness = track.loudness;
     const gainDb =
@@ -2426,9 +2431,10 @@ async function copyTrackToUsb(
     // #474 — the exported file must describe itself: title/artist/album always,
     // BPM/key unless this is a blind (real DJ mode) export.
     await writeExportTags(destPath, track, blind);
+    created = true;
   }
 
-  return { path: `/music/${finalName}`, meta };
+  return { path: `/music/${finalName}`, meta, created };
 }
 
 /**
@@ -2548,6 +2554,202 @@ function saveManifest(usbRoot, tracksMap, playlistsMap) {
     'utf8'
   );
 }
+
+// ── Cancelling a running export ────────────────────────────────────────────────
+// The export modal offers Cancel while an export is in progress. The flag below
+// is checked between tracks, so an in-flight ffmpeg conversion always finishes
+// and nothing is ever killed mid-write. The run then stops at the next safe
+// point and records exactly what it wrote, so the user can afterwards choose to
+// keep that part or remove it again.
+//
+// Removal is scoped strictly to the cancelled run: only audio files and ANLZ
+// folders this run created are deleted, and the stick's manifest / Rekordbox
+// database are put back to the bytes they had before the run started. A stick
+// that already carried a library from earlier exports keeps it untouched, and a
+// track this run REUSED (already on the stick) is never deleted.
+
+let exportCancelRequested = false;
+let exportRunSession = null;
+
+function readTextFileIfExists(p) {
+  try {
+    return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null;
+  } catch {
+    return null;
+  }
+}
+
+function readBytesFileIfExists(p) {
+  try {
+    return fs.existsSync(p) ? fs.readFileSync(p) : null;
+  } catch {
+    return null;
+  }
+}
+
+function getPdbPath(usbRoot) {
+  return path.join(usbRoot, 'PIONEER', 'rekordbox', 'export.pdb');
+}
+
+/**
+ * Opens a cancellable export run: snapshots the stick's current state (manifest
+ * bytes, PDB bytes, manifest ids and audio paths) and clears the cancel flag.
+ */
+function beginExportRun(
+  usbRoot,
+  { existingTracks, existingPlaylists, runTrackIds, runPlaylistIds }
+) {
+  exportCancelRequested = false;
+  exportRunSession = {
+    usbRoot,
+    runTrackIds: [...runTrackIds],
+    runPlaylistIds: [...runPlaylistIds],
+    preExistingTrackIds: [...existingTracks.keys()],
+    preExistingPlaylistIds: [...existingPlaylists.keys()],
+    preExistingAudioPaths: [...existingTracks.values()].map((t) => t?.file_path).filter(Boolean),
+    manifestBefore: readTextFileIfExists(getManifestPath(usbRoot)),
+    pdbBefore: readBytesFileIfExists(getPdbPath(usbRoot)),
+    createdFiles: [],
+    createdTrackIds: new Set(),
+    createdAnlzFolders: [],
+  };
+  return exportRunSession;
+}
+
+/** Records an audio file this run created (a reused/skipped file is not recorded). */
+function recordCreatedFile(trackId, usbFilePath) {
+  if (!exportRunSession) return;
+  exportRunSession.createdFiles.push({ trackId, path: usbFilePath });
+  exportRunSession.createdTrackIds.add(trackId);
+}
+
+/**
+ * Records an ANLZ folder this run created. Skipped when the folder already
+ * existed (it belongs to an earlier export) or when the track's audio was not
+ * written by this run, so beat grids of reused tracks are never removed.
+ */
+function recordCreatedAnlzFolder(usbRoot, trackId, usbFilePath) {
+  const session = exportRunSession;
+  if (!session || !session.createdTrackIds.has(trackId)) return;
+  const folder = getAnlzFolder(usbFilePath);
+  if (fs.existsSync(path.join(usbRoot, folder))) return;
+  session.createdAnlzFolders.push(folder);
+}
+
+/**
+ * Ends a finished/failed run so a later cleanup call cannot act on stale state.
+ * A CANCELLED run keeps its session: the modal still has to ask the user whether
+ * to keep or remove what was written.
+ */
+function endExportRun({ keepSession = false } = {}) {
+  if (!keepSession) exportRunSession = null;
+  exportCancelRequested = false;
+}
+
+/**
+ * Asks the running export to stop at its next safe point. Returns immediately;
+ * the export handler returns with `cancelled: true` once it has stopped.
+ */
+ipcMain.handle('cancel-export', () => {
+  const running = Boolean(exportRunSession);
+  exportCancelRequested = true;
+  return { ok: true, requested: running };
+});
+
+/**
+ * Applies the user's keep/remove choice after a cancelled export.
+ * `keep` leaves the copied part on the stick and removes nothing; `remove`
+ * deletes only what the cancelled run created and restores the stick's database.
+ */
+ipcMain.handle('resolve-export-cleanup', async (_e, { choice = 'keep' } = {}) => {
+  const session = exportRunSession;
+  if (!session) return { ok: false, error: 'No cancelled export is waiting for a cleanup choice.' };
+  exportRunSession = null;
+  exportCancelRequested = false;
+
+  try {
+    const plan = planExportRollback({
+      mode: choice === 'remove' ? 'remove' : 'keep',
+      createdFiles: session.createdFiles,
+      createdAnlzFolders: session.createdAnlzFolders,
+      runTrackIds: session.runTrackIds,
+      runPlaylistIds: session.runPlaylistIds,
+      preExistingTrackIds: session.preExistingTrackIds,
+      preExistingPlaylistIds: session.preExistingPlaylistIds,
+      preExistingAudioPaths: session.preExistingAudioPaths,
+    });
+
+    const summary = {
+      ok: true,
+      choice: plan.mode,
+      usbRoot: session.usbRoot,
+      removedFiles: 0,
+      removedFolders: 0,
+      keptFiles: plan.keptFiles,
+      droppedTracks: plan.dropTrackIds.length,
+      droppedPlaylists: plan.dropPlaylistIds.length,
+      keptTracks: plan.keptTrackIds.length,
+      failures: [],
+    };
+    if (!plan.remove) return summary;
+
+    // 1. Delete this run's additions (only files/folders it created).
+    const applied = applyExportRollback(session.usbRoot, plan);
+    summary.removedFiles = applied.removedFiles;
+    summary.removedFolders = applied.removedFolders;
+    summary.failures = applied.failures;
+    summary.keptFiles = Math.max(0, plan.keptFiles);
+
+    // 2. Put the manifest back exactly as it was before the run. Writing the
+    // bytes we read before the run implements the plan's drop lists (they only
+    // ever name entries the pre-run manifest did not have).
+    const manifestPath = getManifestPath(session.usbRoot);
+    if (session.manifestBefore === null) {
+      try {
+        fs.rmSync(manifestPath, { force: true });
+      } catch (err) {
+        summary.failures.push(`manifest: ${err.message}`);
+      }
+    } else {
+      try {
+        fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+        fs.writeFileSync(manifestPath, session.manifestBefore, 'utf8');
+      } catch (err) {
+        summary.failures.push(`manifest: ${err.message}`);
+      }
+    }
+
+    // 3. Bring the Rekordbox database back in line with that manifest: restore
+    // the exact bytes when the stick had one, otherwise rebuild it from the
+    // manifest as it was before the run (skipped when the stick had neither,
+    // in which case the file we wrote is removed again).
+    const pdbPath = getPdbPath(session.usbRoot);
+    try {
+      if (session.pdbBefore) {
+        fs.writeFileSync(pdbPath, session.pdbBefore);
+      } else if (session.manifestBefore === null) {
+        fs.rmSync(pdbPath, { force: true });
+      } else {
+        const { tracks, playlists } = loadManifest(session.usbRoot);
+        runPdbExporter(
+          {
+            usbRoot: session.usbRoot,
+            tracks: [...tracks.values()],
+            playlists: [...playlists.values()],
+          },
+          session.usbRoot
+        );
+        writeSettingFiles(session.usbRoot);
+      }
+    } catch (err) {
+      summary.failures.push(`database: ${err.message}`);
+    }
+
+    return summary;
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 
 // ── #259: pull cue points set on hardware back into the library ────────────────
 // The CDJ writes hot/memory cues into the stick's ANLZ files; the export
@@ -2742,6 +2944,12 @@ ipcMain.handle(
 
       // Load existing manifest so we can merge with previously exported tracks/playlists
       const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
+      beginExportRun(usbRoot, {
+        existingTracks,
+        existingPlaylists,
+        runTrackIds: tracks.map((t) => t.id),
+        runPlaylistIds: allPlaylists.map((pl) => pl.id),
+      });
       const copyTargets = tracks.filter(
         (t) =>
           !reuseExistingUsbTrack(existingTracks, t.id, new Map(), {
@@ -2768,6 +2976,9 @@ ipcMain.handle(
       const usbMeta = new Map(); // trackId → { fileSize, bitrate } override, only set on re-encode
       let copiedCount = 0;
       for (let i = 0; i < tracks.length; i++) {
+        // Cancel stops the loop here, between tracks: a conversion already
+        // running has finished, so the stick only ever holds whole files.
+        if (exportCancelRequested) break;
         const t = tracks[i];
         const reused = reuseExistingUsbTrack(existingTracks, t.id, usedNames, {
           trimStartMs: applyTrim === false ? null : (t.trim_start_ms ?? null),
@@ -2777,13 +2988,18 @@ ipcMain.handle(
           usbPaths.set(t.id, reused.path);
           if (reused.meta) usbMeta.set(t.id, reused.meta);
         } else {
-          const { path: usbPath, meta } = await copyTrackToUsb(t, usbRoot, usedNames, {
+          const {
+            path: usbPath,
+            meta,
+            created,
+          } = await copyTrackToUsb(t, usbRoot, usedNames, {
             useNormalized,
             targetLufs,
             targetDevice,
             forceMp3,
             applyTrim,
           });
+          if (created) recordCreatedFile(t.id, usbPath);
           usbPaths.set(t.id, usbPath);
           if (meta) usbMeta.set(t.id, meta);
           copiedCount += 1;
@@ -2801,9 +3017,11 @@ ipcMain.handle(
       send('export-rekordbox-progress', { msg: 'Writing beat grids & waveforms…', pct: 40 });
       const anlzPaths = new Map(); // trackId → Pioneer analyze_path string for PDB
       for (let i = 0; i < tracks.length; i++) {
+        if (exportCancelRequested) break;
         const t = tracks[i];
         const usbFilePath = usbPaths.get(t.id);
         if (!usbFilePath) continue;
+        recordCreatedAnlzFolder(usbRoot, t.id, usbFilePath);
         const anlzFolder = getAnlzFolder(usbFilePath).replace(/\\/g, '/');
         anlzPaths.set(t.id, `/${anlzFolder}/ANLZ0000.DAT`);
         const cues = getCuePoints(t.id).filter((c) => c.enabled !== 0);
@@ -2832,7 +3050,11 @@ ipcMain.handle(
 
       // 4. Build PDB tracks for the current export
       send('export-rekordbox-progress', { msg: 'Writing Rekordbox database…', pct: 70 });
-      const newPdbTracks = tracks.map((t) => ({
+      // A cancelled run stopped early, so its PDB rows are limited to the
+      // tracks that are actually on the stick.
+      const cancelled = exportCancelRequested;
+      const pdbSourceTracks = cancelled ? tracks.filter((t) => usbPaths.has(t.id)) : tracks;
+      const newPdbTracks = pdbSourceTracks.map((t) => ({
         id: t.id,
         title: t.title || '',
         artist: t.artist || '',
@@ -2882,8 +3104,18 @@ ipcMain.handle(
 
       send('export-rekordbox-progress', { msg: 'Done!', pct: 100 });
       send('export-rekordbox-progress', null);
-      return { ok: true, trackCount: mergedTracks.size, newTrackCount: total, usbRoot };
+      const result = {
+        ok: true,
+        cancelled,
+        trackCount: mergedTracks.size,
+        newTrackCount: total,
+        addedFileCount: exportRunSession ? exportRunSession.createdFiles.length : 0,
+        usbRoot,
+      };
+      endExportRun({ keepSession: cancelled });
+      return result;
     } catch (err) {
+      endExportRun();
       send('export-rekordbox-progress', null);
       return { ok: false, error: err.message };
     }
@@ -2923,6 +3155,12 @@ ipcMain.handle(
 
       // Load existing manifest for merging
       const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
+      beginExportRun(usbRoot, {
+        existingTracks,
+        existingPlaylists,
+        runTrackIds: allTracks.map((t) => t.id),
+        runPlaylistIds: allPlaylists.map((pl) => pl.id),
+      });
       const copyTargets = allTracks.filter(
         (t) =>
           !reuseExistingUsbTrack(existingTracks, t.id, new Map(), {
@@ -2949,6 +3187,9 @@ ipcMain.handle(
       const usbMeta = new Map(); // trackId → { fileSize, bitrate } override, only set on re-encode
       let copiedCount = 0;
       for (let i = 0; i < allTracks.length; i++) {
+        // Cancel stops the loop here, between tracks: a conversion already
+        // running has finished, so the stick only ever holds whole files.
+        if (exportCancelRequested) break;
         const t = allTracks[i];
         const reused = reuseExistingUsbTrack(existingTracks, t.id, usedNames, {
           trimStartMs: applyTrim === false ? null : (t.trim_start_ms ?? null),
@@ -2958,13 +3199,18 @@ ipcMain.handle(
           usbPaths.set(t.id, reused.path);
           if (reused.meta) usbMeta.set(t.id, reused.meta);
         } else {
-          const { path: usbPath, meta } = await copyTrackToUsb(t, usbRoot, usedNames, {
+          const {
+            path: usbPath,
+            meta,
+            created,
+          } = await copyTrackToUsb(t, usbRoot, usedNames, {
             useNormalized,
             targetLufs,
             targetDevice,
             forceMp3,
             applyTrim,
           });
+          if (created) recordCreatedFile(t.id, usbPath);
           usbPaths.set(t.id, usbPath);
           if (meta) usbMeta.set(t.id, meta);
           copiedCount += 1;
@@ -2980,9 +3226,12 @@ ipcMain.handle(
 
       // Write M3U playlists (USB path mode)
       send('export-all-progress', { msg: 'Writing M3U playlists…', pct: 35 });
+      // A cancelled run leaves the M3U files alone: they describe the previous
+      // complete export, and the cleanup choice must leave them as they were.
+      const playlistsToWrite = exportCancelRequested ? [] : allPlaylists;
       const playlistDir = path.join(usbRoot, 'playlists');
-      fs.mkdirSync(playlistDir, { recursive: true });
-      for (const pl of allPlaylists) {
+      if (playlistsToWrite.length) fs.mkdirSync(playlistDir, { recursive: true });
+      for (const pl of playlistsToWrite) {
         const tracks = getPlaylistTracks(pl.id);
         const safeName = pl.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
         const lines = ['#EXTM3U'];
@@ -3004,9 +3253,11 @@ ipcMain.handle(
       // Write ANLZ beat grids + waveforms (only for tracks in the current export)
       send('export-all-progress', { msg: 'Writing beat grids & waveforms…', pct: 50 });
       for (let i = 0; i < allTracks.length; i++) {
+        if (exportCancelRequested) break;
         const t = allTracks[i];
         const usbFilePath = usbPaths.get(t.id);
         if (!usbFilePath) continue;
+        recordCreatedAnlzFolder(usbRoot, t.id, usbFilePath);
         const cues = getCuePoints(t.id).filter((c) => c.enabled !== 0);
         // #463: re-base the beat grid / cues and read the waveform from the
         // trimmed copy, so the exported ANLZ describes the exported audio.
@@ -3033,7 +3284,11 @@ ipcMain.handle(
 
       // Write PDB — merge with existing manifest
       send('export-all-progress', { msg: 'Writing Rekordbox database…', pct: 70 });
-      const newPdbTracks = allTracks.map((t) => ({
+      // A cancelled run stopped early, so its PDB rows are limited to the
+      // tracks that are actually on the stick.
+      const cancelled = exportCancelRequested;
+      const pdbSourceTracks = cancelled ? allTracks.filter((t) => usbPaths.has(t.id)) : allTracks;
+      const newPdbTracks = pdbSourceTracks.map((t) => ({
         id: t.id,
         title: t.title || '',
         artist: t.artist || '',
@@ -3083,14 +3338,19 @@ ipcMain.handle(
 
       send('export-all-progress', { msg: 'Done!', pct: 100 });
       send('export-all-progress', null);
-      return {
+      const result = {
         ok: true,
+        cancelled,
         trackCount: mergedTracks.size,
         newTrackCount: total,
+        addedFileCount: exportRunSession ? exportRunSession.createdFiles.length : 0,
         playlistCount: mergedPlaylists.size,
         usbRoot,
       };
+      endExportRun({ keepSession: cancelled });
+      return result;
     } catch (err) {
+      endExportRun();
       send('export-all-progress', null);
       return { ok: false, error: err.message };
     }

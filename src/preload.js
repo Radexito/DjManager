@@ -74,6 +74,8 @@ contextBridge.exposeInMainWorld('api', {
   formatUsb: (opts) => ipcRenderer.invoke('format-usb', opts),
   exportRekordbox: (opts) => ipcRenderer.invoke('export-rekordbox', opts),
   exportAll: (opts) => ipcRenderer.invoke('export-all', opts),
+  cancelExport: () => ipcRenderer.invoke('cancel-export'),
+  resolveExportCleanup: (opts) => ipcRenderer.invoke('resolve-export-cleanup', opts),
   onFormatUsbProgress: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('format-usb-progress', handler);

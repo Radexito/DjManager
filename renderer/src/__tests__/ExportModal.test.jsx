@@ -394,4 +394,159 @@ describe('ExportModal', () => {
       );
     });
   });
+
+  // ── Cancel a running export + keep/remove cleanup choice ──────────────────────
+
+  /** Starts an Export All run whose IPC call stays pending until the test ends it. */
+  async function startPendingExportAll() {
+    let finish;
+    window.api.openDirDialog.mockResolvedValue('/tmp/usb');
+    window.api.checkUsbFormat.mockResolvedValue({
+      needsFormat: false,
+      fs: 'fat32',
+      fsLabel: 'FAT32',
+      device: '/dev/sdb1',
+    });
+    window.api.exportAll.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+
+    render(<ExportModal {...defaultProps} />);
+    fireEvent.click(screen.getByText('Export All'));
+    await waitFor(() => expect(window.api.exportAll).toHaveBeenCalled());
+    return finish;
+  }
+
+  it('offers no Cancel for an export while the modal is idle', () => {
+    render(<ExportModal {...defaultProps} />);
+
+    expect(screen.queryByText('Cancel export')).not.toBeInTheDocument();
+  });
+
+  it('shows a Cancel button while the export is running', async () => {
+    await startPendingExportAll();
+
+    expect(screen.getByRole('button', { name: 'Cancel export' })).toBeInTheDocument();
+    // The export options are gone for the duration of the run.
+    expect(screen.queryByText('Export All')).not.toBeInTheDocument();
+  });
+
+  it('calls the cancel IPC when Cancel is clicked', async () => {
+    await startPendingExportAll();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel export' }));
+
+    await waitFor(() => expect(window.api.cancelExport).toHaveBeenCalledOnce());
+    expect(screen.getByRole('button', { name: 'Cancelling…' })).toBeDisabled();
+  });
+
+  it('asks how to clean up after the export stopped, with the number of files written', async () => {
+    const finish = await startPendingExportAll();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel export' }));
+    await waitFor(() => expect(window.api.cancelExport).toHaveBeenCalled());
+
+    finish({ ok: true, cancelled: true, addedFileCount: 3, usbRoot: '/tmp/usb' });
+
+    await waitFor(() => {
+      expect(screen.getByText('Export cancelled')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/3 files had already been written to the USB/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Keep what was copied' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Remove what this export added' })
+    ).toBeInTheDocument();
+  });
+
+  it('sends the keep choice and reports what was kept', async () => {
+    window.api.resolveExportCleanup.mockResolvedValueOnce({
+      ok: true,
+      choice: 'keep',
+      keptFiles: 3,
+      usbRoot: '/tmp/usb',
+    });
+    const finish = await startPendingExportAll();
+    finish({ ok: true, cancelled: true, addedFileCount: 3, usbRoot: '/tmp/usb' });
+    await waitFor(() => screen.getByRole('button', { name: 'Keep what was copied' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Keep what was copied' }));
+
+    await waitFor(() => {
+      expect(window.api.resolveExportCleanup).toHaveBeenCalledWith({ choice: 'keep' });
+      expect(screen.getByText(/Kept 3 files on the USB/)).toBeInTheDocument();
+    });
+  });
+
+  it('sends the remove choice and reports what was removed', async () => {
+    window.api.resolveExportCleanup.mockResolvedValueOnce({
+      ok: true,
+      choice: 'remove',
+      removedFiles: 3,
+      removedFolders: 1,
+      keptFiles: 0,
+      keptTracks: 2,
+      usbRoot: '/tmp/usb',
+    });
+    const finish = await startPendingExportAll();
+    finish({ ok: true, cancelled: true, addedFileCount: 3, usbRoot: '/tmp/usb' });
+    await waitFor(() => screen.getByRole('button', { name: 'Remove what this export added' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove what this export added' }));
+
+    await waitFor(() => {
+      expect(window.api.resolveExportCleanup).toHaveBeenCalledWith({ choice: 'remove' });
+      expect(screen.getByText(/Removed 3 files from the USB/)).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/2 tracks from earlier exports were left untouched/)
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+  });
+
+  it('shows no files written when the export was cancelled before anything landed', async () => {
+    const finish = await startPendingExportAll();
+    finish({ ok: true, cancelled: true, addedFileCount: 0, usbRoot: '/tmp/usb' });
+
+    await waitFor(() => {
+      expect(screen.getByText(/No files had been written to the USB yet/)).toBeInTheDocument();
+    });
+  });
+
+  it('still reports a completed export when Cancel arrives too late', async () => {
+    const finish = await startPendingExportAll();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel export' }));
+
+    finish({ ok: true, cancelled: false, trackCount: 5, playlistCount: 2, usbRoot: '/tmp/usb' });
+
+    await waitFor(() => {
+      expect(screen.getByText('Export complete!')).toBeInTheDocument();
+    });
+    expect(window.api.resolveExportCleanup).not.toHaveBeenCalled();
+  });
+
+  it('offers Cancel for a Rekordbox export too', async () => {
+    let finish;
+    window.api.openDirDialog.mockResolvedValue('/tmp/usb');
+    window.api.checkUsbFormat.mockResolvedValue({
+      needsFormat: false,
+      fs: 'fat32',
+      fsLabel: 'FAT32',
+      device: '/dev/sdb1',
+    });
+    window.api.exportRekordbox.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+
+    render(<ExportModal {...defaultProps} />);
+    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+    await waitFor(() => expect(window.api.exportRekordbox).toHaveBeenCalled());
+
+    expect(screen.getByRole('button', { name: 'Cancel export' })).toBeInTheDocument();
+    finish({ ok: true, cancelled: false, trackCount: 3, usbRoot: '/tmp/usb' });
+  });
 });

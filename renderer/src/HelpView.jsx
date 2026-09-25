@@ -110,6 +110,7 @@ const SECTIONS = [
       'The export writes cue points, beat grid, BPM and automatic gain so CDJs (e.g. CDJ-3000) load the track ready to mix.',
       'Tracks with a trim range (Set IN / Set OUT in Prepare Track) are exported as just that range: the copied file, its waveform and its Rekordbox entry all cover the trim only.',
       'Exporting again to a drive that already has the playlist reuses the existing path/name instead of creating duplicates.',
+      'An export in progress can be cancelled from the dialog. You then choose to keep the files that were already written, or to remove them, which deletes only what that export added and puts the drive database back as it was. Tracks from earlier exports are never touched.',
       'A supported format action is available for USB sticks that need a fresh Rekordbox layout.',
     ],
   },
