@@ -211,6 +211,17 @@ export function PlayerProvider({ children }) {
     if (changed) trimStopArmedRef.current = true;
   }, [currentTrack]);
 
+  // Track id whose Prepare Track (Beat Grid Editor) screen is open, or null.
+  // The stop at the trim OUT point belongs to that screen only: there the user is
+  // setting IN/OUT on this very track and expects playback to stop at the range
+  // end instead of handing off to the next track. Everywhere else the trim end
+  // keeps acting like the end of the track and advances (user correction
+  // 2026-09-25). The editor reports itself through setPrepareTrackOpen.
+  const prepareTrackOpenRef = useRef(null);
+  const setPrepareTrackOpen = useCallback((trackId) => {
+    prepareTrackOpenRef.current = trackId ?? null;
+  }, []);
+
   // Stable play-at-index — exposed via ref so handleEnded can call it without stale closure
   const playAtIndexRef = useRef(null);
   // `next` is defined further down (after playAtIndex) but playAtIndex's own
@@ -359,7 +370,10 @@ export function PlayerProvider({ children }) {
 
   // Register audio event listeners once
   useEffect(() => {
-    // Shared by the natural 'ended' event and the trim-out stop (#463).
+    // Shared by the natural 'ended' event and the trim-out stop (#463). Whether
+    // reaching the trim end pauses or hands off to the queue is decided in
+    // checkTrimEnd, which routes the stop through here only when the Prepare
+    // Track screen is not open for the loaded track.
     const advanceAfterTrack = (fromTrimEnd = false) => {
       const q = queueRef.current;
       const idx = idxRef.current;
@@ -401,7 +415,24 @@ export function PlayerProvider({ children }) {
       if (!trim || !trimStopArmedRef.current || audio.paused) return;
       if (audio.currentTime >= trim.endMs / 1000 - 0.05) {
         trimStopArmedRef.current = false;
-        advanceAfterTrack(true);
+        // Pause at OUT only while Prepare Track is open on the loaded track: that
+        // is the screen where IN/OUT are being set and playback has to stop at the
+        // range end instead of handing off. With the editor closed the trim end
+        // behaves like the end of the track and advances (user correction
+        // 2026-09-25). An explicit play or seek past OUT is unaffected either way,
+        // because neither of those re-arms this stop.
+        const preparingLoadedTrack =
+          prepareTrackOpenRef.current != null &&
+          prepareTrackOpenRef.current === currentTrackRef.current?.id;
+        if (!preparingLoadedTrack) {
+          advanceAfterTrack(true);
+          return;
+        }
+        // Pin the playhead to OUT: the check above can fire up to one poll
+        // interval early, and the paused position has to read as exactly OUT.
+        audio.currentTime = trim.endMs / 1000;
+        audio.pause();
+        setIsPlaying(false);
       }
     };
 
@@ -727,6 +758,7 @@ export function PlayerProvider({ children }) {
         setDevice,
         setVolume,
         patchCurrentTrack,
+        setPrepareTrackOpen,
         reloadCurrentTrack,
         updateQueue,
         audioRef,
