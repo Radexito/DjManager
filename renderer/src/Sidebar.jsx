@@ -23,12 +23,7 @@ const PRESET_COLORS = [
   '#adb5bd',
 ];
 
-function Sidebar({
-  selectedMenuItemId,
-  onMenuSelect,
-  onExportPlaylistRekordboxUsb,
-  onExportPlaylistAll,
-}) {
+function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
   const { sidebarProgress: ytDlpSidebarProgress } = useDownload();
   const { sidebarProgress: tidalSidebarProgress } = useTidalDownload();
   const [playlists, setPlaylists] = useState([]);
@@ -38,7 +33,6 @@ function Sidebar({
   const [waveformGenProgress, setWaveformGenProgress] = useState(null); // { completed, total } | null
   const [moveTracksProgress, setMoveTracksProgress] = useState(null); // { completed, total } | null
   const [removeTracksProgress, setRemoveTracksProgress] = useState(null); // { completed, total } | null
-  const [exportProgress, setExportProgress] = useState(null); // { copied, total, pct } | null
   const [ytDlpCheckProgress, setYtDlpCheckProgress] = useState(null); // { checked, total } | null during fetch/check
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
@@ -166,11 +160,6 @@ function Sidebar({
   };
 
   useEffect(() => {
-    const unsub = window.api.onExportM3UProgress((data) => setExportProgress(data));
-    return unsub;
-  }, []);
-
-  useEffect(() => {
     const unsub = window.api.onImportProgress(({ completed, total }) => {
       setImportProgress({ completed, total });
     });
@@ -241,22 +230,6 @@ function Sidebar({
     });
     return unsub;
   }, []);
-
-  const handleExportM3U = async (id) => {
-    setPlaylistMenu(null);
-    const result = await window.api.exportPlaylistAsM3U(id);
-    setExportProgress(null);
-    if (result && !result.canceled) {
-      alert(
-        `Exported ${result.trackCount} track${result.trackCount !== 1 ? 's' : ''} to:\n${result.destDir}`
-      );
-    }
-  };
-
-  const handleExportPlaylistRekordboxUsb = (id) => {
-    setPlaylistMenu(null);
-    onExportPlaylistRekordboxUsb(id);
-  };
 
   const handleExportPlaylistAll = (id) => {
     setPlaylistMenu(null);
@@ -590,11 +563,6 @@ function Sidebar({
             )}
           </button>
         )}
-        {exportProgress && (
-          <div className="import-progress">
-            Exporting {exportProgress.copied} / {exportProgress.total}… ({exportProgress.pct}%)
-          </div>
-        )}
         <button
           className="import-button"
           onClick={handleImport}
@@ -649,15 +617,6 @@ function Sidebar({
             </div>
           </div>
           <div className="context-menu-separator" />
-          <div className="context-menu-item" onClick={() => handleExportM3U(playlistMenu.id)}>
-            📤 Export as M3U…
-          </div>
-          <div
-            className="context-menu-item"
-            onClick={() => handleExportPlaylistRekordboxUsb(playlistMenu.id)}
-          >
-            💾 Export Rekordbox USB…
-          </div>
           <div
             className="context-menu-item"
             onClick={() => handleExportPlaylistAll(playlistMenu.id)}

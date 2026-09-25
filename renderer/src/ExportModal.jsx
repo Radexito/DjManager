@@ -57,7 +57,6 @@ function ExportFormatOptions({ targetDevice, setTargetDevice, forceMp3, setForce
 
 function ExportModal({ onClose, playlistId, initialMode }) {
   const [step, setStep] = useState(initialMode ? STEPS.confirm : STEPS.idle);
-  const [mode, setMode] = useState(initialMode ?? null);
   const [usbInfo, setUsbInfo] = useState(null);
   const [usbRoot, setUsbRoot] = useState(null);
   const [progress, setProgress] = useState(null); // { msg, pct }
@@ -83,18 +82,15 @@ function ExportModal({ onClose, playlistId, initialMode }) {
 
   // Progress listeners
   useEffect(() => {
-    const unsubRekordbox = window.api.onExportRekordboxProgress(setProgress);
     const unsubAll = window.api.onExportAllProgress(setProgress);
     const unsubFormat = window.api.onFormatUsbProgress(setFormatProgress);
     return () => {
-      unsubRekordbox();
       unsubAll();
       unsubFormat();
     };
   }, []);
 
-  const pickFolder = async (exportMode) => {
-    setMode(exportMode);
+  const pickFolder = async () => {
     const dir = await window.api.openDirDialog();
     if (!dir) return;
     setUsbRoot(dir);
@@ -108,7 +104,7 @@ function ExportModal({ onClose, playlistId, initialMode }) {
     } else if (info.needsFormat) {
       setStep(STEPS.needsFormat);
     } else {
-      startExport(exportMode, dir);
+      startExport(dir);
     }
   };
 
@@ -120,32 +116,20 @@ function ExportModal({ onClose, playlistId, initialMode }) {
       setStep(STEPS.error);
       return;
     }
-    startExport(mode, usbRoot);
+    startExport(usbRoot);
   };
 
-  const startExport = async (exportMode, dir) => {
+  const startExport = async (dir) => {
     setStep(STEPS.exporting);
     setProgress({ msg: 'Starting…', pct: 0 });
-    let res;
-    if (exportMode === 'rekordbox') {
-      res = await window.api.exportRekordbox({
-        usbRoot: dir,
-        playlistId: playlistId ?? null,
-        useNormalized,
-        applyTrim,
-        targetDevice: targetDevice || null,
-        forceMp3,
-      });
-    } else {
-      res = await window.api.exportAll({
-        usbRoot: dir,
-        playlistId: playlistId ?? null,
-        useNormalized,
-        applyTrim,
-        targetDevice: targetDevice || null,
-        forceMp3,
-      });
-    }
+    const res = await window.api.exportAll({
+      usbRoot: dir,
+      playlistId: playlistId ?? null,
+      useNormalized,
+      applyTrim,
+      targetDevice: targetDevice || null,
+      forceMp3,
+    });
     if (res.ok) {
       setResult(res);
       setStep(STEPS.done);
@@ -153,11 +137,6 @@ function ExportModal({ onClose, playlistId, initialMode }) {
       setError(res.error);
       setStep(STEPS.error);
     }
-  };
-
-  const handleExportM3U = async () => {
-    // Per-playlist M3U uses existing flow — just close this modal
-    onClose();
   };
 
   return (
@@ -179,58 +158,6 @@ function ExportModal({ onClose, playlistId, initialMode }) {
           <div className="export-modal-body">
             <p className="export-modal-desc">
               {playlistId
-                ? 'Export this playlist to a Pioneer-compatible USB drive for CDJ/XDJ players.'
-                : 'Choose an export format. Rekordbox USB creates a Pioneer-compatible drive you can plug directly into CDJ/XDJ players.'}
-            </p>
-            <label className="export-normalized-option">
-              <input
-                type="checkbox"
-                checked={useNormalized}
-                onChange={(e) => setUseNormalized(e.target.checked)}
-              />
-              <span>Apply loudness normalization to exported files</span>
-            </label>
-            <label className="export-normalized-option">
-              <input
-                type="checkbox"
-                checked={applyTrim}
-                onChange={(e) => setApplyTrim(e.target.checked)}
-              />
-              <span>Apply trim ranges (IN/OUT) to exported files (off exports the whole file)</span>
-            </label>
-            <ExportFormatOptions
-              targetDevice={targetDevice}
-              setTargetDevice={setTargetDevice}
-              forceMp3={forceMp3}
-              setForceMp3={setForceMp3}
-            />
-            <div className="export-options">
-              <button className="export-option-btn" onClick={() => pickFolder('rekordbox')}>
-                <span className="export-option-icon">💾</span>
-                <span className="export-option-label">Export Rekordbox USB</span>
-                <span className="export-option-sub">PDB + beat grids · all playlists</span>
-              </button>
-              <button className="export-option-btn" onClick={() => pickFolder('all')}>
-                <span className="export-option-icon">📦</span>
-                <span className="export-option-label">Export All</span>
-                <span className="export-option-sub">Rekordbox USB + M3U playlists</span>
-              </button>
-              <button
-                className="export-option-btn export-option-btn--secondary"
-                onClick={handleExportM3U}
-              >
-                <span className="export-option-icon">📋</span>
-                <span className="export-option-label">Export M3U</span>
-                <span className="export-option-sub">Right-click a playlist in the sidebar</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {step === STEPS.confirm && (
-          <div className="export-modal-body">
-            <p className="export-modal-desc">
-              {mode === 'rekordbox'
                 ? 'Export this playlist to a Pioneer-compatible USB drive for CDJ/XDJ players.'
                 : 'Export Rekordbox USB + M3U playlists to a folder.'}
             </p>
@@ -256,9 +183,44 @@ function ExportModal({ onClose, playlistId, initialMode }) {
               forceMp3={forceMp3}
               setForceMp3={setForceMp3}
             />
+            <div className="export-options">
+              <button className="export-option-btn" onClick={() => pickFolder()}>
+                <span className="export-option-icon">📦</span>
+                <span className="export-option-label">Export All</span>
+                <span className="export-option-sub">Rekordbox USB + M3U playlists</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === STEPS.confirm && (
+          <div className="export-modal-body">
+            <p className="export-modal-desc">Export Rekordbox USB + M3U playlists to a folder.</p>
+            <label className="export-normalized-option">
+              <input
+                type="checkbox"
+                checked={useNormalized}
+                onChange={(e) => setUseNormalized(e.target.checked)}
+              />
+              <span>Apply loudness normalization to exported files</span>
+            </label>
+            <label className="export-normalized-option">
+              <input
+                type="checkbox"
+                checked={applyTrim}
+                onChange={(e) => setApplyTrim(e.target.checked)}
+              />
+              <span>Apply trim ranges (IN/OUT) to exported files (off exports the whole file)</span>
+            </label>
+            <ExportFormatOptions
+              targetDevice={targetDevice}
+              setTargetDevice={setTargetDevice}
+              forceMp3={forceMp3}
+              setForceMp3={setForceMp3}
+            />
             <div className="export-confirm-actions">
-              <button className="export-option-btn" onClick={() => pickFolder(mode)}>
-                <span className="export-option-icon">{mode === 'rekordbox' ? '💾' : '📦'}</span>
+              <button className="export-option-btn" onClick={() => pickFolder()}>
+                <span className="export-option-icon">📦</span>
                 <span className="export-option-label">Choose folder &amp; Export</span>
               </button>
               <button className="export-cancel-btn" onClick={onClose}>
@@ -297,7 +259,7 @@ function ExportModal({ onClose, playlistId, initialMode }) {
             <div className="export-needs-format-actions">
               <button
                 className="export-option-btn export-option-btn--secondary"
-                onClick={() => startExport(mode, usbRoot)}
+                onClick={() => startExport(usbRoot)}
               >
                 Export Anyway
               </button>
@@ -337,7 +299,7 @@ function ExportModal({ onClose, playlistId, initialMode }) {
             <div className="export-needs-format-actions">
               <button
                 className="export-option-btn export-option-btn--secondary"
-                onClick={() => startExport(mode, usbRoot)}
+                onClick={() => startExport(usbRoot)}
               >
                 Export Anyway
               </button>

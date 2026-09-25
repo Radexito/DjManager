@@ -18,7 +18,6 @@ describe('ExportModal', () => {
       fsLabel: 'fat32',
       device: '/dev/sdb1',
     });
-    window.api.exportRekordbox.mockResolvedValue({ ok: true, trackCount: 5, usbRoot: '/tmp/usb' });
     window.api.exportAll.mockResolvedValue({
       ok: true,
       trackCount: 5,
@@ -30,21 +29,13 @@ describe('ExportModal', () => {
 
   // ── Idle state ───────────────────────────────────────────────────────────────
 
-  it('shows all three export options in idle state', () => {
+  it('shows only the Export All option in idle state', () => {
     render(<ExportModal {...defaultProps} />);
 
-    expect(screen.getByText('Export Rekordbox USB')).toBeInTheDocument();
     expect(screen.getByText('Export All')).toBeInTheDocument();
-    expect(screen.getByText('Export M3U')).toBeInTheDocument();
-  });
-
-  it('"Export M3U" button calls onClose', () => {
-    const onClose = vi.fn();
-    render(<ExportModal {...defaultProps} onClose={onClose} />);
-
-    fireEvent.click(screen.getByText('Export M3U'));
-
-    expect(onClose).toHaveBeenCalledOnce();
+    // The standalone M3U and Rekordbox USB exports are gone for good
+    expect(screen.queryByText('Export Rekordbox USB')).toBeNull();
+    expect(screen.queryByText('Export M3U')).toBeNull();
   });
 
   // ── Folder dialog cancelled ───────────────────────────────────────────────────
@@ -53,11 +44,11 @@ describe('ExportModal', () => {
     window.api.openDirDialog.mockResolvedValueOnce(null);
 
     render(<ExportModal {...defaultProps} />);
-    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+    fireEvent.click(screen.getByText('Export All'));
 
     await waitFor(() => {
       // Still shows idle export options — no crash
-      expect(screen.getByText('Export Rekordbox USB')).toBeInTheDocument();
+      expect(screen.getByText('Export All')).toBeInTheDocument();
     });
     expect(window.api.checkUsbFormat).not.toHaveBeenCalled();
   });
@@ -74,14 +65,14 @@ describe('ExportModal', () => {
     });
 
     render(<ExportModal {...defaultProps} />);
-    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+    fireEvent.click(screen.getByText('Export All'));
 
     await waitFor(() => {
-      expect(window.api.exportRekordbox).toHaveBeenCalled();
+      expect(window.api.exportAll).toHaveBeenCalled();
     });
   });
 
-  it('shows "Export complete!" after successful rekordbox export', async () => {
+  it('shows "Export complete!" after successful export', async () => {
     window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
     window.api.checkUsbFormat.mockResolvedValueOnce({
       needsFormat: false,
@@ -89,14 +80,14 @@ describe('ExportModal', () => {
       fsLabel: 'FAT32',
       device: '/dev/sdb1',
     });
-    window.api.exportRekordbox.mockResolvedValueOnce({
+    window.api.exportAll.mockResolvedValueOnce({
       ok: true,
       trackCount: 5,
       usbRoot: '/tmp/usb',
     });
 
     render(<ExportModal {...defaultProps} />);
-    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+    fireEvent.click(screen.getByText('Export All'));
 
     await waitFor(() => {
       expect(screen.getByText('Export complete!')).toBeInTheDocument();
@@ -111,14 +102,14 @@ describe('ExportModal', () => {
       fsLabel: 'FAT32',
       device: '/dev/sdb1',
     });
-    window.api.exportRekordbox.mockResolvedValueOnce({
+    window.api.exportAll.mockResolvedValueOnce({
       ok: true,
       trackCount: 7,
       usbRoot: '/tmp/usb',
     });
 
     render(<ExportModal {...defaultProps} />);
-    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+    fireEvent.click(screen.getByText('Export All'));
 
     await waitFor(() => {
       expect(screen.getByText(/7 tracks/)).toBeInTheDocument();
@@ -138,7 +129,7 @@ describe('ExportModal', () => {
     });
 
     render(<ExportModal {...defaultProps} />);
-    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+    fireEvent.click(screen.getByText('Export All'));
 
     await waitFor(() => {
       expect(screen.getByText('Export Anyway')).toBeInTheDocument();
@@ -157,7 +148,7 @@ describe('ExportModal', () => {
     });
 
     render(<ExportModal {...defaultProps} />);
-    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+    fireEvent.click(screen.getByText('Export All'));
 
     await waitFor(() => {
       expect(screen.getByText(/btrfs/)).toBeInTheDocument();
@@ -166,7 +157,7 @@ describe('ExportModal', () => {
 
   // ── "Export Anyway" ───────────────────────────────────────────────────────────
 
-  it('"Export Anyway" triggers exportRekordbox without calling formatUsb', async () => {
+  it('"Export Anyway" triggers exportAll without calling formatUsb', async () => {
     window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
     window.api.checkUsbFormat.mockResolvedValueOnce({
       needsFormat: true,
@@ -175,20 +166,20 @@ describe('ExportModal', () => {
       fsLabel: 'btrfs',
       device: '/dev/sdb1',
     });
-    window.api.exportRekordbox.mockResolvedValueOnce({
+    window.api.exportAll.mockResolvedValueOnce({
       ok: true,
       trackCount: 3,
       usbRoot: '/tmp/usb',
     });
 
     render(<ExportModal {...defaultProps} />);
-    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+    fireEvent.click(screen.getByText('Export All'));
 
     await waitFor(() => screen.getByText('Export Anyway'));
     fireEvent.click(screen.getByText('Export Anyway'));
 
     await waitFor(() => {
-      expect(window.api.exportRekordbox).toHaveBeenCalled();
+      expect(window.api.exportAll).toHaveBeenCalled();
     });
     expect(window.api.formatUsb).not.toHaveBeenCalled();
   });
@@ -202,14 +193,14 @@ describe('ExportModal', () => {
       fsLabel: 'btrfs',
       device: '/dev/sdb1',
     });
-    window.api.exportRekordbox.mockResolvedValueOnce({
+    window.api.exportAll.mockResolvedValueOnce({
       ok: true,
       trackCount: 3,
       usbRoot: '/tmp/usb',
     });
 
     render(<ExportModal {...defaultProps} />);
-    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+    fireEvent.click(screen.getByText('Export All'));
 
     await waitFor(() => screen.getByText('Export Anyway'));
     fireEvent.click(screen.getByText('Export Anyway'));
@@ -222,7 +213,7 @@ describe('ExportModal', () => {
   // ── initialMode (shows confirm step first) ───────────────────────────────────
 
   it('shows confirm step (not folder dialog) when initialMode is provided', async () => {
-    render(<ExportModal {...defaultProps} initialMode="rekordbox" />);
+    render(<ExportModal {...defaultProps} initialMode="all" />);
 
     await waitFor(() => {
       expect(screen.getByText('Choose folder & Export')).toBeInTheDocument();
@@ -233,7 +224,7 @@ describe('ExportModal', () => {
   it('calls openDirDialog after clicking proceed in confirm step', async () => {
     window.api.openDirDialog.mockResolvedValueOnce(null);
 
-    render(<ExportModal {...defaultProps} initialMode="rekordbox" />);
+    render(<ExportModal {...defaultProps} initialMode="all" />);
     await screen.findByText('Choose folder & Export');
     fireEvent.click(screen.getByText('Choose folder & Export'));
 
@@ -298,16 +289,16 @@ describe('ExportModal', () => {
 
     render(<ExportModal {...defaultProps} />);
     expect(screen.getByText('Re-encode all tracks to MP3')).toBeInTheDocument();
-    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+    fireEvent.click(screen.getByText('Export All'));
 
     await waitFor(() => {
-      expect(window.api.exportRekordbox).toHaveBeenCalledWith(
+      expect(window.api.exportAll).toHaveBeenCalledWith(
         expect.objectContaining({ targetDevice: null, forceMp3: false })
       );
     });
   });
 
-  it('passes the selected target device and forceMp3 flag to exportRekordbox', async () => {
+  it('passes the selected target device and forceMp3 flag to exportAll', async () => {
     window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
     window.api.checkUsbFormat.mockResolvedValueOnce({
       needsFormat: false,
@@ -319,16 +310,16 @@ describe('ExportModal', () => {
     render(<ExportModal {...defaultProps} />);
     fireEvent.change(screen.getByLabelText('Target device'), { target: { value: 'xdj-rx2' } });
     fireEvent.click(screen.getByText('Re-encode all tracks to MP3'));
-    fireEvent.click(screen.getByText('Export Rekordbox USB'));
+    fireEvent.click(screen.getByText('Export All'));
 
     await waitFor(() => {
-      expect(window.api.exportRekordbox).toHaveBeenCalledWith(
+      expect(window.api.exportAll).toHaveBeenCalledWith(
         expect.objectContaining({ targetDevice: 'xdj-rx2', forceMp3: true })
       );
     });
   });
 
-  it('passes target device and forceMp3 to exportAll as well', async () => {
+  it('passes the selected target device to exportAll from the confirm step', async () => {
     window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
     window.api.checkUsbFormat.mockResolvedValueOnce({
       needsFormat: false,
@@ -337,9 +328,11 @@ describe('ExportModal', () => {
       device: '/dev/sdb1',
     });
 
-    render(<ExportModal {...defaultProps} />);
-    fireEvent.change(screen.getByLabelText('Target device'), { target: { value: 'cdj-3000' } });
-    fireEvent.click(screen.getByText('Export All'));
+    render(<ExportModal {...defaultProps} initialMode="all" />);
+    fireEvent.change(await screen.findByLabelText('Target device'), {
+      target: { value: 'cdj-3000' },
+    });
+    fireEvent.click(screen.getByText('Choose folder & Export'));
 
     await waitFor(() => {
       expect(window.api.exportAll).toHaveBeenCalledWith(
@@ -356,27 +349,7 @@ describe('ExportModal', () => {
     expect(screen.getByLabelText(/Apply trim ranges/)).toBeChecked();
   });
 
-  it('sends applyTrim: false when the trim option is switched off', async () => {
-    window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
-    window.api.checkUsbFormat.mockResolvedValueOnce({
-      needsFormat: false,
-      fs: 'fat32',
-      fsLabel: 'FAT32',
-      device: '/dev/sdb1',
-    });
-
-    render(<ExportModal {...defaultProps} />);
-    fireEvent.click(screen.getByLabelText(/Apply trim ranges/));
-    fireEvent.click(screen.getByText('Export Rekordbox USB'));
-
-    await waitFor(() => {
-      expect(window.api.exportRekordbox).toHaveBeenCalledWith(
-        expect.objectContaining({ applyTrim: false })
-      );
-    });
-  });
-
-  it('sends applyTrim: true when the option is left alone (export all)', async () => {
+  it('sends applyTrim: true when the option is left alone', async () => {
     window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
     window.api.checkUsbFormat.mockResolvedValueOnce({
       needsFormat: false,
@@ -391,6 +364,26 @@ describe('ExportModal', () => {
     await waitFor(() => {
       expect(window.api.exportAll).toHaveBeenCalledWith(
         expect.objectContaining({ applyTrim: true })
+      );
+    });
+  });
+
+  it('sends applyTrim: false when the trim option is switched off', async () => {
+    window.api.openDirDialog.mockResolvedValueOnce('/tmp/usb');
+    window.api.checkUsbFormat.mockResolvedValueOnce({
+      needsFormat: false,
+      fs: 'fat32',
+      fsLabel: 'FAT32',
+      device: '/dev/sdb1',
+    });
+
+    render(<ExportModal {...defaultProps} />);
+    fireEvent.click(screen.getByLabelText(/Apply trim ranges/));
+    fireEvent.click(screen.getByText('Export All'));
+
+    await waitFor(() => {
+      expect(window.api.exportAll).toHaveBeenCalledWith(
+        expect.objectContaining({ applyTrim: false })
       );
     });
   });

@@ -87,7 +87,6 @@ window.api = {
   adjustBpm: vi.fn().mockResolvedValue([]),
   updateTrack: vi.fn().mockResolvedValue({}),
   getEditorWaveform: vi.fn().mockResolvedValue(null),
-  exportPlaylistAsM3U: vi.fn().mockResolvedValue({ canceled: true }),
   getSetting: vi.fn().mockResolvedValue(null),
   setSetting: vi.fn().mockResolvedValue(undefined),
   normalizeLibrary: vi.fn().mockResolvedValue({ normalized: 0, skipped: 0, total: 0 }),
@@ -114,7 +113,6 @@ window.api = {
   onOpenSettings: vi.fn().mockImplementation(noop),
   onDepsProgress: vi.fn().mockImplementation(noop),
   onMoveLibraryProgress: vi.fn().mockImplementation(noop),
-  onExportM3UProgress: vi.fn().mockImplementation(noop),
   onImportProgress: vi.fn().mockImplementation(noop),
   onNormalizeProgress: vi.fn().mockImplementation(noop),
   onAnalysisProgress: vi.fn().mockImplementation(noop),
@@ -171,11 +169,9 @@ window.api = {
     .fn()
     .mockResolvedValue({ needsFormat: false, fs: 'fat32', fsLabel: 'fat32', device: '/dev/sdb1' }),
   formatUsb: vi.fn().mockResolvedValue({ ok: true }),
-  exportRekordbox: vi.fn().mockResolvedValue({ ok: true, trackCount: 5, usbRoot: '/tmp/usb' }),
   exportAll: vi
     .fn()
     .mockResolvedValue({ ok: true, trackCount: 5, playlistCount: 2, usbRoot: '/tmp/usb' }),
-  onExportRekordboxProgress: vi.fn().mockImplementation(noop),
   onExportAllProgress: vi.fn().mockImplementation(noop),
   onFormatUsbProgress: vi.fn().mockImplementation(noop),
   autoTagSearch: vi.fn().mockResolvedValue({ ok: true, results: [] }),
