@@ -2160,6 +2160,11 @@ async function syncFolderPlaylist(playlistId, { importNew = true } = {}) {
     try {
       addTracksToPlaylist(playlistId, ids);
       added += ids.length;
+      // The open view follows the library, so refresh it on the same throttle
+      // that let the rows land. Without this the playlist stayed empty for the
+      // whole walk and filled in one lump at the end, which is what a 100 file
+      // folder made obvious (#516 test report).
+      send('library-updated');
     } catch (err) {
       console.warn(`[folder-playlist] add to #${playlistId} failed:`, err.message);
     }
