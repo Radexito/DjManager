@@ -226,7 +226,7 @@ export function addTrack(track) {
       year, label, genres, bpm,
       source_url, source_platform, source_quality, source_link,
       user_tags, has_artwork, artwork_path, is_linked, library_id,
-      trim_start_ms, trim_end_ms,
+      trim_start_ms, trim_end_ms, sample_rate, bit_depth,
       created_at
     ) VALUES (
       @title, @artist, @album, @duration,
@@ -234,7 +234,7 @@ export function addTrack(track) {
       @year, @label, @genres, @bpm,
       @source_url, @source_platform, @source_quality, @source_link,
       @user_tags, @has_artwork, @artwork_path, @is_linked, @library_id,
-      @trim_start_ms, @trim_end_ms,
+      @trim_start_ms, @trim_end_ms, @sample_rate, @bit_depth,
       @created_at
     )
   `);
@@ -264,6 +264,9 @@ export function addTrack(track) {
     // #463: NULL = no trim on that side (play/export the whole file)
     trim_start_ms: track.trim_start_ms ?? null,
     trim_end_ms: track.trim_end_ms ?? null,
+    // #561: real sample rate / bit depth of the file, NULL when unknown
+    sample_rate: track.sample_rate ?? null,
+    bit_depth: track.bit_depth ?? null,
     created_at: Date.now(),
   });
 
@@ -290,6 +293,36 @@ export function updateTrack(id, data) {
     WHERE id = @id
   `
   ).run({ id, ...safeData });
+}
+
+/**
+ * #561 — store the real sample rate / bit depth of a track's *file*.
+ *
+ * Separate from updateTrack() on purpose: updateTrack() always flags the track
+ * as analyzed, and these two columns describe the file, not an analysis result.
+ * A null value leaves the stored one alone (COALESCE), so the export-time
+ * backfill can fill in whichever of the two is still missing.
+ *
+ * @param {number} id
+ * @param {{ sampleRate?: number|null, bitDepth?: number|null }} info
+ * @returns {boolean} true when at least one value was written
+ */
+export function setTrackSampleInfo(id, { sampleRate = null, bitDepth = null } = {}) {
+  const rate = Number.isFinite(sampleRate) && sampleRate > 0 ? sampleRate : null;
+  const depth = Number.isFinite(bitDepth) && bitDepth > 0 ? bitDepth : null;
+  if (rate === null && depth === null) return false;
+
+  const info = db
+    .prepare(
+      `
+    UPDATE tracks
+    SET sample_rate = COALESCE(@sampleRate, sample_rate),
+        bit_depth   = COALESCE(@bitDepth, bit_depth)
+    WHERE id = @id
+  `
+    )
+    .run({ id, sampleRate: rate, bitDepth: depth });
+  return info.changes > 0;
 }
 
 /**

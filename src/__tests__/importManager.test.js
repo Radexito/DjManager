@@ -124,6 +124,8 @@ const mockAddTrack = vi.fn().mockReturnValue(99);
 const mockUpdateTrack = vi.fn();
 const mockGetTrackById = vi.fn();
 const mockGetTracks = vi.fn().mockReturnValue([]);
+const mockGetTracksByPaths = vi.fn().mockReturnValue([]);
+const mockSetTrackSampleInfo = vi.fn();
 
 vi.mock('../db/trackRepository.js', () => ({
   getTrackByHash: (...args) => mockGetTrackByHash(...args),
@@ -131,6 +133,8 @@ vi.mock('../db/trackRepository.js', () => ({
   updateTrack: (...args) => mockUpdateTrack(...args),
   getTrackById: (...args) => mockGetTrackById(...args),
   getTracks: (...args) => mockGetTracks(...args),
+  getTracksByPaths: (...args) => mockGetTracksByPaths(...args),
+  setTrackSampleInfo: (...args) => mockSetTrackSampleInfo(...args),
 }));
 
 const mockMoveFileSafe = vi.fn();
@@ -143,6 +147,7 @@ import path from 'path';
 import fs from 'fs';
 import {
   importAudioFile,
+  linkAudioFile,
   moveTrackToLibrary,
   convertStorageFormat,
   getLibraryDiskUsage,
@@ -366,6 +371,81 @@ describe('importAudioFile — artist detection from filename', () => {
     expect(mockAddTrack.mock.calls[0][0].artist).toBe('Filename Artist');
     // ID3 title wins over filename-derived title
     expect(mockAddTrack.mock.calls[0][0].title).toBe('ID3 Title');
+  });
+});
+
+// ── Real sample rate / bit depth (#561) ───────────────────────────────────────
+
+describe('importAudioFile — sample rate / bit depth capture (#561)', () => {
+  it('stores what ffprobe reports for the audio stream', async () => {
+    ffprobe.mockResolvedValueOnce({
+      format: {
+        format_name: 'flac',
+        duration: '180.0',
+        bit_rate: '900000',
+        tags: { title: 'Hi-Res', artist: 'Someone' },
+      },
+      streams: [
+        { codec_type: 'video', codec_name: 'mjpeg', sample_rate: '90000' },
+        {
+          codec_type: 'audio',
+          codec_name: 'flac',
+          sample_rate: '48000',
+          bits_per_raw_sample: '24',
+        },
+      ],
+    });
+
+    await importAudioFile('/music/hires.flac');
+
+    expect(mockAddTrack.mock.calls[0][0].sample_rate).toBe(48000);
+    expect(mockAddTrack.mock.calls[0][0].bit_depth).toBe(24);
+  });
+
+  it('falls back to bits_per_sample and stores NULL when nothing is reported', async () => {
+    ffprobe.mockResolvedValueOnce({
+      format: { format_name: 'wav', duration: '10.0', bit_rate: '1536000', tags: {} },
+      streams: [
+        { codec_type: 'audio', codec_name: 'pcm_s16le', sample_rate: '44100', bits_per_sample: 16 },
+      ],
+    });
+
+    await importAudioFile('/music/plain.wav');
+    expect(mockAddTrack.mock.calls[0][0].sample_rate).toBe(44100);
+    expect(mockAddTrack.mock.calls[0][0].bit_depth).toBe(16);
+
+    // A stream with no numbers at all (the default mock) must not become 16 bit
+    await importAudioFile('/music/unknown.mp3');
+    expect(mockAddTrack.mock.calls[1][0].sample_rate).toBeNull();
+    expect(mockAddTrack.mock.calls[1][0].bit_depth).toBeNull();
+  });
+});
+
+describe('linkAudioFile — sample rate / bit depth capture (#561)', () => {
+  it('stores the probed values for a linked file', async () => {
+    ffprobe.mockResolvedValueOnce({
+      format: {
+        format_name: 'flac',
+        duration: '200.0',
+        bit_rate: '1000000',
+        tags: { title: 'Linked', artist: 'Someone' },
+      },
+      streams: [
+        {
+          codec_type: 'audio',
+          codec_name: 'flac',
+          sample_rate: '96000',
+          bits_per_raw_sample: '24',
+        },
+      ],
+    });
+
+    const res = await linkAudioFile('/external/linked.flac');
+
+    expect(res).toEqual({ id: 99, duplicate: false });
+    expect(mockAddTrack.mock.calls[0][0].is_linked).toBe(1);
+    expect(mockAddTrack.mock.calls[0][0].sample_rate).toBe(96000);
+    expect(mockAddTrack.mock.calls[0][0].bit_depth).toBe(24);
   });
 });
 

@@ -277,6 +277,19 @@ describe('buildTrackRow', () => {
     expect(buf.readUInt32LE(8)).toBe(44100);
   });
 
+  // #561 — the row must carry whatever the track's file really is
+  it('writes the passed SampleRate (offset 8) and SampleDepth (offset 82)', () => {
+    const buf = buildTrackRow({ ...minimal, sampleRate: 96000, sampleDepth: 24 });
+    expect(buf.readUInt32LE(8)).toBe(96000);
+    expect(buf.readUInt16LE(82)).toBe(24);
+  });
+
+  it('falls back to 44100 / 16 only when the caller passes no values at all', () => {
+    const buf = buildTrackRow({ id: 1, title: 'x', filePath: '/m/x.mp3', filename: 'x.mp3' });
+    expect(buf.readUInt32LE(8)).toBe(44100);
+    expect(buf.readUInt16LE(82)).toBe(16);
+  });
+
   it('FileSize at offset 16', () => {
     const buf = buildTrackRow(minimal);
     expect(buf.readUInt32LE(16)).toBe(5000000);
@@ -994,6 +1007,28 @@ describe('writePdb', () => {
     const input = makeInput();
     input.tracks[0].title = 'Röyksopp – I Had This Thing';
     expect(() => writePdb(input, '/tmp/unicode.pdb')).not.toThrow();
+  });
+
+  // #561 — the exported row must describe the track's file. The row sits inside
+  // the Tracks data page, so the tests locate its SampleRate marker (offset 8 of
+  // the row) and check the SampleDepth 74 bytes further on (offset 82).
+  it('#561 writes the row sample_rate / bit_depth of the file', () => {
+    const input = makeInput();
+    input.tracks[0].sample_rate = 96000;
+    input.tracks[0].bit_depth = 24;
+    writePdb(input, '/usb/PIONEER/rekordbox/export.pdb');
+    const [, data] = fs.writeFileSync.mock.calls[0];
+    const rateIdx = data.indexOf(Buffer.from([0x00, 0x77, 0x01, 0x00])); // 96000 LE
+    expect(rateIdx).toBeGreaterThan(-1);
+    expect(data.readUInt16LE(rateIdx + 74)).toBe(24);
+  });
+
+  it('#561 writes 44100 / 16 only for a row that has neither value', () => {
+    writePdb(makeInput(), '/usb/PIONEER/rekordbox/export.pdb');
+    const [, data] = fs.writeFileSync.mock.calls[0];
+    const rateIdx = data.indexOf(Buffer.from([0x44, 0xac, 0x00, 0x00])); // 44100 LE
+    expect(rateIdx).toBeGreaterThan(-1);
+    expect(data.readUInt16LE(rateIdx + 74)).toBe(16);
   });
 
   it('uses mkdirSync to ensure output directory exists', () => {

@@ -26,6 +26,9 @@ export default defineConfig({
             'src/__tests__/playlistRepository.test.js',
             'src/__tests__/cuePointRepository.test.js',
             'src/__tests__/libraryRepository.test.js',
+            // #561 — needs the real tracks table (migration + write-back) with
+            // ffprobe mocked
+            'src/__tests__/sampleInfo.test.js',
           ],
           setupFiles: ['./src/__tests__/setup.js'],
         },

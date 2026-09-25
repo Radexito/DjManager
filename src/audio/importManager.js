@@ -6,6 +6,7 @@ import { promisify } from 'util';
 import { app } from 'electron';
 import { Worker } from 'worker_threads';
 import { ffprobe } from './ffmpeg.js';
+import { sampleInfoFromProbe } from './sampleInfo.js';
 import { getFfmpegRuntimePath } from '../deps.js';
 import {
   addTrack,
@@ -569,6 +570,9 @@ export async function importAudioFile(filePath, sourceMeta = {}, libraryId = nul
   const format = ext.slice(1).toLowerCase();
   const duration = Number(probe.format.duration);
   const bitrate = Number(probe.format.bit_rate);
+  // #561 — what the file really is, for the exported Rekordbox PDB. A copy does
+  // not change either value, so the source probe describes the stored file too.
+  const { sampleRate, bitDepth } = sampleInfoFromProbe(probe);
 
   // Extract tags
   const { title, artist, album, genre, year, label, bpm } = parseTags(probe);
@@ -624,6 +628,8 @@ export async function importAudioFile(filePath, sourceMeta = {}, libraryId = nul
     source_link: sourceMeta.source_link ?? null,
     has_artwork: artworkPath ? 1 : 0,
     artwork_path: artworkPath ?? null,
+    sample_rate: sampleRate,
+    bit_depth: bitDepth,
   });
 
   console.log(`Added track ID ${trackId}: ${resolvedTitle || basename}`);
@@ -648,6 +654,9 @@ export async function linkAudioFile(filePath, libraryId = null) {
   let label = null;
   let bpm = null;
   let genre = [];
+  // #561 — real values of the linked file, captured from the probe below
+  let sampleRate = null;
+  let bitDepth = null;
 
   try {
     const meta = await ffprobe(filePath);
@@ -662,6 +671,7 @@ export async function linkAudioFile(filePath, libraryId = null) {
     bpm = parseFloat(tags.bpm || tags.BPM || '') || null;
     const g = tags.genre || tags.GENRE || '';
     genre = g ? [g] : [];
+    ({ sampleRate, bitDepth } = sampleInfoFromProbe(meta));
   } catch {}
 
   // Fallback: parse "Artist - Title" from filename when tags are absent
@@ -694,6 +704,8 @@ export async function linkAudioFile(filePath, libraryId = null) {
     artwork_path: null,
     is_linked: 1,
     library_id: targetLibraryId,
+    sample_rate: sampleRate,
+    bit_depth: bitDepth,
   });
 
   spawnAnalysis(trackId, filePath);
