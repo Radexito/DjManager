@@ -36,6 +36,9 @@ export function getPlaylists() {
       p.name,
       p.color,
       p.created_at,
+      p.folder_path,
+      p.folder_recursive,
+      p.folder_synced_at,
       COUNT(pt.track_id)                          AS track_count,
       COALESCE(SUM(t.duration), 0)                AS total_duration
     FROM playlists p
@@ -54,6 +57,7 @@ export function getPlaylist(id) {
       `
     SELECT
       p.id, p.name, p.color, p.created_at,
+      p.folder_path, p.folder_recursive, p.folder_synced_at,
       COUNT(pt.track_id)           AS track_count,
       COALESCE(SUM(t.duration), 0) AS total_duration
     FROM playlists p
@@ -64,6 +68,36 @@ export function getPlaylist(id) {
   `
     )
     .get(id);
+}
+
+// ── Folder-tracked playlists (#267) ───────────────────────────────────────────
+
+/** Every playlist that mirrors a folder, oldest first. */
+export function getFolderPlaylists() {
+  return db
+    .prepare(`SELECT * FROM playlists WHERE folder_path IS NOT NULL ORDER BY created_at ASC`)
+    .all();
+}
+
+/** Point a playlist at a folder (or change the folder / recursion). */
+export function setPlaylistFolder(playlistId, folderPath, recursive = false) {
+  db.prepare(`UPDATE playlists SET folder_path = ?, folder_recursive = ? WHERE id = ?`).run(
+    folderPath || null,
+    recursive ? 1 : 0,
+    playlistId
+  );
+}
+
+/** Forget the tracked folder — the playlist itself and its tracks stay. */
+export function clearPlaylistFolder(playlistId) {
+  db.prepare(`UPDATE playlists SET folder_path = NULL, folder_recursive = 0 WHERE id = ?`).run(
+    playlistId
+  );
+}
+
+/** Record when the folder was last mirrored (shown in the UI). */
+export function markPlaylistFolderSynced(playlistId, at = Date.now()) {
+  db.prepare(`UPDATE playlists SET folder_synced_at = ? WHERE id = ?`).run(at, playlistId);
 }
 
 export function renamePlaylist(id, name) {

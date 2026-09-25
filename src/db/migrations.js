@@ -126,6 +126,12 @@ export function initDB() {
     'ALTER TABLE playlists ADD COLUMN color TEXT',
     'ALTER TABLE playlists ADD COLUMN created_at INTEGER',
     'ALTER TABLE playlists ADD COLUMN source_url TEXT',
+    // #267: folder-tracked playlists mirror a local folder. A NULL folder_path
+    // means an ordinary (or smart) playlist; folder_recursive decides whether
+    // sub-folders are part of the mirror.
+    'ALTER TABLE playlists ADD COLUMN folder_path TEXT',
+    'ALTER TABLE playlists ADD COLUMN folder_recursive INTEGER DEFAULT 0',
+    'ALTER TABLE playlists ADD COLUMN folder_synced_at INTEGER',
     'ALTER TABLE playlist_tracks ADD COLUMN position INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE playlist_tracks ADD COLUMN date_added INTEGER',
   ]) {

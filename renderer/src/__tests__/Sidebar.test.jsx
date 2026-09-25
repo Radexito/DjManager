@@ -131,6 +131,69 @@ describe('Sidebar', () => {
     expect(onExportPlaylistRekordboxUsb).toHaveBeenCalledWith(42);
   });
 
+  it('auto-dismisses the folder notice instead of leaving it on screen', async () => {
+    vi.useFakeTimers();
+    try {
+      window.api.getPlaylists.mockResolvedValue([
+        {
+          id: 7,
+          name: 'Tracked Folder',
+          color: null,
+          track_count: 3,
+          total_duration: 600,
+          folder_path: '/tmp/tracked',
+        },
+      ]);
+      window.api.stopFolderPlaylist.mockResolvedValue({ ok: true });
+
+      renderSidebar({ ...defaultProps });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      fireEvent.contextMenu(screen.getByText('Tracked Folder'));
+      await act(async () => {
+        fireEvent.click(screen.getByText(/Stop tracking folder/));
+      });
+
+      expect(screen.getByText(/Folder tracking stopped/)).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6000);
+      });
+
+      expect(screen.queryByText(/Folder tracking stopped/)).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('dismisses the folder notice when it is clicked', async () => {
+    window.api.getPlaylists.mockResolvedValue([
+      {
+        id: 8,
+        name: 'Tracked Folder 2',
+        color: null,
+        track_count: 1,
+        total_duration: 120,
+        folder_path: '/tmp/tracked2',
+      },
+    ]);
+    window.api.stopFolderPlaylist.mockResolvedValue({ ok: true });
+
+    renderSidebar({ ...defaultProps });
+    await waitFor(() => expect(screen.getByText('Tracked Folder 2')).toBeInTheDocument());
+
+    fireEvent.contextMenu(screen.getByText('Tracked Folder 2'));
+    await act(async () => {
+      fireEvent.click(screen.getByText(/Stop tracking folder/));
+    });
+
+    const notice = await screen.findByText(/Folder tracking stopped/);
+    fireEvent.click(notice);
+    expect(screen.queryByText(/Folder tracking stopped/)).not.toBeInTheDocument();
+  });
+
   it('calls onExportPlaylistAll with playlist id when "Export All to USB…" is clicked', async () => {
     const onExportPlaylistAll = vi.fn();
     window.api.getPlaylists.mockResolvedValueOnce([
