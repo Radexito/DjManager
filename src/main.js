@@ -142,7 +142,12 @@ import {
   updateAll,
 } from './deps.js';
 import { initLogger, getLogDir, initRendererLogger, logRendererMessage } from './logger.js';
-import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
+import {
+  detectFilesystem,
+  formatDrive,
+  describeFilesystem,
+  toM3uRelativePath,
+} from './usb/usbUtils.js';
 import { detectWindowsDrives } from './explorer/drives.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
 import { readTrackCues, buildCueImportPlan } from './usb/anlzCueReader.js';
@@ -2985,6 +2990,12 @@ ipcMain.handle(
       for (const pl of allPlaylists) {
         const tracks = getPlaylistTracks(pl.id);
         const safeName = pl.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+        const m3uPath = path.join(playlistDir, `${safeName}.m3u`);
+        // Entries must be relative to the M3U file itself (forward slashes) — a
+        // player resolves them against the playlist's directory. A USB-root path
+        // like "/music/x.mp3" instead makes VLC look for file:///music/x.mp3 on
+        // the host filesystem and fail to open the MRL.
+        const m3uDir = path.dirname(m3uPath);
         const lines = ['#EXTM3U'];
         for (const t of tracks) {
           const usbPath = usbPaths.get(t.id);
@@ -2992,13 +3003,9 @@ ipcMain.handle(
           const duration = Math.floor(exportDurationSec(t, applyTrim) ?? -1);
           const label = [t.artist, t.title].filter(Boolean).join(' - ') || path.basename(usbPath);
           lines.push(`#EXTINF:${duration},${label}`);
-          lines.push(usbPath);
+          lines.push(toM3uRelativePath(m3uDir, usbPath));
         }
-        fs.writeFileSync(
-          path.join(playlistDir, `${safeName}.m3u`),
-          lines.join('\n') + '\n',
-          'utf8'
-        );
+        fs.writeFileSync(m3uPath, lines.join('\n') + '\n', 'utf8');
       }
 
       // Write ANLZ beat grids + waveforms (only for tracks in the current export)
