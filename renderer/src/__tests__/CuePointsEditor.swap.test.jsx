@@ -197,3 +197,50 @@ describe('CuePointsEditor — hot cue slot swap (deferred / Prepare Track path)'
     expect(badgeTexts()).toEqual(['A', 'B', 'C']);
   });
 });
+
+describe('CuePointsEditor — the swap confirmation is a popup', () => {
+  async function openSwapPopup() {
+    await renderEditor();
+    openPicker('B');
+    pickType('Hot cue A');
+    return document.querySelector('.cpe__confirm');
+  }
+
+  it('renders as a modal dialog over a backdrop', async () => {
+    const dialog = await openSwapPopup();
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveAttribute('role', 'dialog');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    // The backdrop is the dialog's parent, and is what closes the popup.
+    expect(dialog.parentElement.className).toContain('cpe__confirm-backdrop');
+  });
+
+  it('a click on the backdrop cancels the swap and leaves the cues alone', async () => {
+    const dialog = await openSwapPopup();
+    fireEvent.click(dialog.parentElement);
+    await act(async () => {});
+
+    expect(document.querySelector('.cpe__confirm')).toBeNull();
+    expect(window.api.updateCuePoint).not.toHaveBeenCalled();
+    expect(badgeTexts()).toEqual(['A', 'B']);
+  });
+
+  it('a click inside the dialog does not dismiss it', async () => {
+    // Without stopPropagation on the dialog, a click on Swap would first reach
+    // the backdrop and cancel the very action the user asked for.
+    const dialog = await openSwapPopup();
+    fireEvent.click(dialog);
+
+    expect(document.querySelector('.cpe__confirm')).toBeInTheDocument();
+    expect(document.querySelector('.cpe__confirm')).toHaveTextContent('is taken');
+  });
+
+  it('clicking Swap still swaps, with the popup gone', async () => {
+    await openSwapPopup();
+    fireEvent.click(screen.getByRole('button', { name: 'Swap' }));
+    await act(async () => {});
+
+    expect(document.querySelector('.cpe__confirm')).toBeNull();
+    expect(badgeTexts()).toEqual(['B', 'A']);
+  });
+});

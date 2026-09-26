@@ -506,14 +506,31 @@ export default function CuePointsEditor({
       )}
 
       {confirmSwap && (
-        <div className="cpe__confirm">
-          <span>{confirmSwap.message}</span>
-          <button className="cpe__btn cpe__btn--add" onClick={confirmSwapCues}>
-            Swap
-          </button>
-          <button className="cpe__btn" onClick={() => setConfirmSwap(null)}>
-            Cancel
-          </button>
+        <div
+          className="cpe__confirm-backdrop"
+          role="presentation"
+          onClick={() => setConfirmSwap(null)}
+        >
+          <div
+            className="cpe__confirm"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Confirm hot cue swap"
+            // The dialog must swallow its own clicks, or a click on Swap would
+            // reach the backdrop and dismiss the popup first.
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="cpe__confirm-title">Hot cue slot is taken</div>
+            <p className="cpe__confirm-message">{confirmSwap.message}</p>
+            <div className="cpe__confirm-actions">
+              <button className="cpe__btn cpe__btn--add" onClick={confirmSwapCues}>
+                Swap
+              </button>
+              <button className="cpe__btn" onClick={() => setConfirmSwap(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
