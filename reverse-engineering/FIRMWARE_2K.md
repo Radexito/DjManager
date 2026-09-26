@@ -549,18 +549,30 @@ base, because each code site loads its own record pointer from its own pool slot
 A second pass swept the cue and database regions with the decompiler and cross-referenced every cue-tag
 use in the whole image. It settles the cue question, and it corrects two things section 17 said.
 
-### The deck never reads a cue type field, and that is now proven exhaustively
+### The cue-section plumbing does not test a cue type value
 
 Every reference to the tags `PCPT`, `PCOB` and `PCO2` anywhere in the 4 MB image resolves to exactly **five
 literal-pool words**, and all five sit either inside the two cue-record read loops (`0x042b7fa0`,
 `0x042b8608`, `0x042b7c80`, `0x042b82ec`) or inside the `PCO2` builder (`0x042bd070`). **No consuming module
-reads a cue type field anywhere in the firmware.** The only per-record predicate that exists is bit 1 of the
-u32 at record offset `+0x10`. **CONFIRMED by exhaustive reference scan.**
+reads a cue type **value** compared against 1, 2 or `0xFFFFFFFF`. The only per-record predicate in that code
+is bit 1 of the u32 at record offset `+0x10`, which bumps the counter at `ctx+0xB84` when the bit is clear.
 
-The consequence is concrete and it changes what our exporter may assume: **the deck cannot tell hot cues,
-memory cues and loops apart at this layer, so our type encoding must not be justified by the firmware.**
-For those two questions the authority is rekordbox's own output and nothing else, which is exactly what the
-byte-differential already provides.
+**Scope of this claim, narrowed after a challenge.** The scan is exhaustive for references to the tag
+_strings_, which is how the code handling the cue sections is located. A test on a cue value need not
+reference a tag string, so this covers the cue-section plumbing rather than the whole image. The routines
+that interpret cue kinds may live in the `disc_cue_*` and `mep_cue_*` modules, which have not been
+decompiled; a follow-up is running against them.
+
+**The deck certainly does store cues.** Its own writer module (`msc_anlz_local_usbWr.c`) emits
+`PCPT`-prefixed records at a 0x40 stride with a 0x38-byte IO length and writes a `PCO2` section, so cues
+written on the deck are real and readable. What the plumbing does not do is decide what a cue _is_ from a
+small integer type field of the kind our writer emits. The likeliest carrier of that distinction is which
+cue list an entry belongs to, that is the section or slot index, together with status-flag bits.
+
+The consequence for our exporter, narrowed accordingly: the firmware cannot _confirm_ our type encoding, so
+rekordbox's own output remains the authority for the hot cue, memory cue and loop values, for the end
+sentinel and for colours. It does not follow that the deck is blind to cue kinds, and it does not follow
+that the deck cannot store them.
 
 ### Two corrections to section 17
 
