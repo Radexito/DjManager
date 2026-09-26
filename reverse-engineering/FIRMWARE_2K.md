@@ -485,3 +485,57 @@ PRs #585 to #590, is the right instrument for acceptance, and it reframes the ex
 the meaning of the cue type byte, the cue-list slot structure, and the PCO2 label and colour offsets. In
 this run no raw track-row access at the offsets our writer uses was observed either, so the database field
 mapping remains unconfirmed from the deck's side.
+
+## 17. Cue-record layout: what the deck's reader requires, and what stayed unresolved
+
+A second disassembly pass went at the writer and manager modules directly, and it settles the question
+section 16 left open.
+
+**The trailing `PCPT` in the expected sequence is a per-record prefix, not a following section.**
+Immediately after the `PCOB` tag matches, every record the reader takes must begin with the four bytes
+`PCPT`: the comparison is a 4-byte match at the start of each record (`0x042b7d06`-`0x042b7d1c` and
+`0x042b836e`-`0x042b837e`), and a mismatch jumps to an error exit (`0x042b7d9c` /
+`0x042b83ae`). That is why the table ends `... PCOB PCPT`. **CONFIRMED as code.** It also means our
+writer's choice to prefix cue entries with a `PCPT` sub-tag is what this deck expects, and the earlier
+worry that a second `PCOB` section breaks the expected sequence does not follow from this code, because
+the `PCPT` requirement is per record rather than a section that must appear after `PCOB`. The
+section-level walk across two `PCOB` sections remains undecoded, so that narrow point is still open.
+
+**Cue record stride.** The code strides cue records by **64 bytes**, from four independent witnesses: a
+`shld` by 6 for a `count * 64` allocation (`0x042b7c98`), `add #64,r11` in a loop delay slot
+(`0x042b83a8`), `add #64,r4` on the write side (`0x042ba142`), a 64-byte copy spanning `+0` to `+0x3C`
+(`0x042b7d4c`-`0x042b7d86`), and reads issued with a length of 64 (`0x042b7cec`, `0x042b8358`).
+**CONFIRMED as code.** A real asymmetry sits beside it and is left unresolved rather than smoothed over:
+on the write path the record IO length is **56 while the stride is 64**. Whether 64 is the parsed
+in-memory record and 56 the serialised one, or whether a field is padded, is **UNRESOLVED**. The
+file-level layout is best settled by the byte-differential against rekordbox's own export, which is
+already the method behind the cue issues.
+
+**There is a second cue list, and capacity is not 8.** Two independent `PCOB`-triggered walks exist in the
+reader; the second reads a different count and handles only slots beyond 10 (`cmp/gt #10`, allocating
+`(count - 10) * 64`, `0x042b8276`-`0x042b82a8`). **CONFIRMED.** So the deck's model is a list of up to 10
+plus an overflow list, not the fixed eight hot cues our writer assumes when it splits cues A to C into the
+DAT and D onward into the EXT. The only per-record discriminator found is **bit 1 of the u32 at record
+offset +16**, which increments a counter when clear (`0x042b838c`-`0x042b83a2`). **CONFIRMED as code**, but
+what that flag means in cue terms is not established. The record count is a u16 in the reader's context
+(`ctx+0xB5A`, `ctx+0xB8E`) and a u32 in the writer's structure (`+36`).
+
+**PCO2 is not in the strict-order reader's table.** `PMAI PPTH PVBR PQTZ PWAV PWV2 PCOB PCPT` is the set
+for both the reader and the writer tables; `PCO2` appears only in the manager table (`0x040ad274`) and in
+`msc_anlz_api_usb.c`. **CONFIRMED.** Our DAT carries no `PCO2`, so this does not affect the DAT path; it
+matters for the EXT, which is the manager's territory. In the manager's `PCO2` code
+(`0x042bcef6`-`0x042bcfb2`) the offsets touched are `+4`, `+8`, `+12`, `+14`, `+16`, with a 16-byte item
+packed and a payload copied at item `+18`; **which of those carries the label and which the colour is NOT
+determinable** from this code.
+
+**What the deck's code does not settle.** No site in the decoded loops compares an entry field against 1,
+2 or `0xFFFFFFFF`, so **the meaning of the cue type byte and the loop end sentinel is NOT DETERMINABLE
+from this code**, and it was deliberately not guessed. No count-versus-length check, checksum or
+skip-by-length resynchronisation was found in the decoded loops either, stated as not-proof-of-absence
+since the section walk before `0x042b7c00` and the tail after `0x042b83de` were not decoded. For these two
+questions the rekordbox byte-differential stays the deciding instrument.
+
+**Two method facts worth keeping.** The alias maps as `physical = 0x04000000 | (ptr & 0x00FFFFFF)`, so a
+naive subtraction of `0x04000000` yields an offset outside the image. And cross-references are found most
+reliably by scanning aligned little-endian u32 for the address of an **individual tag record**, not a table
+base, because each code site loads its own record pointer from its own pool slot.
