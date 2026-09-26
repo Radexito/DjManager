@@ -614,3 +614,53 @@ The two export reference sites are not inside functions Ghidra defined, so their
 decompiled. Closing the validation question completely needs `AddFunctions` at the starts of the functions
 containing `0x0417c062` and `0x041a7824`. Everything else here rests on decompiled bodies or on an
 exhaustive scan of the image.
+
+## 19. Does the deck distinguish cue kinds? What the third pass settled and where it stopped
+
+This pass was a deliberate check on section 18's claim, after the objection that the deck demonstrably
+stores cues. The objection was right about the deck's capabilities and the claim needed narrowing.
+
+### Confirmed
+
+- **Exactly one predicate exists on a cue record:** `tst #2` on the u32 at record `+0x10`, byte-verified in
+  the image and in the decompilation, in both `PCPT` loops. Nothing else inspects a cue record's fields.
+- **The counter that predicate feeds is write-only.** It lives at `base+0xB9C`, correcting section 18's
+  `0xB84`, and the idiom that forms `0xB9C` occurs **exactly once in the entire 4 MB image**, the increment
+  itself, with no literal-pool entry for `0xB9C` or `0xB84` anywhere. So the bit's meaning cannot be derived
+  from this firmware, and it therefore cannot name hot cue, memory cue or loop.
+- **Cue entries are addressed positionally:** `base(ctx+0xB6C) + slot(ctx+0xB68) * 0x40`. Neither the base
+  nor the slot is ever interpreted, with no bound check and no dispatch on either.
+- **The deck's writer emits its own type field.** `FUN_042bd48c` builds
+  `tag(4) | u32 | u32(len) | u16 | payload` with a header length of `0x0E` and a `0x38` body, and the u16 is
+  a byte-swapped value taken from its fourth argument, landing at **record offset `+0x0C`**. So the deck does
+  write a per-entry type field, and section 18's claim was correctly narrowed: the deck writes one and no
+  reader tests one in the code examined.
+
+### Where this stopped, and why
+
+The four call sites of that builder were located as **pool slots** (`0x042bafc0`, `0x042bb2dc`, `0x042bb644`,
+`0x042bb918`), and all four hold the same value, the builder's own address. They are not referenced by any
+`mov.l @(disp,PC),Rn` in the entire image, which was verified arithmetically by computing the pool target of
+every `0xDnnn` word rather than by sampling: **zero direct pool references.** The builder is therefore
+reached through an indexed table, and the constants it receives as its type argument are not extractable by
+static reference following. Extracting them would need either dynamic analysis in an emulator or a
+table-ownership analysis of the dispatcher.
+
+**So the type values themselves remain undetermined from the firmware**, and the differential against
+rekordbox's own output is the practical authority, which is where this question now belongs. One candidate
+remains flagged for a future pass rather than claimed: of the fifty image-wide sites that compare some
+structure's `+0x10` against 1, 2 or 3, exactly one (`0x042a0386`, a `cmp/eq #1`) sits near a cue module, just
+above the last log site of `mep_cue_local.c`. It is UNCERTAIN which structure it inspects.
+
+### Bonus: the module map, by alias-pointer scan
+
+| module                             | log sites             | code range            | sites |
+| ---------------------------------- | --------------------- | --------------------- | ----- |
+| `disc_cue_api.c`                   | 0x041aa024-0x041aad20 |                       |       |
+| `disc_cue_localWr.c`               | 0x041b2f78-0x041b3ea0 |                       |       |
+| `mep_cue_api.c`, `mep_cue_local.c` | 0x0429ed10-0x0429fd8c |                       |       |
+| `msc_anlz_api_usb.c`               | 0x040acc88            | 0x042aa764-0x042ababc | 18    |
+| `msc_anlz_local_usbWr.c`           |                       | 0x042b8abc-0x042ba738 |       |
+
+That is the deck's own layout of the cue and ANLZ code, which is what makes the next sweep a matter of
+picking a name rather than searching blind.
