@@ -334,7 +334,7 @@ exportExt.pdb (0 references), so My Tags never reach the player.
   14). The device export.pdb contains no track rows, so `/music/` vs `/Contents/` cannot be
   compared against rekordbox output from these files. `/Contents/<Artist>/<Album>/` appears
   only in DjManager's own capture corpus
-  (`/home/radexito/github/DjManager/reverse-engineering/captures/*/PIONEER/rekordbox/export.pdb`),
+  (`reverse-engineering/captures/*/PIONEER/rekordbox/export.pdb`),
   which is our own writer's output. No conclusion drawn.
 - **Ordering.** Our playlist-tree row is `parentId 0, unknown 0, sortOrder 0, id 1,
 isFolder 0, name "hujemujedzikieweze"` (abs 40 page 16, 40 B). Our playlist entries are
@@ -436,7 +436,7 @@ wav=0x0b".
   **90** and the constant 0x0003 at **92**. `detectFileType` maps mp3 -> 1, m4a/aac -> 4,
   flac -> 5, wav -> 0x0b, default 1 - exactly the codes quoted in the claim, but at 90.
 - Local corpus: in every track row with a known extension, bytes 90-91 carry the code and
-  byte 92 is 3. Examples: `/home/radexito/Downloads/123/PIONEER/rekordbox/export.pdb`
+  byte 92 is 3. Examples: `<capture>/PIONEER/rekordbox/export.pdb`
   (15 m4a tracks) byte 90-91 = `04 00`, byte 92 = `03` in all 15; the 41-page
   `.../captures/*/PIONEER/rekordbox/export.pdb` captures (mp3): byte 90-91 = `01 00`,
   byte 92 = `03`; `/tmp/pdb/export.pdb` both rows: `... 01 00 03 00 88 00` at offsets
