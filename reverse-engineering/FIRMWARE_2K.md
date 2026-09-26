@@ -664,3 +664,53 @@ above the last log site of `mep_cue_local.c`. It is UNCERTAIN which structure it
 
 That is the deck's own layout of the cue and ANLZ code, which is what makes the next sweep a matter of
 picking a name rather than searching blind.
+
+## 20. The cue record layout, confirmed from rekordbox's own output
+
+Every cue question in this document has been answered by the firmware only in the negative. The layout
+itself comes from the preserved rekordbox 6 captures under `reverse-engineering/captures/`, which is the
+authority section 19 said it had to be. Raw dumps in `~/re/fw2k/nxs-emulator-cues.md`.
+
+A `PCPT` record is **56 bytes (`0x38`)** and reads as follows, big-endian:
+
+| offset  | field                                                     |
+| ------- | --------------------------------------------------------- |
+| `+0x00` | `PCPT` tag                                                |
+| `+0x04` | u32 entry header length, `0x1C`                           |
+| `+0x08` | u32 entry length, `0x38`                                  |
+| `+0x0C` | u32 **cue slot: `0` = memory cue, `1..8` = hot cue A..H** |
+| `+0x10` | u32 zero                                                  |
+| `+0x14` | u32 constant `0x00010000`                                 |
+| `+0x18` | u32 constant `0xFFFFFFFF`                                 |
+| `+0x1C` | u8 **type: `1` = cue point, `2` = loop**                  |
+| `+0x1D` | three bytes, `00 03 e8`                                   |
+| `+0x20` | u32 start time in milliseconds                            |
+| `+0x24` | u32 loop end in milliseconds, or `0xFFFFFFFF`             |
+| `+0x28` | 16 zero bytes                                             |
+
+The enclosing `PCOB` section header carries the list kind: `PCOB`, u32 header length `0x18`, u32 section
+length, then a u32 that is **1 for the hot cue list and 0 for the memory cue list**, a u32 entry count, and
+`0xFFFFFFFF`.
+
+**Cross-checks, all from separate captures:** `41-hot-cue-a-h` holds eight hot cues with slots 1 to 8 at
+`+0x0C`, every record with `+0x1C` = `01` and `+0x24` = `FFFFFFFF`. `47-multiple-loops` holds four loops with
+slots 1 to 4, `+0x1C` = `02`, and real end positions at `+0x24`. `44-labled-cue` shows the label in `PCO2`/`PCP2`
+as **UTF-16BE with a u16 length prefix** (`00 0C` before `Break`) followed by a **three-byte colour**
+(`33 FF 00`).
+
+**What this settles, with the defects named:**
+
+1. **Loops are type `2` with an absolute end time**, so our writer emitting type `1` with an end of
+   `0xFFFFFFFF` is wrong, which is issue #571.
+2. **A memory cue is an ordinary cue record with slot `0`** at `+0x0C` and type `1`, not a stub, which is
+   issue #572. Nothing else in the record distinguishes it from a hot cue.
+3. **Labels and colours live in `PCO2`/`PCP2`** as a length-prefixed UTF-16BE string plus three colour
+   bytes, which is issue #574.
+4. Eight hot cues fit in a single file with slots 1 to 8, which puts the A to C / D to H split our writer
+   assumes in question.
+
+**Why the firmware could not have answered this, restated:** the deck's writer takes the slot number as its
+fourth argument and stores it at `+0x0C`, and the deck's reader never tests a type value at all. The kinds
+are expressed by _which record and which section an entry belongs to_, which is a property of the file
+layout rather than of any comparison the code makes. The emulator was the right instinct for behaviour; the
+captures were the faster oracle for encoding.
