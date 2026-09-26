@@ -429,7 +429,7 @@ Pioneer's binary track index format. Located at `USB_ROOT/export.pdb`.
 
 | Offset | Size | Description                                                                                                                                                         |
 | ------ | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0      | 4    | `type` (0=tracks, 1=genres, 2=artists, 3=albums, 4=labels, 5=keys, 6=colours, 7=playlists, 8=playlist_entries, 9=history_playlists, 10=history_entries, 11=artwork) |
+| 0      | 4    | `type`, numbered 0 to 19: 0 tracks, 1 genres, 2 artists, 3 albums, 4 labels, 5 keys, 6 colours, 7 playlist_tree, 8 playlist_entries, 9 unknown, 10 unknown, 11 history_playlists, 12 history_entries, 13 artwork, 14 unknown, 15 unknown, **16 columns**, 17 unknown, 18 unknown, 19 history |
 | 4      | 4    | `empty_candidate`                                                                                                                                                   |
 | 8      | 4    | `first_page`                                                                                                                                                        |
 | 12     | 4    | `last_page`                                                                                                                                                         |
@@ -904,7 +904,8 @@ with no further detail. Another project working the same problem (murtaza64/mana
 2026-08-18) reports three structural requirements that fixing that rejection. They are recorded here
 because they are cheap to satisfy and expensive to debug:
 
-1. The `columns` tables (**types 17 and 18**, `0x11`/`0x12`) must carry rekordbox's static
+1. The `columns` table (**type 16**; a neighbouring project refers to it as tables 17 and 18
+   in its own 1-based numbering) must carry rekordbox's static
    browse-menu schema rows (the GENRE/ARTIST/... column definitions). Empty `columns` tables are
    rejected. DjManager does write a columns table from `COLUMN_DATASET`
    (`src/usb/pdbWriter.js:86`, emitted at line 921), so we should already satisfy this, but the row
@@ -914,6 +915,11 @@ because they are cheap to satisfy and expensive to debug:
    own candidate (`emptyCandidate = indexPageIndex + 1`, line 937) and advances it as pages are
    allocated (lines 964-990), which looks right but has not been confirmed byte for byte.
 3. `exportExt.pdb` must exist, even when it contains nothing but empty tables (they wrote nine).
+
+Both ground-truth files examined here enumerate exactly twenty tables, types 0 to 19, in order, with
+`type == table index`, which is how the numbering was verified rather than inherited. The earlier
+revision of this document listed `9 = history_playlists` and `11 = artwork`, which was wrong from 9
+onward.
 
 Two further details from the same source, both worth knowing:
 
