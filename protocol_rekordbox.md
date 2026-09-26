@@ -1274,3 +1274,12 @@ Three conclusions follow, and two of them **correct earlier statements in this d
 Open questions this pair raises: the meaning of row offset `0x34` (holds a value near the track's length
 in both writers but not the same number), the `bitrate` slot holding a byte size in our output, and the
 first string slot where we write a long-string blob and rekordbox writes an empty string.
+
+### Deck-side confirmation of the ANLZ path template
+
+The NXS MAIN firmware payload contains the literal `%/ANLZ%04X.DAT` next to the error string
+`Music Analyse File is broken.` (decoded NXS MAIN image, offset `0x0b21f4`). So the four-digit hex file
+index in `ANLZ0000.DAT` is the **deck's own** convention: the player composes that path itself rather than
+depending on rekordbox to name files. The same payload's adjacent ANLZ tag run (`PMAI`, `PTH`, `VBR`,
+`QTZ`, `WAV2`, `V2`, `COB` at `0x0b20de`) and format list (`MP3`, `AAC`, `M4A`, `MP4`, `AIF`, `JPG`,
+`FLAC`) match what this document records from the producer side.
