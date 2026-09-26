@@ -233,3 +233,41 @@ Device Library paths, which is consistent with the deck exposing its library ove
 which rules out ciphertext for it, and the MAIN payload is a _mixture_: `0xFF` is 3.86% of 2.9 MB with no
 run longer than 64 bytes, which is impossible both for ciphertext and for a single clean compressed stream.
 The PANL payload is plaintext data tables (16-bit ramps plus `0x00`/`0x55`/`0xAA` fill), not code.
+
+## 12. The packing: what was ruled out, and the honest conclusion
+
+The MAIN payloads were attacked with purpose-built decoders rather than guesses, and every one is a
+controlled negative. Offsets swept: every byte of the first 8 KiB, every 64 bytes up to 1 MiB, then every
+4 KiB to the end, for each codec on each of the two MAIN payloads (26,757 and 25,146 offsets), with a
+planted-stream positive control and 400 random-data probe offsets per codec to prove there are no false
+positives.
+
+| codec                                                               | how it was tested                                                                                     | result                                                                         |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| LZO1X-1                                                             | pure-python port of `lzo1x_decompress_safe`, validated byte-exact 56/56 against `liblzo2` round trips | 0 valid streams at any offset; planted control found instantly                 |
+| LZJB                                                                | port validated 5/5 against a reference implementation                                                 | 0 valid streams; best survival 320 bytes before an out-of-range back-reference |
+| FastLZ level 1                                                      | transcription of the reference, validated 6/6 plus a hand-built stream                                | 0 valid streams, first token fails everywhere                                  |
+| zlib, raw deflate, gzip                                             | 6,013 offsets plus magic-anchored attempts                                                            | no output                                                                      |
+| xz, lzma-alone, raw LZMA                                            | property search over lc 0-3, lp 0-1, pb 0-2 and three dictionary sizes (1,440 combinations)           | no output                                                                      |
+| bzip2, zstd, LZ4 frame, LZ4 block, Snappy, LZF, Okumura LZSS (12/4) | magic-anchored and swept offsets                                                                      | no output                                                                      |
+
+Additional structure checks, which also came back negative:
+
+- **Not periodic.** For the text-heavy window at `0x10000`, the most skewed residue class over k = 2..32
+  reaches only 0.693 against a 0.600 baseline, and a high-entropy control window shows the same spread
+  (0.789 against 0.675). So the readable text is not interleaved on a fixed lane.
+- **The readable text is genuine and byte-aligned.** 1,640 of the window's 4,096 bytes are printable, with
+  runs up to 102 characters, e.g. `PIONEER`, `XDJ-1000`, `end of version`, `0.01`, `1408052` all appearing
+  intact. Byte-aligned literals of that length rule out a range coder such as LZMA, whose literals are not
+  byte-aligned.
+- **The payload is a mixture, not one stream.** `0xFF` accounts for 3.86% of 2.9 MB with no run longer than
+  64 bytes, which is impossible both for ciphertext and for a single clean compressed stream, and the DRIV
+  payload still shrinks 17% under LZMA while the RX payloads (genuinely encrypted) shrink 0%.
+
+**Conclusion.** The MAIN and DRIV payloads are compressed with a scheme that is not any of the eleven
+standard codecs tested, does not expose a header or a periodic structure, and keeps byte-aligned literals.
+What remains is a vendor-proprietary encoding whose decompressor is almost certainly in the deck's own
+boot ROM rather than in the update file, since no component of the updates contains a boot stage. That
+means the deck-side database code cannot be read from these files at all, and the firmware route is closed
+for it. What the payloads do still give is the vocabulary and the path templates, which is section 10 and
+section 11, and that is the part worth keeping.
