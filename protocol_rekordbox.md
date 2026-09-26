@@ -423,9 +423,9 @@ Pioneer's binary track index format. Located at `USB_ROOT/export.pdb`.
 | 16     | 4                 | Unknown            |
 | 20     | 4                 | `sequence`         |
 | 24     | 4                 | `0x00000000`       |
-| 28     | `num_tables × 20` | Table pointers     |
+| 28     | `num_tables × 16` | Table pointers     |
 
-### Table Pointer Entry (20 bytes)
+### Table Pointer Entry (16 bytes)
 
 | Offset | Size | Description                                                                                                                                                         |
 | ------ | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -433,24 +433,39 @@ Pioneer's binary track index format. Located at `USB_ROOT/export.pdb`.
 | 4      | 4    | `empty_candidate`                                                                                                                                                   |
 | 8      | 4    | `first_page`                                                                                                                                                        |
 | 12     | 4    | `last_page`                                                                                                                                                         |
-| 16     | 4    | Unknown                                                                                                                                                             |
+
+Verified against the djl-analysis specification and against `buildFileHeader()` in
+`src/usb/pdbWriter.js`, which writes **16-byte** entries from offset 28. Earlier revisions
+of this document claimed 20 bytes.
 
 ### Page Structure (4096 bytes)
 
 | Offset | Size | Description        |
 | ------ | ---- | ------------------ |
-| 0      | 4    | `page_index`       |
-| 4      | 4    | `type`             |
-| 8      | 4    | `next_page`        |
-| 12     | 4    | `Unknown`          |
-| 16     | 4    | `num_rows_large`   |
-| 20     | 2    | `num_rows`         |
-| 22     | 2    | `free_size`        |
-| 24     | 2    | `used_size`        |
-| 26     | 2    | Unknown            |
-| 28     | 2    | `free_list_size`   |
-| 30     | 2    | `num_rows_large_2` |
-| 32     | 4064 | Row heap           |
+| Offset | Size | Description                                              |
+| ------ | ---- | -------------------------------------------------------- |
+| 0      | 4    | `magic` (always 0)                                       |
+| 4      | 4    | `page_index` (0 = file header page)                      |
+| 8      | 4    | `type` (table type, redundant sanity check)              |
+| 12     | 4    | `next_page` (follow only until the header's `last_page`) |
+| 16     | 4    | `transaction` / `seqpage` — global edit sequence         |
+| 20     | 4    | `unknown2` (usually 0)                                   |
+| 24     | 1    | `num_rows` (low byte)                                    |
+| 25     | 1    | `unknown3` (written as `num_rows × 0x20`)                |
+| 26     | 1    | `unknown4`                                               |
+| 27     | 1    | `page_flags` (`0x34` data page, `0x64` index page)       |
+| 28     | 2    | `free_size`                                              |
+| 30     | 2    | `next_heap_write_offset`                                 |
+
+Data pages then carry an 8-byte header at offset 32 (`unknown5` = 1,
+`num_rows_large` u16, two unknown u16s), so their row heap starts at 40. Index
+pages carry a 28-byte extra header, so their heap starts at 60. Row offsets are
+stored backwards from the end of the heap, 2 bytes each, bit 15 = present flag.
+
+Taken from the verified writer (`PAGE_HEADER_SIZE = 32`, `DATA_HEADER_TOTAL = 40`,
+`INDEX_HEADER_TOTAL = 60` in `src/usb/pdbWriter.js`), whose output players read
+correctly. Earlier revisions of this document were shifted by four bytes and
+mislabelled `next_page`, `seqpage` and the row counts.
 
 Row offsets are stored from the end of the heap, 2 bytes each, bit 15 = present flag.
 
@@ -473,8 +488,21 @@ Key fields in a track row (`type = 0`):
 
 Strings are length-prefixed. The first byte determines encoding:
 
-- `0x40` + length → ASCII string (length bytes follow)
-- `0x90` + length × 2 (u16BE) → UTF-16BE string (length × 2 bytes follow)
+| Kind | Layout |
+| ---- | ------ |
+| Short ASCII | `lk = ((dataLen + 1) << 1) | 1`, then `dataLen` ASCII bytes (max 126) |
+| Long ASCII | `0x40`, u16**LE** length = `dataLen + 4`, pad `0x00`, then ASCII bytes |
+| Unicode | `0x90`, u16**LE** length = `byteLen + 4`, pad `0x00`, then **UTF-16LE** bytes |
+
+`length` counts the whole field including its 4-byte header, and there is no
+terminator byte. The flag byte is `lengthAndKind`: bit 0 set means short, the
+other bits pick the encoding (`0x40` long ASCII, `0x90` wide).
+
+The wide encoding is **UTF-16LE, not BE**. The djl-analysis specification records
+that they too previously believed it was big-endian until `@evilfred` corrected it.
+The one exception is ISRC: it reports kind `0x90` but stores `03`, ASCII bytes and
+a null. This applies to `export.pdb`/`exportExt.pdb` only — **ANLZ strings really
+are UTF-16BE**, which is why both endiannesses appear in this document.
 
 ---
 
@@ -724,3 +752,114 @@ CDJ hardware accepts non-native resolutions. This application generates at
 7. **`analyzePath` in PDB points to the folder** (without trailing slash), not to the `.DAT` file. CDJs append `/ANLZ0000.DAT` themselves.
 
 8. **Electron `protocol.handle` cannot be used for audio** — Range request handling is unreliable in Electron 28+. Use a local HTTP server (`127.0.0.1:ephemeral`) instead.
+
+---
+
+## Ground-truth verification: rekordbox-written ANLZ (2026-09-26)
+
+Everything above was originally derived from community documentation plus trial and error. This
+section records a byte-level *verification* against ANLZ files that rekordbox itself wrote, which is
+the first time the cue sections have been confirmed against the producer's own output.
+
+### Where the reference files came from
+
+| Family | Source | Files | Written by | Notes |
+| ------ | ------ | ----- | ---------- | ----- |
+| A | `%APPDATA%\\Pioneer\\rekordbox\\share\\PIONEER\\USBANLZ\\<hash>\\<uuid>\\ANLZ0000.*` (Windows laptop) | 374 | rekordbox (PC) | Analysis cache. 98 DAT, 97 EXT, 97 2EX, 82 3EX. **Contains no cues at all** |
+| B | `C:\\shimi usb\\PIONEER\\USBANLZ\\P0xx\\xxxxxxx\\ANLZ0000.DAT` | 54 | device or old rekordbox | DAT only, device epoch timestamp, header bytes 16/20 are zero |
+| C | `reverse-engineering/captures/<NN-slug>/PIONEER/USBANLZ/...` (this repo) | 52 sets | rekordbox (PC) | **The only cues-with-labels reference.** Captures 42-47 are the decisive ones |
+| D | `U:\\PIONEER\\USBANLZ\\P037,P066` (the test stick) | 6 | **DjManager** | Our own blind-mode export |
+| E | `playlists.zip` on the laptop desktop | 3 | **DjManager** | Our own export |
+
+Family A proves something useful on its own: rekordbox's cache holds analysis only. Cue points live
+in `export.pdb` until an export happens, which is why 40-hot-cue-a-b-c and friends (family C, exported
+to a stick) are the files that carry cues.
+
+### Cue sections, confirmed byte for byte
+
+`PCOB` at its own offset: `PCOB | len_header=24 | len_tag | type (u4) | pad (u2) | num_cues (u2) |
+memory_count sentinel (u4)`, with the first `PCPT` starting at `offset + 24` and no `len_entry` field.
+`PCPT` is a fixed 56 bytes with `len_header = 28`. All of this matches what this document already
+claimed. The `PCO2`/`PCP2` layouts match too, including `len_tag = 88` for an unlabelled entry and
+`len_tag = 140` for a 25-character label, and the colour block sitting at `44 + len_comment`.
+
+Two `PCPT` facts worth calling out because plain playback hides them:
+
+* `PCPT+40` (the colour byte) is **`0x00` in every observed ground-truth record**, hot cues included.
+  Colour is carried by `PCP2` in the EXT file, not by `PCPT`.
+* `PCPT+28` is `1` for a cue point and **`2` for a loop**, and `PCPT+36`/`PCP2+24` hold the loop's
+  **absolute end position in ms**, not a length. Capture 46: `time_ms=61313`, `loop_time=62869`,
+  which is the stated 4-beat loop, 1556 ms long.
+
+### How rekordbox splits cues between DAT and EXT
+
+Observed in both capture 43 (8 hot cues) and capture 47 (4 loops):
+
+| File, slot | Contents |
+| ---------- | -------- |
+| `.DAT` PCOB slot 1 (`type=1`) | hot cues **A, B, C only** (file order 2, 1, 3) |
+| `.EXT` PCOB slot 1 (`type=1`) | hot cues **D onwards** (file order 8, 7, 6, 5, 4) |
+| `.EXT` PCO2 slot 1 (`type=1`) | **all** hot cues, with labels and colours |
+| `.DAT` PCOB slot 2 (`type=0`) | memory cues (capture 42: `len_tag=80`, one entry) |
+| `.EXT` PCO2 slot 2 (`type=0`) | the same memory cues in the PCP2 form |
+
+So the first three hot cues are duplicated into the DAT, the rest live only in the EXT, and the DAT's
+slot 2 is a *populated* memory-cue section rather than a stub. This is why a 3-hot-cue player still
+sees A/B/C on a stick exported from a 8-cue library.
+
+### The real colour palette
+
+`PCP2+44` carries a hue code followed by R, G, B. Measured from capture 43:
+
+| Colour | Code | R | G | B |
+| ------ | ---- | - | - | - |
+| red | `0x00` | 255 | 0 | 23 |
+| blue | `0x01` | 0 | 0 | 255 |
+| cyan | `0x09` | 0 | 224 | 255 |
+| green | `0x16` | 26 | 255 | 0 |
+| yellow | `0x20` | 255 | 232 | 0 |
+| orange | `0x26` | 255 | 94 | 0 |
+| pink | `0x31` | 255 | 0 | 161 |
+| violet | `0x38` | 179 | 0 | 255 |
+
+"No colour" is code `0x00` with RGB `0, 0, 0` (capture 42). Note that red is also code `0x00`: the
+code is a hue index around the wheel, so the RGB triple is what actually distinguishes a colour from
+no colour. The values currently in `PIONEER_PCP2_MAP` (`src/audio/anlzWriter.js`) are approximations
+for red, orange, yellow and blue, and pink is missing entirely.
+
+### Sections we never write
+
+* **`PSSI`** — 32-byte header, 384-696 byte body, present in **72 of 97** rekordbox EXT files and in
+  every cue capture, always the last section. Purpose still unknown; we never write it. It is present
+  in files whose cues work, so it is not a prerequisite for cue display, but its absence is a real
+  difference from native output.
+* **`.3EX`** — **not an ANLZ container at all.** Its first bytes are a msgpack-style map containing the
+  ASCII string `embedding` plus a UUID and float payload. Treat it as a separate format, unrelated to
+  deck playback.
+
+### Divergences between this writer and ground truth
+
+| # | Aspect | Ours | Ground truth | Status |
+| - | ------ | ---- | ------------ | ------ |
+| 1 | Loop cues | `buildPcptEntry` hard-codes `type=1` and `loop_time=0xFFFFFFFF` (`anlzWriter.js:426,429`) | `type=2` with an absolute end position | **we cannot export a loop** |
+| 2 | Memory cues | `PCOB`/`PCO2` slot 2 always written as 24/20-byte stubs; a code comment claims a populated slot 2 is rejected | capture 42 has a populated slot 2 in both files | **we cannot export a memory cue** |
+| 3 | `PCPT+40` colour byte | palette code 1-8 | always `0x00` | wrong |
+| 4 | `PCP2` colour codes/RGB | approximated for 4 of 8, pink absent | table above | wrong |
+| 5 | Cue distribution | all hot cues in DAT slot 1 | A-C in DAT, D+ in EXT | differs; may cost us cues 4-8 on 3-cue players |
+| 6 | `PSSI` | never written | in 75% of native EXT files | missing |
+| 7 | `PVBR` payload | filled in (1194 of 1600 bytes non-zero) | 3 of 1604 (PC), 0 (device) | differs, but a filled seek table is legal |
+| 8 | `PPTH` path | `/music/<file>` (`src/main.js:2372,2376`) | `/Contents/<Artist>/<Album>/<file>` | differs |
+
+Section order, section sizes, header constants, `PCPT`/`PCP2` field layout and the three exact palette
+entries that we do get right (green, cyan, violet) all match, so the writer's geometry is sound; the
+divergences are content and coverage.
+
+### Reproducing
+
+```bash
+python3 reverse-engineering/scripts/anlz-walk.py <file.DAT|.EXT|.2EX> [...]   # section census
+node -e "..."   # see reverse-engineering/ANLZ_GROUNDTRUTH.md for the writer-vs-truth harness
+```
+
+The full analysis, including every decoded cue record and the raw offsets, is in
+`reverse-engineering/ANLZ_GROUNDTRUTH.md`.
