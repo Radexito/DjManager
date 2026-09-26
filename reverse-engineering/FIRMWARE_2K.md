@@ -199,3 +199,37 @@ confirm protocol details from the deck's own side:
 The same tag run appears in the XDJ-1000MK2 MAIN payload (section 4), so the ANLZ vocabulary is consistent
 across the family, and `ANLZ%04X.DAT` is new: it is the deck-side template behind the file naming our
 protocol document already records.
+
+## 11. Corrections and additions after the component analysis
+
+**Correction to an interim claim.** A sub-analysis reported the `GUI` component as plaintext code in _both_
+files. Measured by marker count that is wrong for the NXS2: the NXS `GUI` payload contains
+`DS_G3_Font` 31 times, `Glib3` 124 times, `GLib\src` 296 times and `ThreadX` once, while the NXS2 `GUI`
+payload contains **zero** of those strings and only 27 printable runs of 14+ characters. Only the NXS 1.44
+GUI payload is plaintext; the NXS2 one is packed. The claim is recorded here so the document stays honest
+about which generation is readable.
+
+**The S0 record names the original build file.** Each S-record component's leading `S0` record carries the
+file name it was produced from, which the decode surfaces directly:
+
+| component   | S0 payload as text                                                          |
+| ----------- | --------------------------------------------------------------------------- |
+| NXS2 `DRIV` | `G11.MOT`                                                                   |
+| NXS2 `MAIN` | `romobj  mot` (i.e. a `.mot` object, with the separator rendered as spaces) |
+
+**Vocabulary now confirmed in three packed MAIN payloads**, each of which hides its code but leaks strings:
+
+| payload                                     | strings found                                                                                  |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| NXS MAIN `0x08e9c0`, `0x0b20de`, `0x0b21f4` | format list, `PMAI PTH VBR QTZ WAV2 V2 COB`, `%/ANLZ%04X.DAT`, `Music Analyse File is broken.` |
+| NXS2 MAIN `0x0ca6cf`                        | `./PIONEER/` `LIBRARY/` `PDTL` and `LocalDBSer...` (a local database server string)            |
+| NXS2 MAIN `0x0ee6a9`                        | `PMAI PTH VB QTZ WAV V2 COB 3N KEY`                                                            |
+| XDJ-1000MK2 MAIN `0x0a9c8a`, `0x0cda71`     | `PIONEER/` `LIBRARY/` `PDTL`; `PMAI PTH VB QTZ WAV V2 COB`                                     |
+
+So the tag set includes `3N` and `KEY` in the NXS2 build, and a `LocalDBServer` string appears next to the
+Device Library paths, which is consistent with the deck exposing its library over Pro DJ Link.
+
+**What the component analysis adds on the packed payloads.** The DRIV payload shrinks by 17% under LZMA,
+which rules out ciphertext for it, and the MAIN payload is a _mixture_: `0xFF` is 3.86% of 2.9 MB with no
+run longer than 64 bytes, which is impossible both for ciphertext and for a single clean compressed stream.
+The PANL payload is plaintext data tables (16-bit ramps plus `0x00`/`0x55`/`0xAA` fill), not code.
