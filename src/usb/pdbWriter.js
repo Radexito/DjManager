@@ -667,15 +667,17 @@ export class DataPage {
     buf.writeUInt32LE(nextPage, 12); // NextPage
     buf.writeUInt32LE(transaction, 16); // Transaction
     buf.writeUInt32LE(0, 20); // Unknown2
-    buf[24] = this.numRows & 0xff; // NumRowsSmall
-    buf[25] = (this.numRows * 0x20) & 0xff; // Unknown3
-    buf[26] = 0; // Unknown4
+    // Bytes 24..26 pack two counters: the low 13 bits count the row-offset slots
+    // ever allocated and the high 11 bits count the live rows. Writing the low
+    // bytes only drops the carry into byte 26, which makes a reader compute
+    // num_rows modulo 8 (verified against device output, see issue #581).
+    buf.writeUIntLE(this.numRows | (this.numRows << 13), 24, 3);
     buf[27] = 0x34; // PageFlags (data page)
     buf.writeUInt16LE(freeSize, 28); // FreeSize
     buf.writeUInt16LE(this._topSize, 30); // NextHeapWriteOffset
 
     // ── Data Page Header (8 bytes at offset 32) ──
-    buf.writeUInt16LE(1, 32); // Unknown5
+    buf.writeUInt16LE(this.numRows, 32); // Live row count (device writes this, not a constant)
     buf.writeUInt16LE(0, 34); // NumRowsLarge
     buf.writeUInt16LE(0, 36); // Unknown6
     buf.writeUInt16LE(0, 38); // Unknown7
