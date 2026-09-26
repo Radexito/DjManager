@@ -421,3 +421,67 @@ differing only by a dot before `PIONEER`, with drive-letter formatting available
 `%c:/.%s`. The export files are `PIONEER/rekordbox/export.pdb` and `PIONEER/rekordbox/exportExt.pdb`, and
 each appears twice, in two different modules, so more than one consumer opens them. The dotted variant is
 the same file reached through a hidden or alternate root; the strings alone do not say which.
+
+## 16. Corrections from reading the deck's ANLZ code, and what it confirmed
+
+A disassembly pass over the ANLZ modules corrected three statements in section 14 and settled the tag
+recognition rules. Corrections first, since section 14 is wrong on them:
+
+1. **The tag tables are arrays of 8-byte records, not contiguous u32 words.** Each record is
+   `{tag[4], u32 0}`, so record _i_ of the table at `0x040ace28` is at `0x040ace28 + 8*i`. The hexdump
+   shows `PMAI 00000000 PPTH 00000000 ...`. The tag order already recorded stands; only the stride was
+   wrong.
+2. **The chain is unrolled, not pointer-walked.** Each record's address is loaded individually from a
+   literal pool, one pool slot per record, and the recognition code is a repeated 9-instruction block
+   rather than a loop over the array. There _are_ stride-4 arrays of pointers to the records immediately
+   after each record array, which is what the C code indexes by number.
+3. **Pointers in this image use the SH-4 alias form `0xA4xxxxxx`, not `0x04xxxxxx`.** Physical
+   `0x040ad0bc` is referenced as `0xa40ad0bc`. This is why the earlier search for absolute pointers to
+   the strings and tables returned zero hits and was misread as "the strings must be reached by a base
+   register plus offset". They are reached absolutely; the search was looking for the wrong address form.
+   **Any further xref search must use the `0xA4` form.** The image is little-endian, confirmed
+   independently as the native `sts.l pr,@-r15` byte pair `22 4f` occurs 5,964 times against 43 for the
+   reversed pair.
+
+**Tag recognition, confirmed from the code:** given a 4-byte tag it compares against each record of the
+`0x040ace28` list in that exact order, returning 0 for recognised and -1 for unrecognised, and it **never
+reads a section length**. Unknown tags simply fall through to -1. This means the deck does not skip
+sections by their declared size, so a length field in our files is not what protects us.
+
+**The reader enforces an expected order.** In `msc_anlz_local_usbRd.c` (code from `0x042b7506`, pools
+pointing at the table at physical `0x040ad1b4`), each section tag read is compared against the next
+expected record with the same 4-byte compare, and on mismatch the code **does not resynchronise**: it
+jumps to an error exit that logs file and line and returns **-2** (`0x042b8178`) or **-3**
+(`0x042b8196`). Confirmed at the read helper and at the `PVBR` comparison; the identical three-instruction
+shape recurs for the remaining tags. The expected sequence recorded for that table is
+`PMAI PPTH PVBR PQTZ PWAV PWV2 PCOB PCPT`.
+
+**Where that leaves our writer.** Our DAT emits a 28-byte `PMAI` file header, then
+`PPTH PVBR PQTZ PWAV PWV2 PCOB PCOB`, so the first seven expected tags match in order and the eighth
+differs: we emit a second `PCOB` (the memory cue list) where the table names `PCPT`. Two readings remain
+open and the code examined does not yet decide between them: either `PCPT` is the tag of the first cue
+entry _inside_ the `PCOB` body, in which case our sub-tag assumption and our second `PCOB` are both fine,
+or `PCPT` is a top-level section that follows `PCOB`, in which case our second `PCOB` is where the reader
+loses the sequence. Rekordbox's own DAT files do carry two cue lists, so repetition is probably tolerated,
+but which of the two readings holds is **not yet determined** and a follow-up disassembly of the writer
+and manager modules is running against it.
+
+**A section header the deck itself builds** carries, after its 4-byte tag, a **32-bit length field of
+`0x1C` (28)**, then u16 fields (one of them 1) and zero fill from +128. That is the 28-byte ANLZ header
+seen from the deck's side, matching the 28-byte file header our writer emits.
+
+**The database side, and a useful negative.** An exhaustive message scan across the database region and
+the whole image found **no PDB analogue of the ANLZ breakage message**. There is no `broken`, `corrupt`,
+`checksum`, `CRC`, `invalid` or `illegal` string associated with the export database, no magic or version
+constant check adjacent to any of the six sites that load `export.pdb` or `exportExt.pdb`, and the failure
+path is a return of -1 with an internal log rather than a rejection. The `CacheDB DSQLerror!` family
+belongs to the deck's own SQL cache, which is a different database. **So the deck does not adjudicate our
+file as corrupt; when a device library is rejected as corrupted, the stricter reader is rekordbox, not the
+player.** That is exactly why the byte-differential against a genuine rekordbox export, the method behind
+PRs #585 to #590, is the right instrument for acceptance, and it reframes the expectation behind issue
+#577.
+
+**Still open, with the code that will decide them already located:** the PCOB and PCO2 entry strides and
+the meaning of the cue type byte, the cue-list slot structure, and the PCO2 label and colour offsets. In
+this run no raw track-row access at the offsets our writer uses was observed either, so the database field
+mapping remains unconfirmed from the deck's side.
