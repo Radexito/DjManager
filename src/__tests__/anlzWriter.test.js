@@ -460,15 +460,15 @@ describe('buildPcobSections', () => {
     expect(pcob1.readUInt32BE(12)).toBe(1);
   });
 
-  it('PCOB2 stays empty even when memory cues are passed (export disabled, see Known Issues)', () => {
-    // Byte layout for memory cues in PCOB2 was verified against native Rekordbox
-    // (issue #208), but real-world testing showed memory cues are unreliable in
-    // practice, so writing them is disabled for now. PCOB2 must always be the
-    // empty stub regardless of what's in cuePoints.
+  it('PCOB2 carries real slot-0 memory cue records (#572, capture 42)', () => {
+    // A memory cue is an ordinary cue record with slot 0, placed in the list whose
+    // kind is 0 — see capture 42-momory_cue. Writing an empty stub loses it.
     const [, pcob2] = buildPcobSections([memoryCue]);
-    expect(pcob2.readUInt32BE(8)).toBe(24); // len_tag = header only, no entries
-    expect(pcob2.readUInt32BE(12)).toBe(0); // type = 0 (memory_cues slot)
-    expect(pcob2.readUInt16BE(18)).toBe(0); // num_cues = 0
+    expect(pcob2.readUInt32BE(8)).toBe(24 + 56); // header + one PCPT record
+    expect(pcob2.readUInt32BE(12)).toBe(0); // list kind = 0 (memory cues)
+    expect(pcob2.readUInt32BE(16)).toBe(1); // entry count
+    expect(pcob2.readUInt32BE(24 + 12)).toBe(0); // slot 0 at +0x0c
+    expect(pcob2[24 + 28]).toBe(1); // type 1 at +0x1c
   });
 
   it('PCOB2 stays empty when there are no memory cues', () => {
@@ -507,30 +507,29 @@ describe('buildPcobSections', () => {
   });
 });
 
-// ── Pioneer color palette (hexToPioneerCode via PCPT / PCP2) ──────────────────
+// ── Colour bytes ──────────────────────────────────────────────────────────────
 
-describe('Pioneer color palette — PCPT color_code byte', () => {
+describe('PCPT has no colour byte (#574)', () => {
   const pcptStart = 24; // first PCPT entry after 24-byte PCOB header
-  const colorByteOffset = pcptStart + 40; // byte [40] of the PCPT entry
+  const trailerOffset = pcptStart + 40; // first byte of the 16-byte trailer
 
-  it('orange (#ff9900) → code 3 (confirmed by native Rekordbox hex-diff)', () => {
-    const [pcob1] = buildPcobSections([{ position_ms: 1000, color: '#ff9900', hot_cue_index: 0 }]);
-    expect(pcob1[colorByteOffset]).toBe(3);
-  });
-
-  it('cyan (#00b4d8) → code 6 (confirmed by native Rekordbox hex-diff)', () => {
+  it('writes 16 zero bytes at +0x28 for a coloured hot cue (captures 41, 43, 44)', () => {
+    // Every captured rekordbox PCPT record ends in 16 zero bytes, coloured cues
+    // included: the eight fully coloured hot cues of capture 43 have
+    // 00×16 at +0x28 in both DAT and EXT. The colour lives in the EXT PCP2
+    // entries only.
     const [pcob1] = buildPcobSections([{ position_ms: 1000, color: '#00b4d8', hot_cue_index: 0 }]);
-    expect(pcob1[colorByteOffset]).toBe(6);
+    for (let i = trailerOffset; i < pcptStart + 56; i++) {
+      expect(pcob1[i]).toBe(0);
+    }
   });
 
-  it('unknown color hex → code 0 (no color / CDJ default)', () => {
-    const [pcob1] = buildPcobSections([{ position_ms: 1000, color: '#123456', hot_cue_index: 0 }]);
-    expect(pcob1[colorByteOffset]).toBe(0);
-  });
-
-  it('null/missing color → code 0', () => {
-    const [pcob1] = buildPcobSections([{ position_ms: 1000, color: null, hot_cue_index: 0 }]);
-    expect(pcob1[colorByteOffset]).toBe(0);
+  it('PCP2 (EXT PCO2) is where the colour is written', () => {
+    const [pco2hot] = buildPco2Sections([
+      { position_ms: 1000, color: '#00b4d8', label: '', hot_cue_index: 0 },
+    ]);
+    // PCO2 header 20 + PCP2 fixed 44 → cyan hue 0x09 + RGB (capture 43 slot 5)
+    expect([...pco2hot.subarray(20 + 44, 20 + 48)]).toEqual([0x09, 0x00, 0xe0, 0xff]);
   });
 });
 
@@ -606,10 +605,12 @@ describe('buildPco2Sections', () => {
     expect(pco2mem.readUInt32BE(12)).toBe(0);
   });
 
-  it('slot 2 stays empty even when memory cues are passed (export disabled, see Known Issues)', () => {
+  it('slot 2 carries real slot-0 memory cue records (#572, capture 42)', () => {
     const [pco2hot, pco2mem] = buildPco2Sections([memoryCue]);
-    expect(pco2hot.readUInt16BE(16)).toBe(0); // slot 1: 0 cues
-    expect(pco2mem.readUInt16BE(16)).toBe(0); // slot 2: always 0 cues (disabled)
+    expect(pco2hot.readUInt16BE(16)).toBe(0); // slot 1: no hot cues here
+    expect(pco2mem.readUInt16BE(16)).toBe(1); // slot 2: the memory cue
+    expect(pco2mem.readUInt32BE(20 + 12)).toBe(0); // PCP2 slot 0 at +0x0c
+    expect(pco2mem[20 + 16]).toBe(1); // type 1 at +0x10
   });
 
   it('slot 1 carries all 16 hot cues in one flat list, including "page 2" (9-16)', () => {
@@ -625,25 +626,24 @@ describe('buildPco2Sections', () => {
     expect(pco2hot.readUInt16BE(16)).toBe(16); // num_cues = 16
   });
 
-  it('PCP2 color_code for orange (#ff9900) = 0x23 (extended wheel code 35)', () => {
-    // PCP2 uses a ~64-step extended color wheel, NOT the PCPT 1-8 palette.
-    // code 35 (0x23) corresponds to orange on the wheel (hue ≈ 38°, Δ2° from #FF9900).
+  it('PCP2 colour block for orange (#ff9900) = hue 0x26 + ff 5e 00 (capture 43 slot 2)', () => {
+    // Read straight out of capture 43-hot-cue-colors: `26 ff 5e 00`.
     const cue = { position_ms: 1000, color: '#ff9900', label: '', hot_cue_index: 0 };
     const [pco2hot] = buildPco2Sections([cue]);
     // PCO2 header=20; PCP2 entry starts at 20.
     // Inside PCP2 buf: colorOff = 44 + labelByteLen(0) = 44.
     // Absolute offset in PCO2 buf: 20 + 44 = 64.
     const colorOff = 20 + 44;
-    expect(pco2hot[colorOff]).toBe(0x23);
+    expect(pco2hot[colorOff]).toBe(0x26);
   });
 
-  it('PCP2 RGB bytes use native Rekordbox wheel RGB (not raw hex) for known palette entry', () => {
-    // #ff9900 maps to wheel code 35 with native RGB (0xff, 0xa2, 0x00).
+  it('PCP2 RGB bytes are the captured rekordbox values, not raw hex', () => {
+    // #ff9900 maps to hue 0x26 with native RGB (0xff, 0x5e, 0x00).
     const cue = { position_ms: 1000, color: '#ff9900', label: '', hot_cue_index: 0 };
     const [pco2hot] = buildPco2Sections([cue]);
     const colorOff = 20 + 44;
     expect(pco2hot[colorOff + 1]).toBe(0xff); // R
-    expect(pco2hot[colorOff + 2]).toBe(0xa2); // G  (native wheel, not 0x99)
+    expect(pco2hot[colorOff + 2]).toBe(0x5e); // G  (native value, not 0x99)
     expect(pco2hot[colorOff + 3]).toBe(0x00); // B
   });
 });
