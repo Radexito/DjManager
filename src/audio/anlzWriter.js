@@ -750,7 +750,7 @@ function buildSectionWithBigHeader(fourcc, specificHeader, data) {
  * Includes real waveforms generated from the source audio via ffmpeg.
  *
  * @param {object} opts
- * @param {string}  opts.usbFilePath    - USB-relative path e.g. "/music/Artist - Title.mp3"
+ * @param {string}  opts.usbFilePath    - USB-relative path e.g. "/Contents/Artist - Title.mp3"
  * @param {string}  opts.sourceFilePath - Absolute path to original audio on disk
  * @param {string|null} opts.beatgrid       - JSON string from DB (mixxx-analyzer output)
  * @param {number}  opts.bpm                - BPM value from DB (already bpm_override ?? bpm)
