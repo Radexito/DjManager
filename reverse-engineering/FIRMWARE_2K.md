@@ -316,3 +316,64 @@ readable, and that analysis is the live follow-up rather than a dead end.
 analysis and none of its code is copied into this repository; its findings are cited here and its code is
 not redistributed. The decoder parameters above are stated as a format description so that anything needed
 here can be implemented independently.
+
+## 14. The deck's own module map, ANLZ tag tables, and what it does not know
+
+The unpacked SH-4 image carries the build paths of the modules it was compiled from, which maps the
+firmware's own structure. All of these live under `DB/cache/cue/src/`:
+
+```
+disc_cue_api.c  disc_cue_local.c  disc_cue_localIdx.c  disc_cue_localRd.c  disc_cue_localWr.c
+ex_fsys.c
+mep_cue_api.c  mep_cue_local.c
+msc_anlz_api_usb.c  msc_anlz_local_usb.c  msc_anlz_local_usbRd.c  msc_anlz_local_usbWr.c
+msc_anlz_local_usbmng.c  msc_anlz_local_remove.c
+```
+
+The split is informative: the `msc_anlz_*` family is the USB ANLZ path with separate read (`usbRd`), write
+(`usbWr`), management (`usbmng`) and remove modules, and the `disc_cue_*` family is the same idea for
+disc media. Also present: a TCP/IP stack (`Middle/cente/tcpip/...`), a shell (`Middle/cente/shell/...`),
+`LocalDBServer` / `RemoteDBServer` / `DBComm_TASK` / `DSListen_TASK` (the PRO DJ LINK database server),
+and `mhod` / `pdst` atoms.
+
+**The ANLZ tag tables are the parser's dispatch arrays.** Every 4-byte tag constant in the image occurs
+only inside these tables, never in a separate literal pool, so the parser walks each array with a pointer
+instead of comparing immediates. The tables, by the module they sit beside:
+
+| address      | order                                                         | module                    |
+| ------------ | ------------------------------------------------------------- | ------------------------- |
+| `0x040ace28` | `PMAI PPTH PVBR PQTZ PWAV PWV2 PCOB PWV3 PKEY PCO2 PCP2`      | `msc_anlz_api_usb.c`      |
+| `0x040acebc` | `PVBR PQTZ PWAV PWV2 PCOB PWV3 PKEY PCO2 PCPT PCP2`           | `msc_anlz_api_usb.c`      |
+| `0x040acf0c` | `PMAI PPTH PVBR PQTZ PWAV PWV2 PCOB PCPT PWV3 PKEY PCO2 PCP2` | `msc_anlz_local_remove.c` |
+| `0x040ad100` | `PMAI PPTH PCOB`                                              | `msc_anlz_local_usb.c`    |
+| `0x040ad1b4` | `PMAI PPTH PVBR PQTZ PWAV PWV2 PCOB PCPT`                     | `msc_anlz_local_usbRd.c`  |
+| `0x040ad234` | `PMAI PPTH PVBR PQTZ PWAV PWV2 PCOB PCPT`                     | `msc_anlz_local_usbWr.c`  |
+| `0x040ad274` | `PMAI PPTH PCPT PCP2 PCOB PCO2`                               | `msc_anlz_local_usbmng.c` |
+
+The read and write tables in `usbRd`/`usbWr` are identical and both start with `PMAI PPTH`, which
+confirms `PMAI` writes the header and `PPTH` the path for the DAT file, and that the deck's own writer
+emits the same eight DAT sections we do. The variants without `PMAI`/`PPTH` are the EXT side, and the
+`PCPT` / `PCP2` / `PCO2` entries are what the newer cue features travel in.
+
+**Tags this generation does not know.** `PWV4`, `PWV5`, `PWV6`, `PWV7`, `PSSI`, `PSSC` and `PQT2` return
+zero occurrences in the entire 4 MB image. The NXS 1.44 firmware has no parser for the coloured preview
+waveforms, no song structure (phrase) support, and no `PQT2`. Files carrying them are simply not the
+files this deck reads, which is direct evidence for which sections are worth writing for this generation.
+`PCO2` is present, so hot-cue labels and colours in the extended cue section are within this deck's
+vocabulary.
+
+**New tags not previously in the protocol document:** `PKEY` (4 occurrences), `PCPT` (5), `PCP2` (4),
+`PMNG` and `PTBL` (one each, beside `msc_anlz_local_usbmng.c`, so they belong to ANLZ management rather
+than to a single ANLZ file). One genuine code use of `PKEY` exists at `0x043a401f`, the rest are table
+entries.
+
+**Path construction, from the strings themselves:** the deck builds ANLZ paths as `/%s/%s` with
+`/ANLZ%04X.` plus an extension, and the folder as `P%03X`, matching
+`PIONEER/USBANLZ/P001/ANLZ0000.DAT` independently of anything rekordbox does. Device Library paths are
+`: /PIONEER/LIBRARY/PDTL.DB` and a second `.` -prefixed copy `:/.PIONEER/LIBRARY/PDTL.DB`, and the export
+files are `PIONEER/rekordbox/export.pdb` and `PIONEER/rekordbox/exportExt.pdb` (both present twice, in two
+different modules, so both the export reader and a second consumer use them).
+
+**The deck's own failure message for bad analysis data** is `Music Analyse File is broken!!!`, sitting in
+`msc_anlz_local_usb.c` right next to the `ANLZ%04X` template. That is the string a deck shows when it
+rejects an ANLZ file, and it is the ANLZ-side counterpart of the corrupted-library report in issue #577.
