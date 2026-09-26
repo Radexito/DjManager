@@ -136,3 +136,22 @@ is unchanged across seven years it is a deliberate, long-lived design.
 3. Identify the RX/RX2 scheme.
 4. A second firmware version of the same model would let us diff to separate code from data, and a boot
    ROM read would name the packing outright.
+
+## 8. Cross-model check: the DRIV component in NXS 1.44 and NXS2 1.87
+
+Both models carry a 388,690-byte `DRIV` component that decodes to a 135,168-byte image. Comparing them:
+
+| measurement | value |
+| --- | --- |
+| longest byte-identical prefix | **72 bytes** (identical in both), then they diverge |
+| byte-identical positions overall | 27,224 of 135,168 = 20.1% |
+| entropy | 7.60 (NXS) and 7.53 (NXS2) |
+| chi-square, byte histogram | 150,928 and 191,410 (uniform is about 255) |
+| readable strings in the decoded payload | none; only 6 to 8 character fragments |
+
+Both are packed with the same scheme, and the shared 72-byte prefix is the interesting part: it is
+consistent with **compression of near-identical source**, where a small build difference propagates after
+the first block, and inconsistent with a keyed transform, which would leave no identical prefix at all.
+Together with the skewed histograms in section 3, that is a second independent argument that these
+payloads are compressed rather than encrypted. It also means the DRIV payloads cannot be decrypted into
+readable code by any key, and only the GUI component (section 2) is directly readable.
