@@ -184,3 +184,18 @@ Consequences, stated plainly:
 3. What the firmware does give us cheaply is the **vocabulary**, which is still useful confirmation: the
    ANLZ tag run and the `PIONEER/LIBRARY` plus `PDTL` paths appear in the XDJ-1000MK2 MAIN payload in the
    clear (section 4), so a packed payload still leaks its strings even when its code stays opaque.
+
+## 10. What the packed payloads still leak (and it is worth having)
+
+Packing hides code but not strings. Three runs inside the **packed** NXS MAIN payload are readable and they
+confirm protocol details from the deck's own side:
+
+| offset in decoded NXS MAIN | bytes read as text | what it is |
+| --- | --- | --- |
+| `0x0b21f4` | `...sic Analyse File is broken` then `%/ANLZ%04X.DAT` | the deck composes ANLZ paths itself, with a four-digit hex file index, so `ANLZ0000.DAT` is the deck's own convention and not a rekordbox invention |
+| `0x0b20de` | `PMAI PTH VBR QTZ WAV2 V2 COB` | the ANLZ tag dispatch table, and it sits next to the string above, so this region is the ANLZ handling data |
+| `0x08e9c0` | `PGM ... /export.pdb ... MP3 AAC M4A MP4 AIF JPG FLAC` | a reference to the export database path plus the supported audio format list |
+
+The same tag run appears in the XDJ-1000MK2 MAIN payload (section 4), so the ANLZ vocabulary is consistent
+across the family, and `ANLZ%04X.DAT` is new: it is the deck-side template behind the file naming our
+protocol document already records.
