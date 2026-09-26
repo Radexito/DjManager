@@ -377,3 +377,47 @@ different modules, so both the export reader and a second consumer use them).
 **The deck's own failure message for bad analysis data** is `Music Analyse File is broken!!!`, sitting in
 `msc_anlz_local_usb.c` right next to the `ANLZ%04X` template. That is the string a deck shows when it
 rejects an ANLZ file, and it is the ANLZ-side counterpart of the corrupted-library report in issue #577.
+
+## 15. The deck's own media cache, and why it is not the rekordbox export
+
+The database region of the image names a second, entirely separate database belonging to the deck:
+`CacheDB`, reached through an engine called `DSQL`, with one error string per accessor:
+
+```
+CacheDB DSQLerror! djdsqlCache_GetCasheDir()    djdsqlCache_GetSNamePath()   djdsqlCache_GetLNamePath()
+CacheDB DSQLerror! djdsqlCache_GetRootID()      djdsqlCache_GetEntInf()      djdsqlCache_SetDispOffset()
+CacheDB DSQLerror! djdsqlCache_GetDirCnt()      djdsqlCache_GetFileCnt()     djdsqlCache_SetEntryCnt()
+CacheDB DSQLerror! djdsqlCache_SetDepth()       djdsqlCache_GetDepth()       djdsqlCache_SetFlgs()
+CacheDB DSQLerror! djdsqlCache_CheckDirRegist() djdsqlCache_DelteTbl()       djdsqlCache_SetRegState()
+CacheDB DSQLerror! djdsqlCache_GetImgAddr()     djdsqlCache_SetImgAddr()     djdsqlCache_DelDirRecord()
+CacheDB DSQLerror! djdsqlCache_InsertDir()      djdsqlCache_InsertFile()     djdsqlCache_GetSongInf()
+CacheDB DSQLerror! djdsqlCache_InsertSongInf()  djdsqlCache_GetPlayingInfo_Track()
+CacheDB DSQLerror! djdsqlCache_GetTrack_Content()
+MEP/iTunes DSQLerror! djdsqlCache_GetPlayingInfo_Track()  djdsqlCache_GetTrack_Content()
+MEP/iTunes DSQLerror! djdsqliTunes_GetTrackContent()
+```
+
+That is a directory-and-file indexed cache with its own table management (`DelteTbl`, `InsertDir`,
+`InsertFile`, `CheckDirRegist`, `SetRegState`), which is the deck's own model of the media it has seen,
+distinct from any file rekordbox writes. The `MEP/iTunes` variants and the `mhod` / `pdst` atoms beside
+the export paths show the same layer handles MEP and iTunes databases, which is why those atoms are
+present at all. This matters for interpretation only: it means an error seen while browsing is not
+automatically a complaint about `export.pdb`.
+
+Other strings in the same region, for reference:
+
+```
+0x0406f8c0  This information is not supported (ItemKind=%d).
+0x0406f580  GetOneData_SongInfo(): Wrong Patameter!!!!!! pstRmif=%d, pstRec=%d
+0x0406f664  Delivery Flag      : %s
+0x0406f84c  ReqGet_DeliverySongInfo():aquire memory pool error!
+0x0406fa50  ReqLoadTrackPreviousPlay : Memory Pool Acquisition Error !!!!!
+```
+
+`Delivery` and `SongInfo` are the PRO DJ LINK side, where one player serves track information to another.
+
+The deck's Device Library paths appear as `: /PIONEER/LIBRARY/PDTL.DB` and `:/.PIONEER/LIBRARY/PDTL.DB`,
+differing only by a dot before `PIONEER`, with drive-letter formatting available as `%c:/%s` and
+`%c:/.%s`. The export files are `PIONEER/rekordbox/export.pdb` and `PIONEER/rekordbox/exportExt.pdb`, and
+each appears twice, in two different modules, so more than one consumer opens them. The dotted variant is
+the same file reached through a hidden or alternate root; the strings alone do not say which.
