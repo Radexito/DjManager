@@ -598,6 +598,40 @@ describe('DataPage', () => {
     expect(buf[25]).toBe((3 * 0x20) & 0xff);
   });
 
+  // Bytes 24..26 pack two counters: low 13 bits = row-offset slots ever allocated,
+  // high 11 bits = live rows. Verified against a device-written export.pdb, where a
+  // 27-row page carries 0x03 in byte 26 (issue #581).
+  it('packs live rows into bytes 24-26 with the carry in byte 26 (27 rows)', () => {
+    const page = new DataPage(TABLE_TYPES.Columns);
+    for (let i = 0; i < 27; i++) page.insertRow(buildArtistRow(i + 1, 'Col' + i));
+    const buf = page.toBuffer(1, 2, 2);
+    expect([buf[24], buf[25], buf[26]]).toEqual([0x1b, 0x60, 0x03]);
+    expect(buf.readUIntLE(24, 3)).toBe(27 | (27 << 13));
+  });
+
+  it('packs exactly 8 rows as [0x08, 0x00, 0x01]', () => {
+    const page = new DataPage(TABLE_TYPES.Colors);
+    for (let i = 0; i < 8; i++) page.insertRow(buildArtistRow(i + 1, 'C' + i));
+    const buf = page.toBuffer(1, 2, 2);
+    expect([buf[24], buf[25], buf[26]]).toEqual([0x08, 0x00, 0x01]);
+  });
+
+  it('packs 7 rows without a carry into byte 26', () => {
+    const page = new DataPage(TABLE_TYPES.Colors);
+    for (let i = 0; i < 7; i++) page.insertRow(buildArtistRow(i + 1, 'C' + i));
+    const buf = page.toBuffer(1, 2, 2);
+    expect([buf[24], buf[25], buf[26]]).toEqual([0x07, 0xe0, 0x00]);
+  });
+
+  it('data page header row count at offset 32 equals the live row count', () => {
+    const page = new DataPage(TABLE_TYPES.Artists);
+    page.insertRow(buildArtistRow(1, 'A'));
+    page.insertRow(buildArtistRow(2, 'B'));
+    page.insertRow(buildArtistRow(3, 'C'));
+    const buf = page.toBuffer(1, 2, 2);
+    expect(buf.readUInt16LE(32)).toBe(3);
+  });
+
   it('row data starts at byte 40 (DataHeaderSize)', () => {
     const page = new DataPage(TABLE_TYPES.Artists);
     const row = buildArtistRow(1, 'Test');
