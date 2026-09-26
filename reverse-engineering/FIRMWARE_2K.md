@@ -16,31 +16,31 @@ A `.UPD` is a manifest, then N components concatenated:
 
 The manifest sizes plus the manifest length equal the file size exactly:
 
-| file | manifest | components | banner overhead |
-| --- | --- | --- | --- |
-| `CDJ2000NXS_v144.UPD` | 33 bytes | 2015268, 388690, 7062204, 98888 | 0 |
-| `CDJ2000NXS2_v187.UPD` | 33 bytes | 6931940, 388690, 9347916, 100274 | 0 |
-| `XDJ1KMK2_v145.UPD` | 17 bytes | 25306326, 90046 | 0 |
-| `XDJRX_v221.UPD` | none | whole file encrypted, see section 5 | |
-| `XDJRX2_v143.UPD` | none | whole file encrypted, see section 5 | |
+| file                   | manifest | components                          | banner overhead |
+| ---------------------- | -------- | ----------------------------------- | --------------- |
+| `CDJ2000NXS_v144.UPD`  | 33 bytes | 2015268, 388690, 7062204, 98888     | 0               |
+| `CDJ2000NXS2_v187.UPD` | 33 bytes | 6931940, 388690, 9347916, 100274    | 0               |
+| `XDJ1KMK2_v145.UPD`    | 17 bytes | 25306326, 90046                     | 0               |
+| `XDJRX_v221.UPD`       | none     | whole file encrypted, see section 5 |                 |
+| `XDJRX2_v143.UPD`      | none     | whole file encrypted, see section 5 |                 |
 
 Verification for the XDJ-1000MK2: `17 + 25306326 + 90046 = 25396389`, the exact file size. For the NXS:
 `33 + 2015268 + 388690 + 7062204 + 98888 = 9565083`, likewise exact.
 
 Each component names itself in its banner, so the component inventory is readable without any guessing:
 
-| model | component | payload form | decoded image |
-| --- | --- | --- | --- |
-| CDJ-2000NXS 1.44 | `CDJ-2000NXS GUI Ver1.200` | raw binary | 2,015,268 bytes as stored |
-| | `CDJ-2000NXS DRIVVer1.00` | S-record text | 8,450 records |
-| | `CDJ-2000NXS MAINVer1.44` | S-record text | 90,542 records |
-| | `CDJ-2000NXS PANLVer1.00` | S-record text | 1,286 records |
-| CDJ-2000NXS2 1.87 | `CDJ-2000NXS2GUI Ver1.81` | raw binary | 6,931,940 bytes as stored |
-| | `CDJ-2000NXS2DRIVVer1.00` | S-record text | 135,168-byte image, 8,448 records |
-| | `CDJ-2000NXS2MAINVer1.87` | S-record text | 3,906,816-byte image, 119,844 records, entry `0xA0000000` |
-| | `CDJ-2000NXS2PANLVer1.00` | S-record text | 1,048,576-byte image, 1,297 records |
-| XDJ-1000MK2 1.45 | `XDJ-1000MK2 MAINVer1.45` | S-record text | 10,504,320-byte image, 324,439 records, entry `0xA0000000` |
-| | `XDJ-1000MK2 PANLVer1.00` | S-record text | 1,048,576-byte image, 1,166 records |
+| model             | component                  | payload form  | decoded image                                              |
+| ----------------- | -------------------------- | ------------- | ---------------------------------------------------------- |
+| CDJ-2000NXS 1.44  | `CDJ-2000NXS GUI Ver1.200` | raw binary    | 2,015,268 bytes as stored                                  |
+|                   | `CDJ-2000NXS DRIVVer1.00`  | S-record text | 8,450 records                                              |
+|                   | `CDJ-2000NXS MAINVer1.44`  | S-record text | 90,542 records                                             |
+|                   | `CDJ-2000NXS PANLVer1.00`  | S-record text | 1,286 records                                              |
+| CDJ-2000NXS2 1.87 | `CDJ-2000NXS2GUI Ver1.81`  | raw binary    | 6,931,940 bytes as stored                                  |
+|                   | `CDJ-2000NXS2DRIVVer1.00`  | S-record text | 135,168-byte image, 8,448 records                          |
+|                   | `CDJ-2000NXS2MAINVer1.87`  | S-record text | 3,906,816-byte image, 119,844 records, entry `0xA0000000`  |
+|                   | `CDJ-2000NXS2PANLVer1.00`  | S-record text | 1,048,576-byte image, 1,297 records                        |
+| XDJ-1000MK2 1.45  | `XDJ-1000MK2 MAINVer1.45`  | S-record text | 10,504,320-byte image, 324,439 records, entry `0xA0000000` |
+|                   | `XDJ-1000MK2 PANLVer1.00`  | S-record text | 1,048,576-byte image, 1,166 records                        |
 
 Two notes on the decode: the S7 entry record for every MAIN component is `0xA0000000`, which is a RAM
 address, so these are images to be unpacked and jumped into rather than flash images. And the two PANL
@@ -70,7 +70,7 @@ For the XDJ-1000MK2 MAIN payload (10,504,320 bytes, 95.8% non-`0xff`):
 
 - It is **not machine code** for any architecture tried. Blackfin illegal-opcode rate per 4 KiB window:
   32.5% to 40.5%, against 36.7% for random data and 0.0% for assembled Blackfin (control below).
-  ARM and Thumb are also ruled out by fingerprint: `push {..lr}` frequency is *below* the random-data
+  ARM and Thumb are also ruled out by fingerprint: `push {..lr}` frequency is _below_ the random-data
   rate, `BX LR` never appears, and branch targets do not concentrate in-image.
 - It is **not ciphertext**: the byte histogram is far too skewed. 0x00 is about 8 to 11 times its
   uniform frequency and 0xff about 6 to 10 times, then 0xdf, 0xef, 0xe0, 0x40. A block or stream cipher
@@ -141,13 +141,13 @@ is unchanged across seven years it is a deliberate, long-lived design.
 
 Both models carry a 388,690-byte `DRIV` component that decodes to a 135,168-byte image. Comparing them:
 
-| measurement | value |
-| --- | --- |
-| longest byte-identical prefix | **72 bytes** (identical in both), then they diverge |
-| byte-identical positions overall | 27,224 of 135,168 = 20.1% |
-| entropy | 7.60 (NXS) and 7.53 (NXS2) |
-| chi-square, byte histogram | 150,928 and 191,410 (uniform is about 255) |
-| readable strings in the decoded payload | none; only 6 to 8 character fragments |
+| measurement                             | value                                               |
+| --------------------------------------- | --------------------------------------------------- |
+| longest byte-identical prefix           | **72 bytes** (identical in both), then they diverge |
+| byte-identical positions overall        | 27,224 of 135,168 = 20.1%                           |
+| entropy                                 | 7.60 (NXS) and 7.53 (NXS2)                          |
+| chi-square, byte histogram              | 150,928 and 191,410 (uniform is about 255)          |
+| readable strings in the decoded payload | none; only 6 to 8 character fragments               |
 
 Both are packed with the same scheme, and the shared 72-byte prefix is the interesting part: it is
 consistent with **compression of near-identical source**, where a small build difference propagates after
@@ -160,10 +160,10 @@ readable code by any key, and only the GUI component (section 2) is directly rea
 
 A whole-component check separates the two generations cleanly:
 
-| component | ThreadX | Express Logic | Glib3 | `DS_G3_Font` | `BF53x` | printable runs >= 14 |
-| --- | --- | --- | --- | --- | --- | --- |
-| CDJ-2000NXS 1.44 `GUI` (raw binary) | 1 | 1 | **124** | **31** | 1 | **432** |
-| CDJ-2000NXS2 1.87 `GUI` (raw binary) | 0 | 0 | 0 | 0 | 0 | 27 |
+| component                            | ThreadX | Express Logic | Glib3   | `DS_G3_Font` | `BF53x` | printable runs >= 14 |
+| ------------------------------------ | ------- | ------------- | ------- | ------------ | ------- | -------------------- |
+| CDJ-2000NXS 1.44 `GUI` (raw binary)  | 1       | 1             | **124** | **31**       | 1       | **432**              |
+| CDJ-2000NXS2 1.87 `GUI` (raw binary) | 0       | 0             | 0       | 0            | 0       | 27                   |
 
 So the 2012-era NXS GUI payload is plaintext and the NXS2 GUI payload is packed, even though both are raw
 binary payloads of the same component name. The same holds for the other components: on the NXS, code was
@@ -190,11 +190,11 @@ Consequences, stated plainly:
 Packing hides code but not strings. Three runs inside the **packed** NXS MAIN payload are readable and they
 confirm protocol details from the deck's own side:
 
-| offset in decoded NXS MAIN | bytes read as text | what it is |
-| --- | --- | --- |
-| `0x0b21f4` | `...sic Analyse File is broken` then `%/ANLZ%04X.DAT` | the deck composes ANLZ paths itself, with a four-digit hex file index, so `ANLZ0000.DAT` is the deck's own convention and not a rekordbox invention |
-| `0x0b20de` | `PMAI PTH VBR QTZ WAV2 V2 COB` | the ANLZ tag dispatch table, and it sits next to the string above, so this region is the ANLZ handling data |
-| `0x08e9c0` | `PGM ... /export.pdb ... MP3 AAC M4A MP4 AIF JPG FLAC` | a reference to the export database path plus the supported audio format list |
+| offset in decoded NXS MAIN | bytes read as text                                     | what it is                                                                                                                                          |
+| -------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0x0b21f4`                 | `...sic Analyse File is broken` then `%/ANLZ%04X.DAT`  | the deck composes ANLZ paths itself, with a four-digit hex file index, so `ANLZ0000.DAT` is the deck's own convention and not a rekordbox invention |
+| `0x0b20de`                 | `PMAI PTH VBR QTZ WAV2 V2 COB`                         | the ANLZ tag dispatch table, and it sits next to the string above, so this region is the ANLZ handling data                                         |
+| `0x08e9c0`                 | `PGM ... /export.pdb ... MP3 AAC M4A MP4 AIF JPG FLAC` | a reference to the export database path plus the supported audio format list                                                                        |
 
 The same tag run appears in the XDJ-1000MK2 MAIN payload (section 4), so the ANLZ vocabulary is consistent
 across the family, and `ANLZ%04X.DAT` is new: it is the deck-side template behind the file naming our
