@@ -5,6 +5,7 @@ import {
   getTrackById,
   getTrackByHash,
   updateTrack,
+  setTrackSampleInfo,
   removeTrack,
   removeTracks,
   getTrackCountByFilePath,
@@ -43,6 +44,51 @@ describe('trackRepository', () => {
       expect(track.title).toBe('Test Track');
       expect(track.artist).toBe('Test Artist');
       expect(track.duration).toBeCloseTo(180.5);
+    });
+  });
+
+  // #561 — the exported Rekordbox PDB described every track as 44100 Hz / 16 bit
+  // because these two columns did not exist.
+  describe('sample_rate / bit_depth (#561)', () => {
+    it('addTrack stores both real values', () => {
+      const id = addTrack({ ...SAMPLE, sample_rate: 48000, bit_depth: 24 });
+
+      const track = getTrackById(id);
+      expect(track.sample_rate).toBe(48000);
+      expect(track.bit_depth).toBe(24);
+    });
+
+    it('addTrack leaves both NULL when the caller has nothing to store', () => {
+      const track = getTrackById(addTrack(SAMPLE));
+
+      expect(track.sample_rate).toBeNull();
+      expect(track.bit_depth).toBeNull();
+    });
+
+    it('setTrackSampleInfo fills only the missing value', () => {
+      const id = addTrack({ ...SAMPLE, sample_rate: 88200 });
+
+      expect(setTrackSampleInfo(id, { sampleRate: null, bitDepth: 24 })).toBe(true);
+      const track = getTrackById(id);
+      expect(track.sample_rate).toBe(88200);
+      expect(track.bit_depth).toBe(24);
+    });
+
+    it('setTrackSampleInfo ignores a missing or zero value instead of overwriting', () => {
+      const id = addTrack({ ...SAMPLE, sample_rate: 44100, bit_depth: 16 });
+
+      expect(setTrackSampleInfo(id, { sampleRate: 0, bitDepth: null })).toBe(false);
+      const track = getTrackById(id);
+      expect(track.sample_rate).toBe(44100);
+      expect(track.bit_depth).toBe(16);
+    });
+
+    it('setTrackSampleInfo does not mark the track as analyzed', () => {
+      const id = addTrack(SAMPLE);
+      expect(getTrackById(id).analyzed).toBe(0);
+
+      setTrackSampleInfo(id, { sampleRate: 96000, bitDepth: 24 });
+      expect(getTrackById(id).analyzed).toBe(0);
     });
   });
 

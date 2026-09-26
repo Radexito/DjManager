@@ -23,6 +23,16 @@ const ROWSET_SIZE = 36; // 16×u16 positions + u16 ActiveRows + u16 LastWrittenR
 const MAX_ROWS_PER_ROWSET = 16;
 const EMPTY_TABLE_SENTINEL = 0x03ffffff;
 
+/**
+ * #561 — last-resort values for the SAMPLERATE / BITDEPTH columns of a track
+ * row. A row is expected to carry the FILE's own values (tracks.sample_rate /
+ * tracks.bit_depth); these are only written when a track has none and the
+ * export-time probe could not tell either (see src/audio/sampleInfo.js), and
+ * the export logs when that happens.
+ */
+export const DEFAULT_SAMPLE_RATE = 44100;
+export const DEFAULT_BIT_DEPTH = 16;
+
 export const TABLE_TYPES = {
   Tracks: 0,
   Genres: 1,
@@ -318,14 +328,16 @@ export function buildTrackRow(params) {
     title = '',
     filePath = '',
     filename = '',
-    sampleRate = 44100,
+    // #561 — defaults only apply to callers that pass nothing at all; the
+    // export path always passes what the track's file actually is.
+    sampleRate = DEFAULT_SAMPLE_RATE,
     fileSize = 0,
     checksum = 0,
     bitrate = 320,
     trackNumber = 0,
     tempo = 0,
     year = 0,
-    sampleDepth = 16,
+    sampleDepth = DEFAULT_BIT_DEPTH,
     duration = 0,
     discNumber = 0,
     playCount = 0,
@@ -872,8 +884,11 @@ function buildPdbBuffer(input) {
         analyzePath: t.analyzePath || '',
         dateAdded: now,
         analyzeDate: now,
-        sampleRate: 44100,
-        sampleDepth: 16,
+        // #561 — the file's real values, never a blanket 44100/16. The caller
+        // is responsible for resolving them (import capture or export-time
+        // backfill); a row that still has none falls back to the defaults here.
+        sampleRate: t.sample_rate || DEFAULT_SAMPLE_RATE,
+        sampleDepth: t.bit_depth || DEFAULT_BIT_DEPTH,
         replayGain: t.replay_gain ?? null,
       })
     );

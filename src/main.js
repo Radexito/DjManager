@@ -111,6 +111,11 @@ import {
 } from './db/libraryRepository.js';
 import { getDbPath, setDbPath } from './db/dbLocation.js';
 import { convertAudio } from './audio/ffmpeg.js';
+import {
+  resolveExportSampleInfo,
+  backfillPdbSampleInfo,
+  sampleInfoFromProbe,
+} from './audio/sampleInfo.js';
 import { exportTrimRange, shiftBeatgridForTrim, shiftCuePointsForTrim } from './audio/trackTrim.js';
 
 import {
@@ -2337,6 +2342,10 @@ ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlis
         duration: 0,
         bitrate: 0,
       };
+      // #561 — the file is copied byte for byte below, so this probe also
+      // describes what lands on the stick.
+      let sampleRate = null;
+      let bitDepth = null;
       try {
         const { ffprobe: runFfprobe } = await import('./audio/ffmpeg.js');
         const data = await runFfprobe(srcPath);
@@ -2352,6 +2361,7 @@ ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlis
           duration: parseFloat(data.format?.duration) || 0,
           bitrate: parseInt(stream.bit_rate || data.format?.bit_rate || 0, 10) || 0,
         };
+        ({ sampleRate, bitDepth } = sampleInfoFromProbe(data));
       } catch {}
 
       // Copy to USB /music/
@@ -2406,6 +2416,9 @@ ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlis
         genres: [],
         file_size: fileSize,
         bitrate: meta.bitrate,
+        // #561 — real values, probed above from the file that was just copied
+        sample_rate: sampleRate,
+        bit_depth: bitDepth,
         comments: '',
         rating: 0,
         analyzePath: anlzPaths.get(i) || '',
@@ -2673,6 +2686,9 @@ ipcMain.handle('format-usb', async (_, { device, mountPoint }) => {
  * `meta` is non-null only when the file was re-encoded to a different format,
  * in which case it carries the real output fileSize/bitrate for the PDB row
  * (the source DB values no longer apply once the container/codec changes).
+ * #561: it also says whether the audio was re-encoded (`reencoded`) and into
+ * which `format`, so the PDB row can report the depth the output codec really
+ * has instead of the library file's.
  */
 async function copyTrackToUsb(
   track,
@@ -2732,6 +2748,11 @@ async function copyTrackToUsb(
         meta = {
           fileSize,
           bitrate: durationSec ? Math.round((fileSize * 8) / durationSec) : track.bitrate || 0,
+          // #561 — was the AUDIO re-encoded (format change and/or gain), and in
+          // which format did it land? A trim-only pass is a stream copy and
+          // keeps the source sample rate / bit depth, so it does not set this.
+          reencoded: Boolean(targetFormat || gainDb !== 0),
+          format: (targetFormat || srcExt.replace(/^\./, '')).toLowerCase() || null,
         };
       }
     } else {
@@ -3080,6 +3101,7 @@ ipcMain.handle(
       // 2. Copy files to USB, build USB path map
       const usbPaths = new Map(); // trackId → USB path
       const usbMeta = new Map(); // trackId → { fileSize, bitrate } override, only set on re-encode
+      const reusedIds = new Set(); // files already on the USB from an earlier export
       let copiedCount = 0;
       for (let i = 0; i < tracks.length; i++) {
         const t = tracks[i];
@@ -3089,6 +3111,7 @@ ipcMain.handle(
         });
         if (reused) {
           usbPaths.set(t.id, reused.path);
+          reusedIds.add(t.id);
           if (reused.meta) usbMeta.set(t.id, reused.meta);
         } else {
           const { path: usbPath, meta } = await copyTrackToUsb(t, usbRoot, usedNames, {
@@ -3110,6 +3133,15 @@ ipcMain.handle(
           pct: Math.round(((i + 1) / total) * 40),
         });
       }
+
+      // 2b. #561 — the real sample rate / bit depth of each row: what the import
+      // captured, an ffprobe for tracks imported before that existed, and the
+      // output codec's depth when this export re-encodes the file.
+      const sampleInfo = await resolveExportSampleInfo(tracks, {
+        reusedIds,
+        manifestTracks: existingTracks,
+        usbMeta,
+      });
 
       // 3. Write ANLZ beat grid files (only for tracks in the current export)
       send('export-rekordbox-progress', { msg: 'Writing beat grids & waveforms…', pct: 40 });
@@ -3166,6 +3198,9 @@ ipcMain.handle(
         genres: t.genres ? JSON.parse(t.genres) : [],
         file_size: usbMeta.get(t.id)?.fileSize ?? t.file_size ?? 0,
         bitrate: usbMeta.get(t.id)?.bitrate ?? t.bitrate ?? 0,
+        // #561 — the file that lands on the stick, not a blanket 44100/16
+        sample_rate: sampleInfo.get(t.id)?.sampleRate ?? null,
+        bit_depth: sampleInfo.get(t.id)?.bitDepth ?? null,
         comments: t.comments || '',
         rating: t.rating || 0,
         replay_gain: t.replay_gain ?? null,
@@ -3186,6 +3221,11 @@ ipcMain.handle(
 
       const mergedPlaylists = new Map(existingPlaylists);
       for (const pl of newPdbPlaylists) mergedPlaylists.set(pl.id, pl);
+
+      // #561 — rows carried over from an older export manifest have no values
+      // yet: probe each file on the stick once (the rows keep the answer, so the
+      // next export of the same stick does no probing at all).
+      await backfillPdbSampleInfo([...mergedTracks.values()], { usbRoot });
 
       runPdbExporter(
         { usbRoot, tracks: [...mergedTracks.values()], playlists: [...mergedPlaylists.values()] },
@@ -3261,6 +3301,7 @@ ipcMain.handle(
       // Copy files once
       const usbPaths = new Map();
       const usbMeta = new Map(); // trackId → { fileSize, bitrate } override, only set on re-encode
+      const reusedIds = new Set(); // files already on the USB from an earlier export
       let copiedCount = 0;
       for (let i = 0; i < allTracks.length; i++) {
         const t = allTracks[i];
@@ -3270,6 +3311,7 @@ ipcMain.handle(
         });
         if (reused) {
           usbPaths.set(t.id, reused.path);
+          reusedIds.add(t.id);
           if (reused.meta) usbMeta.set(t.id, reused.meta);
         } else {
           const { path: usbPath, meta } = await copyTrackToUsb(t, usbRoot, usedNames, {
@@ -3291,6 +3333,13 @@ ipcMain.handle(
           pct: Math.round(((i + 1) / total) * 35),
         });
       }
+
+      // #561 — real values for the PDB rows (see export-rekordbox above)
+      const sampleInfo = await resolveExportSampleInfo(allTracks, {
+        reusedIds,
+        manifestTracks: existingTracks,
+        usbMeta,
+      });
 
       // Write M3U playlists (USB path mode)
       send('export-all-progress', { msg: 'Writing M3U playlists…', pct: 35 });
@@ -3364,6 +3413,9 @@ ipcMain.handle(
         genres: t.genres ? JSON.parse(t.genres) : [],
         file_size: usbMeta.get(t.id)?.fileSize ?? t.file_size ?? 0,
         bitrate: usbMeta.get(t.id)?.bitrate ?? t.bitrate ?? 0,
+        // #561 — the file that lands on the stick, not a blanket 44100/16
+        sample_rate: sampleInfo.get(t.id)?.sampleRate ?? null,
+        bit_depth: sampleInfo.get(t.id)?.bitDepth ?? null,
         comments: t.comments || '',
         rating: t.rating || 0,
         replay_gain: t.replay_gain ?? null,
@@ -3387,6 +3439,10 @@ ipcMain.handle(
 
       const mergedPlaylists = new Map(existingPlaylists);
       for (const pl of newPdbPlaylists) mergedPlaylists.set(pl.id, pl);
+
+      // #561 — same backfill as export-rekordbox: manifest rows with no values
+      // are probed once from the file on the stick.
+      await backfillPdbSampleInfo([...mergedTracks.values()], { usbRoot });
 
       runPdbExporter(
         { usbRoot, tracks: [...mergedTracks.values()], playlists: [...mergedPlaylists.values()] },
