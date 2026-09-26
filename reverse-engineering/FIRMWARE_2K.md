@@ -155,3 +155,32 @@ the first block, and inconsistent with a keyed transform, which would leave no i
 Together with the skewed histograms in section 3, that is a second independent argument that these
 payloads are compressed rather than encrypted. It also means the DRIV payloads cannot be decrypted into
 readable code by any key, and only the GUI component (section 2) is directly readable.
+
+## 9. Which payloads are readable, and why that closes the firmware route for protocol questions
+
+A whole-component check separates the two generations cleanly:
+
+| component | ThreadX | Express Logic | Glib3 | `DS_G3_Font` | `BF53x` | printable runs >= 14 |
+| --- | --- | --- | --- | --- | --- | --- |
+| CDJ-2000NXS 1.44 `GUI` (raw binary) | 1 | 1 | **124** | **31** | 1 | **432** |
+| CDJ-2000NXS2 1.87 `GUI` (raw binary) | 0 | 0 | 0 | 0 | 0 | 27 |
+
+So the 2012-era NXS GUI payload is plaintext and the NXS2 GUI payload is packed, even though both are raw
+binary payloads of the same component name. The same holds for the other components: on the NXS, code was
+found only in the GUI component; on the NXS2 and XDJ-1000MK2 no component showed plaintext code.
+
+**And the readable component does not contain the parts we care about.** Scanning the whole NXS GUI for the
+database and protocol vocabulary returns nothing: zero hits for `PIONEER`, `LIBRARY`, `PDTL`, `rekordbox`,
+`ANLZ`, `USBANLZ`, `PMAI`, `pdb`, `export`, `playlist`, `track`, `bpm`, `cue`. Its content is ThreadX,
+eSOL Glib3 graphics, fonts, chassis tables and compressed bitmaps.
+
+Consequences, stated plainly:
+
+1. The deck-side database, ANLZ and USB logic is **not readable from any firmware we have**. It lives in
+   the packed MAIN payloads, and the RX family additionally encrypts everything but its 12-byte tag.
+2. Therefore the firmware route cannot answer the open protocol questions (track row offset `0x34`, the
+   first string slot, the genre id, the auto-gain pair). Ground truth from files the deck and rekordbox
+   write is the only route that works, which is what `PDB_SPEC_AND_DIFFERENTIAL.md` did.
+3. What the firmware does give us cheaply is the **vocabulary**, which is still useful confirmation: the
+   ANLZ tag run and the `PIONEER/LIBRARY` plus `PDTL` paths appear in the XDJ-1000MK2 MAIN payload in the
+   clear (section 4), so a packed payload still leaks its strings even when its code stays opaque.
