@@ -238,10 +238,14 @@ Subheader (12 bytes at offset 12):
 
 Body: `num_entries` bytes, each `(whiteness[0–7] << 5) | height[0–31]`.
 
-### PCOB × 2 — Cue Object Stubs (EXT file — always empty)
+### PCOB × 2 — Cue Objects (EXT file)
 
-Both EXT PCOB sections are always the empty 24-byte stub (same header format as DAT PCOB).
-Populated cue data is **not** placed in EXT PCOB; use EXT PCO2 instead.
+Slot 1 carries **hot cues D onwards** and slot 2 carries the memory cues, both in the same `PCPT` form
+as the DAT. Rekordbox's own files are the reference here: `43-hot-cue-colors` has `num_cues=5` in the
+EXT slot 1 (`hot_cue` 8, 7, 6, 5, 4) while the DAT holds only A, B and C, and `42-momory_cue` has a
+populated slot 2 with `len_tag=80` and one `type=0` entry. An earlier revision of this document called
+these sections "always empty stubs", which is wrong: the DAT slot 1 holds the first three hot cues and
+the EXT holds the rest.
 
 ### PCO2 × 2 — Extended Cue Points (EXT file)
 
@@ -1082,3 +1086,34 @@ corroborates nor contradicts them. Note that `0xC0700` is a value our writer cop
 To go further one would need one of: a finished container decode of the run1 streams, an already
 plaintext flash read from hardware, or dynamic analysis on a real player. Field naming therefore has to
 come from the producer side, which is what the PDB differential section above does.
+
+## Row layouts for the other tables
+
+Every row begins with a 2-byte subtype that identifies the row kind within its table, followed by an
+`IndexShift` (u16) in the tables that carry one, then the payload. Rows that hold text end with a
+DeviceSQL string; the byte just before it is a small "string kind" marker (`0x03`), and the final byte
+of the fixed header is the name's byte offset within the row (`0x0a` for artist rows, `22` for album
+rows, and so on). Where a row has several strings, their offsets are listed in a u16 table whose own
+offset is fixed by the subtype; track rows use 21 of them, 42 bytes at offsets 94 to 136.
+
+| Table (type) | Subtype / first field | Layout |
+| ------------ | --------------------- | ------ |
+| tracks (0) | `0x24` | 94-byte header, then 21 x u16 string offsets (42 B), then the string heap. Offset 4 is `0xC0700`, the same value as `contentLink` in `exportLibrary.db`. Offsets 24 and 26 are the two auto-gain words; the reference values 13940 and 17802 correspond to 0 dB, and a replay-gain value scales them as `10 ** (dB / 20) * reference` |
+| genres (1) | not written by us | shape not verified here. The public descriptions give subtype `0x64` and the artist shape, but neither this application's code nor the ground-truth files examined so far confirm it |
+| artists (2) | `0x60` | subtype u16, IndexShift u16, Id u32, `0x03`, name offset `0x0a`, string |
+| albums (3) | `0x80` | first two bytes are the subtype, then IndexShift u16, u32 zero, ArtistId u32 at 8, Id u32 at 12, u32 zero, `0x03`, name offset 22, string |
+| labels (4) | not written by us | not verified here |
+| keys (5) | id as u16 | SmallId u16 (equals the Id), u16 zero, Id u32, string at offset 8 |
+| colours (6) | - | u32, u8, ID u16 at 5, u8, string at offset 8 |
+| playlist_tree (7) | - | ParentId u32, u32 zero, SortOrder u32, Id u32, RawIsFolder u32 (1 for a folder, 0 for a playlist), string at offset 20 |
+| playlist_entries (8) | - | exactly 12 bytes: EntryIndex u32, TrackId u32, PlaylistId u32 |
+| columns (16) | - | ID u16, u16 unknown, string at offset 4 |
+| unknown 17, 18 | - | four u16 values, 8 bytes |
+
+Rows marked "not written by us" are exactly that: this application creates those tables empty, so
+the layouts above come from the public format descriptions only and are flagged rather than asserted.
+
+The playlist pair is what makes an export usable: `playlist_tree` defines the tree (folders and
+playlists, with `ParentId` 0 for the root level) and `playlist_entries` maps an entry index to a track
+and a playlist. Anything that wants to offer smart lists in this application should evaluate its rules
+and then write the result through these two tables, because players never evaluate rules themselves.
