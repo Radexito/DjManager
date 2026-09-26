@@ -863,3 +863,114 @@ node -e "..."   # see reverse-engineering/ANLZ_GROUNDTRUTH.md for the writer-vs-
 
 The full analysis, including every decoded cue record and the raw offsets, is in
 `reverse-engineering/ANLZ_GROUNDTRUTH.md`.
+
+---
+
+## What lives on a stick, and who writes it
+
+Two sticks were inventoried for this section. One (`DJ_OUTPUT`, drive `U:`) was written by this
+application at 02:05 on 2026-09-26 and then read by rekordbox. The other (`shimi usb`) is a real DJ
+stick last written in 2023, used in hardware, and it still carries the player's own leftovers.
+
+| Path | Written by | We write it | Format status |
+| ---- | ---------- | ----------- | ------------- |
+| `PIONEER/rekordbox/export.pdb` | rekordbox, DjManager | yes | fully specified in this document |
+| `PIONEER/rekordbox/exportExt.pdb` | rekordbox 6 and later | no | tags + tag_tracks tables, see below |
+| `PIONEER/rekordbox/exportLibrary.db` | rekordbox 6 and later | no | SQLCipher, key and parameters recovered via a `sqlite3_key` hook (above) |
+| `PIONEER/rekordbox/export.pdb.bak` | rekordbox | no | backup it leaves when it rewrites the library |
+| `PIONEER/rekordbox/playlists3.sync` | rekordbox | no | controls whether rekordbox auto-syncs this stick |
+| `PIONEER/rekordbox/RBFLTR.DAT` | **player** | no | see below |
+| `PIONEER/USBANLZ/<hash>/<track>/ANLZ0000.DAT` | both | yes | specified above |
+| `PIONEER/USBANLZ/.../ANLZ0000.EXT` | both | yes | specified above |
+| `PIONEER/USBANLZ/.../ANLZ0000.2EX` | both | yes | specified above |
+| `PIONEER/USBANLZ/.../ANLZ0000.3EX` | rekordbox 7 | no | **not an ANLZ container** (msgpack `embedding` blob) |
+| `PIONEER/MYSETTING.DAT`, `MYSETTING2.DAT` | rekordbox, DjManager | yes | `src/usb/settingWriter.js` |
+| `PIONEER/DEVSETTING.DAT` | rekordbox, DjManager | yes | `src/usb/settingWriter.js` |
+| `PIONEER/DJPROFILE.NXS` (also seen as `djprofile.nxs`) | rekordbox | no, correctly | device profile, not ours to write |
+| `PIONEER/extracted/gcred.dat` | rekordbox | no | 64 ASCII characters plus CRLF, likely a licence or session token. Not ours |
+| `PIONEER/CDJ/`, `PIONEER/MPJ/` | **player** | no | directories players create on first use |
+| `PIONEER/LIBRARY/` | rekordbox (Device Library Plus / OneLibrary) | no | **absent from both sticks.** Only the 2024 firmware references this path |
+| `/music/<file>` | DjManager | yes | our layout, see the divergence note below |
+| `/Contents/<Artist>/<Album>/<file>` | rekordbox | no | rekordbox's own layout |
+| `playlists/*.m3u` | DjManager | yes | our export |
+| `<folder>/*.m3u8` | rekordbox (optional) | no | rekordbox writes the playlist as an m3u8 beside the music when asked |
+| `_Serato_/`, `VirtualDJ/`, `LOST.DIR` | other software / filesystem | no | unrelated, and `LOST.DIR` is a FAT corruption artifact |
+
+`RBFLTR.DAT` deserves a note. It sits under `PIONEER/rekordbox/`, carries the device epoch timestamp
+`01/01/2012 01:00`, and inside is an `FMAI` container with the banner `PIONEER` / `CDJ-900NXS` /
+`1.31` followed by `FCND` chunks holding small values. It is a **player-written** file, not a Pioneer
+delivery format and not something we produce. The shimi stick also proves why it must never be
+deleted: the deck that wrote it (a CDJ-900NXS) may look for it again.
+
+## Getting rekordbox to accept a third-party library
+
+A stick written by a third-party tool can be rejected outright with "Device library is corrupted",
+with no further detail. Another project working the same problem (murtaza64/manadj, issue 94,
+2026-08-18) reports three structural requirements that fixing that rejection. They are recorded here
+because they are cheap to satisfy and expensive to debug:
+
+1. The `columns` tables (**types 17 and 18**, `0x11`/`0x12`) must carry rekordbox's static
+   browse-menu schema rows (the GENRE/ARTIST/... column definitions). Empty `columns` tables are
+   rejected. DjManager does write a columns table from `COLUMN_DATASET`
+   (`src/usb/pdbWriter.js:86`, emitted at line 921), so we should already satisfy this, but the row
+   contents have not been diffed against rekordbox's own until now.
+2. **Each table's `empty_candidate` must be its own all-zero page and be the final link of that
+   table's chain.** One shared zero page for every table is rejected. DjManager gives each table its
+   own candidate (`emptyCandidate = indexPageIndex + 1`, line 937) and advances it as pages are
+   allocated (lines 964-990), which looks right but has not been confirmed byte for byte.
+3. `exportExt.pdb` must exist, even when it contains nothing but empty tables (they wrote nine).
+
+Two further details from the same source, both worth knowing:
+
+- Audio belongs under `/Contents/`, not `/music/`.
+- A track row must be at least 221 bytes, with min-row-size padding when it is shorter.
+- The track row byte at offset 92 is the file type code: mp3 = 1, m4a = 4, flac = 5, wav = `0x0b`.
+
+The external claims above are from that issue and are marked as such; the DjManager column is what
+this repository does today, verified by reading the code, not by testing.
+
+**Untested here:** whether rekordbox currently accepts a DjManager stick. The failure is quiet and
+easy to check: plug the stick in, open the Devices pane, and see whether the library browses or
+whether it reports the library as corrupted.
+
+---
+
+## Smart Lists and My Tags on a stick: what is possible
+
+This is the question "can we support rekordbox's new library type and smart playlists later", answered
+from evidence gathered here.
+
+**Players do not evaluate rules.** String scans of six firmware images (CDJ-2000NXS 1.44,
+CDJ-2000NXS2 1.87, XDJ-1000MK2 1.45, XDJ-RX 2.21, XDJ-RX2 1.43, CDJ-3000 3.22) find no `smartList`,
+`myTag`, `MY TAG`, `OneLibrary`, `exportExt` or `master.db` strings at all, and no PDB table names
+either, so tables are addressed by number. What a player reads is a static playlist out of
+`playlist_tree` / `playlist_entries` in `export.pdb`, which this writer already produces.
+
+**rekordbox does not export smart lists to a stick.** Users report the XML export writing an empty
+`smartlist.xml`, and that intelligent playlists cannot be taken to a USB stick. So this is a platform
+limitation, not a gap in DjManager.
+
+**My Tags travel; Smart Lists do not.** Two plain-ish carriers exist for My Tags:
+
+| Carrier | Encryption | Contains | Reachable for us |
+| ------- | ---------- | -------- | ---------------- |
+| `exportExt.pdb` | none, plain PDB | `tags` and `tag_tracks` tables | **yes**, and we already have ground-truth files |
+| `exportLibrary.db` | SQLCipher (key recovered, above) | `myTag` tables and `myTagMasterDBID` on the content rows | only with rekordbox's own `sqlite3.dll` or a reimplementation |
+
+`exportLibrary.db` also carries the default My Tag folders rekordbox ships: Genre, Components,
+Situation, Untitled Column.
+
+**Practical plan for DjManager:**
+
+1. Implement Smart Lists **in this application** (rule model over our own library) and materialise the
+   result as ordinary playlists at export time, written through the existing `playlist_tree` /
+   `playlist_entries` tables. That produces something rekordbox itself does not deliver, needs no
+   decryption, and plays on every deck.
+2. Write `exportExt.pdb` with `tags` and `tag_tracks` so My Tags set in DjManager survive the trip.
+   The format is plain and the spec is being recovered from the ground-truth files in
+   `/tmp/pdb/` (see `reverse-engineering/` for the full analysis).
+3. Treat `exportLibrary.db` as out of scope until someone is willing to depend on rekordbox's own
+   DLL to write it.
+
+Reading rekordbox's existing Smart Lists out of `master.db` would require breaking its database
+encryption, which is a separate and much larger project, and is not started.
