@@ -654,13 +654,13 @@ above the last log site of `mep_cue_local.c`. It is UNCERTAIN which structure it
 
 ### Bonus: the module map, by alias-pointer scan
 
-| module                             | log sites             | code range            | sites |
-| ---------------------------------- | --------------------- | --------------------- | ----- |
-| `disc_cue_api.c`                   | 0x041aa024-0x041aad20 |                       |       |
-| `disc_cue_localWr.c`               | 0x041b2f78-0x041b3ea0 |                       |       |
-| `mep_cue_api.c`, `mep_cue_local.c` | 0x0429ed10-0x0429fd8c |                       |       |
-| `msc_anlz_api_usb.c`               | 0x040acc88            | 0x042aa764-0x042ababc | 18    |
-| `msc_anlz_local_usbWr.c`           |                       | 0x042b8abc-0x042ba738 |       |
+| module                             | what the scan pinned                 |
+| ---------------------------------- | ------------------------------------ |
+| `disc_cue_api.c`                   | log sites 0x041aa024-0x041aad20      |
+| `disc_cue_localWr.c`               | log sites 0x041b2f78-0x041b3ea0      |
+| `mep_cue_api.c`, `mep_cue_local.c` | log sites 0x0429ed10-0x0429fd8c      |
+| `msc_anlz_api_usb.c`               | code 0x042aa764-0x042ababc, 18 sites |
+| `msc_anlz_local_usbWr.c`           | code 0x042b8abc-0x042ba738           |
 
 That is the deck's own layout of the cue and ANLZ code, which is what makes the next sweep a matter of
 picking a name rather than searching blind.
