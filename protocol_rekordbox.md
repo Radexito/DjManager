@@ -829,13 +829,8 @@ for red, orange, yellow and blue, and pink is missing entirely.
 
 ### Sections we never write
 
-* **`PSSI`** — 32-byte header, 384-696 byte body, present in **72 of 97** rekordbox EXT files and in
-  every cue capture, always the last section. Purpose still unknown; we never write it. It is present
-  in files whose cues work, so it is not a prerequisite for cue display, but its absence is a real
-  difference from native output.
-* **`.3EX`** — **not an ANLZ container at all.** Its first bytes are a msgpack-style map containing the
-  ASCII string `embedding` plus a UUID and float payload. Treat it as a separate format, unrelated to
-  deck playback.
+* **`PSSI`** — **decoded, see the section below.** 32-byte header, then a body of 24-byte records.
+  Present in **72 of 97** rekordbox EXT files and in every cue capture, always the last section.
 
 ### Divergences between this writer and ground truth
 
@@ -974,3 +969,44 @@ Situation, Untitled Column.
 
 Reading rekordbox's existing Smart Lists out of `master.db` would require breaking its database
 encryption, which is a separate and much larger project, and is not started.
+
+### `PSSI` decoded: rekordbox phrase (song structure) analysis
+
+This section was previously unrecorded here. It is now decoded, from the 21-record example in
+rekordbox's own cache (`share/fb0/9b86e-.../ANLZ0000.EXT`):
+
+```
+PSSI | len_header = 32 | len_tag | 0x18 (=24, the record size) | (count << 16) | 1 |
+       0 | total_beats | 0x01010000
+```
+
+then `count` records of 24 bytes, each `{ index u16, position_seconds u16, phrase_type u16, 9 x u16
+zero }`, index counting from 1.
+
+Measured values from that file (21 phrases, 560 to 561 beats per `PQT2`):
+
+| # | sec | type | | # | sec | type | | # | sec | type |
+| - | --- | ---- | - | - | --- | ---- | - | - | --- | ---- |
+| 1 | 5 | 1 | | 8 | 179 | 9 | | 15 | 411 | 9 |
+| 2 | 19 | 2 | | 9 | 191 | 6 | | 16 | 419 | 6 |
+| 3 | 31 | 8 | | 10 | 251 | 6 | | 17 | 443 | 6 |
+| 4 | 39 | 3 | | 11 | 259 | 6 | | 18 | 451 | 6 |
+| 5 | 63 | 4 | | 12 | 287 | 6 | | 19 | 475 | 9 |
+| 6 | 99 | 5 | | 13 | 323 | 5 | | 20 | 483 | 6 |
+| 7 | 127 | 9 | | 14 | 383 | 9 | | 21 | 507 | 10 |
+
+So it is the phrase analysis that drives rekordbox's song structure display. The phrase model is
+documented by Pioneer as Intro, Up, Down, Chorus, Bridge, Verse and Outro, with rekordbox 7 adding
+Fill in, but the numeric-to-label mapping is **not** published anywhere we could find, and ten distinct
+numeric values appear in this one file, so the mapping is left as an open question. Position is in
+**seconds**, and it divides evenly into 24-byte records, with the record count in the header.
+
+Cross-checks: the header's `total_beats` field agrees with `PQT2` (673 against 673, 560 against 561),
+`count << 16` equalled 16 for a 16-record file and 21 for this 21-record one, the `0x18` field is the
+record size, and `0x01010000` was identical in both files examined. Device-written ANLZ (family B)
+carry no `PSSI` at all, which fits: phrase analysis is a rekordbox feature, not a device one.
+
+**Conclusion for our writer:** `PSSI` is optional metadata for a display feature, it was absent from
+every file our exporter produced and from every device-written file examined, and producing it would
+require reimplementing rekordbox's phrase analysis. Do not write it; document it and move on. Cue
+display demonstrably works without it.
