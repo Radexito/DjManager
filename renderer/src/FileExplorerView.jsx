@@ -700,6 +700,41 @@ export default function FileExplorerView({ style }) {
     [linkDir, showToast]
   );
 
+  // #267 — turn a folder into a playlist that keeps itself in sync.
+  const watchFoldersAsPlaylists = useCallback(
+    async (dirPaths, recursive) => {
+      let created = 0;
+      let added = 0;
+      let linked = 0;
+      const problems = [];
+      for (const dirPath of dirPaths) {
+        const res = await window.api.createFolderPlaylist({ folderPath: dirPath, recursive });
+        if (res?.ok) {
+          created += 1;
+          added += res.added ?? 0;
+          linked += res.linked ?? 0;
+        } else {
+          const why =
+            res?.error === 'duplicate-name'
+              ? 'a playlist with that name already exists'
+              : (res?.error ?? 'failed');
+          problems.push(`${basename(dirPath) || dirPath}: ${why}`);
+        }
+      }
+      if (created > 0) {
+        const what = created === 1 ? 'Tracking folder' : `Tracking ${created} folders`;
+        const extra = problems.length ? ` (${problems.join('; ')})` : '';
+        showToast(
+          `${what}: ${added} track${added === 1 ? '' : 's'} added, ${linked} linked${extra}`,
+          problems.length === 0
+        );
+      } else {
+        showToast(problems.join('; ') || 'Could not create the folder playlist', false);
+      }
+    },
+    [showToast]
+  );
+
   const remapFolders = useCallback(
     async (dirPaths) => {
       let count = 0;
@@ -983,6 +1018,12 @@ export default function FileExplorerView({ style }) {
         break;
       case 'create-playlist-recursive':
         createPlaylistsForFolders(paths, true);
+        break;
+      case 'watch-folder-playlist':
+        watchFoldersAsPlaylists(paths, false);
+        break;
+      case 'watch-folder-playlist-recursive':
+        watchFoldersAsPlaylists(paths, true);
         break;
       case 'remap-folders':
         remapFolders(paths);

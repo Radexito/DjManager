@@ -39,6 +39,8 @@ export default defineConfig({
             'src/__tests__/importManager.test.js',
             'src/__tests__/dbLocation.test.js',
             'src/__tests__/autoTagger.test.js',
+            'src/__tests__/libraryWatcher.test.js',
+            'src/__tests__/folderPlaylistSync.test.js',
             'src/__tests__/anlzCueReader.test.js',
             'src/__tests__/id3Writer.test.js',
             'src/__tests__/mp4Tags.test.js',

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ── Module mocks (hoisted before imports) ────────────────────────────────────
 
@@ -21,10 +21,16 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/tmp/djman-test' },
 }));
 
+const workerHarness = vi.hoisted(() => ({ created: [] }));
 vi.mock('worker_threads', () => ({
   Worker: vi.fn(function () {
-    this.on = vi.fn();
+    this.handlers = {};
+    this.on = vi.fn((event, cb) => {
+      this.handlers[event] = cb;
+      return this;
+    });
     this.terminate = vi.fn();
+    workerHarness.created.push(this);
   }),
 }));
 
@@ -147,6 +153,9 @@ import {
   convertStorageFormat,
   getLibraryDiskUsage,
   getLibraryFreeSpace,
+  spawnAnalysis,
+  cancelAnalysis,
+  resetAnalysisState,
 } from '../audio/importManager.js';
 import cryptoDefault from 'crypto';
 
@@ -728,5 +737,102 @@ describe('getLibraryFreeSpace', () => {
     });
 
     expect(getLibraryFreeSpace(1)).toBeNull();
+  });
+});
+
+// ─── Analysis scheduling ────────────────────────────────────────────────────
+//
+// A folder import re-analyses tracks that the renderer has already queued (the
+// explorer analyses unanalysed tracks it is showing), and a cancelled worker
+// used to leave the batch counter short: the progress bar stuck at 27/54 while
+// every track was in fact analysed.
+
+describe('analysis scheduling', () => {
+  const progress = [];
+
+  const drainQueue = () => {
+    // Finish every worker the scheduler starts, so the next test begins idle.
+    for (let guard = 0; guard < 200; guard++) {
+      const running = workerHarness.created.filter((w) => !w.__done);
+      if (running.length === 0) return;
+      for (const worker of running) {
+        worker.__done = true;
+        worker.handlers.message({ ok: false, error: 'test' });
+      }
+    }
+  };
+
+  beforeEach(() => {
+    resetAnalysisState();
+    workerHarness.created.length = 0;
+    progress.length = 0;
+    global.mainWindow = {
+      webContents: {
+        send: (channel, payload) => channel === 'analysis-progress' && progress.push(payload),
+      },
+    };
+  });
+
+  afterEach(() => {
+    drainQueue();
+    delete global.mainWindow;
+  });
+
+  it('runs at most four analyses at once and queues the rest', () => {
+    for (let i = 1; i <= 6; i++) spawnAnalysis(1000 + i, `/music/${i}.mp3`);
+
+    expect(workerHarness.created.length).toBe(4);
+    expect(progress.at(-1)).toMatchObject({ active: 4, total: 6, done: 0, finished: false });
+
+    // One finishes, one queued job takes its slot.
+    workerHarness.created[0].__done = true;
+    workerHarness.created[0].handlers.message({ ok: false, error: 'test' });
+
+    expect(workerHarness.created.length).toBe(5);
+    expect(progress.at(-1)).toMatchObject({ active: 4, done: 1, finished: false });
+  });
+
+  it('counts every job and reports the batch finished', () => {
+    const before = progress.length ? progress.at(-1) : { total: 0, done: 0 };
+    for (let i = 1; i <= 3; i++) spawnAnalysis(2000 + i, `/music/b${i}.mp3`);
+    const started = workerHarness.created.length;
+
+    drainQueue();
+
+    const last = progress.at(-1);
+    expect(workerHarness.created.length).toBe(started);
+    expect(last.done - before.done).toBe(3);
+    expect(last.total).toBeGreaterThanOrEqual(last.done);
+    expect(last.finished).toBe(true);
+    expect(last.active).toBe(0);
+  });
+
+  it('does not leave the batch stuck when a track is analysed twice', () => {
+    // The renderer queues the same track while the folder sync already did.
+    spawnAnalysis(3001, '/music/twice.mp3');
+    const startedAfterFirst = workerHarness.created.length;
+    spawnAnalysis(3001, '/music/twice.mp3');
+
+    // The first worker was cancelled, so the batch must not count it twice.
+    const queuedOrStarted = workerHarness.created.filter((w) => !w.__done);
+    expect(queuedOrStarted.length).toBeLessThanOrEqual(4);
+
+    drainQueue();
+
+    const last = progress.at(-1);
+    expect(last.active).toBe(0);
+    expect(last.finished).toBe(true);
+    expect(last.done).toBe(last.total);
+    expect(workerHarness.created.length).toBeGreaterThanOrEqual(startedAfterFirst);
+  });
+
+  it('drops a cancelled queued job from the batch', () => {
+    for (let i = 1; i <= 6; i++) spawnAnalysis(4000 + i, `/music/q${i}.mp3`);
+    const totalBefore = progress.at(-1).total;
+
+    expect(cancelAnalysis(4006)).toBe(true); // still queued: only 4 run at once
+
+    expect(progress.at(-1).total).toBe(totalBefore - 1);
+    expect(cancelAnalysis(4006)).toBe(false); // already gone
   });
 });
