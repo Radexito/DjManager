@@ -670,7 +670,11 @@ export class DataPage {
     buf[24] = this.numRows & 0xff; // NumRowsSmall
     buf[25] = (this.numRows * 0x20) & 0xff; // Unknown3
     buf[26] = 0; // Unknown4
-    buf[27] = 0x34; // PageFlags (data page)
+    // Bit 4 marks a data page that contains deleted or invalid rows. Device output
+    // sets it only on pages that really carry stale slots (0x34) and uses 0x24 on
+    // pages without them. Pages are written fresh here and never reuse a slot, so
+    // 0x24 is the honest value (verified against device output, see issue #582).
+    buf[27] = 0x24; // PageFlags (data page, no stale rows)
     buf.writeUInt16LE(freeSize, 28); // FreeSize
     buf.writeUInt16LE(this._topSize, 30); // NextHeapWriteOffset
 
