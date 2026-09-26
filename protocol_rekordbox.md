@@ -1117,3 +1117,67 @@ The playlist pair is what makes an export usable: `playlist_tree` defines the tr
 playlists, with `ParentId` 0 for the root level) and `playlist_entries` maps an entry index to a track
 and a playlist. Anything that wants to offer smart lists in this application should evaluate its rules
 and then write the result through these two tables, because players never evaluate rules themselves.
+
+## exportExt.pdb — My Tags (rekordbox 6 and later)
+
+This is the "new library type" companion file that rekordbox 6 and later write next to `export.pdb`,
+and it is where **My Tags** live on a USB stick. It is a plain DeviceSQL database with the same file
+header, 16-byte table pointers and 4096-byte pages as `export.pdb`, so the parser in this repository
+reads it unchanged. Crucially it is **not** encrypted, unlike `exportLibrary.db`, which means My Tags
+are reachable without touching SQLCipher.
+
+Measured on the user's stick (`U:/PIONEER/rekordbox/exportExt.pdb`, 73,728 bytes = 18 pages), header:
+`num_tables = 9`, `len_page = 4096`, `next_unused = 21`, `sequence = 8`. The nine tables are types 0
+to 8, and only two of them carry rows:
+
+| Type | Rows | Content |
+| ---- | ---- | ------- |
+| 3 | 28 | **the tag tree** |
+| 7 | 1 | a single 60-byte row, not yet decoded |
+| 0, 1, 2, 4, 5, 6, 8 | 0 | empty |
+
+The 28 rows in table 3 are the default My Tag definitions, decoded by reading their names:
+
+- **Genre**: AIl, Acid House, Deep House, Techno, Nu Disco, Electro House, Bass Music, Trap
+- **Components**: Synth, Vocal, Beat, Sub Bass, Percussion, Piano, Dark, Upper
+- **Situation**: Main Floor, Second Floor, Lounge, Mid Night, Morning, Build up, Peak Time, Build down
+- **Untitled Column**: My Comment
+
+That is four category rows plus 24 child rows, and the grouping is visible in the rows themselves:
+row index 0 is `Genre`, indices 1 to 8 are its children, index 8 is `Components`, and so on, with the
+`IndexShift` field (u16 at row offset 2) stepping by `0x20` per row, wrapping to `0x0100` at index 8
+and `0x0200` at index 16. This matches the page header's `unknown3 = num_rows * 0x20` relationship
+noted above.
+
+Row layout as observed (48 to 56 bytes per row, little-endian):
+
+```
+0x00  u16   subtype, 0x0680 for every tag row
+0x02  u16   IndexShift, row index * 0x20
+0x04  u32   zero in every row observed
+0x08  u32   zero in every row observed
+0x0c  u32   group or parent id (0 for Genre, 1 for its children, 2 for Components, 3 for Situation,
+             4 for Untitled Column)
+...
+      then a small field descriptor and the name as a DeviceSQL string
+```
+
+The payload between the ids and the name is **not fully decoded yet**: the last few bytes before the
+name are consistent with a string-field descriptor plus a byte that varies with the row, and settling
+it needs more samples, in particular a tag with a non-ASCII name. The name itself and the parent
+relationships above are certain, since they are read straight out of the rows.
+
+The second stick examined (`C:\shimi usb`, written in 2023) has the same nine tables and the same
+default tag names, with `sequence = 18` instead of 8 and a larger allocation: its type 3 table holds 76
+row slots, of which only the default names decode and the rest are free or deleted slots, and its type 7
+table holds two slots instead of one. No user-created tag names were found on either stick.
+
+The `tag_tracks` table (type 4), which would map tracks to tags, **is empty on both sticks**, because no
+track in either library has a tag assigned. Its row layout therefore could not be verified and is left
+open. The single row in table 7 (60 bytes) is also undecoded; it contains the byte run `22 23 24 25 26`
+followed by `03` repeated five times, which looks like a small parallel array but its meaning is
+unknown.
+
+**Consequence for this application:** supporting My Tags needs no decryption, only a writer for this
+file. The blocking pieces are the unverified `tag_tracks` row layout and the `...`-marked payload of
+the tag rows.
