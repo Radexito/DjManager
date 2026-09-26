@@ -1010,3 +1010,69 @@ carry no `PSSI` at all, which fits: phrase analysis is a rekordbox feature, not 
 every file our exporter produced and from every device-written file examined, and producing it would
 require reimplementing rekordbox's phrase analysis. Do not write it; document it and move on. Cue
 display demonstrably works without it.
+
+---
+
+## What the player firmware can and cannot tell us
+
+The hope behind disassembling the firmware was to name the fields our writer still marks as unknown
+by watching the *consumer* read them. That is now answered, with a negative result that is bounded by
+measurement rather than by effort. Method: binutils 2.39 built with `--target=bfin-elf`, disassembling
+the already-decoded payloads, with an instruction-decode-validity yardstick calibrated on both ends
+(64 KiB of `/dev/urandom` decodes at 36.0 % ILLEGAL, genuine Blackfin code at 0.0 %). Full report,
+including the per-window tables and the instruction listings: `reverse-engineering/BLACKFIN_FINDINGS.md`.
+
+### The S-record layer is plaintext, but the payload is not
+
+This corrects an earlier conclusion of this document. The container for CDJ-2000NXS, CDJ-2000NXS2 and
+XDJ-1000MK2 updates is plaintext Motorola S-records, but that only gets you the *transport*. The bytes
+inside are compressed or encoded:
+
+| image, region | windows | ILLEGAL rate | verdict |
+| ------------- | ------- | ------------ | ------- |
+| `C2KNXS-run1-0x0.bin`, every 4 KiB window from 0x0 to 0x2e1000 | 724 | 30-50 % in every window | **not addressable code** (random-data rate) |
+| `C2KNXS-run1-0x0.bin`, 0x31000-0x40000 | 15 | no instructions emitted | all-zero padding |
+| `C2KNXS-blobA.bin`, 0x87000-0xe1000 | ~144 | **0.0-0.1 %** | **genuine code, 576 KiB, readable** |
+| `C2KNXS-blobA.bin`, 0x0 / 0x80000 / 0x100000 / 0x180000 | 6 | 30.9-77.7 % | data, compressed or still encoded |
+| `C2KNXS2-blobA.bin`, 12 windows across 6.6 MB | 12 | 32.3-49.9 % | encoded or compressed |
+
+Corroborating detail: the readable ASCII in `C2KNXS-run1-0x0.bin` is interleaved with high-bit junk
+every 9 to 11 bytes, for example `"M\xffusic Anal\xffyse File\xff is brok\xfb en\0%/ANLZ\x9f%04X.DAT"`.
+Readable text with random-rate disassembly is the signature of a still-compressed container, which is
+why earlier attempts to read "the code" out of that stream could not work.
+
+### Neither the ANLZ dispatch nor the PDB reader is in the readable code
+
+- No ANLZ tag constant (`PPTH`, `PVBR`, `PQTZ`, `PCOB`, `PWAV`, `PWV2`, `PWV3`, `PQT2`) appears in the
+  readable body: they would need 32-bit constants built as low and high immediate pairs, and those are
+  absent. Raw scans find at most single loose fourcc hits, which is the expected false-positive rate.
+- No PDB, ANLZ or track strings of any kind, and no plausible record parser. Table names remain entirely
+  absent, as established earlier, and the only debris is concatenated fragments such as `1scAnlzS`,
+  `cAnlzSem` and `KdexMyTagNyaExtD` (note the `MyTag` sitting inside a fragment, not as a token).
+- The one relevant literal that does exist, the path template `%/ANLZ%04X.DAT`, sits at 0xb21f4 in the
+  run1 stream next to `"Music Analyse File is broken."`, inside an encoded region.
+
+### Two leads from this session are refuted
+
+Both were mine, and both die on the instruction listing:
+
+1. **The `0xC0700` at blobA 0x92407 is instruction bytes, not a constant.** The bytes `00 07 0c 00`
+   are the second byte of `CALL (P0)`, the whole opcode of `CC = R7 == 0x0`, and the low byte of
+   `R0 = 0x0`. `0xC0700` appears zero times as an immediate anywhere in the disassembly, and the other
+   occurrence in the corpus sits in high-entropy bytes.
+2. **The function that loads 42 and 43 is not a record reader.** Those are object selectors passed to a
+   helper at 0xb2a62; the reads at `+0x1a`/`+0x1e` are a delta between two sibling objects, then a
+   virtual call. The 42-equals-our-string-offset-table-size match was numerology.
+
+### Consequence
+
+The player-side code that reads the USB database is not present in readable form in these images, so
+the unknown fields of the track-row map cannot be named from firmware. The `0x24` at offset 0, the
+`0xC0700` at offset 4, the auto-gain pair at 24/26, the `0x29` at 86 and the `0x03` at 92 remain
+justified only by native-file observation and the public format descriptions, and the firmware neither
+corroborates nor contradicts them. Note that `0xC0700` is a value our writer copies from
+`exportLibrary.db`'s `contentLink` column, which is a producer-side identification and not a guess.
+
+To go further one would need one of: a finished container decode of the run1 streams, an already
+plaintext flash read from hardware, or dynamic analysis on a real player. Field naming therefore has to
+come from the producer side, which is what the PDB differential section above does.
