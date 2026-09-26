@@ -7,14 +7,14 @@ No repo file was edited.
 
 ## Files under analysis
 
-| role | path | size |
-|---|---|---|
-| our output | /tmp/pdb/export.pdb | 163840 B |
-| rekordbox/device output | /tmp/anlz-gt/shimi_rekordbox/export.pdb | 167936 B |
-| our tags ground truth (rekordbox) | /tmp/pdb/exportExt.pdb | 73728 B |
-| rekordbox/device tags | /tmp/anlz-gt/shimi_rekordbox/exportExt.pdb | 81920 B |
-| rex test data (3rd party) | /tmp/pdb/pristine.pdb | 167936 B |
-| our writer | /tmp/djm-517/src/usb/pdbWriter.js | - |
+| role                              | path                                       | size     |
+| --------------------------------- | ------------------------------------------ | -------- |
+| our output                        | /tmp/pdb/export.pdb                        | 163840 B |
+| rekordbox/device output           | /tmp/anlz-gt/shimi_rekordbox/export.pdb    | 167936 B |
+| our tags ground truth (rekordbox) | /tmp/pdb/exportExt.pdb                     | 73728 B  |
+| rekordbox/device tags             | /tmp/anlz-gt/shimi_rekordbox/exportExt.pdb | 81920 B  |
+| rex test data (3rd party)         | /tmp/pdb/pristine.pdb                      | 167936 B |
+| our writer                        | /tmp/djm-517/src/usb/pdbWriter.js          | -        |
 
 ## Method
 
@@ -34,33 +34,33 @@ Two rekordbox/player-written files analysed: `/tmp/pdb/exportExt.pdb` ("ours/use
 
 All multibyte values little-endian. Same layout as export.pdb; only `num_tables` differs.
 
-| offset | size | field | ours | shimi |
-|---|---|---|---|---|
-| 0x00 | 4 | Magic (four zero bytes) | 0x00000000 | 0x00000000 |
-| 0x04 | 4 | LenPage | 4096 | 4096 |
-| 0x08 | 4 | NumTables | **9** | **9** |
-| 0x0c | 4 | NextUnusedPage | 21 | 22 |
-| 0x10 | 4 | Unknown1 (u32@16) | 5 | 1 |
-| 0x14 | 4 | SeqDb | 8 | 18 |
-| 0x18 | 4 | Gap (zeros, part of SeqDb as u64) | 0 | 0 |
-| 0x1c | 9x16 | table pointers (Type, EmptyCandidate, FirstPage, LastPage) | see 1.2 | see 1.2 |
+| offset | size | field                                                      | ours       | shimi      |
+| ------ | ---- | ---------------------------------------------------------- | ---------- | ---------- |
+| 0x00   | 4    | Magic (four zero bytes)                                    | 0x00000000 | 0x00000000 |
+| 0x04   | 4    | LenPage                                                    | 4096       | 4096       |
+| 0x08   | 4    | NumTables                                                  | **9**      | **9**      |
+| 0x0c   | 4    | NextUnusedPage                                             | 21         | 22         |
+| 0x10   | 4    | Unknown1 (u32@16)                                          | 5          | 1          |
+| 0x14   | 4    | SeqDb                                                      | 8          | 18         |
+| 0x18   | 4    | Gap (zeros, part of SeqDb as u64)                          | 0          | 0          |
+| 0x1c   | 9x16 | table pointers (Type, EmptyCandidate, FirstPage, LastPage) | see 1.2    | see 1.2    |
 
 Raw header bytes, ours: `00000000 00100000 09000000 15000000 05000000 08000000 00000000`
 Raw header bytes, shimi: `00000000 00100000 09000000 16000000 01000000 12000000 00000000`
 
 ### 1.2 Table list (identical type set in both files)
 
-| ptr offset | type | empty_candidate | first | last | ours chain | shimi chain |
-|---|---|---|---|---|---|---|
-| 0x1c | 0 | 2 | 1 | 1 | [1] index only | [1] index only |
-| 0x2c | 1 | 4 | 3 | 3 | [3] index only | [3] index only |
-| 0x3c | 2 | 6 | 5 | 5 | [5] index only | [5] index only |
-| 0x4c | 3 | 20 | 7 | 8 | [7,8] index + 1 data, **28 rows** | [7,8] index + 1 data, **28 rows** |
-| 0x5c | 4 | 10 | 9 | 9 | [9] index only | [9] index only |
-| 0x6c | 5 | 12 | 11 | 11 | [11] index only | [11] index only |
-| 0x7c | 6 | 14 | 13 | 13 | [13] index only | [13] index only |
-| 0x8c | 7 | **19** | 15 | **16** | [15,16] index + 1 data, **1 row** | empty_c=**21**, first 15, last **19**, chain [15,16,19]: index + 1 stale data page (0 live rows) + 1 live data page |
-| 0x9c | 8 | 18 | 17 | 17 | [17] index only | [17] index only |
+| ptr offset | type | empty_candidate | first | last   | ours chain                        | shimi chain                                                                                                         |
+| ---------- | ---- | --------------- | ----- | ------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 0x1c       | 0    | 2               | 1     | 1      | [1] index only                    | [1] index only                                                                                                      |
+| 0x2c       | 1    | 4               | 3     | 3      | [3] index only                    | [3] index only                                                                                                      |
+| 0x3c       | 2    | 6               | 5     | 5      | [5] index only                    | [5] index only                                                                                                      |
+| 0x4c       | 3    | 20              | 7     | 8      | [7,8] index + 1 data, **28 rows** | [7,8] index + 1 data, **28 rows**                                                                                   |
+| 0x5c       | 4    | 10              | 9     | 9      | [9] index only                    | [9] index only                                                                                                      |
+| 0x6c       | 5    | 12              | 11    | 11     | [11] index only                   | [11] index only                                                                                                     |
+| 0x7c       | 6    | 14              | 13    | 13     | [13] index only                   | [13] index only                                                                                                     |
+| 0x8c       | 7    | **19**          | 15    | **16** | [15,16] index + 1 data, **1 row** | empty_c=**21**, first 15, last **19**, chain [15,16,19]: index + 1 stale data page (0 live rows) + 1 live data page |
+| 0x9c       | 8    | 18              | 17    | 17     | [17] index only                   | [17] index only                                                                                                     |
 
 So the two files contain exactly the same 9 tables, and only two of them hold data:
 `type 3 = tags` (28 rows, documented) and `type 7` (1 row, purpose not identified).
@@ -70,19 +70,19 @@ tag_tracks in contains no rows here (see 1.5).
 
 Page header (32 B) for the tags data page:
 
-| | ours page 8 | shimi page 8 |
-|---|---|---|
-| Magic u32@0 | 0 | 0 |
-| PageIndex u32@4 | 8 | 8 |
-| Type u32@8 | 3 | 3 |
-| NextPage u32@12 | 20 (= empty candidate) | 20 (= empty candidate) |
-| SeqPage u32@16 | 7 | 2 |
-| Unknown2 u32@20 | 0 | 0 |
-| u24@24: low 13 = num_row_offsets, high 11 = num_rows | 0x03801c -> 28 / 28 | 0x03804c -> **76** slots / 28 live |
-| PageFlags u8@27 | 0x24 | **0x34** (bit 4 = deleted rows present) |
-| FreeSize u16@28 | 2568 | 24 |
-| UsedSize u16@30 | 1424 | 3860 |
-| data hdr u16x4 @32 | 28, 0, 0, 0 | 28, 0, 0, 0 |
+|                                                      | ours page 8            | shimi page 8                            |
+| ---------------------------------------------------- | ---------------------- | --------------------------------------- |
+| Magic u32@0                                          | 0                      | 0                                       |
+| PageIndex u32@4                                      | 8                      | 8                                       |
+| Type u32@8                                           | 3                      | 3                                       |
+| NextPage u32@12                                      | 20 (= empty candidate) | 20 (= empty candidate)                  |
+| SeqPage u32@16                                       | 7                      | 2                                       |
+| Unknown2 u32@20                                      | 0                      | 0                                       |
+| u24@24: low 13 = num_row_offsets, high 11 = num_rows | 0x03801c -> 28 / 28    | 0x03804c -> **76** slots / 28 live      |
+| PageFlags u8@27                                      | 0x24                   | **0x34** (bit 4 = deleted rows present) |
+| FreeSize u16@28                                      | 2568                   | 24                                      |
+| UsedSize u16@30                                      | 1424                   | 3860                                    |
+| data hdr u16x4 @32                                   | 28, 0, 0, 0            | 28, 0, 0, 0                             |
 
 Read this page as: 28 row-offset slots (2 row groups of 16, last group 12 used) in the
 ours file; the shimi page has 5 row groups (76 slots ever allocated), of which only
@@ -92,21 +92,21 @@ offsets u16 reversed within a group, then row presence flags u16 + last-transact
 
 ### 1.3 tags row layout (type 3) - verified on all 28 rows in both files
 
-| row offset | size | field | value / meaning |
-|---|---|---|---|
-| 0x00 | u16 | subtype | 0x0680 = "near" (1-byte string offsets), 0x0684 = "far" (2-byte offsets). All 56 rows in both files are 0x0680 |
-| 0x02 | u16 | tag_index | 0, 32, 64, ... = +32 per row, in row order |
-| 0x04 | 8 B | unknown | always zero in both files |
-| 0x0c | u32 | category | id of the parent category; **0 when this row IS a category** |
-| 0x10 | u32 | category_pos | 0-based position inside the category; for a category row, its own position in the category list |
-| 0x14 | u32 | id | 1..4 for the four categories, otherwise a large pseudo-random u32 (per database) |
-| 0x18 | 4 B | raw_is_category | `00 00 00 00` = tag, `00 00 00 01` = category (non-zero) |
-| 0x1c | u8 | constant 3 | the "3" that precedes string offsets in every string-bearing row |
-| 0x1d | u8 | ofs_name | offset of the name string, relative to the row start (near variant) |
-| 0x1e | u8 | ofs_unknown | offset of a second string, always the 1-byte empty string 0x03 |
-| 0x1f | - | name string | DeviceSQL string; short ASCII = len byte `2*n+3`, long = `0x40`+u16 len+pad |
-| - | - | unknown string | 0x03 (empty short string) |
-| tail | 8-11 B | zeros | 8 zero bytes + 0-3 zero pad bytes to a 4-byte boundary |
+| row offset | size   | field           | value / meaning                                                                                                |
+| ---------- | ------ | --------------- | -------------------------------------------------------------------------------------------------------------- |
+| 0x00       | u16    | subtype         | 0x0680 = "near" (1-byte string offsets), 0x0684 = "far" (2-byte offsets). All 56 rows in both files are 0x0680 |
+| 0x02       | u16    | tag_index       | 0, 32, 64, ... = +32 per row, in row order                                                                     |
+| 0x04       | 8 B    | unknown         | always zero in both files                                                                                      |
+| 0x0c       | u32    | category        | id of the parent category; **0 when this row IS a category**                                                   |
+| 0x10       | u32    | category_pos    | 0-based position inside the category; for a category row, its own position in the category list                |
+| 0x14       | u32    | id              | 1..4 for the four categories, otherwise a large pseudo-random u32 (per database)                               |
+| 0x18       | 4 B    | raw_is_category | `00 00 00 00` = tag, `00 00 00 01` = category (non-zero)                                                       |
+| 0x1c       | u8     | constant 3      | the "3" that precedes string offsets in every string-bearing row                                               |
+| 0x1d       | u8     | ofs_name        | offset of the name string, relative to the row start (near variant)                                            |
+| 0x1e       | u8     | ofs_unknown     | offset of a second string, always the 1-byte empty string 0x03                                                 |
+| 0x1f       | -      | name string     | DeviceSQL string; short ASCII = len byte `2*n+3`, long = `0x40`+u16 len+pad                                    |
+| -          | -      | unknown string  | 0x03 (empty short string)                                                                                      |
+| tail       | 8-11 B | zeros           | 8 zero bytes + 0-3 zero pad bytes to a 4-byte boundary                                                         |
 
 far variant (not present in either file, from the public spec): ofs_name u16 @0x1e,
 ofs_unknown u16 @0x20.
@@ -219,7 +219,6 @@ the My Tags store rather than a per-association row. Do not build anything on it
   data; the player shows an empty My Tags list and no tag categories. The format is
   fully specified above and is small: 9 table pointers, 1 index page + 1 data page for
   the tags table, 28 rows of <=56 bytes.
-
 
 ---
 

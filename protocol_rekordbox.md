@@ -431,12 +431,12 @@ Pioneer's binary track index format. Located at `USB_ROOT/export.pdb`.
 
 ### Table Pointer Entry (16 bytes)
 
-| Offset | Size | Description                                                                                                                                                         |
-| ------ | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Offset | Size | Description                                                                                                                                                                                                                                                                                  |
+| ------ | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0      | 4    | `type`, numbered 0 to 19: 0 tracks, 1 genres, 2 artists, 3 albums, 4 labels, 5 keys, 6 colours, 7 playlist_tree, 8 playlist_entries, 9 unknown, 10 unknown, 11 history_playlists, 12 history_entries, 13 artwork, 14 unknown, 15 unknown, **16 columns**, 17 unknown, 18 unknown, 19 history |
-| 4      | 4    | `empty_candidate`                                                                                                                                                   |
-| 8      | 4    | `first_page`                                                                                                                                                        |
-| 12     | 4    | `last_page`                                                                                                                                                         |
+| 4      | 4    | `empty_candidate`                                                                                                                                                                                                                                                                            |
+| 8      | 4    | `first_page`                                                                                                                                                                                                                                                                                 |
+| 12     | 4    | `last_page`                                                                                                                                                                                                                                                                                  |
 
 Verified against the djl-analysis specification and against `buildFileHeader()` in
 `src/usb/pdbWriter.js`, which writes **16-byte** entries from offset 28. Earlier revisions
@@ -444,8 +444,8 @@ of this document claimed 20 bytes.
 
 ### Page Structure (4096 bytes)
 
-| Offset | Size | Description        |
-| ------ | ---- | ------------------ |
+| Offset | Size | Description                                              |
+| ------ | ---- | -------------------------------------------------------- |
 | Offset | Size | Description                                              |
 | ------ | ---- | -------------------------------------------------------- |
 | 0      | 4    | `magic` (always 0)                                       |
@@ -492,11 +492,11 @@ Key fields in a track row (`type = 0`):
 
 Strings are length-prefixed. The first byte determines encoding:
 
-| Kind | Layout |
-| ---- | ------ |
-| Short ASCII | `lk = ((dataLen + 1) << 1) | 1`, then `dataLen` ASCII bytes (max 126) |
-| Long ASCII | `0x40`, u16**LE** length = `dataLen + 4`, pad `0x00`, then ASCII bytes |
-| Unicode | `0x90`, u16**LE** length = `byteLen + 4`, pad `0x00`, then **UTF-16LE** bytes |
+| Kind        | Layout                                                                        |
+| ----------- | ----------------------------------------------------------------------------- |
+| Short ASCII | `lk = ((dataLen + 1) << 1)                                                    | 1`, then `dataLen` ASCII bytes (max 126) |
+| Long ASCII  | `0x40`, u16**LE** length = `dataLen + 4`, pad `0x00`, then ASCII bytes        |
+| Unicode     | `0x90`, u16**LE** length = `byteLen + 4`, pad `0x00`, then **UTF-16LE** bytes |
 
 `length` counts the whole field including its 4-byte header, and there is no
 terminator byte. The flag byte is `lengthAndKind`: bit 0 set means short, the
@@ -762,18 +762,18 @@ CDJ hardware accepts non-native resolutions. This application generates at
 ## Ground-truth verification: rekordbox-written ANLZ (2026-09-26)
 
 Everything above was originally derived from community documentation plus trial and error. This
-section records a byte-level *verification* against ANLZ files that rekordbox itself wrote, which is
+section records a byte-level _verification_ against ANLZ files that rekordbox itself wrote, which is
 the first time the cue sections have been confirmed against the producer's own output.
 
 ### Where the reference files came from
 
-| Family | Source | Files | Written by | Notes |
-| ------ | ------ | ----- | ---------- | ----- |
-| A | `%APPDATA%\\Pioneer\\rekordbox\\share\\PIONEER\\USBANLZ\\<hash>\\<uuid>\\ANLZ0000.*` (Windows laptop) | 374 | rekordbox (PC) | Analysis cache. 98 DAT, 97 EXT, 97 2EX, 82 3EX. **Contains no cues at all** |
-| B | `C:\\shimi usb\\PIONEER\\USBANLZ\\P0xx\\xxxxxxx\\ANLZ0000.DAT` | 54 | device or old rekordbox | DAT only, device epoch timestamp, header bytes 16/20 are zero |
-| C | `reverse-engineering/captures/<NN-slug>/PIONEER/USBANLZ/...` (this repo) | 52 sets | rekordbox (PC) | **The only cues-with-labels reference.** Captures 42-47 are the decisive ones |
-| D | `U:\\PIONEER\\USBANLZ\\P037,P066` (the test stick) | 6 | **DjManager** | Our own blind-mode export |
-| E | `playlists.zip` on the laptop desktop | 3 | **DjManager** | Our own export |
+| Family | Source                                                                                                | Files   | Written by              | Notes                                                                         |
+| ------ | ----------------------------------------------------------------------------------------------------- | ------- | ----------------------- | ----------------------------------------------------------------------------- |
+| A      | `%APPDATA%\\Pioneer\\rekordbox\\share\\PIONEER\\USBANLZ\\<hash>\\<uuid>\\ANLZ0000.*` (Windows laptop) | 374     | rekordbox (PC)          | Analysis cache. 98 DAT, 97 EXT, 97 2EX, 82 3EX. **Contains no cues at all**   |
+| B      | `C:\\shimi usb\\PIONEER\\USBANLZ\\P0xx\\xxxxxxx\\ANLZ0000.DAT`                                        | 54      | device or old rekordbox | DAT only, device epoch timestamp, header bytes 16/20 are zero                 |
+| C      | `reverse-engineering/captures/<NN-slug>/PIONEER/USBANLZ/...` (this repo)                              | 52 sets | rekordbox (PC)          | **The only cues-with-labels reference.** Captures 42-47 are the decisive ones |
+| D      | `U:\\PIONEER\\USBANLZ\\P037,P066` (the test stick)                                                    | 6       | **DjManager**           | Our own blind-mode export                                                     |
+| E      | `playlists.zip` on the laptop desktop                                                                 | 3       | **DjManager**           | Our own export                                                                |
 
 Family A proves something useful on its own: rekordbox's cache holds analysis only. Cue points live
 in `export.pdb` until an export happens, which is why 40-hot-cue-a-b-c and friends (family C, exported
@@ -789,9 +789,9 @@ claimed. The `PCO2`/`PCP2` layouts match too, including `len_tag = 88` for an un
 
 Two `PCPT` facts worth calling out because plain playback hides them:
 
-* `PCPT+40` (the colour byte) is **`0x00` in every observed ground-truth record**, hot cues included.
+- `PCPT+40` (the colour byte) is **`0x00` in every observed ground-truth record**, hot cues included.
   Colour is carried by `PCP2` in the EXT file, not by `PCPT`.
-* `PCPT+28` is `1` for a cue point and **`2` for a loop**, and `PCPT+36`/`PCP2+24` hold the loop's
+- `PCPT+28` is `1` for a cue point and **`2` for a loop**, and `PCPT+36`/`PCP2+24` hold the loop's
   **absolute end position in ms**, not a length. Capture 46: `time_ms=61313`, `loop_time=62869`,
   which is the stated 4-beat loop, 1556 ms long.
 
@@ -799,32 +799,32 @@ Two `PCPT` facts worth calling out because plain playback hides them:
 
 Observed in both capture 43 (8 hot cues) and capture 47 (4 loops):
 
-| File, slot | Contents |
-| ---------- | -------- |
-| `.DAT` PCOB slot 1 (`type=1`) | hot cues **A, B, C only** (file order 2, 1, 3) |
+| File, slot                    | Contents                                          |
+| ----------------------------- | ------------------------------------------------- |
+| `.DAT` PCOB slot 1 (`type=1`) | hot cues **A, B, C only** (file order 2, 1, 3)    |
 | `.EXT` PCOB slot 1 (`type=1`) | hot cues **D onwards** (file order 8, 7, 6, 5, 4) |
-| `.EXT` PCO2 slot 1 (`type=1`) | **all** hot cues, with labels and colours |
+| `.EXT` PCO2 slot 1 (`type=1`) | **all** hot cues, with labels and colours         |
 | `.DAT` PCOB slot 2 (`type=0`) | memory cues (capture 42: `len_tag=80`, one entry) |
-| `.EXT` PCO2 slot 2 (`type=0`) | the same memory cues in the PCP2 form |
+| `.EXT` PCO2 slot 2 (`type=0`) | the same memory cues in the PCP2 form             |
 
 So the first three hot cues are duplicated into the DAT, the rest live only in the EXT, and the DAT's
-slot 2 is a *populated* memory-cue section rather than a stub. This is why a 3-hot-cue player still
+slot 2 is a _populated_ memory-cue section rather than a stub. This is why a 3-hot-cue player still
 sees A/B/C on a stick exported from a 8-cue library.
 
 ### The real colour palette
 
 `PCP2+44` carries a hue code followed by R, G, B. Measured from capture 43:
 
-| Colour | Code | R | G | B |
-| ------ | ---- | - | - | - |
-| red | `0x00` | 255 | 0 | 23 |
-| blue | `0x01` | 0 | 0 | 255 |
-| cyan | `0x09` | 0 | 224 | 255 |
-| green | `0x16` | 26 | 255 | 0 |
-| yellow | `0x20` | 255 | 232 | 0 |
-| orange | `0x26` | 255 | 94 | 0 |
-| pink | `0x31` | 255 | 0 | 161 |
-| violet | `0x38` | 179 | 0 | 255 |
+| Colour | Code   | R   | G   | B   |
+| ------ | ------ | --- | --- | --- |
+| red    | `0x00` | 255 | 0   | 23  |
+| blue   | `0x01` | 0   | 0   | 255 |
+| cyan   | `0x09` | 0   | 224 | 255 |
+| green  | `0x16` | 26  | 255 | 0   |
+| yellow | `0x20` | 255 | 232 | 0   |
+| orange | `0x26` | 255 | 94  | 0   |
+| pink   | `0x31` | 255 | 0   | 161 |
+| violet | `0x38` | 179 | 0   | 255 |
 
 "No colour" is code `0x00` with RGB `0, 0, 0` (capture 42). Note that red is also code `0x00`: the
 code is a hue index around the wheel, so the RGB triple is what actually distinguishes a colour from
@@ -833,21 +833,21 @@ for red, orange, yellow and blue, and pink is missing entirely.
 
 ### Sections we never write
 
-* **`PSSI`** — **decoded, see the section below.** 32-byte header, then a body of 24-byte records.
+- **`PSSI`** — **decoded, see the section below.** 32-byte header, then a body of 24-byte records.
   Present in **72 of 97** rekordbox EXT files and in every cue capture, always the last section.
 
 ### Divergences between this writer and ground truth
 
-| # | Aspect | Ours | Ground truth | Status |
-| - | ------ | ---- | ------------ | ------ |
-| 1 | Loop cues | `buildPcptEntry` hard-codes `type=1` and `loop_time=0xFFFFFFFF` (`anlzWriter.js:426,429`) | `type=2` with an absolute end position | **we cannot export a loop** |
-| 2 | Memory cues | `PCOB`/`PCO2` slot 2 always written as 24/20-byte stubs; a code comment claims a populated slot 2 is rejected | capture 42 has a populated slot 2 in both files | **we cannot export a memory cue** |
-| 3 | `PCPT+40` colour byte | palette code 1-8 | always `0x00` | wrong |
-| 4 | `PCP2` colour codes/RGB | approximated for 4 of 8, pink absent | table above | wrong |
-| 5 | Cue distribution | all hot cues in DAT slot 1 | A-C in DAT, D+ in EXT | differs; may cost us cues 4-8 on 3-cue players |
-| 6 | `PSSI` | never written | in 75% of native EXT files | missing |
-| 7 | `PVBR` payload | filled in (1194 of 1600 bytes non-zero) | 3 of 1604 (PC), 0 (device) | differs, but a filled seek table is legal |
-| 8 | `PPTH` path | `/music/<file>` (`src/main.js:2372,2376`) | `/Contents/<Artist>/<Album>/<file>` | differs |
+| #   | Aspect                  | Ours                                                                                                          | Ground truth                                    | Status                                         |
+| --- | ----------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------- |
+| 1   | Loop cues               | `buildPcptEntry` hard-codes `type=1` and `loop_time=0xFFFFFFFF` (`anlzWriter.js:426,429`)                     | `type=2` with an absolute end position          | **we cannot export a loop**                    |
+| 2   | Memory cues             | `PCOB`/`PCO2` slot 2 always written as 24/20-byte stubs; a code comment claims a populated slot 2 is rejected | capture 42 has a populated slot 2 in both files | **we cannot export a memory cue**              |
+| 3   | `PCPT+40` colour byte   | palette code 1-8                                                                                              | always `0x00`                                   | wrong                                          |
+| 4   | `PCP2` colour codes/RGB | approximated for 4 of 8, pink absent                                                                          | table above                                     | wrong                                          |
+| 5   | Cue distribution        | all hot cues in DAT slot 1                                                                                    | A-C in DAT, D+ in EXT                           | differs; may cost us cues 4-8 on 3-cue players |
+| 6   | `PSSI`                  | never written                                                                                                 | in 75% of native EXT files                      | missing                                        |
+| 7   | `PVBR` payload          | filled in (1194 of 1600 bytes non-zero)                                                                       | 3 of 1604 (PC), 0 (device)                      | differs, but a filled seek table is legal      |
+| 8   | `PPTH` path             | `/music/<file>` (`src/main.js:2372,2376`)                                                                     | `/Contents/<Artist>/<Album>/<file>`             | differs                                        |
 
 Section order, section sizes, header constants, `PCPT`/`PCP2` field layout and the three exact palette
 entries that we do get right (green, cyan, violet) all match, so the writer's geometry is sound; the
@@ -871,29 +871,29 @@ Two sticks were inventoried for this section. One (`DJ_OUTPUT`, drive `U:`) was 
 application at 02:05 on 2026-09-26 and then read by rekordbox. The other (`shimi usb`) is a real DJ
 stick last written in 2023, used in hardware, and it still carries the player's own leftovers.
 
-| Path | Written by | We write it | Format status |
-| ---- | ---------- | ----------- | ------------- |
-| `PIONEER/rekordbox/export.pdb` | rekordbox, DjManager | yes | fully specified in this document |
-| `PIONEER/rekordbox/exportExt.pdb` | rekordbox 6 and later | no | tags + tag_tracks tables, see below |
-| `PIONEER/rekordbox/exportLibrary.db` | rekordbox 6 and later | no | SQLCipher, key and parameters recovered via a `sqlite3_key` hook (above) |
-| `PIONEER/rekordbox/export.pdb.bak` | rekordbox | no | backup it leaves when it rewrites the library |
-| `PIONEER/rekordbox/playlists3.sync` | rekordbox | no | controls whether rekordbox auto-syncs this stick |
-| `PIONEER/rekordbox/RBFLTR.DAT` | **player** | no | see below |
-| `PIONEER/USBANLZ/<hash>/<track>/ANLZ0000.DAT` | both | yes | specified above |
-| `PIONEER/USBANLZ/.../ANLZ0000.EXT` | both | yes | specified above |
-| `PIONEER/USBANLZ/.../ANLZ0000.2EX` | both | yes | specified above |
-| `PIONEER/USBANLZ/.../ANLZ0000.3EX` | rekordbox 7 | no | **not an ANLZ container** (msgpack `embedding` blob) |
-| `PIONEER/MYSETTING.DAT`, `MYSETTING2.DAT` | rekordbox, DjManager | yes | `src/usb/settingWriter.js` |
-| `PIONEER/DEVSETTING.DAT` | rekordbox, DjManager | yes | `src/usb/settingWriter.js` |
-| `PIONEER/DJPROFILE.NXS` (also seen as `djprofile.nxs`) | rekordbox | no, correctly | device profile, not ours to write |
-| `PIONEER/extracted/gcred.dat` | rekordbox | no | 64 ASCII characters plus CRLF, likely a licence or session token. Not ours |
-| `PIONEER/CDJ/`, `PIONEER/MPJ/` | **player** | no | directories players create on first use |
-| `PIONEER/LIBRARY/` | rekordbox (Device Library Plus / OneLibrary) | no | **absent from both sticks.** Only the 2024 firmware references this path |
-| `/music/<file>` | DjManager | yes | our layout, see the divergence note below |
-| `/Contents/<Artist>/<Album>/<file>` | rekordbox | no | rekordbox's own layout |
-| `playlists/*.m3u` | DjManager | yes | our export |
-| `<folder>/*.m3u8` | rekordbox (optional) | no | rekordbox writes the playlist as an m3u8 beside the music when asked |
-| `_Serato_/`, `VirtualDJ/`, `LOST.DIR` | other software / filesystem | no | unrelated, and `LOST.DIR` is a FAT corruption artifact |
+| Path                                                   | Written by                                   | We write it   | Format status                                                              |
+| ------------------------------------------------------ | -------------------------------------------- | ------------- | -------------------------------------------------------------------------- |
+| `PIONEER/rekordbox/export.pdb`                         | rekordbox, DjManager                         | yes           | fully specified in this document                                           |
+| `PIONEER/rekordbox/exportExt.pdb`                      | rekordbox 6 and later                        | no            | tags + tag_tracks tables, see below                                        |
+| `PIONEER/rekordbox/exportLibrary.db`                   | rekordbox 6 and later                        | no            | SQLCipher, key and parameters recovered via a `sqlite3_key` hook (above)   |
+| `PIONEER/rekordbox/export.pdb.bak`                     | rekordbox                                    | no            | backup it leaves when it rewrites the library                              |
+| `PIONEER/rekordbox/playlists3.sync`                    | rekordbox                                    | no            | controls whether rekordbox auto-syncs this stick                           |
+| `PIONEER/rekordbox/RBFLTR.DAT`                         | **player**                                   | no            | see below                                                                  |
+| `PIONEER/USBANLZ/<hash>/<track>/ANLZ0000.DAT`          | both                                         | yes           | specified above                                                            |
+| `PIONEER/USBANLZ/.../ANLZ0000.EXT`                     | both                                         | yes           | specified above                                                            |
+| `PIONEER/USBANLZ/.../ANLZ0000.2EX`                     | both                                         | yes           | specified above                                                            |
+| `PIONEER/USBANLZ/.../ANLZ0000.3EX`                     | rekordbox 7                                  | no            | **not an ANLZ container** (msgpack `embedding` blob)                       |
+| `PIONEER/MYSETTING.DAT`, `MYSETTING2.DAT`              | rekordbox, DjManager                         | yes           | `src/usb/settingWriter.js`                                                 |
+| `PIONEER/DEVSETTING.DAT`                               | rekordbox, DjManager                         | yes           | `src/usb/settingWriter.js`                                                 |
+| `PIONEER/DJPROFILE.NXS` (also seen as `djprofile.nxs`) | rekordbox                                    | no, correctly | device profile, not ours to write                                          |
+| `PIONEER/extracted/gcred.dat`                          | rekordbox                                    | no            | 64 ASCII characters plus CRLF, likely a licence or session token. Not ours |
+| `PIONEER/CDJ/`, `PIONEER/MPJ/`                         | **player**                                   | no            | directories players create on first use                                    |
+| `PIONEER/LIBRARY/`                                     | rekordbox (Device Library Plus / OneLibrary) | no            | **absent from both sticks.** Only the 2024 firmware references this path   |
+| `/music/<file>`                                        | DjManager                                    | yes           | our layout, see the divergence note below                                  |
+| `/Contents/<Artist>/<Album>/<file>`                    | rekordbox                                    | no            | rekordbox's own layout                                                     |
+| `playlists/*.m3u`                                      | DjManager                                    | yes           | our export                                                                 |
+| `<folder>/*.m3u8`                                      | rekordbox (optional)                         | no            | rekordbox writes the playlist as an m3u8 beside the music when asked       |
+| `_Serato_/`, `VirtualDJ/`, `LOST.DIR`                  | other software / filesystem                  | no            | unrelated, and `LOST.DIR` is a FAT corruption artifact                     |
 
 `RBFLTR.DAT` deserves a note. It sits under `PIONEER/rekordbox/`, carries the device epoch timestamp
 `01/01/2012 01:00`, and inside is an `FMAI` container with the banner `PIONEER` / `CDJ-900NXS` /
@@ -957,9 +957,9 @@ limitation, not a gap in DjManager.
 
 **My Tags travel; Smart Lists do not.** Two plain-ish carriers exist for My Tags:
 
-| Carrier | Encryption | Contains | Reachable for us |
-| ------- | ---------- | -------- | ---------------- |
-| `exportExt.pdb` | none, plain PDB | `tags` and `tag_tracks` tables | **yes**, and we already have ground-truth files |
+| Carrier            | Encryption                       | Contains                                                 | Reachable for us                                              |
+| ------------------ | -------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------- |
+| `exportExt.pdb`    | none, plain PDB                  | `tags` and `tag_tracks` tables                           | **yes**, and we already have ground-truth files               |
 | `exportLibrary.db` | SQLCipher (key recovered, above) | `myTag` tables and `myTagMasterDBID` on the content rows | only with rekordbox's own `sqlite3.dll` or a reimplementation |
 
 `exportLibrary.db` also carries the default My Tag folders rekordbox ships: Genre, Components,
@@ -995,15 +995,15 @@ zero }`, index counting from 1.
 
 Measured values from that file (21 phrases, 560 to 561 beats per `PQT2`):
 
-| # | sec | type | | # | sec | type | | # | sec | type |
-| - | --- | ---- | - | - | --- | ---- | - | - | --- | ---- |
-| 1 | 5 | 1 | | 8 | 179 | 9 | | 15 | 411 | 9 |
-| 2 | 19 | 2 | | 9 | 191 | 6 | | 16 | 419 | 6 |
-| 3 | 31 | 8 | | 10 | 251 | 6 | | 17 | 443 | 6 |
-| 4 | 39 | 3 | | 11 | 259 | 6 | | 18 | 451 | 6 |
-| 5 | 63 | 4 | | 12 | 287 | 6 | | 19 | 475 | 9 |
-| 6 | 99 | 5 | | 13 | 323 | 5 | | 20 | 483 | 6 |
-| 7 | 127 | 9 | | 14 | 383 | 9 | | 21 | 507 | 10 |
+| #   | sec | type |     | #   | sec | type |     | #   | sec | type |
+| --- | --- | ---- | --- | --- | --- | ---- | --- | --- | --- | ---- |
+| 1   | 5   | 1    |     | 8   | 179 | 9    |     | 15  | 411 | 9    |
+| 2   | 19  | 2    |     | 9   | 191 | 6    |     | 16  | 419 | 6    |
+| 3   | 31  | 8    |     | 10  | 251 | 6    |     | 17  | 443 | 6    |
+| 4   | 39  | 3    |     | 11  | 259 | 6    |     | 18  | 451 | 6    |
+| 5   | 63  | 4    |     | 12  | 287 | 6    |     | 19  | 475 | 9    |
+| 6   | 99  | 5    |     | 13  | 323 | 5    |     | 20  | 483 | 6    |
+| 7   | 127 | 9    |     | 14  | 383 | 9    |     | 21  | 507 | 10   |
 
 So it is the phrase analysis that drives rekordbox's song structure display. The phrase model is
 documented by Pioneer as Intro, Up, Down, Chorus, Bridge, Verse and Outro, with rekordbox 7 adding
@@ -1026,7 +1026,7 @@ display demonstrably works without it.
 ## What the player firmware can and cannot tell us
 
 The hope behind disassembling the firmware was to name the fields our writer still marks as unknown
-by watching the *consumer* read them. That is now answered, with a negative result that is bounded by
+by watching the _consumer_ read them. That is now answered, with a negative result that is bounded by
 measurement rather than by effort. Method: binutils 2.39 built with `--target=bfin-elf`, disassembling
 the already-decoded payloads, with an instruction-decode-validity yardstick calibrated on both ends
 (64 KiB of `/dev/urandom` decodes at 36.0 % ILLEGAL, genuine Blackfin code at 0.0 %). Full report,
@@ -1035,16 +1035,16 @@ including the per-window tables and the instruction listings: `reverse-engineeri
 ### The S-record layer is plaintext, but the payload is not
 
 This corrects an earlier conclusion of this document. The container for CDJ-2000NXS, CDJ-2000NXS2 and
-XDJ-1000MK2 updates is plaintext Motorola S-records, but that only gets you the *transport*. The bytes
+XDJ-1000MK2 updates is plaintext Motorola S-records, but that only gets you the _transport_. The bytes
 inside are compressed or encoded:
 
-| image, region | windows | ILLEGAL rate | verdict |
-| ------------- | ------- | ------------ | ------- |
-| `C2KNXS-run1-0x0.bin`, every 4 KiB window from 0x0 to 0x2e1000 | 724 | 30-50 % in every window | **not addressable code** (random-data rate) |
-| `C2KNXS-run1-0x0.bin`, 0x31000-0x40000 | 15 | no instructions emitted | all-zero padding |
-| `C2KNXS-blobA.bin`, 0x87000-0xe1000 | ~144 | **0.0-0.1 %** | **genuine code, 576 KiB, readable** |
-| `C2KNXS-blobA.bin`, 0x0 / 0x80000 / 0x100000 / 0x180000 | 6 | 30.9-77.7 % | data, compressed or still encoded |
-| `C2KNXS2-blobA.bin`, 12 windows across 6.6 MB | 12 | 32.3-49.9 % | encoded or compressed |
+| image, region                                                  | windows | ILLEGAL rate            | verdict                                     |
+| -------------------------------------------------------------- | ------- | ----------------------- | ------------------------------------------- |
+| `C2KNXS-run1-0x0.bin`, every 4 KiB window from 0x0 to 0x2e1000 | 724     | 30-50 % in every window | **not addressable code** (random-data rate) |
+| `C2KNXS-run1-0x0.bin`, 0x31000-0x40000                         | 15      | no instructions emitted | all-zero padding                            |
+| `C2KNXS-blobA.bin`, 0x87000-0xe1000                            | ~144    | **0.0-0.1 %**           | **genuine code, 576 KiB, readable**         |
+| `C2KNXS-blobA.bin`, 0x0 / 0x80000 / 0x100000 / 0x180000        | 6       | 30.9-77.7 %             | data, compressed or still encoded           |
+| `C2KNXS2-blobA.bin`, 12 windows across 6.6 MB                  | 12      | 32.3-49.9 %             | encoded or compressed                       |
 
 Corroborating detail: the readable ASCII in `C2KNXS-run1-0x0.bin` is interleaved with high-bit junk
 every 9 to 11 bytes, for example `"M\xffusic Anal\xffyse File\xff is brok\xfb en\0%/ANLZ\x9f%04X.DAT"`.
@@ -1096,19 +1096,19 @@ of the fixed header is the name's byte offset within the row (`0x0a` for artist 
 rows, and so on). Where a row has several strings, their offsets are listed in a u16 table whose own
 offset is fixed by the subtype; track rows use 21 of them, 42 bytes at offsets 94 to 136.
 
-| Table (type) | Subtype / first field | Layout |
-| ------------ | --------------------- | ------ |
-| tracks (0) | `0x24` | 94-byte header, then 21 x u16 string offsets (42 B), then the string heap. Offset 4 is `0xC0700`, the same value as `contentLink` in `exportLibrary.db`. Offsets 24 and 26 are the two auto-gain words; the reference values 13940 and 17802 correspond to 0 dB, and a replay-gain value scales them as `10 ** (dB / 20) * reference` |
-| genres (1) | not written by us | shape not verified here. The public descriptions give subtype `0x64` and the artist shape, but neither this application's code nor the ground-truth files examined so far confirm it |
-| artists (2) | `0x60` | subtype u16, IndexShift u16, Id u32, `0x03`, name offset `0x0a`, string |
-| albums (3) | `0x80` | first two bytes are the subtype, then IndexShift u16, u32 zero, ArtistId u32 at 8, Id u32 at 12, u32 zero, `0x03`, name offset 22, string |
-| labels (4) | not written by us | not verified here |
-| keys (5) | id as u16 | SmallId u16 (equals the Id), u16 zero, Id u32, string at offset 8 |
-| colours (6) | - | u32, u8, ID u16 at 5, u8, string at offset 8 |
-| playlist_tree (7) | - | ParentId u32, u32 zero, SortOrder u32, Id u32, RawIsFolder u32 (1 for a folder, 0 for a playlist), string at offset 20 |
-| playlist_entries (8) | - | exactly 12 bytes: EntryIndex u32, TrackId u32, PlaylistId u32 |
-| columns (16) | - | ID u16, u16 unknown, string at offset 4 |
-| unknown 17, 18 | - | four u16 values, 8 bytes |
+| Table (type)         | Subtype / first field | Layout                                                                                                                                                                                                                                                                                                                                |
+| -------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| tracks (0)           | `0x24`                | 94-byte header, then 21 x u16 string offsets (42 B), then the string heap. Offset 4 is `0xC0700`, the same value as `contentLink` in `exportLibrary.db`. Offsets 24 and 26 are the two auto-gain words; the reference values 13940 and 17802 correspond to 0 dB, and a replay-gain value scales them as `10 ** (dB / 20) * reference` |
+| genres (1)           | not written by us     | shape not verified here. The public descriptions give subtype `0x64` and the artist shape, but neither this application's code nor the ground-truth files examined so far confirm it                                                                                                                                                  |
+| artists (2)          | `0x60`                | subtype u16, IndexShift u16, Id u32, `0x03`, name offset `0x0a`, string                                                                                                                                                                                                                                                               |
+| albums (3)           | `0x80`                | first two bytes are the subtype, then IndexShift u16, u32 zero, ArtistId u32 at 8, Id u32 at 12, u32 zero, `0x03`, name offset 22, string                                                                                                                                                                                             |
+| labels (4)           | not written by us     | not verified here                                                                                                                                                                                                                                                                                                                     |
+| keys (5)             | id as u16             | SmallId u16 (equals the Id), u16 zero, Id u32, string at offset 8                                                                                                                                                                                                                                                                     |
+| colours (6)          | -                     | u32, u8, ID u16 at 5, u8, string at offset 8                                                                                                                                                                                                                                                                                          |
+| playlist_tree (7)    | -                     | ParentId u32, u32 zero, SortOrder u32, Id u32, RawIsFolder u32 (1 for a folder, 0 for a playlist), string at offset 20                                                                                                                                                                                                                |
+| playlist_entries (8) | -                     | exactly 12 bytes: EntryIndex u32, TrackId u32, PlaylistId u32                                                                                                                                                                                                                                                                         |
+| columns (16)         | -                     | ID u16, u16 unknown, string at offset 4                                                                                                                                                                                                                                                                                               |
+| unknown 17, 18       | -                     | four u16 values, 8 bytes                                                                                                                                                                                                                                                                                                              |
 
 Rows marked "not written by us" are exactly that: this application creates those tables empty, so
 the layouts above come from the public format descriptions only and are flagged rather than asserted.
@@ -1130,11 +1130,11 @@ Measured on the user's stick (`U:/PIONEER/rekordbox/exportExt.pdb`, 73,728 bytes
 `num_tables = 9`, `len_page = 4096`, `next_unused = 21`, `sequence = 8`. The nine tables are types 0
 to 8, and only two of them carry rows:
 
-| Type | Rows | Content |
-| ---- | ---- | ------- |
-| 3 | 28 | **the tag tree** |
-| 7 | 1 | a single 60-byte row, not yet decoded |
-| 0, 1, 2, 4, 5, 6, 8 | 0 | empty |
+| Type                | Rows | Content                               |
+| ------------------- | ---- | ------------------------------------- |
+| 3                   | 28   | **the tag tree**                      |
+| 7                   | 1    | a single 60-byte row, not yet decoded |
+| 0, 1, 2, 4, 5, 6, 8 | 0    | empty                                 |
 
 The 28 rows in table 3 are the default My Tag definitions, decoded by reading their names:
 
@@ -1151,19 +1151,19 @@ noted above.
 
 Row layout, verified on all 28 rows in both files (little-endian):
 
-| Offset | Size | Field |
-| ------ | ---- | ----- |
-| 0x00 | u16 | subtype: `0x0680` for the one-byte string-offset variant, `0x0684` for the two-byte one. Every row in both files is `0x0680` |
-| 0x02 | u16 | `tag_index`: 0, 32, 64, ... stepping by 32 in row order |
-| 0x04 | 8 B | zero in every row |
-| 0x0c | u32 | **category**: the id of the parent category, and 0 when this row *is* a category |
-| 0x10 | u32 | `category_pos`: 0-based position within the category |
-| 0x14 | u32 | **id**: 1 to 4 for the four categories, otherwise a pseudo-random u32 that is unique per database |
-| 0x18 | u32 | `raw_is_category`: 0 for a tag, non-zero for a category |
-| 0x1c | u8 | constant `0x03`, the marker that precedes string offsets in every string-bearing row |
-| 0x1d | u8 | `ofs_name`: byte offset of the name string, relative to the row start |
-| 0x1e | u8 | `ofs_unknown`: byte offset of a second string, always the empty string `0x03` |
-| - | - | the name as a DeviceSQL string, then the empty string, then 8 zero bytes and padding |
+| Offset | Size | Field                                                                                                                        |
+| ------ | ---- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 0x00   | u16  | subtype: `0x0680` for the one-byte string-offset variant, `0x0684` for the two-byte one. Every row in both files is `0x0680` |
+| 0x02   | u16  | `tag_index`: 0, 32, 64, ... stepping by 32 in row order                                                                      |
+| 0x04   | 8 B  | zero in every row                                                                                                            |
+| 0x0c   | u32  | **category**: the id of the parent category, and 0 when this row _is_ a category                                             |
+| 0x10   | u32  | `category_pos`: 0-based position within the category                                                                         |
+| 0x14   | u32  | **id**: 1 to 4 for the four categories, otherwise a pseudo-random u32 that is unique per database                            |
+| 0x18   | u32  | `raw_is_category`: 0 for a tag, non-zero for a category                                                                      |
+| 0x1c   | u8   | constant `0x03`, the marker that precedes string offsets in every string-bearing row                                         |
+| 0x1d   | u8   | `ofs_name`: byte offset of the name string, relative to the row start                                                        |
+| 0x1e   | u8   | `ofs_unknown`: byte offset of a second string, always the empty string `0x03`                                                |
+| -      | -    | the name as a DeviceSQL string, then the empty string, then 8 zero bytes and padding                                         |
 
 Row length follows `round_up(31 + len(name_string) + 1 + 8, 4)`, giving 48, 52 or 56 bytes, and that
 rule held exactly on all 28 rows of the newer file. In the older file some rows are longer than the
@@ -1211,13 +1211,13 @@ full analysis is in `reverse-engineering/PDB_SPEC_AND_DIFFERENTIAL.md`.
 
 **What we write wrong, each with the offset where it shows:**
 
-| # | Defect | Evidence |
-| - | ------ | -------- |
-| 1 | Data pages declare the wrong row count when a table holds 8 or more rows. Bytes 24 to 26 hold packed counters (low 13 bits: slots ever allocated, high 11 bits: live rows) and we never carry into byte 26, so a reader computes `num_rows` modulo 8 | page 34 `columns`: ours `0x00`, device `0x03` at file offset 139,290, i.e. we declare 3 rows for a page holding 27. Same on page 36 (6 vs 22), page 38 (1 vs 17), page 14 (0 vs 8). Pages with fewer than 8 rows are right by accident |
-| 2 | Data page flags are always `0x34`, which claims the page contains deleted rows | device writes `0x24` on pages without stale slots, offsets 139,291 and 155,675, and reserves `0x34` for pages that really do have stale slots |
-| 3 | `unknown18` static row 12 carries `0x0302` where the device carries `0x0300` | file offset 155,788. The sequence around it is `0x0100, 0x0200, 0x0300, ...` so `0x302` is a typo in the dataset |
-| 4 | The transaction row count on data pages is hard-coded to 1 | device writes the page's live row count (27, 22, 17, 8 on the pages above) |
-| 5 | Genres are dropped entirely: no genre rows at all, and the track row's `GenreId` is 0, although the same export's own manifest names genre "Blues" | `pdbWriter.js` has no genre-row builder. A player shows no genre for a track that has one |
+| #   | Defect                                                                                                                                                                                                                                               | Evidence                                                                                                                                                                                                                               |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Data pages declare the wrong row count when a table holds 8 or more rows. Bytes 24 to 26 hold packed counters (low 13 bits: slots ever allocated, high 11 bits: live rows) and we never carry into byte 26, so a reader computes `num_rows` modulo 8 | page 34 `columns`: ours `0x00`, device `0x03` at file offset 139,290, i.e. we declare 3 rows for a page holding 27. Same on page 36 (6 vs 22), page 38 (1 vs 17), page 14 (0 vs 8). Pages with fewer than 8 rows are right by accident |
+| 2   | Data page flags are always `0x34`, which claims the page contains deleted rows                                                                                                                                                                       | device writes `0x24` on pages without stale slots, offsets 139,291 and 155,675, and reserves `0x34` for pages that really do have stale slots                                                                                          |
+| 3   | `unknown18` static row 12 carries `0x0302` where the device carries `0x0300`                                                                                                                                                                         | file offset 155,788. The sequence around it is `0x0100, 0x0200, 0x0300, ...` so `0x302` is a typo in the dataset                                                                                                                       |
+| 4   | The transaction row count on data pages is hard-coded to 1                                                                                                                                                                                           | device writes the page's live row count (27, 22, 17, 8 on the pages above)                                                                                                                                                             |
+| 5   | Genres are dropped entirely: no genre rows at all, and the track row's `GenreId` is 0, although the same export's own manifest names genre "Blues"                                                                                                   | `pdbWriter.js` has no genre-row builder. A player shows no genre for a track that has one                                                                                                                                              |
 
 Defect 1 is the one to fix first: it applies to every export this application has ever produced,
 because the `columns`, `unknown17`, `unknown18` and `colors` pages always hold 8 or more rows.

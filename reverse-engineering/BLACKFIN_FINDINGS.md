@@ -22,15 +22,17 @@ A raw `-b binary -m bfin` invocation is NOT supported by bfd (no plain binary ta
 the ELF wrapper above is the working recipe.
 
 Images inspected (read-only):
-| file | size | md5 |
-|---|---|---|
-| /tmp/fw/decoded/C2KNXS-run1-0x0.bin | 3,019,968 | d3c82a224c49ceedaa57cbfc9c913e2f |
-| /tmp/fw/decoded/C2KNXS-blobA.bin | 1.9 MB | (see below) |
-| /tmp/fw/decoded/C2KNXS2-run1-0x0.bin | 3.9 MB | 3e1976ccd39d2c1c0227cc5d807f4408 |
+
+| file                                 | size      | md5                              |
+| ------------------------------------ | --------- | -------------------------------- |
+| /tmp/fw/decoded/C2KNXS-run1-0x0.bin  | 3,019,968 | d3c82a224c49ceedaa57cbfc9c913e2f |
+| /tmp/fw/decoded/C2KNXS-blobA.bin     | 1.9 MB    | (see below)                      |
+| /tmp/fw/decoded/C2KNXS2-run1-0x0.bin | 3.9 MB    | 3e1976ccd39d2c1c0227cc5d807f4408 |
 
 Also reused: `/tmp/bfin-work/_full0.asm` (63 MB, full disassembly of C2KNXS-run1-0x0.bin).
 
 **Decode-validity calibration (the yardstick used throughout):**
+
 - 64 KiB of `/dev/urandom` -> 36.0 % ILLEGAL (binutils 2.39, bfin; from HOWTO.txt).
 - Genuine Blackfin code -> 0.0 % ILLEGAL (measured again here).
 
@@ -39,30 +41,34 @@ Also reused: `/tmp/bfin-work/_full0.asm` (63 MB, full disassembly of C2KNXS-run1
 Per-4 KiB-window ILLEGAL-instruction rate, computed by parsing `_full0.asm`
 (724 windows, 0x0-0x2e1000 covered by the disassembly):
 
-| image / range | windows | ILLEGAL rate | verdict |
-|---|---|---|---|
-| C2KNXS-run1-0x0.bin, **every** 4 KiB window 0x0-0x2e1000 | 724 | 30-40 % (588 windows), 40-50 % (114), 20-30 % (15), 10-20 % (2) | **not decodable code** - sits at the random-data rate (36 %); NOT one window is under 5 %, none under 1 % |
-| C2KNXS-run1-0x0.bin 0x31000-0x40000 | 15 | objdump emits no instruction lines at all | all-zero/unmapped padding (verified: 0x32000-0x33000 is 4096 x 0x00, high-bit rate 0.0 %) |
-| C2KNXS-blobA.bin 0x87000-0x93000 | ~12 | **0.0-0.1 %** | **genuine Blackfin code**, fully readable |
-| C2KNXS-blobA.bin 0x0, 0x1000, 0x80000, 0x100000, 0x180000, 0x1d0000 | 6 | 30.9-77.7 % | data / compressed / still-encoded - not code |
+| image / range                                                       | windows | ILLEGAL rate                                                    | verdict                                                                                                   |
+| ------------------------------------------------------------------- | ------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| C2KNXS-run1-0x0.bin, **every** 4 KiB window 0x0-0x2e1000            | 724     | 30-40 % (588 windows), 40-50 % (114), 20-30 % (15), 10-20 % (2) | **not decodable code** - sits at the random-data rate (36 %); NOT one window is under 5 %, none under 1 % |
+| C2KNXS-run1-0x0.bin 0x31000-0x40000                                 | 15      | objdump emits no instruction lines at all                       | all-zero/unmapped padding (verified: 0x32000-0x33000 is 4096 x 0x00, high-bit rate 0.0 %)                 |
+| C2KNXS-blobA.bin 0x87000-0x93000                                    | ~12     | **0.0-0.1 %**                                                   | **genuine Blackfin code**, fully readable                                                                 |
+| C2KNXS-blobA.bin 0x0, 0x1000, 0x80000, 0x100000, 0x180000, 0x1d0000 | 6       | 30.9-77.7 %                                                     | data / compressed / still-encoded - not code                                                              |
 
 | C2KNXS2-blobA.bin 0x0, 0x30000, 0x80000, 0x100000, 0x180000, 0x200000, 0x300000, 0x400000, 0x500000, 0x600000, 0x640000 | 12 | 32.3-49.9 % | encoded/compressed - not code, not a string pool (printable-run density only 0.25-6.6 % per 256 KiB) |
 
 Evidence for the code verdict (blobA, all four values from `bfin-elf-objdump`):
+
 ```
 0x087000: 1672 insns   0 ILLEGAL   0.0%
 0x087100: 1646 insns   1 ILLEGAL   0.1%
 0x092000: 1671 insns   0 ILLEGAL   0.0%
 0x092407: 1623 insns   1 ILLEGAL   0.1%
 ```
+
 and for the negative verdict (same tool, same options):
+
 ```
 C2KNXS-run1-0x0.bin 0xf4000: 1686 insns  (15.1% ILLEGAL - the *cleanest* window in the image)
 C2KNXS-run1-0x0.bin 0x9b000: 2022 insns  (25.1% ILLEGAL)
 C2KNXS-blobA.bin   0x80000: 1959 insns  (73.8% ILLEGAL)
 ```
+
 Corroboration that C2KNXS-run1-0x0.bin is not a plaintext code image: its strings are
-readable ASCII but *interleaved with stray high-bit junk bytes*, e.g. at 0xb21f4:
+readable ASCII but _interleaved with stray high-bit junk bytes_, e.g. at 0xb21f4:
 `"M<FF>usic Anal<FF>yse File<FF> is brok<FB>en\0%/ANLZ<9F>%04X.DAT"` (0xff/0xfb/0x9f
 inserted roughly every 9-11 bytes). Readable text + random-rate disassembly means the
 run1 stream is a container whose big payload regions are still compressed/encoded.
@@ -78,6 +84,7 @@ come from there.
 
 Readable code in the corpus is confined to `C2KNXS-blobA.bin`, and it consists of two
 segments (from per-4 KiB ILLEGAL rates over `_bA.asm`, 475 windows, 91 windows < 2 % ILLEGAL):
+
 - `0x78000-0x79000` (4 KiB)
 - `0x87000-0xe1000` (576 KiB) - the main code body
 
@@ -103,11 +110,13 @@ Two previous leads are now **refuted with instruction-level evidence**:
 
 **(a) The `0xC0700` "constant in real code" at blobA 0x92407 is a byte-level coincidence.**
 The bytes are `00 07 0c 00` spanning two instructions and two immediates:
+
 ```
 0x92406: 60 00        CALL (P0);
 0x92408: 07 0c        CC = R7 == 0x0;
 0x9240a: 00 60        R0 = 0x0 (X);
 ```
+
 `0x92407` is the second byte of `CALL (P0)` (0x00), then `07 0c` = the whole
 `CC = R7 == 0x0` opcode, then the low byte (0x00) of `R0 = 0x0`. So the 0x000C0700
 pattern is assembled from instruction bytes; it is not an immediate. Consistent with
@@ -116,9 +125,10 @@ this, `0xC0700`/`0x0C0700` appears **zero** times as an immediate anywhere in
 in high-entropy bytes. **Neither occurrence is a PDB bitmask/contentLink constant.**
 
 **(b) The function that loads 42/43 is not a record reader, and 42 is not the string-offset
-table size.** Full disassembly of blobA 0x923d0-0x92426 shows 42 and 43 are *selectors*
+table size.** Full disassembly of blobA 0x923d0-0x92426 shows 42 and 43 are _selectors_
 passed to a helper, and the u16 reads at +0x1a/+0x1e are on the two returned objects, not
 on a track record:
+
 ```
 0x923d0: LINK 0x0
 0x923da: R1 = 0x2a (X)          ; 42
@@ -144,26 +154,27 @@ on a track record:
 0x92418: R0 *= R6               ; then call 0xe0a04 with a scaled value
 0x9241a: CALL 0xe0a04
 ```
-The `W[... + 0x1a]`/`W[... + 0x1e]` pair is used only as a *delta* between two sibling
+
+The `W[... + 0x1a]`/`W[... + 0x1e]` pair is used only as a _delta_ between two sibling
 objects selected by index 42 and 43, and it never touches the 21x2-byte string-offset
 table. The "42 = our 42-byte string offset table" match is numerology. There is no
 evidence this function has anything to do with PDB records.
 
 ## 3. Our track-row map fields: name or rule out (with evidence)
 
-Given section 2, every field of our writer's map must be resolved from *indirect*
+Given section 2, every field of our writer's map must be resolved from _indirect_
 evidence in the readable code. Status of each previously "unknown" field:
 
-| field (our offset) | value we write | firmware verdict | evidence |
-|---|---|---|---|
-| u16 @0 "Unnamed0" | 0x24 | **not named** | no code in the readable region tests a record's first u16 against 0x24; PDB row-type dispatch not present (section 2) |
-| u16 @2 IndexShift | 0 | **not named** (mechanism already known from the format, not from firmware) | no firmware evidence found either way |
-| u32 @4 "Bitmask" | 0xC0700 | **ruled out as a firmware constant** - the only in-code occurrence is a byte coincidence at 0x92407 (section 2a); appears 0 times as an immediate | `grep -c '0x0c0700|0xc0700' _full0.asm` = 0 |
-| u16 @24 / u16 @26 auto-gain | 13940 / 17802 (0x3674/0x458A) refs 0x4975/0x5DC9 | **not confirmable from firmware**; nothing in the readable code loads these two consecutive u16s as a gain pair (the only `+0x1a`/`+0x1e` pair found is the unrelated delta in section 2b) | blobA 0x923d0-0x92426 |
-| u16 @86 "Unnamed26" | 0x29 | **not named** | no 0x29 record-field test in readable code |
-| u16 @92 "Unnamed30" | 0x03 | **not named** | no 0x03 record-field test in readable code |
-| string-index semantics (KeyAnalyzed "1", PhraseAnalyzed "1", AutoloadHotcues "ON", UnknownString4/5/6/7/8) | as listed | **not nameable**; the string-offset walker that would assign meaning to the 21 offsets is not in the readable region | section 2 |
-| everything else in the row (SampleRate, ComposerId, ... FilePath) | - | labels came from prior public-format work, **not** from these images; firmware adds nothing | - |
+| field (our offset)                                                                                         | value we write                                   | firmware verdict                                                                                                                                                                           | evidence                                                                                                              |
+| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| u16 @0 "Unnamed0"                                                                                          | 0x24                                             | **not named**                                                                                                                                                                              | no code in the readable region tests a record's first u16 against 0x24; PDB row-type dispatch not present (section 2) |
+| u16 @2 IndexShift                                                                                          | 0                                                | **not named** (mechanism already known from the format, not from firmware)                                                                                                                 | no firmware evidence found either way                                                                                 |
+| u32 @4 "Bitmask"                                                                                           | 0xC0700                                          | **ruled out as a firmware constant** - the only in-code occurrence is a byte coincidence at 0x92407 (section 2a); appears 0 times as an immediate                                          | `grep -c '0x0c0700                                                                                                    | 0xc0700' _full0.asm` = 0 |
+| u16 @24 / u16 @26 auto-gain                                                                                | 13940 / 17802 (0x3674/0x458A) refs 0x4975/0x5DC9 | **not confirmable from firmware**; nothing in the readable code loads these two consecutive u16s as a gain pair (the only `+0x1a`/`+0x1e` pair found is the unrelated delta in section 2b) | blobA 0x923d0-0x92426                                                                                                 |
+| u16 @86 "Unnamed26"                                                                                        | 0x29                                             | **not named**                                                                                                                                                                              | no 0x29 record-field test in readable code                                                                            |
+| u16 @92 "Unnamed30"                                                                                        | 0x03                                             | **not named**                                                                                                                                                                              | no 0x03 record-field test in readable code                                                                            |
+| string-index semantics (KeyAnalyzed "1", PhraseAnalyzed "1", AutoloadHotcues "ON", UnknownString4/5/6/7/8) | as listed                                        | **not nameable**; the string-offset walker that would assign meaning to the 21 offsets is not in the readable region                                                                       | section 2                                                                                                             |
+| everything else in the row (SampleRate, ComposerId, ... FilePath)                                          | -                                                | labels came from prior public-format work, **not** from these images; firmware adds nothing                                                                                                | -                                                                                                                     |
 
 Note the honest asymmetry: none of the 21 string names is present as a string anywhere in
 these images either (the task's earlier result stands: `tracks`, `genres`, `artists`,
@@ -181,7 +192,7 @@ in `strings-clean.txt`).
    tags absent from the readable code and from all plaintext string pools.
 3. **The meaning of u16 @0 = 0x24 and u16 @92 = 0x03** - not recoverable here. Reason: no
    consumer-side test of these fields is in the readable code; the values are only ever
-   *produced* by our writer.
+   _produced_ by our writer.
 4. **Whether u16 @24/@26 are really auto-gain** - not recoverable here (no arithmetic on a
    @24/@26 pair found; the writers' 0x4975/0x5DC9 reference values do not appear in the
    readable code).
@@ -201,6 +212,7 @@ named from firmware. This is a negative result, and it is bounded by measurement
 effort.**
 
 What is established:
+
 - Exactly one readable code body exists in the inspected corpus: `C2KNXS-blobA.bin`
   0x78000-0x79000 and 0x87000-0xe1000 (0.0-0.1 % ILLEGAL). Its 576 KiB parse cleanly and
   were read instruction by instruction.
