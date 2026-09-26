@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
 """Scan decoded component images for real Blackfin code (illegal-rate map, best of 4 phases)."""
-import subprocess, sys, re, glob, os
+import subprocess, sys, re
 
-BIN = "/home/radexito/re/binutils/bin/bfin-elf-objdump"
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from paths import firmware_dir, locate, objdump, scratch  # noqa: E402
+
+BIN = objdump("bfin-elf-objdump")
 
 
 def rate(chunk):
-    open("/tmp/w.bin", "wb").write(chunk)
-    out = subprocess.run([BIN, "-D", "-b", "binary", "-m", "bfin", "/tmp/w.bin"],
+    window = scratch()
+    window.write_bytes(chunk)
+    out = subprocess.run([BIN, "-D", "-b", "binary", "-m", "bfin", str(window)],
                          capture_output=True, text=True).stdout
     tot = bad = 0
     for line in out.splitlines():
@@ -20,7 +28,8 @@ def rate(chunk):
 
 print("file, sampling every 4 KiB (small files) or 64 KiB (large), best of 4 phases")
 print("random-data baseline = 36.7%")
-for path in sys.argv[1:]:
+paths = sys.argv[1:] or sorted(str(p) for p in firmware_dir().glob("raw_*.bin"))
+for path in paths:
     img = open(path, "rb").read()
     step = 4096 if len(img) <= (1 << 20) else 65536
     results = []

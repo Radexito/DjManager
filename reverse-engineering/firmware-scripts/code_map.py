@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 """Blackfin code-ness map: illegal-opcode rate per sampled 4 KiB window, best of 4 phases."""
-import subprocess, sys, re, os
+import subprocess, sys, re
 
-BIN = "/home/radexito/re/binutils/bin/bfin-elf-objdump"
-IMG = sys.argv[1]
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from paths import locate, objdump, scratch  # noqa: E402
+
+BIN = objdump("bfin-elf-objdump")
+IMG = str(locate("raw_C2KNXS.comp0.bin", *sys.argv[1:2]))
 STEP = int(sys.argv[2]) if len(sys.argv) > 2 else 65536
 img = open(IMG, "rb").read()
 print("image", IMG, len(img), "bytes; sampling every", STEP)
 
 def illegal_rate(chunk):
-    open("/tmp/w.bin", "wb").write(chunk)
-    out = subprocess.run([BIN, "-D", "-b", "binary", "-m", "bfin", "/tmp/w.bin"],
+    window = scratch()
+    window.write_bytes(chunk)
+    out = subprocess.run([BIN, "-D", "-b", "binary", "-m", "bfin", str(window)],
                          capture_output=True, text=True).stdout
     tot = bad = 0
     for line in out.splitlines():

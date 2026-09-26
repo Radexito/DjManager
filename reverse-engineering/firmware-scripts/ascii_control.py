@@ -2,12 +2,20 @@
 """Control: does ASCII text (like S-record text) fake a low illegal rate?"""
 import subprocess, re
 
-BIN = "/home/radexito/re/binutils/bin/bfin-elf-objdump"
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from paths import locate, objdump, scratch  # noqa: E402
+
+BIN = objdump("bfin-elf-objdump")
 
 
 def illegal(b):
-    open("/tmp/w.bin", "wb").write(b)
-    out = subprocess.run([BIN, "-D", "-b", "binary", "-m", "bfin", "/tmp/w.bin"],
+    window = scratch()
+    window.write_bytes(b)
+    out = subprocess.run([BIN, "-D", "-b", "binary", "-m", "bfin", str(window)],
                          capture_output=True, text=True).stdout
     tot = bad = 0
     for line in out.splitlines():
@@ -19,7 +27,7 @@ def illegal(b):
 
 
 # 1. what is actually at DRIV raw 0x52000?
-d = open("/home/radexito/re/fw2k/raw_C2KNXS.comp1.bin", "rb").read()
+d = locate("raw_C2KNXS.comp1.bin").read_bytes()
 seg = d[0x52000:0x52080]
 print("DRIV raw 0x52000..0x52080:")
 print("   hex:", seg[:48].hex())
@@ -31,6 +39,6 @@ print("   4 KiB of ASCII text        : %.1f%%" % illegal(b"the quick brown fox j
 print("   S-record text from the file : %.1f%%" % illegal(d[0x52000:0x53000]))
 print("   random data                : %.1f%%" % illegal(open("/dev/urandom", "rb").read(4096)))
 print("   the known GUI code block   : %.1f%%" %
-      illegal(open("/home/radexito/re/fw2k/raw_C2KNXS.comp0.bin", "rb").read()[0x87000:0x88000]))
+      illegal(locate("raw_C2KNXS.comp0.bin").read_bytes()[0x87000:0x88000]))
 print("   0xff fill                  : %.1f%%" % illegal(b"\xff" * 4096))
 print("   0x00 fill                  : %.1f%%" % illegal(b"\x00" * 4096))

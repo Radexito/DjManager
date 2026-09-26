@@ -1,7 +1,9 @@
 # Pioneer 2k / XDJ firmware: what the update files actually contain
 
-Measured 2026-09-26 on the official `.UPD` files, using a multi-target binutils built in `~/re/binutils`.
-Working copies live in `~/re/fw2k/`. Nothing here is copied from community notes; every claim has an offset
+Measured 2026-09-26 on the official `.UPD` files, using locally built multi-target binutils (the build
+recipe is in `reverse-engineering/firmware-scripts/README.md`). The firmware itself is downloaded from the
+vendor's site and is not redistributed here; the scripts take its location from `CDJ_FW_DIR`. Nothing here
+is copied from community notes; every claim has an offset
 or a measurement, and the negative results are listed as plainly as the positive ones.
 
 ## 1. Container format (verified, sums to the byte)
@@ -119,11 +121,13 @@ is unchanged across seven years it is a deliberate, long-lived design.
   XDJ-1000MK2 MAIN image 1,166 records overwrite 36,831 bytes, all inside `0x0c0000..0x0ffffc`.
 - Split components before decoding. Merging them put two address spaces in one buffer and produced
   1,166 phantom overlaps.
-- The toolchain: `binutils 2.39 --target=bfin-elf --enable-targets=bfin-elf,arm-linux-gnueabi,aarch64-linux-gnu`.
+- The toolchain: `binutils 2.39 --target=bfin-elf --enable-targets=bfin-elf,arm-linux-gnueabi,aarch64-linux-gnu`
+  (and `--target=sh4-linux-gnu --enable-targets=sh4-linux-gnu,sh-elf` for the SH-4 side).
   Do **not** use `--enable-targets=all`: `opcodes/mips-formats.h` fails to compile with a modern GCC
   (`static_assert` without `assert.h`), which aborts the whole build.
-- Scripts used are in `~/re/fw2k/`: `split_components.py`, `srec_decode2.py`, `census.py`,
-  `component_codescan.py`, `code_map.py`, `arm_fingerprint.py`, `lz_trials.py`, `raw_trials.py`.
+- The scripts behind this document are in `reverse-engineering/firmware-scripts/`: `split_components.py`,
+  `srec_decode2.py`, `census.py`, `component_codescan.py`, `code_map.py`, `arm_fingerprint.py`,
+  `lz_trials.py`, `raw_trials.py`.
 
 ## 7. Open items
 
