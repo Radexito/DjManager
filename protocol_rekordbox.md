@@ -1188,3 +1188,44 @@ file, and the format is small: nine table pointers, one index page plus one data
 tree, and 28 rows of at most 56 bytes. Our exporter never writes it, so sticks we build show an empty
 My Tags list. The remaining unknown is only the `tag_tracks` row layout (type 4), which stays empty on
 both sticks examined because no track in either library has a tag assigned. Tracked as #579.
+
+## Differential: our `export.pdb` against rekordbox's and the device's
+
+Three files were compared with the parser in this repository: our export (`export.pdb`, 163,840 bytes,
+40 pages, 2 tracks), a device-written file from the user's older stick (`C:\shimi usb`, 167,936 bytes,
+41 pages, no tracks but one history row) and the rex corpus file `pristine.pdb` (167,936 bytes). The
+full analysis is in `reverse-engineering/PDB_SPEC_AND_DIFFERENTIAL.md`.
+
+**What matches, verified byte for byte:**
+
+- File header layout, table count (20), table order and types, and the placement of one flags-`0x64`
+  index page at the start of every table.
+- The four static datasets that devices also carry: `colors` (all 8 rows identical), `columns` (all 27
+  rows identical, the browse-menu schema), `unknown17` (all 22 rows) and `unknown18` (16 of 17 rows).
+- String encodings: long UTF-16LE columns names and short-ASCII colour names are byte-identical
+  wherever the same content exists on both sides.
+- The empty-candidate rule: every one of the 20 tables has its own distinct candidate page, and in both
+  files that candidate is the final link of the table's chain. Candidates that point past the end of the
+  file occur in **both** files and are exactly the tables that own a data page, so that pattern is
+  rekordbox's own behaviour and not a defect of ours.
+
+**What we write wrong, each with the offset where it shows:**
+
+| # | Defect | Evidence |
+| - | ------ | -------- |
+| 1 | Data pages declare the wrong row count when a table holds 8 or more rows. Bytes 24 to 26 hold packed counters (low 13 bits: slots ever allocated, high 11 bits: live rows) and we never carry into byte 26, so a reader computes `num_rows` modulo 8 | page 34 `columns`: ours `0x00`, device `0x03` at file offset 139,290, i.e. we declare 3 rows for a page holding 27. Same on page 36 (6 vs 22), page 38 (1 vs 17), page 14 (0 vs 8). Pages with fewer than 8 rows are right by accident |
+| 2 | Data page flags are always `0x34`, which claims the page contains deleted rows | device writes `0x24` on pages without stale slots, offsets 139,291 and 155,675, and reserves `0x34` for pages that really do have stale slots |
+| 3 | `unknown18` static row 12 carries `0x0302` where the device carries `0x0300` | file offset 155,788. The sequence around it is `0x0100, 0x0200, 0x0300, ...` so `0x302` is a typo in the dataset |
+| 4 | The transaction row count on data pages is hard-coded to 1 | device writes the page's live row count (27, 22, 17, 8 on the pages above) |
+| 5 | Genres are dropped entirely: no genre rows at all, and the track row's `GenreId` is 0, although the same export's own manifest names genre "Blues" | `pdbWriter.js` has no genre-row builder. A player shows no genre for a track that has one |
+
+Defect 1 is the one to fix first: it applies to every export this application has ever produced,
+because the `columns`, `unknown17`, `unknown18` and `colors` pages always hold 8 or more rows.
+
+**Where names came from.** The track row's own `Unnamed` fields are now partly resolved against the
+public format description: offset 0 is the subtype (`0x24`), offset 86 is the spec's `u5` and offset 92
+is the spec's `u7`. The page-accounting discovery above also resolved a long-standing misreading: the
+24-bit field's low bits count allocated slots and its high bits count live rows, which is why a 76-slot
+page with 28 live rows reads `0x03804C`. The two auto-gain constants still cannot be verified, because
+**no rekordbox-written track row exists on this machine**: the device stick's file has no tracks and the
+repo's capture corpus is our own output. That remains the one field pair with no ground truth.
