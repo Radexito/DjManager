@@ -271,3 +271,48 @@ boot ROM rather than in the update file, since no component of the updates conta
 means the deck-side database code cannot be read from these files at all, and the firmware route is closed
 for it. What the payloads do still give is the vocabulary and the path templates, which is section 10 and
 section 11, and that is the part worth keeping.
+
+## 13. CORRECTION: the MAIN payload is LZSS-packed SH-4 code, and it is readable
+
+Sections 9 to 12 conclude that the MAIN payloads are a proprietary encoding with the decompressor in the
+deck boot ROM, and that deck-side code is therefore unreadable. **That conclusion is wrong** and this
+section replaces it. The resolution came from the `cdj2k-revival/cdj2000-emulator` project, which had
+already solved the hardware problem this analysis was missing.
+
+**What was missing: the CPU.** The CDJ-2000 is a two-processor machine. The GUI board is a **Blackfin
+BF531** which paints the display, and the MAIN board is a **Renesas SH-4**, which runs the player, the
+flash, SDRAM, DMAC, panel, SD, ATAPI, USB and the audio DSP. Every code test in sections 9 to 12 was run
+for Blackfin (which correctly matched the GUI component) and for ARM and Thumb (which correctly came back
+negative), and **never for SH-4**. The MAIN payload was therefore being scanned for instructions from the
+wrong architecture, which is exactly what produced the "no code, must be a proprietary compressor" result.
+
+**What the packing is.** The MAIN updater carries an SH-4 image whose regions are **LZSS**-packed with a
+4 KiB space-filled window, 18-byte lookahead, a 12-bit position and a 4-bit length biased by 3, and packed
+regions at `0x10000` and `0x40000`, each guarded by a checksum. The flag convention is the detail that
+defeated the earlier sweep: in this format a flag bit of 1 means **literal** and 0 means **match**, the
+inverse of the Okumura convention that was tested, which is why every offset was rejected.
+
+**Consequences, corrected.** LZSS leaves literals in the clear and replaces only repeated material with
+match tokens, which explains every symptom that was misread as encryption or a proprietary codec: the
+readable strings survive verbatim inside the packed region, the occasional stray byte between readable
+characters is a match token, the byte histogram is skewed, and there is no periodic structure. The entropy
+figures in section 9 measure the _packed_ form, not the code.
+
+**Container details newly verified.** The reference parser accepted our original `C2KNXS.UPD` unchanged and
+validated every component, which independently confirms the manifest and title analysis and adds two facts
+it did not have: each component ends with a **CRC-16 (CRC-HQX, `binascii.crc_hqx`, seed 0)** trailer, and
+the trailer width and byte order differ per component, 4 bytes big-endian for GUI and 2 bytes little-endian
+for DRIV, MAIN and PANL. The same project documents the RX-style family as `[payload][12-byte tag][4-byte
+CRC32]`, matching section 8.
+
+**Result.** Decompressing our CDJ-2000NXS `C2KMAIN.UPD` yields a 3,019,968-byte flash image, a 196,608-byte
+unpacked loader and a **4,063,232-byte unpacked MAIN application** loaded at `0x04000000`. It is genuine
+SH-4 code: `rts` (`0x000B`) appears 8,662 times against 43 in random data of the same size, `nop`
+(`0x0009`) 24,671 against 32, the `mov.l r14,@-r15` and `sts.l pr,@-r15` prologues 6,250 and 5,942 against
+28 and 30, `rte` 143, and `jsr @Rn` 54,409 against 495. Deck-side database and ANLZ logic is therefore
+readable, and that analysis is the live follow-up rather than a dead end.
+
+**Licence boundary.** The reference project is GPL-2.0-or-later. Its extractors were run locally for
+analysis and none of its code is copied into this repository; its findings are cited here and its code is
+not redistributed. The decoder parameters above are stated as a format description so that anything needed
+here can be implemented independently.
