@@ -1229,3 +1229,48 @@ is the spec's `u7`. The page-accounting discovery above also resolved a long-sta
 page with 28 live rows reads `0x03804C`. The two auto-gain constants still cannot be verified, because
 **no rekordbox-written track row exists on this machine**: the device stick's file has no tracks and the
 repo's capture corpus is our own output. That remains the one field pair with no ground truth.
+
+## Track row verified against a rekordbox export of the same library
+
+A pair of exports of the _same_ library was found on the laptop, which settles questions the earlier
+differential had to leave open: `Desktop/djmanaget-cloude/binary files/dnbclassics_rekordbox` (written by
+rekordbox, 172,032 bytes, 18 track rows) next to `dnbclassics_djmanager` (written by this application,
+163,840 bytes, 4 track rows). Both export the same four dnb tracks.
+
+**The layout is confirmed.** Every string slot in the row's 21-entry offset table lines up between the
+two writers: the analyze path at index 14, the two dates at 10 and 15, the title at 17, the
+`Artist - Title.mp3` name at 19 and the full path at 20, with `ON` at index 7 in both files. Row header
+fields that match exactly include the subtype `0x24`, the `contentLink` constant `0x000C0700` and the
+sample rate `44100`.
+
+**Values that differ, with offsets (track row, byte 0 = row start):**
+
+| Offset    | Field             | Rekordbox                                                        | Ours                                                                                        |
+| --------- | ----------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| 0x02      | row index shift   | `0x0060`, `0x0020` (non-zero, steps of 0x20)                     | `0x0000`                                                                                    |
+| 0x10      | file size         | `0`                                                              | `0` (matches, but see below)                                                                |
+| 0x14      | checksum          | `0x0BC94115`, `0x0B14BDD9` (non-zero)                            | `0x00000000`                                                                                |
+| 0x18      | auto gain pair    | `0x4975` / `0x5DC9` = **18805 / 24009**                          | `0` / `0` when the track has no replay gain                                                 |
+| 0x20      | key id            | `4`, `1`                                                         | `0`                                                                                         |
+| 0x30      | bitrate           | `32`                                                             | `0x38642` = 230978, and `0x3F74D` = 259917 on the next track, i.e. byte sizes, not bitrates |
+| 0x34      | see below         | `8700`                                                           | `8650` (same magnitude, same track)                                                         |
+| 0x3C      | genre id          | `4`, `1`                                                         | `0`                                                                                         |
+| string 0  | first string slot | empty (`0x03`)                                                   | a 6-byte long string `90 06 00 00 03 00` in this export                                     |
+| string 20 | file path         | `/Contents/UnknownArtist/UnknownAlbum/Wilkinson - Afterglow.mp3` | `/music/Wilkinson - Afterglow.mp3`                                                          |
+
+Three conclusions follow, and two of them **correct earlier statements in this document**:
+
+1. The auto-gain reference pair is now measured, not guessed: **18805 and 24009** appear on both
+   rekordbox tracks that carry no replay gain, so those are the "no gain applied" references. The
+   earlier note that no rekordbox-written track row existed on this machine was true of the two sticks
+   examined but wrong in general: this Desktop pair has one.
+2. **rekordbox itself exports an empty genres table while setting a non-zero `GenreId`** (4 and 1 here,
+   with the `genres` table holding zero rows). So an empty genres table is normal behaviour, and the
+   actionable difference is the `GenreId` in the track row, not the missing genre rows.
+3. The path rekordbox writes is `/Contents/<Artist>/<Album>/<filename>`, with `UnknownArtist` and
+   `UnknownAlbum` as literal fallbacks, which is a stronger statement than "use `Contents` instead of
+   `music`".
+
+Open questions this pair raises: the meaning of row offset `0x34` (holds a value near the track's length
+in both writers but not the same number), the `bitrate` slot holding a byte size in our output, and the
+first string slot where we write a long-string blob and rekordbox writes an empty string.
