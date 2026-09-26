@@ -382,3 +382,68 @@ describe('BeatGridEditor — trim preview + queue (#463 follow-up)', () => {
     );
   });
 });
+
+describe('Prepare Track — hot cue slot swap (deferred path)', () => {
+  const badges = () => [...document.querySelectorAll('.cpe__badge')].map((el) => el.textContent);
+
+  afterEach(() => {
+    window.api.getCuePoints.mockResolvedValue([]);
+    window.api.updateCuePoint.mockResolvedValue({ ok: true });
+  });
+
+  it('asks before overwriting a slot and saves both cues on Apply', async () => {
+    window.api.getCuePoints.mockResolvedValue([
+      {
+        id: 11,
+        track_id: 7,
+        position_ms: 10_000,
+        label: 'Intro',
+        color: '#ff6b35',
+        hot_cue_index: 0,
+        enabled: 1,
+      },
+      {
+        id: 12,
+        track_id: 7,
+        position_ms: 30_000,
+        label: 'Drop',
+        color: '#ff0000',
+        hot_cue_index: 1,
+        enabled: 1,
+      },
+    ]);
+    const { onApply } = renderEditor();
+    await act(async () => {});
+
+    // Cue 12 holds B; ask it to take A, which cue 11 holds.
+    const badgeB = [...document.querySelectorAll('.cpe__badge')].find(
+      (el) => el.textContent === 'B'
+    );
+    fireEvent.click(badgeB);
+    fireEvent.click(screen.getByTitle('Hot cue A'));
+
+    expect(document.querySelector('.cpe__confirm')).toHaveTextContent('Hot cue A (Intro) is taken');
+    expect(badges()).toEqual(['A', 'B']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Swap' }));
+    await act(async () => {});
+
+    // Deferred: the swap stays local until Apply.
+    expect(window.api.updateCuePoint).not.toHaveBeenCalled();
+    expect(badges()).toEqual(['B', 'A']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await act(async () => {});
+
+    expect(window.api.updateCuePoint).toHaveBeenCalledTimes(2);
+    expect(window.api.updateCuePoint).toHaveBeenCalledWith(
+      12,
+      expect.objectContaining({ hotCueIndex: 0 })
+    );
+    expect(window.api.updateCuePoint).toHaveBeenCalledWith(
+      11,
+      expect.objectContaining({ hotCueIndex: 1 })
+    );
+    expect(onApply).toHaveBeenCalled();
+  });
+});
