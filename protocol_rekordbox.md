@@ -1149,28 +1149,33 @@ row index 0 is `Genre`, indices 1 to 8 are its children, index 8 is `Components`
 and `0x0200` at index 16. This matches the page header's `unknown3 = num_rows * 0x20` relationship
 noted above.
 
-Row layout as observed (48 to 56 bytes per row, little-endian):
+Row layout, verified on all 28 rows in both files (little-endian):
 
-```
-0x00  u16   subtype, 0x0680 for every tag row
-0x02  u16   IndexShift, row index * 0x20
-0x04  u32   zero in every row observed
-0x08  u32   zero in every row observed
-0x0c  u32   group or parent id (0 for Genre, 1 for its children, 2 for Components, 3 for Situation,
-             4 for Untitled Column)
-...
-      then a small field descriptor and the name as a DeviceSQL string
-```
+| Offset | Size | Field |
+| ------ | ---- | ----- |
+| 0x00 | u16 | subtype: `0x0680` for the one-byte string-offset variant, `0x0684` for the two-byte one. Every row in both files is `0x0680` |
+| 0x02 | u16 | `tag_index`: 0, 32, 64, ... stepping by 32 in row order |
+| 0x04 | 8 B | zero in every row |
+| 0x0c | u32 | **category**: the id of the parent category, and 0 when this row *is* a category |
+| 0x10 | u32 | `category_pos`: 0-based position within the category |
+| 0x14 | u32 | **id**: 1 to 4 for the four categories, otherwise a pseudo-random u32 that is unique per database |
+| 0x18 | u32 | `raw_is_category`: 0 for a tag, non-zero for a category |
+| 0x1c | u8 | constant `0x03`, the marker that precedes string offsets in every string-bearing row |
+| 0x1d | u8 | `ofs_name`: byte offset of the name string, relative to the row start |
+| 0x1e | u8 | `ofs_unknown`: byte offset of a second string, always the empty string `0x03` |
+| - | - | the name as a DeviceSQL string, then the empty string, then 8 zero bytes and padding |
 
-The payload between the ids and the name is **not fully decoded yet**: the last few bytes before the
-name are consistent with a string-field descriptor plus a byte that varies with the row, and settling
-it needs more samples, in particular a tag with a non-ASCII name. The name itself and the parent
-relationships above are certain, since they are read straight out of the rows.
+Row length follows `round_up(31 + len(name_string) + 1 + 8, 4)`, giving 48, 52 or 56 bytes, and that
+rule held exactly on all 28 rows of the newer file. In the older file some rows are longer than the
+rule because a name was replaced in place with a shorter one and stale bytes of the previous name
+remain inside the allocated row, so a parser must walk rows by the index offsets and never by scanning
+for text.
 
-The second stick examined (`C:\shimi usb`, written in 2023) has the same nine tables and the same
-default tag names, with `sequence = 18` instead of 8 and a larger allocation: its type 3 table holds 76
-row slots, of which only the default names decode and the rest are free or deleted slots, and its type 7
-table holds two slots instead of one. No user-created tag names were found on either stick.
+The nine tables are identical in both files, and only two hold data: type 3 (tags, 28 rows) and type 7
+(one 60-byte bookkeeping row). That type 7 row is still not understood: it is mostly zeros, ends with
+five repeated `0x03` empty strings, and its only varying field (`0xBB52C102` in the newer file,
+`0x8A68985A` in the older) is rewritten with a new random value on each write. It is not the documented
+16-byte tag_track row. Nothing should be built on it yet.
 
 The `tag_tracks` table (type 4), which would map tracks to tags, **is empty on both sticks**, because no
 track in either library has a tag assigned. Its row layout therefore could not be verified and is left
@@ -1179,5 +1184,7 @@ followed by `03` repeated five times, which looks like a small parallel array bu
 unknown.
 
 **Consequence for this application:** supporting My Tags needs no decryption, only a writer for this
-file. The blocking pieces are the unverified `tag_tracks` row layout and the `...`-marked payload of
-the tag rows.
+file, and the format is small: nine table pointers, one index page plus one data page for the tags
+tree, and 28 rows of at most 56 bytes. Our exporter never writes it, so sticks we build show an empty
+My Tags list. The remaining unknown is only the `tag_tracks` row layout (type 4), which stays empty on
+both sticks examined because no track in either library has a tag assigned. Tracked as #579.
