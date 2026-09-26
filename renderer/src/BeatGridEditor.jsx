@@ -368,6 +368,7 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
     stop,
     queue,
     patchCurrentTrack,
+    setPrepareTrackOpen,
   } = usePlayer();
 
   const [offset, setOffset] = useState(track.beatgrid_offset ?? 0);
@@ -826,6 +827,15 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
     start: track.trim_start_ms ?? null,
     end: track.trim_end_ms ?? null,
   });
+  // Tell the player that the Prepare Track screen is open, so reaching the trim
+  // OUT point pauses there instead of advancing to the next track (user report
+  // 2026-09-25). Cleared on unmount, which is what keeps the pause exclusive to
+  // this screen.
+  useEffect(() => {
+    setPrepareTrackOpen?.(track.id);
+    return () => setPrepareTrackOpen?.(null);
+  }, [setPrepareTrackOpen, track.id]);
+
   useEffect(() => {
     if (!isThisTrack) return;
     patchCurrentTrack(track.id, { trim_start_ms: trimStart, trim_end_ms: trimEnd });
