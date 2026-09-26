@@ -683,7 +683,7 @@ A `PCPT` record is **56 bytes (`0x38`)** and reads as follows, big-endian:
 | `+0x14` | u32 constant `0x00010000`                                 |
 | `+0x18` | u32 constant `0xFFFFFFFF`                                 |
 | `+0x1C` | u8 **type: `1` = cue point, `2` = loop**                  |
-| `+0x1D` | three bytes, `00 03 e8`                                   |
+| `+0x1D` | three bytes, `00 03 e8` (constant in every capture)       |
 | `+0x20` | u32 start time in milliseconds                            |
 | `+0x24` | u32 loop end in milliseconds, or `0xFFFFFFFF`             |
 | `+0x28` | 16 zero bytes                                             |
@@ -706,11 +706,29 @@ as **UTF-16BE with a u16 length prefix** (`00 0C` before `Break`) followed by a 
    issue #572. Nothing else in the record distinguishes it from a hot cue.
 3. **Labels and colours live in `PCO2`/`PCP2`** as a length-prefixed UTF-16BE string plus three colour
    bytes, which is issue #574.
-4. Eight hot cues fit in a single file with slots 1 to 8, which puts the A to C / D to H split our writer
-   assumes in question.
+4. **The A to C / D to H split is confirmed correct.** For the eight-hot-cue track, rekordbox writes three
+   cue records in the DAT (slots 2, 1, 3, list kind 1, count 3) and five in the EXT (slots 8, 7, 6, 5, 4,
+   list kind 1, count 5), with the extended cue sections carrying the labels and colours. Our writer's split
+   matches rekordbox exactly, and an earlier note in this section that questioned it came from a
+   too-imprecise reading of "eight hot cues in one file": they span two files.
 
 **Why the firmware could not have answered this, restated:** the deck's writer takes the slot number as its
 fourth argument and stores it at `+0x0C`, and the deck's reader never tests a type value at all. The kinds
 are expressed by _which record and which section an entry belongs to_, which is a property of the file
 layout rather than of any comparison the code makes. The emulator was the right instinct for behaviour; the
 captures were the faster oracle for encoding.
+
+### Verified section map, from the captures
+
+Both files carry **two `PCOB` sections**, one per cue list, with the list kind at `+0x0C` of the header: 1 for
+the hot cue list, 0 for the memory cue list, followed by the entry count. The EXT additionally carries **two
+`PCO2` sections** (labels and colours), then `PQT2`, the preview waveforms and `PSSI`.
+
+For the eight-hot-cue track (`41-hot-cue-a-h`): the DAT has one non-empty list, kind 1 with count 3, holding
+slots 2, 1, 3; the EXT has kind 1 with count 5, holding slots 8, 7, 6, 5, 4. Note the order is not sorted in
+either file, so entry order carries no meaning. For every capture examined, the memory cue list (kind 0) is
+present and empty except in `42-momory_cue`, where it holds one record with slot 0.
+
+Also worth recording: the EXT carries `PSSI`, which the NXS firmware has no parser for, so a current
+rekordbox export contains sections an NXS player ignores. That is expected and harmless, and it is another
+reason not to use the firmware as the arbiter of what a file may contain.
