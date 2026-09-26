@@ -138,7 +138,7 @@ const UNKNOWN17_DATASET = [
   { Unknown1: 0x16, Unknown2: 0x1b, Unknown3: 0x63, Unknown4: 0x0a },
 ];
 
-const UNKNOWN18_DATASET = [
+export const UNKNOWN18_DATASET = [
   { Unknown1: 0x01, Unknown2: 0x06, Unknown3: 0x01, Unknown4: 0x00 },
   { Unknown1: 0x15, Unknown2: 0x07, Unknown3: 0x01, Unknown4: 0x00 },
   { Unknown1: 0x0e, Unknown2: 0x08, Unknown3: 0x01, Unknown4: 0x00 },
@@ -151,7 +151,7 @@ const UNKNOWN18_DATASET = [
   { Unknown1: 0x16, Unknown2: 0x11, Unknown3: 0x01, Unknown4: 0x00 },
   { Unknown1: 0x19, Unknown2: 0x00, Unknown3: 0x100, Unknown4: 0x00 },
   { Unknown1: 0x1a, Unknown2: 0x01, Unknown3: 0x200, Unknown4: 0x00 },
-  { Unknown1: 0x02, Unknown2: 0x02, Unknown3: 0x302, Unknown4: 0x00 },
+  { Unknown1: 0x02, Unknown2: 0x02, Unknown3: 0x300, Unknown4: 0x00 },
   { Unknown1: 0x03, Unknown2: 0x03, Unknown3: 0x400, Unknown4: 0x00 },
   { Unknown1: 0x05, Unknown2: 0x04, Unknown3: 0x500, Unknown4: 0x00 },
   { Unknown1: 0x06, Unknown2: 0x05, Unknown3: 0x600, Unknown4: 0x00 },

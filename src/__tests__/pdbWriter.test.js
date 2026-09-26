@@ -21,6 +21,7 @@ import {
   buildPlaylistEntryRow,
   buildUnknown17Row,
   buildUnknown18Row,
+  UNKNOWN18_DATASET,
   DataPage,
   buildIndexPage,
   buildFileHeader,
@@ -528,6 +529,22 @@ describe('buildUnknown18Row', () => {
     expect(buf.readUInt16LE(2)).toBe(0x06);
     expect(buf.readUInt16LE(4)).toBe(0x01);
     expect(buf.readUInt16LE(6)).toBe(0x00);
+  });
+
+  // The dataset is static reference data that a device-written export.pdb carries
+  // identically. Its Unknown3 column runs 0x100..0x700 with 0x300 in the middle
+  // row; that row used to say 0x302 (issue #583).
+  it('dataset Unknown3 column is 0x100..0x700 in order', () => {
+    const third = UNKNOWN18_DATASET.map((r) => r.Unknown3);
+    expect(third).toEqual([
+      0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x100, 0x200, 0x300, 0x400, 0x500,
+      0x600, 0x700,
+    ]);
+  });
+
+  it('row 12 renders as 020002000003 0000', () => {
+    const buf = buildUnknown18Row(UNKNOWN18_DATASET[12]);
+    expect(buf.toString('hex')).toBe('0200020000030000');
   });
 });
 
