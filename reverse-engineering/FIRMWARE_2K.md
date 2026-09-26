@@ -543,3 +543,62 @@ questions the rekordbox byte-differential stays the deciding instrument.
 naive subtraction of `0x04000000` yields an offset outside the image. And cross-references are found most
 reliably by scanning aligned little-endian u32 for the address of an **individual tag record**, not a table
 base, because each code site loads its own record pointer from its own pool slot.
+
+## 18. Cue fields and database validation: pass two, including corrections to section 17
+
+A second pass swept the cue and database regions with the decompiler and cross-referenced every cue-tag
+use in the whole image. It settles the cue question, and it corrects two things section 17 said.
+
+### The deck never reads a cue type field, and that is now proven exhaustively
+
+Every reference to the tags `PCPT`, `PCOB` and `PCO2` anywhere in the 4 MB image resolves to exactly **five
+literal-pool words**, and all five sit either inside the two cue-record read loops (`0x042b7fa0`,
+`0x042b8608`, `0x042b7c80`, `0x042b82ec`) or inside the `PCO2` builder (`0x042bd070`). **No consuming module
+reads a cue type field anywhere in the firmware.** The only per-record predicate that exists is bit 1 of the
+u32 at record offset `+0x10`. **CONFIRMED by exhaustive reference scan.**
+
+The consequence is concrete and it changes what our exporter may assume: **the deck cannot tell hot cues,
+memory cues and loops apart at this layer, so our type encoding must not be justified by the firmware.**
+For those two questions the authority is rekordbox's own output and nothing else, which is exactly what the
+byte-differential already provides.
+
+### Two corrections to section 17
+
+1. **`FUN_042bcef6` is a `PCO2` _builder_, not a parser.** It writes the literal `"PCO2"` into the record
+   buffer and copies the label payload; `DAT_042bd070` is `0x040ad29c`, the `PCO2` record in the manager
+   table. So the field mapping read out of it describes what the **deck itself writes** when it writes an
+   ANLZ file, not what it expects to find. Useful in itself: the deck's own writer emits a `PCO2` section,
+   so `PCO2` is inside this generation's write vocabulary as well as its read tables.
+2. **The field at record `+0x2C` has no field meaning.** In `FUN_042b7c98` it is `puVar6[0xb]` inside a
+   16-longword whole-record copy, not a position being filled in. Section 17's "the position field" reading
+   was wrong.
+
+### What the deck's own `PCO2` records look like
+
+The builder writes `label(4) | u32 | u32 | u16 | u16 | u16 | [u32 if d[+0x14] != 0]`, with the label copied
+to `record + d[+4]` for a length of `d[+8] - d[+4]`, so the two u32s are a start and end offset for the
+label payload. `FUN_042bd48c` builds `label(4) | u32 | u32(len) | u16 | payload` with a header length of
+`0x0E` and guards `arg > 0xd && len > 0xd`. `FUN_042bd074` reads u16 fields at `+2` and `+0x0E` through
+`+0x1A` and u32 at `+4` and `+8`, and derives `label_len = LEN - 0x2C - count(+0x1A)`, which is the one
+place `0x2C` carries real meaning. Its working set is **56 bytes per record, `count * 0x38`**, which agrees
+with the writer's 56-byte IO length. **Which field carries the colour is NOT DETERMINABLE:** no mask or
+unpack to three or six bits exists anywhere in that cluster.
+
+### The `+0x10` flag and the database
+
+The reader does `mov.l @(16,r11)` then `tst #2`, and increments the counter at `ctx+0xB84` when the bit is
+**clear**. The control flow is confirmed; the meaning is not, and the counter has no readers anywhere.
+
+**No database validation exists.** The `0x04060000`-`0x04076000` region is data, holding the export path
+strings. The two xref sites that use those strings (`0x0417c062`-`0x0417c0b4` and `0x041a7824`) pass the path
+to helper routines and branch only on whether the return value is zero; **no magic, version, page counter or
+checksum is read.** The `0x04170000`-`0x04174000` region, 24 functions, is the filesystem layer and contains
+only byte-class tests. This closes the question raised in section 16 with the same answer: the deck reads
+what rekordbox writes without adjudicating it.
+
+### Remaining work, stated precisely
+
+The two export reference sites are not inside functions Ghidra defined, so their callees were not
+decompiled. Closing the validation question completely needs `AddFunctions` at the starts of the functions
+containing `0x0417c062` and `0x041a7824`. Everything else here rests on decompiled bodies or on an
+exhaustive scan of the image.
