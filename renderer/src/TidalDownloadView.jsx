@@ -368,57 +368,12 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
     }
   }
 
-  // ── collection download (account playlists / mixes / favorites) ────────────
-  // Resolution and download happen in main (tidal-download-collection); the UI
-  // only mirrors the progress events into the regular download step.
-  const handleDownloadCollection = useCallback(
-    async (col) => {
-      if (collectionBusy) return;
-      const key = `${col.type}:${col.id}`;
-      setCollectionBusy(key);
-      setFetchError(null);
-      setResult(null);
-      setTrackStatuses([]);
-      setPlaylistInfo({ type: col.type, title: col.title, entries: [] });
-      setStep('download');
-      setLoading(true);
-
-      try {
-        const res = await window.api.tidalDownloadCollection({
-          type: col.type,
-          id: col.id,
-          title: col.title,
-        });
-        setResult(res);
-        if (res?.ok) {
-          await window.api
-            .getPlaylists()
-            .then(setPlaylists)
-            .catch(() => {});
-        }
-      } catch (err) {
-        setResult({ ok: false, error: err?.message ?? 'Collection download failed' });
-      } finally {
-        setLoading(false);
-        setCollectionBusy(null);
-      }
-    },
-    [
-      collectionBusy,
-      setFetchError,
-      setLoading,
-      setPlaylistInfo,
-      setPlaylists,
-      setResult,
-      setStep,
-      setTrackStatuses,
-    ]
-  );
-
   // ── open a collection as a selectable track list ────────────────────────────
-  // The tree's name opens the collection, the ↓ button still downloads it whole.
-  // Resolution happens in main (tidal-collection-tracks); the entries then take
-  // the regular select step, so tracks are picked exactly like in the URL flow.
+  // Both collection controls (the name and the ↓ arrow) land here, so a whole
+  // collection is never downloaded unasked. Resolution happens in main
+  // (tidal-collection-tracks); the entries then take the regular select step
+  // with everything downloadable pre-ticked, so tracks are picked exactly like
+  // in the URL flow and can be unticked before the download starts.
   const handleOpenCollection = useCallback(
     async (col) => {
       const key = `${col.type}:${col.id}`;
@@ -532,6 +487,14 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
       setTrackStatuses,
     ]
   );
+
+  // ── leave the flow ──────────────────────────────────────────────────────────
+  // Also drops the "open" highlight so the collections row is not left marked
+  // as opened once the download finished or failed.
+  const handleNewDownload = useCallback(() => {
+    setOpenCollectionKey(null);
+    resetToUrl();
+  }, [resetToUrl]);
 
   // ── toggle selection ────────────────────────────────────────────────────────
   const handleToggleEntry = useCallback(
@@ -736,7 +699,10 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
 
         <div className="tidal-browse-layout">
           <TidalCollectionsPanel
-            onDownload={handleDownloadCollection}
+            // Both controls open the collection as a selectable list: the name
+            // and the ↓ arrow take the same resolve-and-select path, so nothing
+            // downloads a whole collection unasked.
+            onDownload={handleOpenCollection}
             onOpen={handleOpenCollection}
             busyKey={collectionBusy}
             openKey={openCollectionKey}
@@ -1059,7 +1025,7 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
                 View in Music →
               </button>
             )}
-            <button type="button" className="dl-goto-btn" onClick={resetToUrl}>
+            <button type="button" className="dl-goto-btn" onClick={handleNewDownload}>
               ← New download
             </button>
           </div>
@@ -1071,7 +1037,7 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
           <button
             type="button"
             className="dl-back-btn"
-            onClick={resetToUrl}
+            onClick={handleNewDownload}
             style={{ marginTop: 8, alignSelf: 'flex-start' }}
           >
             ← Try again
