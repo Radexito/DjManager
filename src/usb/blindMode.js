@@ -23,11 +23,15 @@ export function resolveBlindMode(explicit, getSettingFn) {
 }
 
 /**
- * Strip the beat information a standalone player would display.
- * `analyzePath` is deliberately kept: it points at the blind ANLZ, and clearing
- * it would make the player think the track was never analysed.
+ * Strip everything a standalone player would display for the set.
+ *
+ * BPM and the key both go (user decision 2026-09-26): a key column reading
+ * "Ab major" is a mixing aid in its own right, so leaving it in defeats the
+ * point of the mode. `analyzePath` is deliberately kept: it points at the blind
+ * ANLZ, and clearing it would make the player think the track was never
+ * analysed, which makes it run its own analysis instead.
  */
 export function applyBlindMode(track, blindMode) {
   if (!blindMode) return track;
-  return { ...track, bpm: 0 };
+  return { ...track, bpm: 0, key_raw: null, key_camelot: null };
 }

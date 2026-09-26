@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { generateWaveform } from './waveformGenerator.js';
+import { generateWaveform, generateFlatWaveform } from './waveformGenerator.js';
 
 // ─── Path hashing (ported from beirbox-gui/ANLZ/ANLZ.go) ──────────────────────
 // Pioneer CDJs store ANLZ files at PIONEER/USBANLZ/{hash}/ANLZ0000.DAT
@@ -759,7 +759,10 @@ function buildSectionWithBigHeader(fourcc, specificHeader, data) {
  * @param {Array}   [opts.cuePoints]        - Cue point rows from cue_points table
  * @param {boolean} [opts.blind=false]      - #258 "real DJ mode": write an ANLZ
  *   that still looks analysed (so the player does NOT run its own analysis) but
- *   carries no beat grid and no waveform at all. Cue points are still written.
+ *   carries an empty beat grid and a FLAT waveform. Cue points are still
+ *   written. BPM and key are zeroed on the PDB row by applyBlindMode.
+ * @param {number}  [opts.durationSec=0]    - length of the exported audio, used
+ *   to size the flat waveform sections in blind mode.
  */
 export async function writeAnlz(opts) {
   const {
@@ -772,6 +775,7 @@ export async function writeAnlz(opts) {
     ffmpegPath,
     cuePoints,
     blind = false,
+    durationSec = 0,
   } = opts;
 
   const folderHash = getFolderName(usbFilePath);
@@ -779,11 +783,15 @@ export async function writeAnlz(opts) {
   fs.mkdirSync(anlzDir, { recursive: true });
 
   // ── Generate waveforms from source audio ─────────────────────────────────
-  // Blind mode skips generation entirely: no ffmpeg pass, and the waveform
-  // sections below are omitted, which is the state a failed export produced —
-  // the stick shows no waveform instead of the player analysing one itself.
+  // Blind mode still writes every waveform section, but FLAT (user decision
+  // 2026-09-26). Omitting them left the player without any waveform data, so it
+  // drew one of its own and the scrolling strip stayed visible in rekordbox —
+  // the opposite of the point. Silence encodes to a straight line and needs no
+  // ffmpeg pass, so the mode stays fast as well as blind.
   let waveforms = null;
-  if (!blind && sourceFilePath) {
+  if (blind) {
+    waveforms = generateFlatWaveform(durationSec);
+  } else if (sourceFilePath) {
     try {
       waveforms = await generateWaveform(sourceFilePath, ffmpegPath || 'ffmpeg');
     } catch (err) {

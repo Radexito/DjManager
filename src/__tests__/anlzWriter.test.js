@@ -2,18 +2,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Module mocks (hoisted before imports) ─────────────────────────────────────
 
-vi.mock('../audio/waveformGenerator.js', () => ({
-  generateWaveform: vi.fn().mockResolvedValue({
-    pwv3: Buffer.alloc(100, 0x21),
-    pwv5: Buffer.alloc(200, 0x11),
-    pwav: Buffer.alloc(400, 0x41),
-    pwv2: Buffer.alloc(100, 0x22),
-    pwv4: Buffer.alloc(7200, 0x33),
-    pwv7: Buffer.alloc(300, 0x44),
-    pwv6: Buffer.alloc(3600, 0x55),
-    numCols: 100,
-  }),
-}));
+vi.mock('../audio/waveformGenerator.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    // Only the decode-and-analyse path is mocked. generateFlatWaveform stays the
+    // real one, so the blind tests below exercise the geometry it actually builds.
+    generateWaveform: vi.fn().mockResolvedValue({
+      pwv3: Buffer.alloc(100, 0x21),
+      pwv5: Buffer.alloc(200, 0x11),
+      pwav: Buffer.alloc(400, 0x41),
+      pwv2: Buffer.alloc(100, 0x22),
+      pwv4: Buffer.alloc(7200, 0x33),
+      pwv7: Buffer.alloc(300, 0x44),
+      pwv6: Buffer.alloc(3600, 0x55),
+      numCols: 100,
+    }),
+  };
+});
 
 vi.mock('fs', () => {
   const writeFileSync = vi.fn();
@@ -130,7 +136,7 @@ describe('writeAnlz', () => {
   // #258 — real DJ mode: the ANLZ must still exist, so the player does not
   // analyse the track itself, but it carries no waveform and no beat grid.
   describe('blind mode', () => {
-    const blindOpts = { ...baseOpts, blind: true, cuePoints: [] };
+    const blindOpts = { ...baseOpts, blind: true, cuePoints: [], durationSec: 10 };
 
     /** Buffers written for the DAT / EXT file. */
     function writtenFiles() {
@@ -148,23 +154,53 @@ describe('writeAnlz', () => {
       expect(generateWaveform).not.toHaveBeenCalled();
     });
 
-    it('writes DAT and EXT but no 2EX', async () => {
+    it('writes DAT, EXT and 2EX', async () => {
       await writeAnlz(blindOpts);
       const suffixes = fs.writeFileSync.mock.calls.map((c) => c[0].slice(-3));
-      expect(suffixes).toEqual(['DAT', 'EXT']);
+      expect(suffixes).toEqual(['DAT', 'EXT', '2EX']);
     });
 
-    it('omits every waveform section', async () => {
+    it('writes every waveform section FLAT instead of omitting it (user decision 2026-09-26)', async () => {
       await writeAnlz(blindOpts);
-      const { DAT, EXT } = writtenFiles();
-      const datTags = parseSections(DAT).map((s) => s.tag);
-      expect(datTags).not.toContain('PWAV');
-      expect(datTags).not.toContain('PWV2');
-      expect(datTags).not.toContain('PWV3');
-      const extTags = parseSections(EXT).map((s) => s.tag);
-      expect(extTags).not.toContain('PWV3');
-      expect(extTags).not.toContain('PWV5');
-      expect(extTags).not.toContain('PWV4');
+      const { DAT, EXT, '2EX': twoEx } = writtenFiles();
+      const dat = parseSections(DAT);
+      const ext = parseSections(EXT);
+      const ex = parseSections(twoEx);
+
+      // Present, so the player has waveform data and never draws its own...
+      expect(dat.map((s) => s.tag)).toEqual(expect.arrayContaining(['PWAV', 'PWV2']));
+      expect(ext.map((s) => s.tag)).toEqual(expect.arrayContaining(['PWV3', 'PWV5', 'PWV4']));
+      expect(ex.map((s) => s.tag)).toEqual(expect.arrayContaining(['PWV7', 'PWV6', 'PWVC']));
+
+      // ... and their amplitudes are zero: a dead straight line. PWV4 keeps its
+      // per-column complement byte (255 - peak), which is what a real silent
+      // file carries, so only its four amplitude bytes must be zero.
+      for (const [buf, sections] of [
+        [DAT, dat],
+        [EXT, ext],
+        [twoEx, ex],
+      ]) {
+        for (const section of sections) {
+          if (!/^(PWAV|PWV\d)$/.test(section.tag)) continue;
+          const body = buf.slice(section.pos + section.lenHdr, section.pos + section.lenTag);
+          expect(body.length).toBeGreaterThan(0);
+          if (section.tag === 'PWV4') {
+            for (let i = 0; i < body.length; i += 6) {
+              expect([...body.slice(i, i + 6)]).toEqual([0, 255, 0, 0, 0, 0]);
+            }
+          } else {
+            expect(body.some((b) => b !== 0)).toBe(false);
+          }
+        }
+      }
+    });
+
+    it('sizes the flat scroll waveform from the exported duration', async () => {
+      await writeAnlz({ ...blindOpts, durationSec: 10 });
+      const { EXT } = writtenFiles();
+      const pwv3 = parseSections(EXT).find((s) => s.tag === 'PWV3');
+      // 10 s at 150 columns per second, one byte per column.
+      expect(pwv3.lenTag - pwv3.lenHdr).toBe(1500);
     });
 
     it('leaves both beat grids header-only', async () => {

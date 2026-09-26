@@ -11,6 +11,7 @@ vi.mock('child_process', () => ({
 import {
   generateWaveform,
   generateEditorWaveform,
+  generateFlatWaveform,
   PWAV_COLS,
   PWV2_COLS,
   PWV4_COLS,
@@ -311,6 +312,68 @@ describe('generateEditorWaveform', () => {
 
     for (let i = 0; i < result.detailHires.length; i++) {
       expect(result.detailHires[i]).toBe(0);
+    }
+  });
+});
+
+// ── #258 blind export: the flat waveform ──────────────────────────────────────
+// A blind export writes every waveform section, but flat. Absent sections left
+// the player with nothing to draw, so it drew a waveform of its own and the
+// scrolling strip stayed visible (rekordbox, 2026-09-26) — the opposite of the
+// point. Silence encodes to a straight line and needs no ffmpeg pass.
+describe('generateFlatWaveform (#258 blind export)', () => {
+  const ZERO = (buf) => buf.every((b) => b === 0);
+
+  it('matches the geometry of a real 10 second track', () => {
+    // 10 s × 22050 Hz = 220500 samples, 147 samples per column → 1500 columns.
+    const { pwv3, pwv5, pwv7, pwav, pwv2, pwv4, pwv6, numCols } = generateFlatWaveform(10);
+    expect(numCols).toBe(1500);
+    expect(pwv3.length).toBe(1500); // 1 byte per column
+    expect(pwv5.length).toBe(3000); // 2 bytes per column
+    expect(pwv7.length).toBe(4500); // 3 bytes per column
+    expect(pwav.length).toBe(PWAV_COLS); // 400, fixed
+    expect(pwv2.length).toBe(PWV2_COLS); // 100, fixed
+    expect(pwv4.length).toBe(PWV4_COLS * 6); // 7200, fixed
+    expect(pwv6.length).toBe(1200 * 3); // 3600, fixed
+  });
+
+  it('encodes silence: zero amplitudes throughout', () => {
+    const w = generateFlatWaveform(30);
+    for (const key of ['pwv3', 'pwv5', 'pwv7', 'pwav', 'pwv2', 'pwv6']) {
+      expect(ZERO(w[key]), `${key} must be entirely zero`).toBe(true);
+    }
+  });
+
+  it('writes the real silence encoding into PWV4', () => {
+    // PWV4 is 6 bytes per column: [peak, 255-peak, rms, bass, mid, treble].
+    // Silence has peak 0, so the complement byte is 255 in every column while
+    // the four amplitude bytes stay 0 — exactly what a silent file produces.
+    const column = (buf, i) => [...buf.slice(i * 6, i * 6 + 6)].join(',');
+    const w = generateFlatWaveform(30);
+    const distinct = new Set();
+    for (let i = 0; i < w.pwv4.length / 6; i++) distinct.add(column(w.pwv4, i));
+    expect([...distinct]).toEqual(['0,255,0,0,0,0']);
+  });
+
+  it('needs no ffmpeg pass', () => {
+    spawn.mockClear();
+    generateFlatWaveform(5);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('scales the scroll buffers with the duration', () => {
+    expect(generateFlatWaveform(60).numCols).toBe(9000);
+    expect(generateFlatWaveform(0.5).numCols).toBe(75);
+  });
+
+  it('keeps the fixed-size overviews even when the duration is unknown', () => {
+    for (const bad of [0, null, undefined, NaN, -4]) {
+      const w = generateFlatWaveform(bad);
+      expect(w.numCols).toBe(0);
+      expect(w.pwav.length).toBe(PWAV_COLS);
+      expect(w.pwv2.length).toBe(PWV2_COLS);
+      expect(w.pwv4.length).toBe(PWV4_COLS * 6);
+      expect(w.pwv6.length).toBe(3600);
     }
   });
 });

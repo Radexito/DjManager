@@ -317,6 +317,25 @@ export async function generateWaveform(filePath, ffmpegBin = 'ffmpeg') {
 }
 
 /**
+ * Waveform data for a track that must show no waveform at all (#258).
+ *
+ * Same geometry as a real track — scroll buffers sized for `durationSec` at
+ * COLS_PER_SEC plus the fixed-size overviews — but every amplitude is zero,
+ * which is exactly what a silent file of that length produces. It is used in
+ * place of omitting the sections: a missing section leaves the player with no
+ * waveform data, and it then draws one of its own, which is the opposite of
+ * what the mode is for (confirmed in rekordbox on 2026-09-26: the scrolling
+ * strip stayed visible while the overview went blank).
+ *
+ * @param {number} durationSec - length of the audio the ANLZ describes
+ * @returns {{pwv3: Buffer, pwv5: Buffer, pwav: Buffer, pwv2: Buffer, pwv4: Buffer, pwv6: Buffer, pwv7: Buffer, numCols: number}}
+ */
+export function generateFlatWaveform(durationSec) {
+  const seconds = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : 0;
+  return computeColumns(new Float32Array(Math.floor(seconds * SAMPLE_RATE)));
+}
+
+/**
  * Generate waveform data optimised for the Beat Grid Editor UI.
  *
  * Returns:

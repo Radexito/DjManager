@@ -45,22 +45,31 @@ describe('#258 real DJ mode (blind export)', () => {
       expect(applyBlindMode(track, false)).toBe(track);
     });
 
-    it('blanks BPM but KEEPS the analyse path', () => {
+    it('blanks BPM and the key, but KEEPS the analyse path', () => {
       const out = applyBlindMode(track, true);
       expect(out.bpm).toBe(0);
+      // The key goes too (user decision 2026-09-26): a key column reading "9B"
+      // is a mixing aid, so leaving it in defeats the point of the mode.
+      expect(out.key_raw).toBeNull();
+      expect(out.key_camelot).toBeNull();
       // The path must stay: the blind ANLZ exists precisely so the player does
       // not treat the track as unanalysed and build its own waveform + grid.
       expect(out.analyzePath).toBe('/music/a/ANLZ0000.DAT');
     });
 
-    it('keeps everything else a player reads (title, key, cues, rating)', () => {
+    it('keeps everything else a player reads (title, cues, rating)', () => {
       const out = applyBlindMode({ ...track, cuePoints: [{ position: 12 }] }, true);
       expect(out.title).toBe('Siku Siku Mocz');
       expect(out.artist).toBe('Mako');
-      expect(out.key_raw).toBe('9B');
       expect(out.rating).toBe(4);
       expect(out.cuePoints).toEqual([{ position: 12 }]);
       expect(out.id).toBe(7);
+    });
+
+    it('zeroes a Camelot key as well as a raw one', () => {
+      const out = applyBlindMode({ ...track, key_camelot: '9B', key_raw: 'B major' }, true);
+      expect(out.key_camelot).toBeNull();
+      expect(out.key_raw).toBeNull();
     });
 
     it('does not mutate the input track', () => {

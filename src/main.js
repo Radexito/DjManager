@@ -3152,6 +3152,8 @@ ipcMain.handle(
             ffmpegPath: getFfmpegRuntimePath(),
             cuePoints: trim ? trim.cuePoints : cues,
             blind,
+            // #258: sizes the flat waveform sections blind writes.
+            durationSec: exportDurationSec(t, applyTrim) ?? 0,
           });
         } catch (err) {
           console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
@@ -3366,6 +3368,8 @@ ipcMain.handle(
             ffmpegPath: getFfmpegRuntimePath(),
             cuePoints: trim ? trim.cuePoints : cues,
             blind,
+            // #258: sizes the flat waveform sections blind writes.
+            durationSec: exportDurationSec(t, applyTrim) ?? 0,
           });
         } catch (err) {
           console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
