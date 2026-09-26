@@ -25,6 +25,10 @@ function collectionKey(col) {
  * mixes & radio including My Daily Discovery and video mixes, favorites).
  * Loads through window.api.tidalListCollections.
  *
+ * The fetch is lazy: it runs only once the TIDAL tab is actually visible
+ * (`active`), and the main process caches the result, so switching tabs back and
+ * forth never spawns the tdn Python CLI again. `Reload` forces a refetch.
+ *
  * Two actions per row: the caret expands nested branches, the name opens the
  * collection as a selectable track list (`onOpen`), and the arrow downloads the
  * whole thing in one go (`onDownload`).
@@ -38,18 +42,20 @@ export default function TidalCollectionsPanel({
   busyKey,
   openKey,
   disabled = false,
+  active = true,
 }) {
   const [collections, setCollections] = useState(null);
   const [warnings, setWarnings] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
   const [collapsed, setCollapsed] = useState(() => new Set());
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ force = false } = {}) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await window.api.tidalListCollections();
+      const res = await window.api.tidalListCollections({ force });
       if (!res?.ok) {
         setError(res?.error ?? 'Could not load your TIDAL collections.');
         setCollections([]);
@@ -64,12 +70,16 @@ export default function TidalCollectionsPanel({
       setWarnings([]);
     } finally {
       setLoading(false);
+      setLoaded(true);
     }
   }, []);
 
+  // Nothing is fetched while the view is hidden: the listing spawns Python
+  // (~20 s) and used to run at app startup for a tab the user had not opened.
   useEffect(() => {
+    if (!active || loaded) return;
     load();
-  }, [load]);
+  }, [active, loaded, load]);
 
   const groups = useMemo(() => {
     const byGroup = new Map();
@@ -160,20 +170,20 @@ export default function TidalCollectionsPanel({
         <button
           type="button"
           className="tidal-collections-reload"
-          onClick={load}
+          onClick={() => load({ force: true })}
           disabled={loading}
         >
           Reload
         </button>
       </div>
 
-      {loading ? (
+      {loading || (active && !loaded) ? (
         <div className="tidal-collections-status">Loading collections…</div>
       ) : error ? (
         <div className="dl-fetch-error" style={{ padding: '4px 12px 8px' }}>
           ✗ {error}
         </div>
-      ) : groups.length === 0 ? (
+      ) : !loaded ? null : groups.length === 0 ? (
         <div className="tidal-collections-status">No collections found on this account.</div>
       ) : (
         <div className="tidal-tree" role="tree">
