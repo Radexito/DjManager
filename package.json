@@ -136,8 +136,8 @@
     "globals": "^17.8.0",
     "husky": "^9.1.7",
     "lint-staged": "^17.5.1",
-    "prettier": "^3.9.8",
-    "vitest": "^5.0.1",
+    "prettier": "^3.9.9",
+    "vitest": "^5.0.2",
     "wait-on": "^9.1.0"
   },
   "dependencies": {
