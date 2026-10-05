@@ -158,6 +158,7 @@ import {
   detectFilesystem,
   formatDrive,
   describeFilesystem,
+  toM3uRelativePath,
   usbAudioDir,
   usbAudioPath,
 } from './usb/usbUtils.js';
@@ -3354,6 +3355,12 @@ ipcMain.handle(
       for (const pl of allPlaylists) {
         const tracks = getPlaylistTracks(pl.id);
         const safeName = pl.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+        const m3uPath = path.join(playlistDir, `${safeName}.m3u`);
+        // Entries must be relative to the M3U file itself (forward slashes) — a
+        // player resolves them against the playlist's directory. A USB-root path
+        // like "/music/x.mp3" instead makes VLC look for file:///music/x.mp3 on
+        // the host filesystem and fail to open the MRL.
+        const m3uDir = path.dirname(m3uPath);
         const lines = ['#EXTM3U'];
         for (const t of tracks) {
           const usbPath = usbPaths.get(t.id);
@@ -3361,13 +3368,14 @@ ipcMain.handle(
           const duration = Math.floor(exportDurationSec(t, applyTrim) ?? -1);
           const label = [t.artist, t.title].filter(Boolean).join(' - ') || path.basename(usbPath);
           lines.push(`#EXTINF:${duration},${label}`);
-          lines.push(usbPath);
+          // usbPaths holds a USB-relative path ("/Contents/x.mp3"), so join it with
+          // the stick root first: path.relative needs two ABSOLUTE paths. Handed the
+          // drive-less value, Windows resolves it against the process CWD and writes
+          // an absolute "C:/Contents/x.mp3" — measured on the dev laptop, that is a
+          // path on the system drive, so the playlist still would not open.
+          lines.push(toM3uRelativePath(m3uDir, path.join(usbRoot, usbPath)));
         }
-        fs.writeFileSync(
-          path.join(playlistDir, `${safeName}.m3u`),
-          lines.join('\n') + '\n',
-          'utf8'
-        );
+        fs.writeFileSync(m3uPath, lines.join('\n') + '\n', 'utf8');
       }
 
       // Write ANLZ beat grids + waveforms (only for tracks in the current export)
