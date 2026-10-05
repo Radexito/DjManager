@@ -131,6 +131,16 @@ export default function PlayerBar({
   const PB_H_MIN = 84;
   const PB_H_MAX = 260;
   const clampPbH = (v) => Math.min(PB_H_MAX, Math.max(PB_H_MIN, Math.round(v)));
+  // Waveform / seek row height derived from the bar height: half of every pixel
+  // the user drags into the bar goes into the wave, the 22px offset keeps the row
+  // at its historical 40px at the default bar (124 * 0.5 - 22 = 40), the floor
+  // keeps the wave readable for cue alignment at PB_H_MIN (84 -> 20, floored) and
+  // the ceiling keeps the row below the album art's 140px cap so the wave is
+  // never the tallest element in the bar. Published as --pb-wave-h on the row;
+  // PlayerBarCues.css consumes it as that element's height.
+  const PB_WAVE_MIN = 24;
+  const PB_WAVE_MAX = 108;
+  const clampPbWave = (h) => Math.min(PB_WAVE_MAX, Math.max(PB_WAVE_MIN, Math.round(h / 2 - 22)));
   const [barH, setBarH] = useState(() => {
     try {
       const v = parseInt(localStorage.getItem(PB_H_KEY), 10);
@@ -168,6 +178,9 @@ export default function PlayerBar({
       /* ignore */
     }
   }, [barH]);
+
+  // Live row height for the waveform / seek area (see clampPbWave above).
+  const waveH = clampPbWave(barH);
 
   // ── Resizable horizontal zones ─────────────────────────────────────────────
   // zones[0]=transport cluster (null=auto), zones[1]=album-art (null=auto square,
@@ -429,10 +442,20 @@ export default function PlayerBar({
   function paintWaveform() {
     const canvas = waveCanvasRef.current;
     if (!canvas || !waveDataRef.current) return;
-    // rAF ensures the canvas has been laid out and offsetWidth > 0
+    // rAF ensures the canvas has been laid out with the current bar height and
+    // offsetWidth/offsetHeight are non-zero. Reading them here (rather than in the
+    // effect) is what makes a bar resize land before the repaint: React commits the
+    // new --pb-wave-h / bar height first, then this callback forces layout.
     requestAnimationFrame(() => {
-      canvas.width = canvas.offsetWidth || canvas.clientWidth || 400;
-      canvas.height = canvas.offsetHeight || canvas.clientHeight || 40;
+      const w = canvas.offsetWidth || canvas.clientWidth || 400;
+      const h = canvas.offsetHeight || canvas.clientHeight || 40;
+      // Resizing a canvas clears its backing store, so only touch it when the box
+      // actually changed - repaints at the same size (track/color changes, extra
+      // rAFs queued during one drag frame) just redraw.
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
       drawWaveform(canvas, waveDataRef.current, colorModeRef.current);
     });
   }
@@ -764,7 +787,7 @@ export default function PlayerBar({
       {/* Center: full-width seekbar / waveform */}
       <div className="player-seek">
         <span className="player-time">{formatTime(currentTime)}</span>
-        <div className="player-seekbar-wrap">
+        <div className="player-seekbar-wrap" style={{ '--pb-wave-h': `${waveH}px` }}>
           <div ref={seekbarBgRef} className="player-seekbar-bg" />
           <canvas ref={waveCanvasRef} className="player-waveform-canvas" />
           <input

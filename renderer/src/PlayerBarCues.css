@@ -3,7 +3,14 @@
   flex: 1;
   display: flex;
   align-items: center;
-  height: 40px;
+  /* Height follows the bar height. PlayerBar.jsx derives --pb-wave-h from the
+     live bar height (half of it, minus 22px of chrome, clamped to 24-108px) and
+     writes it on this element. The 40px fallback is the value for the default
+     124px bar and keeps the box non-zero if the variable is ever missing - every
+     child here is absolutely positioned, so an auto height would collapse to 0.
+     The 4px seek line, the cue markers and the range input all centre on this
+     box, so they follow the resized row automatically. */
+  height: var(--pb-wave-h, 40px);
 }
 
 .player-seekbar-bg {
