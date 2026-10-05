@@ -11,6 +11,7 @@ const STEPS = {
   notRemovable: 'notRemovable',
   formatting: 'formatting',
   exporting: 'exporting',
+  cleanup: 'cleanup',
   done: 'done',
   error: 'error',
 };
@@ -55,6 +56,35 @@ function ExportFormatOptions({ targetDevice, setTargetDevice, forceMp3, setForce
   );
 }
 
+/**
+ * Plain-language summary of what the chosen cleanup did. Kept out of the JSX so
+ * the wording is easy to read and test.
+ */
+function cleanupOutcomeText(res) {
+  if (!res || res.ok === false) {
+    return `Cleanup failed: ${res?.error ?? 'unknown error'}`;
+  }
+  if (res.choice === 'remove') {
+    const files = res.removedFiles ?? 0;
+    const folders = res.removedFolders ?? 0;
+    return [
+      files > 0
+        ? `Removed ${files} file${files === 1 ? '' : 's'} from the USB.`
+        : 'No files were left to remove.',
+      folders > 0 ? `${folders} beat grid folder${folders === 1 ? '' : 's'} deleted.` : null,
+      'The USB database was put back to how it was before this export.',
+      res.keptTracks > 0
+        ? `${res.keptTracks} track${res.keptTracks === 1 ? '' : 's'} from earlier exports were left untouched.`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+  const files = res.keptFiles ?? 0;
+  if (files === 0) return 'Nothing was written to the USB, so there was nothing to keep.';
+  return `Kept ${files} file${files === 1 ? '' : 's'} on the USB. The USB database lists them.`;
+}
+
 function ExportModal({ onClose, playlistId, initialMode }) {
   const [step, setStep] = useState(initialMode ? STEPS.confirm : STEPS.idle);
   const [mode, setMode] = useState(initialMode ?? null);
@@ -64,6 +94,10 @@ function ExportModal({ onClose, playlistId, initialMode }) {
   const [formatProgress, setFormatProgress] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelled, setCancelled] = useState(null); // { addedFileCount, usbRoot }
+  const [cleanupResult, setCleanupResult] = useState(null);
+  const [cleanupBusy, setCleanupBusy] = useState(false);
   const [useNormalized, setUseNormalized] = useState(true);
   // #463: optional — a trimmed track can be exported as the whole file instead.
   const [applyTrim, setApplyTrim] = useState(true);
@@ -146,13 +180,31 @@ function ExportModal({ onClose, playlistId, initialMode }) {
         forceMp3,
       });
     }
-    if (res.ok) {
+    setCancelling(false);
+    if (res.ok && res.cancelled) {
+      // The export stopped at a safe point. Ask what to do with the part that
+      // was already written before anything else happens.
+      setCancelled({ addedFileCount: res.addedFileCount ?? 0, usbRoot: res.usbRoot });
+      setStep(STEPS.cleanup);
+    } else if (res.ok) {
       setResult(res);
       setStep(STEPS.done);
     } else {
       setError(res.error);
       setStep(STEPS.error);
     }
+  };
+
+  const handleCancelExport = async () => {
+    setCancelling(true);
+    await window.api.cancelExport();
+  };
+
+  const resolveCleanup = async (choice) => {
+    setCleanupBusy(true);
+    const res = await window.api.resolveExportCleanup({ choice });
+    setCleanupBusy(false);
+    setCleanupResult(res);
   };
 
   const handleExportM3U = async () => {
@@ -370,6 +422,62 @@ function ExportModal({ onClose, playlistId, initialMode }) {
             <p className="export-status-msg">{progress?.msg ?? 'Exporting…'}</p>
             <ProgressBar pct={progress?.pct} />
             <p className="export-status-pct">{progress?.pct ?? 0}%</p>
+            <div className="export-needs-format-actions">
+              <button
+                className="export-cancel-btn"
+                onClick={handleCancelExport}
+                disabled={cancelling}
+              >
+                {cancelling ? 'Cancelling…' : 'Cancel export'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === STEPS.cleanup && (
+          <div className="export-modal-body">
+            <p className="export-status-msg">Export cancelled</p>
+            {cleanupResult ? (
+              <>
+                <p className="export-status-sub">{cleanupOutcomeText(cleanupResult)}</p>
+                <p className="export-status-path">{cleanupResult.usbRoot ?? cancelled?.usbRoot}</p>
+                <button className="export-done-btn" onClick={onClose}>
+                  Done
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="export-status-sub">
+                  {cancelled?.addedFileCount > 0
+                    ? `${cancelled.addedFileCount} file${
+                        cancelled.addedFileCount === 1 ? '' : 's'
+                      } had already been written to the USB when the export stopped.`
+                    : 'No files had been written to the USB yet when the export stopped.'}
+                </p>
+                <div className="export-needs-format-actions">
+                  <button
+                    className="export-option-btn"
+                    onClick={() => resolveCleanup('keep')}
+                    disabled={cleanupBusy}
+                  >
+                    Keep what was copied
+                  </button>
+                  <button
+                    className="export-option-btn export-option-btn--danger"
+                    onClick={() => resolveCleanup('remove')}
+                    disabled={cleanupBusy}
+                  >
+                    Remove what this export added
+                  </button>
+                </div>
+                <p className="export-needs-format-hint">
+                  Keeping saves the files that were copied and lists them in the USB database.
+                  Removing deletes only the files and beat grids this export added, and puts the USB
+                  database back to how it was before. Tracks and playlists from earlier exports are
+                  never touched.
+                </p>
+              </>
+            )}
           </div>
         )}
 

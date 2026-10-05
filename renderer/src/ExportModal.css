@@ -280,6 +280,12 @@
   background: #222;
   color: #ccc;
 }
+/* Cancel while an export runs is in flight once clicked; keep it visibly inert */
+.export-cancel-btn:disabled,
+.export-option-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 
 /* Spinner */
 .export-spinner {
