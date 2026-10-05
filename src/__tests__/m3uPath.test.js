@@ -1,7 +1,8 @@
 // src/__tests__/m3uPath.test.js
 // Unit tests for the pure M3U path helper (#m3u-relative) — no Electron, no SQLite.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { toM3uRelativePath } from '../usb/usbUtils.js';
+import path from 'path';
+import { toM3uRelativePath, usbAudioPath } from '../usb/usbUtils.js';
 
 const USB = '/media/user/USB';
 const PLAYLIST_DIR = `${USB}/playlists`;
@@ -91,5 +92,33 @@ describe('toM3uRelativePath — stays quiet', () => {
 
     expect(log).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+// ── The real call site (export-all) ───────────────────────────────────────────
+//
+// Regression: `export-all` stores each track's USB path the way usbAudioPath()
+// builds it — USB-RELATIVE with a leading slash. Feeding that straight to
+// toM3uRelativePath() gives path.relative a drive-less second argument, which on
+// Windows resolves against the process CWD: the entry became an absolute
+// "C:/Contents/x.mp3" (a path on the system drive) and the playlist still would
+// not open. The call site therefore joins the value with the stick root first.
+describe('toM3uRelativePath — the export-all call site', () => {
+  const ROOT = 'U:\\';
+  const DIR = 'U:\\playlists';
+
+  it('produces a working entry for the value usbAudioPath() hands over', () => {
+    const stored = usbAudioPath("Drake - Drake - God's Plan.mp3");
+    expect(stored.startsWith('/')).toBe(true); // USB-relative, not a host path
+
+    const entry = toM3uRelativePath(DIR, path.win32.join(ROOT, stored));
+    expect(entry).toBe("../Contents/Drake - Drake - God's Plan.mp3");
+    expect(entry.startsWith('/')).toBe(false);
+    expect(/^[A-Za-z]:/.test(entry)).toBe(false);
+  });
+
+  it('resolves back to the audio file that really sits on the stick', () => {
+    const entry = toM3uRelativePath(DIR, path.win32.join(ROOT, usbAudioPath('a.mp3')));
+    expect(path.win32.normalize(path.win32.join(DIR, entry))).toBe('U:\\Contents\\a.mp3');
   });
 });

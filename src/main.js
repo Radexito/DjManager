@@ -3368,7 +3368,12 @@ ipcMain.handle(
           const duration = Math.floor(exportDurationSec(t, applyTrim) ?? -1);
           const label = [t.artist, t.title].filter(Boolean).join(' - ') || path.basename(usbPath);
           lines.push(`#EXTINF:${duration},${label}`);
-          lines.push(toM3uRelativePath(m3uDir, usbPath));
+          // usbPaths holds a USB-relative path ("/Contents/x.mp3"), so join it with
+          // the stick root first: path.relative needs two ABSOLUTE paths. Handed the
+          // drive-less value, Windows resolves it against the process CWD and writes
+          // an absolute "C:/Contents/x.mp3" — measured on the dev laptop, that is a
+          // path on the system drive, so the playlist still would not open.
+          lines.push(toM3uRelativePath(m3uDir, path.join(usbRoot, usbPath)));
         }
         fs.writeFileSync(m3uPath, lines.join('\n') + '\n', 'utf8');
       }
