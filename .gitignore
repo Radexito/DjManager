@@ -187,3 +187,6 @@ playwright-report/
 
 build-resources/rekordbox-exporter
 build-resources/rekordbox-exporter.exe
+
+# Firmware images are downloaded locally by the analyst, never committed
+reverse-engineering/firmware/

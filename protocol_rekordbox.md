@@ -30,8 +30,9 @@ Audio files themselves aren't shown in the tree above since their location is
 convention-dependent: native Rekordbox exports place them under
 `Contents/<artist>/<album>/track.mp3`, while third-party tools (including this
 application before #559) placed them under `/music/` or any other user-chosen path. DjManager now writes
-`/Contents/<file>` — flat, with no artist/album split — and records that same path in `export.pdb`, so the
-two stay consistent (verified against a rekordbox-written export on 2026-10-05). Only the
+`/Contents/<file>` (flat, with no artist/album split, matching Rekordbox's folder name) and records that
+same path in `export.pdb`, so the two stay consistent (verified against a rekordbox-written export on
+2026-10-05). Only the
 USB-relative path recorded in `export.pdb`/ANLZ files matters to the CDJ — the
 directory layout of the audio itself is not otherwise constrained.
 
@@ -101,7 +102,7 @@ PPTH → PVBR → PQTZ → PWAV → PWV2 → PCOB × 2
 | 12     | 4        | `len_path` — byte count of UTF-16BE string **including** null terminator |
 | 16     | len_path | Path as UTF-16BE, null-terminated                                        |
 
-Path is the USB-relative track path, e.g. `/music/Artist - Title.mp3`.
+Path is the USB-relative track path, e.g. `/Contents/Artist - Title.mp3`.
 
 ### PVBR — VBR Seek Index ⚠️ REQUIRED
 
@@ -483,7 +484,7 @@ Key fields in a track row (`type = 0`):
 | ------------- | ---------------- | ------------------------------------------------------- |
 | `analyzePath` | DeviceSQL string | ANLZ folder path, e.g. `/PIONEER/USBANLZ/P036/00006A74` |
 | `filename`    | DeviceSQL string | Filename only, e.g. `Artist - Title.mp3`                |
-| `filePath`    | DeviceSQL string | Full USB path, e.g. `/music/Artist - Title.mp3`         |
+| `filePath`    | DeviceSQL string | Full USB path, e.g. `/Contents/Artist - Title.mp3`      |
 | `bpm`         | u32              | BPM × 100                                               |
 | `duration`    | u32              | Duration in seconds                                     |
 | `sampleRate`  | u32              | e.g. 44100                                              |
@@ -572,7 +573,7 @@ CREATE TABLE content(
   releaseDate varchar,
   dateCreated varchar,              -- 'YYYY-MM-DD'
   dateAdded varchar,                -- 'YYYY-MM-DD'
-  path varchar,                     -- USB-relative path, e.g. '/music/filename.mp3'
+  path varchar,                     -- USB-relative path, e.g. '/Contents/filename.mp3'
   fileName varchar,
   fileSize integer,                 -- bytes
   fileType integer,                 -- 1=MP3, 11=WAV
@@ -689,7 +690,12 @@ CREATE TABLE recommendedLike(content_id_1 integer, content_id_2 integer, rating 
 
 - **Per-track manual gain slider** — stored only in `master.db` on the PC, never exported to USB. CDJ auto-gain normalisation comes entirely from `Unnamed7`/`Unnamed8` in `export.pdb`.
 - **Waveform / beatgrid / key analysis** — stored in ANLZ files. `content.analysisDataFilePath` points to `ANLZ0000.DAT` on USB.
+  <<<<<<< HEAD
 - **Audio files** — stored under the exporter's audio folder: `{usbRoot}/Contents/` for DjManager since #559, `{usbRoot}/music/` for older DjManager exports and for rekordbox's own grouping.
+  \=======
+- **Audio files** — stored under `{usbRoot}/Contents/`.
+
+> > > > > > > origin/dev
 
 ### Implementation notes
 
@@ -1218,7 +1224,7 @@ full analysis is in `reverse-engineering/PDB_SPEC_AND_DIFFERENTIAL.md`.
 | 1   | Data pages declare the wrong row count when a table holds 8 or more rows. Bytes 24 to 26 hold packed counters (low 13 bits: slots ever allocated, high 11 bits: live rows) and we never carry into byte 26, so a reader computes `num_rows` modulo 8 | page 34 `columns`: ours `0x00`, device `0x03` at file offset 139,290, i.e. we declare 3 rows for a page holding 27. Same on page 36 (6 vs 22), page 38 (1 vs 17), page 14 (0 vs 8). Pages with fewer than 8 rows are right by accident. **FIXED in #585 (2026-10-05)**                                                                                                                        |
 | 2   | Data page flags are always `0x34`, which claims the page contains deleted rows                                                                                                                                                                       | device writes `0x24` on pages without stale slots, offsets 139,291 and 155,675, and reserves `0x34` for pages that really do have stale slots. **FIXED in #586 (2026-10-05)**                                                                                                                                                                                                                 |
 | 3   | `unknown18` static row 12 carries `0x0302` where the device carries `0x0300`                                                                                                                                                                         | file offset 155,788. The sequence around it is `0x0100, 0x0200, 0x0300, ...` so `0x302` is a typo in the dataset. **FIXED in #587 (2026-10-05)**                                                                                                                                                                                                                                              |
-| 4   | The transaction row count on data pages is 1. **Not a defect — closed by measurement (2026-10-05)**                                                                                                                                                  | device writes **1** on every dynamic table (Tracks 11 rows, Artists 5, Keys 12, PlaylistEntries 4, PlaylistTree 1) and carries the row count only on the four static datasets (Columns 27, Unknown17 22, Unknown18 17, Colors 8). Measured 2026-10-05 over 48 device/rekordbox `export*.pdb` files; PR #585's attempt to write the live count everywhere was **rejected** as a new divergence |
+| 4   | The transaction row count on data pages is 1. **Not a defect; closed by measurement (2026-10-05)**                                                                                                                                                   | device writes **1** on every dynamic table (Tracks 11 rows, Artists 5, Keys 12, PlaylistEntries 4, PlaylistTree 1) and carries the row count only on the four static datasets (Columns 27, Unknown17 22, Unknown18 17, Colors 8). Measured 2026-10-05 over 48 device/rekordbox `export*.pdb` files; PR #585's attempt to write the live count everywhere was **rejected** as a new divergence |
 | 5   | Genres are dropped entirely: no genre rows at all, and the track row's `GenreId` is 0, although the same export's own manifest names genre "Blues"                                                                                                   | `pdbWriter.js` has no genre-row builder. A player shows no genre for a track that has one                                                                                                                                                                                                                                                                                                     |
 
 Defect 1 was the most consequential (it applied to every export this application had ever produced,
