@@ -29,7 +29,9 @@ USB_ROOT/
 Audio files themselves aren't shown in the tree above since their location is
 convention-dependent: native Rekordbox exports place them under
 `Contents/<artist>/<album>/track.mp3`, while third-party tools (including this
-application) place them under `/music/` or any other user-chosen path. Only the
+application before #559) placed them under `/music/` or any other user-chosen path. DjManager now writes
+`/Contents/<file>` — flat, with no artist/album split — and records that same path in `export.pdb`, so the
+two stay consistent (verified against a rekordbox-written export on 2026-10-05). Only the
 USB-relative path recorded in `export.pdb`/ANLZ files matters to the CDJ — the
 directory layout of the audio itself is not otherwise constrained.
 
@@ -687,7 +689,7 @@ CREATE TABLE recommendedLike(content_id_1 integer, content_id_2 integer, rating 
 
 - **Per-track manual gain slider** — stored only in `master.db` on the PC, never exported to USB. CDJ auto-gain normalisation comes entirely from `Unnamed7`/`Unnamed8` in `export.pdb`.
 - **Waveform / beatgrid / key analysis** — stored in ANLZ files. `content.analysisDataFilePath` points to `ANLZ0000.DAT` on USB.
-- **Audio files** — stored under `{usbRoot}/music/`.
+- **Audio files** — stored under the exporter's audio folder: `{usbRoot}/Contents/` for DjManager since #559, `{usbRoot}/music/` for older DjManager exports and for rekordbox's own grouping.
 
 ### Implementation notes
 
@@ -847,7 +849,7 @@ for red, orange, yellow and blue, and pink is missing entirely.
 | 5   | Cue distribution        | all hot cues in DAT slot 1                                                                                    | A-C in DAT, D+ in EXT                           | differs; may cost us cues 4-8 on 3-cue players |
 | 6   | `PSSI`                  | never written                                                                                                 | in 75% of native EXT files                      | missing                                        |
 | 7   | `PVBR` payload          | filled in (1194 of 1600 bytes non-zero)                                                                       | 3 of 1604 (PC), 0 (device)                      | differs, but a filled seek table is legal      |
-| 8   | `PPTH` path             | `/music/<file>` (`src/main.js:2372,2376`)                                                                     | `/Contents/<Artist>/<Album>/<file>`             | differs                                        |
+| 8   | `PPTH` path             | `/Contents/<file>` since #559 (`/music/<file>` before, `src/main.js`)                                         | `/Contents/<Artist>/<Album>/<file>`             | differs                                        |
 
 Section order, section sizes, header constants, `PCPT`/`PCP2` field layout and the three exact palette
 entries that we do get right (green, cyan, violet) all match, so the writer's geometry is sound; the
@@ -871,29 +873,29 @@ Two sticks were inventoried for this section. One (`DJ_OUTPUT`, drive `U:`) was 
 application at 02:05 on 2026-09-26 and then read by rekordbox. The other (`shimi usb`) is a real DJ
 stick last written in 2023, used in hardware, and it still carries the player's own leftovers.
 
-| Path                                                   | Written by                                   | We write it   | Format status                                                              |
-| ------------------------------------------------------ | -------------------------------------------- | ------------- | -------------------------------------------------------------------------- |
-| `PIONEER/rekordbox/export.pdb`                         | rekordbox, DjManager                         | yes           | fully specified in this document                                           |
-| `PIONEER/rekordbox/exportExt.pdb`                      | rekordbox 6 and later                        | no            | tags + tag_tracks tables, see below                                        |
-| `PIONEER/rekordbox/exportLibrary.db`                   | rekordbox 6 and later                        | no            | SQLCipher, key and parameters recovered via a `sqlite3_key` hook (above)   |
-| `PIONEER/rekordbox/export.pdb.bak`                     | rekordbox                                    | no            | backup it leaves when it rewrites the library                              |
-| `PIONEER/rekordbox/playlists3.sync`                    | rekordbox                                    | no            | controls whether rekordbox auto-syncs this stick                           |
-| `PIONEER/rekordbox/RBFLTR.DAT`                         | **player**                                   | no            | see below                                                                  |
-| `PIONEER/USBANLZ/<hash>/<track>/ANLZ0000.DAT`          | both                                         | yes           | specified above                                                            |
-| `PIONEER/USBANLZ/.../ANLZ0000.EXT`                     | both                                         | yes           | specified above                                                            |
-| `PIONEER/USBANLZ/.../ANLZ0000.2EX`                     | both                                         | yes           | specified above                                                            |
-| `PIONEER/USBANLZ/.../ANLZ0000.3EX`                     | rekordbox 7                                  | no            | **not an ANLZ container** (msgpack `embedding` blob)                       |
-| `PIONEER/MYSETTING.DAT`, `MYSETTING2.DAT`              | rekordbox, DjManager                         | yes           | `src/usb/settingWriter.js`                                                 |
-| `PIONEER/DEVSETTING.DAT`                               | rekordbox, DjManager                         | yes           | `src/usb/settingWriter.js`                                                 |
-| `PIONEER/DJPROFILE.NXS` (also seen as `djprofile.nxs`) | rekordbox                                    | no, correctly | device profile, not ours to write                                          |
-| `PIONEER/extracted/gcred.dat`                          | rekordbox                                    | no            | 64 ASCII characters plus CRLF, likely a licence or session token. Not ours |
-| `PIONEER/CDJ/`, `PIONEER/MPJ/`                         | **player**                                   | no            | directories players create on first use                                    |
-| `PIONEER/LIBRARY/`                                     | rekordbox (Device Library Plus / OneLibrary) | no            | **absent from both sticks.** Only the 2024 firmware references this path   |
-| `/music/<file>`                                        | DjManager                                    | yes           | our layout, see the divergence note below                                  |
-| `/Contents/<Artist>/<Album>/<file>`                    | rekordbox                                    | no            | rekordbox's own layout                                                     |
-| `playlists/*.m3u`                                      | DjManager                                    | yes           | our export                                                                 |
-| `<folder>/*.m3u8`                                      | rekordbox (optional)                         | no            | rekordbox writes the playlist as an m3u8 beside the music when asked       |
-| `_Serato_/`, `VirtualDJ/`, `LOST.DIR`                  | other software / filesystem                  | no            | unrelated, and `LOST.DIR` is a FAT corruption artifact                     |
+| Path                                                   | Written by                                   | We write it   | Format status                                                                    |
+| ------------------------------------------------------ | -------------------------------------------- | ------------- | -------------------------------------------------------------------------------- |
+| `PIONEER/rekordbox/export.pdb`                         | rekordbox, DjManager                         | yes           | fully specified in this document                                                 |
+| `PIONEER/rekordbox/exportExt.pdb`                      | rekordbox 6 and later                        | no            | tags + tag_tracks tables, see below                                              |
+| `PIONEER/rekordbox/exportLibrary.db`                   | rekordbox 6 and later                        | no            | SQLCipher, key and parameters recovered via a `sqlite3_key` hook (above)         |
+| `PIONEER/rekordbox/export.pdb.bak`                     | rekordbox                                    | no            | backup it leaves when it rewrites the library                                    |
+| `PIONEER/rekordbox/playlists3.sync`                    | rekordbox                                    | no            | controls whether rekordbox auto-syncs this stick                                 |
+| `PIONEER/rekordbox/RBFLTR.DAT`                         | **player**                                   | no            | see below                                                                        |
+| `PIONEER/USBANLZ/<hash>/<track>/ANLZ0000.DAT`          | both                                         | yes           | specified above                                                                  |
+| `PIONEER/USBANLZ/.../ANLZ0000.EXT`                     | both                                         | yes           | specified above                                                                  |
+| `PIONEER/USBANLZ/.../ANLZ0000.2EX`                     | both                                         | yes           | specified above                                                                  |
+| `PIONEER/USBANLZ/.../ANLZ0000.3EX`                     | rekordbox 7                                  | no            | **not an ANLZ container** (msgpack `embedding` blob)                             |
+| `PIONEER/MYSETTING.DAT`, `MYSETTING2.DAT`              | rekordbox, DjManager                         | yes           | `src/usb/settingWriter.js`                                                       |
+| `PIONEER/DEVSETTING.DAT`                               | rekordbox, DjManager                         | yes           | `src/usb/settingWriter.js`                                                       |
+| `PIONEER/DJPROFILE.NXS` (also seen as `djprofile.nxs`) | rekordbox                                    | no, correctly | device profile, not ours to write                                                |
+| `PIONEER/extracted/gcred.dat`                          | rekordbox                                    | no            | 64 ASCII characters plus CRLF, likely a licence or session token. Not ours       |
+| `PIONEER/CDJ/`, `PIONEER/MPJ/`                         | **player**                                   | no            | directories players create on first use                                          |
+| `PIONEER/LIBRARY/`                                     | rekordbox (Device Library Plus / OneLibrary) | no            | **absent from both sticks.** Only the 2024 firmware references this path         |
+| `/Contents/<file>`                                     | DjManager                                    | yes           | our layout since #559 (flat, no artist/album split; `/music/<file>` before that) |
+| `/Contents/<Artist>/<Album>/<file>`                    | rekordbox                                    | no            | rekordbox's own layout                                                           |
+| `playlists/*.m3u`                                      | DjManager                                    | yes           | our export                                                                       |
+| `<folder>/*.m3u8`                                      | rekordbox (optional)                         | no            | rekordbox writes the playlist as an m3u8 beside the music when asked             |
+| `_Serato_/`, `VirtualDJ/`, `LOST.DIR`                  | other software / filesystem                  | no            | unrelated, and `LOST.DIR` is a FAT corruption artifact                           |
 
 `RBFLTR.DAT` deserves a note. It sits under `PIONEER/rekordbox/`, carries the device epoch timestamp
 `01/01/2012 01:00`, and inside is an `FMAI` container with the banner `PIONEER` / `CDJ-900NXS` /
@@ -1211,16 +1213,18 @@ full analysis is in `reverse-engineering/PDB_SPEC_AND_DIFFERENTIAL.md`.
 
 **What we write wrong, each with the offset where it shows:**
 
-| #   | Defect                                                                                                                                                                                                                                               | Evidence                                                                                                                                                                                                                               |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Data pages declare the wrong row count when a table holds 8 or more rows. Bytes 24 to 26 hold packed counters (low 13 bits: slots ever allocated, high 11 bits: live rows) and we never carry into byte 26, so a reader computes `num_rows` modulo 8 | page 34 `columns`: ours `0x00`, device `0x03` at file offset 139,290, i.e. we declare 3 rows for a page holding 27. Same on page 36 (6 vs 22), page 38 (1 vs 17), page 14 (0 vs 8). Pages with fewer than 8 rows are right by accident |
-| 2   | Data page flags are always `0x34`, which claims the page contains deleted rows                                                                                                                                                                       | device writes `0x24` on pages without stale slots, offsets 139,291 and 155,675, and reserves `0x34` for pages that really do have stale slots                                                                                          |
-| 3   | `unknown18` static row 12 carries `0x0302` where the device carries `0x0300`                                                                                                                                                                         | file offset 155,788. The sequence around it is `0x0100, 0x0200, 0x0300, ...` so `0x302` is a typo in the dataset                                                                                                                       |
-| 4   | The transaction row count on data pages is hard-coded to 1                                                                                                                                                                                           | device writes the page's live row count (27, 22, 17, 8 on the pages above)                                                                                                                                                             |
-| 5   | Genres are dropped entirely: no genre rows at all, and the track row's `GenreId` is 0, although the same export's own manifest names genre "Blues"                                                                                                   | `pdbWriter.js` has no genre-row builder. A player shows no genre for a track that has one                                                                                                                                              |
+| #   | Defect                                                                                                                                                                                                                                               | Evidence                                                                                                                                                                                                                                                                                                                                                                                      |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Data pages declare the wrong row count when a table holds 8 or more rows. Bytes 24 to 26 hold packed counters (low 13 bits: slots ever allocated, high 11 bits: live rows) and we never carry into byte 26, so a reader computes `num_rows` modulo 8 | page 34 `columns`: ours `0x00`, device `0x03` at file offset 139,290, i.e. we declare 3 rows for a page holding 27. Same on page 36 (6 vs 22), page 38 (1 vs 17), page 14 (0 vs 8). Pages with fewer than 8 rows are right by accident. **FIXED in #585 (2026-10-05)**                                                                                                                        |
+| 2   | Data page flags are always `0x34`, which claims the page contains deleted rows                                                                                                                                                                       | device writes `0x24` on pages without stale slots, offsets 139,291 and 155,675, and reserves `0x34` for pages that really do have stale slots. **FIXED in #586 (2026-10-05)**                                                                                                                                                                                                                 |
+| 3   | `unknown18` static row 12 carries `0x0302` where the device carries `0x0300`                                                                                                                                                                         | file offset 155,788. The sequence around it is `0x0100, 0x0200, 0x0300, ...` so `0x302` is a typo in the dataset. **FIXED in #587 (2026-10-05)**                                                                                                                                                                                                                                              |
+| 4   | The transaction row count on data pages is 1. **Not a defect — closed by measurement (2026-10-05)**                                                                                                                                                  | device writes **1** on every dynamic table (Tracks 11 rows, Artists 5, Keys 12, PlaylistEntries 4, PlaylistTree 1) and carries the row count only on the four static datasets (Columns 27, Unknown17 22, Unknown18 17, Colors 8). Measured 2026-10-05 over 48 device/rekordbox `export*.pdb` files; PR #585's attempt to write the live count everywhere was **rejected** as a new divergence |
+| 5   | Genres are dropped entirely: no genre rows at all, and the track row's `GenreId` is 0, although the same export's own manifest names genre "Blues"                                                                                                   | `pdbWriter.js` has no genre-row builder. A player shows no genre for a track that has one                                                                                                                                                                                                                                                                                                     |
 
-Defect 1 is the one to fix first: it applies to every export this application has ever produced,
-because the `columns`, `unknown17`, `unknown18` and `colors` pages always hold 8 or more rows.
+Defect 1 was the most consequential (it applied to every export this application had ever produced,
+because the `columns`, `unknown17`, `unknown18` and `colors` pages always hold 8 or more rows) and is
+fixed in #585 (2026-10-05), together with defects 2 and 3 in #586 and #587. Defect 5 (genres) is still
+open, tracked as #584.
 
 **Where names came from.** The track row's own `Unnamed` fields are now partly resolved against the
 public format description: offset 0 is the subtype (`0x24`), offset 86 is the spec's `u5` and offset 92
@@ -1241,7 +1245,8 @@ rekordbox, 172,032 bytes, 18 track rows) next to `dnbclassics_djmanager` (writte
 two writers: the analyze path at index 14, the two dates at 10 and 15, the title at 17, the
 `Artist - Title.mp3` name at 19 and the full path at 20, with `ON` at index 7 in both files. Row header
 fields that match exactly include the subtype `0x24`, the `contentLink` constant `0x000C0700` and the
-sample rate `44100`.
+sample rate `44100` (both files of that pair really are 44.1 kHz; the writer now emits each file's own
+rate and depth — #564, 2026-10-05).
 
 **Values that differ, with offsets (track row, byte 0 = row start):**
 
