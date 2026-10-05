@@ -222,6 +222,7 @@ function App() {
               />
               <TidalDownloadView
                 style={{ display: selectedPlaylistId === 'tidal' ? '' : 'none' }}
+                active={selectedPlaylistId === 'tidal'}
                 onGoToLibrary={() => setSelectedPlaylistId('music')}
                 onGoToPlaylist={(id) => setSelectedPlaylistId(id)}
               />
