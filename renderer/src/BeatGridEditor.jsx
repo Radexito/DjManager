@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react
 import { usePlayer } from './PlayerContext.jsx';
 import CuePointsEditor from './CuePointsEditor.jsx';
 import { clampTrimRange, formatTrimTime, trimColumns } from './trackTrim.js';
+import { bigWaveformColor, overviewWaveformColor } from './waveformColors.js';
 import './BeatGridEditor.css';
 
 // Trim range markers (#463) — same accent as the grid-offset readout so the
@@ -72,7 +73,17 @@ function computeBeats(beatgridJson, bpm, offsetMs = 0) {
  *                    150 cols/sec buffer, or a mix during the lazy-regen
  *                    transition period (#262)
  */
-function drawDetail(canvas, detail, viewCenter, beats, cuePoints, viewMs, trackDurationMs, trim) {
+function drawDetail(
+  canvas,
+  detail,
+  viewCenter,
+  beats,
+  cuePoints,
+  viewMs,
+  trackDurationMs,
+  trim,
+  mode
+) {
   const ctx = canvas.getContext('2d');
   const W = canvas.width;
   const H = canvas.height;
@@ -105,15 +116,13 @@ function drawDetail(canvas, detail, viewCenter, beats, cuePoints, viewMs, trackD
       const amplitude = Math.max(treble, mid, bass) / 255;
       const halfH = Math.max(1, amplitude * midY * 0.85);
 
-      // Gamma-compress to prevent bass domination (same logic as PlayerBar)
-      const bassC = Math.pow(bass / 255, 0.55);
-      const midC = Math.pow(mid / 255, 0.3);
-      const trebleC = Math.pow(treble / 255, 0.2);
-      const dominant = Math.max(bassC, midC, trebleC) || 0.001;
-      const brightness = Math.min(1, amplitude * 2.5);
-      const r = Math.round((trebleC / dominant) * brightness * 255);
-      const g = Math.round((midC / dominant) * brightness * 255);
-      const b = Math.round((bassC / dominant) * brightness * 255);
+      // Large-waveform colour maths, shared with the player bar (#608); the mode comes from the setting.
+      const { r, g, b } = bigWaveformColor(mode, {
+        bass,
+        mid,
+        treble,
+        brightness: Math.min(1, amplitude * 2.5),
+      });
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(px, midY - halfH, 1, halfH * 2);
     }
@@ -263,7 +272,8 @@ function drawOverview(
   playheadMs,
   cuePoints,
   viewMs,
-  trim
+  trim,
+  mode
 ) {
   const ctx = canvas.getContext('2d');
   const W = canvas.width;
@@ -289,15 +299,13 @@ function drawOverview(
       const amplitude = Math.max(rms, bass / 255, mid / 255, treble / 255);
       const halfH = Math.max(1, amplitude * midY * 0.9);
 
-      // Gamma-compress to prevent bass domination (same logic as PlayerBar)
-      const bassC = Math.pow(bass / 255, 0.55);
-      const midC = Math.pow(mid / 255, 0.3);
-      const trebleC = Math.pow(treble / 255, 0.2);
-      const dominant = Math.max(bassC, midC, trebleC) || 0.001;
-      const brightness = Math.min(1, rms * 2.5);
-      const r = Math.round((trebleC / dominant) * brightness * 255);
-      const g = Math.round((midC / dominant) * brightness * 255);
-      const b = Math.round((bassC / dominant) * brightness * 255);
+      // Thin overview strip: the full-spectrum flavour, the way rekordbox colours its overview (#608).
+      const { r, g, b } = overviewWaveformColor(mode, {
+        bass,
+        mid,
+        treble,
+        brightness: Math.min(1, rms * 2.5),
+      });
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(px, midY - halfH, 1, halfH * 2);
     }
@@ -400,6 +408,8 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
 
   const waveformDetailRef = useRef(null);
   const waveformOverviewRef = useRef(null);
+  // waveform_color_mode (#608) — the same setting the player bar honours, so all views agree.
+  const colourModeRef = useRef('rgb');
   const beatsRef = useRef([]);
   const cuePointsRef = useRef([]);
   const trimRef = useRef(null); // pending trim markers (#463) for the canvas loop
@@ -506,6 +516,25 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
     return unsub;
   }, [track.id]);
 
+  // ── Waveform colour mode (#608) — the same setting the player bar reads ────
+  useEffect(() => {
+    let alive = true;
+    window.api
+      .getSetting('waveform_color_mode', 'rgb')
+      .then((m) => {
+        if (alive) colourModeRef.current = m || 'rgb';
+      })
+      .catch(() => {});
+    const onMode = (e) => {
+      colourModeRef.current = e.detail || 'rgb';
+    };
+    window.addEventListener('waveform-color-mode-changed', onMode);
+    return () => {
+      alive = false;
+      window.removeEventListener('waveform-color-mode-changed', onMode);
+    };
+  }, []);
+
   // ── Load cue points ───────────────────────────────────────────────────────
   useEffect(() => {
     let alive = true;
@@ -551,12 +580,23 @@ export default function BeatGridEditor({ track, onClose, onApply }) {
           cues,
           vms,
           dur,
-          trimRef.current
+          trimRef.current,
+          colourModeRef.current
         );
 
       const oc = overviewCanvasRef.current;
       if (oc)
-        drawOverview(oc, waveformOverviewRef.current, vc, dur, ph, cues, vms, trimRef.current);
+        drawOverview(
+          oc,
+          waveformOverviewRef.current,
+          vc,
+          dur,
+          ph,
+          cues,
+          vms,
+          trimRef.current,
+          colourModeRef.current
+        );
 
       rafRef.current = requestAnimationFrame(loop);
     };
