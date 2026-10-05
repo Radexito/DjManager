@@ -22,7 +22,7 @@ import './App.css';
 function App() {
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('music');
   const [showSettings, setShowSettings] = useState(false);
-  const [exportState, setExportState] = useState(null); // { playlistId, mode } | null
+  const [exportState, setExportState] = useState(null); // { playlistId } | null
   const [depsProgress, setDepsProgress] = useState(null); // { msg, pct } or null
   const [depsLog, setDepsLog] = useState([]); // console lines [{ text, kind }]
   const [depsDone, setDepsDone] = useState(false); // run finished, awaiting Close
@@ -209,10 +209,7 @@ function App() {
                 selectedMenuItemId={selectedPlaylistId}
                 onMenuSelect={handleMenuSelect}
                 activePlaylistId={selectedPlaylistId}
-                onExportPlaylistRekordboxUsb={(id) =>
-                  setExportState({ playlistId: id, mode: 'rekordbox' })
-                }
-                onExportPlaylistAll={(id) => setExportState({ playlistId: id, mode: 'all' })}
+                onExportPlaylistAll={(id) => setExportState({ playlistId: id })}
               />
               {/* Always mounted so state persists when switching tabs */}
               <DownloadView
@@ -266,7 +263,7 @@ function App() {
           {exportState != null && (
             <ExportModal
               playlistId={exportState.playlistId}
-              initialMode={exportState.mode}
+              initialMode="all"
               onClose={() => setExportState(null)}
             />
           )}

@@ -62,27 +62,15 @@ contextBridge.exposeInMainWorld('api', {
   reorderPlaylist: (playlistId, orderedTrackIds) =>
     ipcRenderer.invoke('reorder-playlist', { playlistId, orderedTrackIds }),
   getPlaylistsForTrack: (trackId) => ipcRenderer.invoke('get-playlists-for-track', trackId),
-  exportPlaylistAsM3U: (playlistId) => ipcRenderer.invoke('export-playlist-m3u', playlistId),
-  onExportM3UProgress: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('export-m3u-progress', handler);
-    return () => ipcRenderer.removeListener('export-m3u-progress', handler);
-  },
 
   // USB / Rekordbox export
   checkUsbFormat: (mountPath) => ipcRenderer.invoke('check-usb-format', mountPath),
   formatUsb: (opts) => ipcRenderer.invoke('format-usb', opts),
-  exportRekordbox: (opts) => ipcRenderer.invoke('export-rekordbox', opts),
   exportAll: (opts) => ipcRenderer.invoke('export-all', opts),
   onFormatUsbProgress: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('format-usb-progress', handler);
     return () => ipcRenderer.removeListener('format-usb-progress', handler);
-  },
-  onExportRekordboxProgress: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('export-rekordbox-progress', handler);
-    return () => ipcRenderer.removeListener('export-rekordbox-progress', handler);
   },
   onExportAllProgress: (cb) => {
     const handler = (_, data) => cb(data);
