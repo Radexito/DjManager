@@ -1,10 +1,28 @@
 import fs from 'fs';
+import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
 const FAT_FILESYSTEMS = new Set(['fat32', 'fat16', 'fat', 'exfat', 'vfat', 'msdos']);
+
+// ── Audio folder name on the stick ────────────────────────────────────────────
+// Native Rekordbox exports audio under `Contents/<artist>/<album>/`; we keep a
+// flat folder but match its name so the layout is recognisable. CDJs locate a
+// track's ANLZ data through the USB-relative path recorded in export.pdb, so
+// the folder name is free to change (see protocol_rekordbox.md).
+export const USB_AUDIO_DIR = 'Contents';
+
+/** Absolute path of the audio folder on a mounted stick. */
+export function usbAudioDir(usbRoot) {
+  return path.join(usbRoot, USB_AUDIO_DIR);
+}
+
+/** USB-relative path of one track's audio file, e.g. `/Contents/Artist - Title.mp3`. */
+export function usbAudioPath(filename) {
+  return `/${USB_AUDIO_DIR}/${filename}`;
+}
 
 /**
  * Detects the filesystem type and device path for a given mount point.

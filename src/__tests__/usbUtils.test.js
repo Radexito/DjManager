@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import path from 'path';
 
 // ── Module mocks (hoisted before imports) ─────────────────────────────────────
 
@@ -15,7 +16,14 @@ vi.mock('child_process', () => {
 });
 
 // Import after mocks
-import { detectFilesystem, describeFilesystem, formatDrive } from '../usb/usbUtils.js';
+import {
+  detectFilesystem,
+  describeFilesystem,
+  formatDrive,
+  USB_AUDIO_DIR,
+  usbAudioDir,
+  usbAudioPath,
+} from '../usb/usbUtils.js';
 
 // ── Platform stub — force Linux branch regardless of host OS ─────────────────
 // usbUtils reads process.platform at call time, so stubbing the global works.
@@ -292,5 +300,35 @@ describe('describeFilesystem', () => {
 
   it('handles undefined gracefully', () => {
     expect(describeFilesystem(undefined)).toBe('Unknown');
+  });
+});
+
+// ── USB audio folder (Rekordbox-compatible) ───────────────────────────────────
+
+describe('USB audio folder', () => {
+  it("matches Rekordbox's folder name", () => {
+    expect(USB_AUDIO_DIR).toBe('Contents');
+  });
+
+  it('resolves the audio directory under the given usbRoot', () => {
+    expect(usbAudioDir('/media/dj/REKORDBOX')).toBe(
+      path.join('/media/dj/REKORDBOX', USB_AUDIO_DIR)
+    );
+    expect(path.basename(usbAudioDir('/media/dj/REKORDBOX'))).toBe('Contents');
+  });
+
+  it('builds the USB-relative path of one copied file', () => {
+    expect(usbAudioPath('Artist - Title.mp3')).toBe('/Contents/Artist - Title.mp3');
+  });
+
+  it('keeps spaces and non-ASCII characters intact', () => {
+    const name = 'Beyoncé - Déjà Vu (Extended Mix) 曲 01.flac';
+    expect(usbAudioPath(name)).toBe(`/Contents/${name}`);
+  });
+
+  it('always uses forward slashes in the USB-relative path', () => {
+    // CDJs read these paths from export.pdb, which is always forward-slashed
+    // regardless of the host OS.
+    expect(usbAudioPath('a.mp3')).not.toContain('\\');
   });
 });
