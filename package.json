@@ -129,7 +129,7 @@
     "@playwright/test": "^1.63.0",
     "@vitest/coverage-v8": "^5.0.0",
     "concurrently": "^10.0.5",
-    "electron": "^44.4.5",
+    "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
     "electron-rebuild": "^3.2.9",
     "eslint": "^10.11.0",
