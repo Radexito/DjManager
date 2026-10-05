@@ -564,10 +564,25 @@ describe('DataPage', () => {
     expect(buf.readUInt32LE(0)).toBe(0);
   });
 
-  it('PageFlags is 0x34 at offset 27', () => {
+  // Bit 4 of the data page flags means "contains deleted rows". Device output uses
+  // 0x24 for pages without stale slots and 0x34 only when they exist; this writer
+  // never reuses a slot, so every data page it emits is 0x24 (issue #582).
+  it('PageFlags is 0x24 at offset 27 (no stale rows)', () => {
     const page = new DataPage(TABLE_TYPES.Tracks);
     const buf = page.toBuffer(1, 2, 2);
-    expect(buf[27]).toBe(0x34);
+    expect(buf[27]).toBe(0x24);
+  });
+
+  it('PageFlags bit 4 is not set for a page with many rows either', () => {
+    const page = new DataPage(TABLE_TYPES.Columns);
+    for (let i = 0; i < 27; i++) page.insertRow(buildArtistRow(i + 1, 'Col' + i));
+    const buf = page.toBuffer(1, 2, 2);
+    expect(buf[27] & 0x10).toBe(0);
+  });
+
+  it('index pages keep flags 0x64', () => {
+    const idx = buildIndexPage(TABLE_TYPES.Tracks, 1, 2, 2);
+    expect(idx[27]).toBe(0x64);
   });
 
   it('empty page: NumRowsSmall=0 at offset 24', () => {
