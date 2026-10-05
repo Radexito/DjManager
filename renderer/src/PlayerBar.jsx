@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
+import { bigWaveformColor } from './waveformColors.js';
 import './PlayerBar.css';
 import './PlayerBarCues.css';
 
@@ -376,38 +377,15 @@ export default function PlayerBar({
       const x = Math.floor(i * colW);
       const w = Math.max(1, Math.ceil(colW));
 
-      // EMA-derived band values have bass >> mid >> treble by ~10-30x, so naive
-      // normalisation always picks bass as dominant and renders everything blue.
-      // Gamma-compress each channel independently before normalisation so weaker
-      // channels (treble, mid) become visually comparable to bass.
-      const bassC = Math.pow(bass / 255, 0.55);
-      const midC = Math.pow(mid / 255, 0.3);
-      const trebleC = Math.pow(treble / 255, 0.2);
-
-      const dominant = Math.max(bassC, midC, trebleC) || 0.001;
-      const brightness = Math.min(1, rms * 2.5);
-
-      const nb = (bassC / dominant) * brightness;
-      const ng = (midC / dominant) * brightness;
-      const nr = (trebleC / dominant) * brightness;
-
-      let r, g, b;
-      if (mode === 'classic') {
-        const white = Math.min(1, nr * 2);
-        r = Math.round(white * 220);
-        g = Math.round(white * 220);
-        b = Math.round(55 + nb * 180 + white * 55);
-      } else if (mode === '3band') {
-        // Blue=bass, Orange=mid, White=treble
-        r = Math.min(255, Math.round(nb * 30 + ng * 255 + nr * 255));
-        g = Math.min(255, Math.round(nb * 30 + ng * 140 + nr * 255));
-        b = Math.min(255, Math.round(nb * 255 + ng * 0 + nr * 255));
-      } else {
-        // RGB: treble→red, mid→green, bass→blue
-        r = Math.round(nr * 255);
-        g = Math.round(ng * 255);
-        b = Math.round(nb * 255);
-      }
+      // Colour maths lives in waveformColors.js so every view agrees (#608). The player bar draws the
+      // LARGE waveform, i.e. the dominant-band flavour - the same thing rekordbox does for its large
+      // waveform (no green in a normal mix), and the mode setting is honoured here as before.
+      const { r, g, b } = bigWaveformColor(mode, {
+        bass,
+        mid,
+        treble,
+        brightness: Math.min(1, rms * 2.5),
+      });
 
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(x, midY - halfH, w, halfH * 2);
