@@ -677,7 +677,14 @@ export class DataPage {
     buf.writeUInt16LE(this._topSize, 30); // NextHeapWriteOffset
 
     // ── Data Page Header (8 bytes at offset 32) ──
-    buf.writeUInt16LE(this.numRows, 32); // Live row count (device writes this, not a constant)
+    // Unknown5. Measured against rekordbox 7.2.11's own export of the same tracks (2026-10-05):
+    // the device writes 1 here on every dynamic table (Tracks, Artists, Keys, PlaylistEntries,
+    // PlaylistTree, even one holding 11 rows) and the live row count only on the four static
+    // datasets (Columns 27, Unknown17 22, Unknown18 17, Colors 8). This writer inserts rows one
+    // at a time, which is the "1" case, so the value stays 1 until the field's meaning is settled.
+    // An earlier revision of this patch wrote the live row count here, which diverged from the
+    // device on every dynamic table; the packed counters at bytes 24-26 are the actual fix.
+    buf.writeUInt16LE(1, 32); // Unknown5
     buf.writeUInt16LE(0, 34); // NumRowsLarge
     buf.writeUInt16LE(0, 36); // Unknown6
     buf.writeUInt16LE(0, 38); // Unknown7

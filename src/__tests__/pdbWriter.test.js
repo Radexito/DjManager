@@ -623,13 +623,16 @@ describe('DataPage', () => {
     expect([buf[24], buf[25], buf[26]]).toEqual([0x07, 0xe0, 0x00]);
   });
 
-  it('data page header row count at offset 32 equals the live row count', () => {
+  it('data page header Unknown5 stays 1, the way the device writes row-by-row inserts', () => {
+    // Measured against rekordbox 7.2.11's own export of the same tracks (2026-10-05): the device
+    // writes the live row count only on the static datasets (Columns 27, Unknown17 22, Unknown18
+    // 17, Colors 8) and 1 on every dynamic table, even one holding 11 rows.
     const page = new DataPage(TABLE_TYPES.Artists);
     page.insertRow(buildArtistRow(1, 'A'));
     page.insertRow(buildArtistRow(2, 'B'));
     page.insertRow(buildArtistRow(3, 'C'));
     const buf = page.toBuffer(1, 2, 2);
-    expect(buf.readUInt16LE(32)).toBe(3);
+    expect(buf.readUInt16LE(32)).toBe(1);
   });
 
   it('row data starts at byte 40 (DataHeaderSize)', () => {
