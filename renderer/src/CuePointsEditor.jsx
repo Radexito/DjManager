@@ -45,6 +45,14 @@ const HOT_CUE_LABELS = [
 ];
 const HOT_CUE_PAGE_SIZE = 8;
 
+// Names one side of a swap: "Hot cue B (Drop)" / "Memory cue (Intro)".
+function cueSlotName(cue) {
+  const slot =
+    cue.hot_cue_index >= 0 ? `Hot cue ${HOT_CUE_LABELS[cue.hot_cue_index]}` : 'Memory cue';
+  const label = (cue.label ?? '').trim();
+  return label ? `${slot} (${label})` : slot;
+}
+
 // Visibility preference keys in localStorage
 const LS_SHOW_HOT = 'cue-show-hot';
 const LS_SHOW_MEM = 'cue-show-mem';
@@ -79,6 +87,8 @@ export default function CuePointsEditor({
   const [confirmGen, setConfirmGen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  // Pending hot cue slot swap: { id, hotCueIndex, oldIndex, occupantId, message }
+  const [confirmSwap, setConfirmSwap] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editLabel, setEditLabel] = useState('');
   const [typePickerId, setTypePickerId] = useState(null); // cue id whose type picker is open
@@ -335,9 +345,8 @@ export default function CuePointsEditor({
     }
   };
 
-  // Change a cue's type: -1 = memory, 0-7 = hot cue A-H
-  const handleTypeChange = async (id, hotCueIndex) => {
-    setTypePickerId(null);
+  // Write one cue's type (deferred: local state; otherwise: DB + reload).
+  const applyTypeChange = async (id, hotCueIndex) => {
     if (deferred) {
       setCuePoints((prev) =>
         prev.map((c) => (c.id === id ? { ...c, hot_cue_index: hotCueIndex } : c))
@@ -346,6 +355,57 @@ export default function CuePointsEditor({
       await window.api.updateCuePoint(id, { hotCueIndex });
       reload();
     }
+  };
+
+  // Change a cue's type: -1 = memory, 0..HOT_CUE_LABELS.length-1 = hot cue A..P.
+  // One hot cue slot holds one cue, so taking a slot another cue already holds
+  // asks for confirmation first. Free slots and the memory type apply at once.
+  const handleTypeChange = (id, hotCueIndex) => {
+    setTypePickerId(null);
+    const cue = cuePoints.find((c) => c.id === id);
+    if (!cue) return;
+    const occupant =
+      hotCueIndex >= 0
+        ? cuePoints.find((c) => c.id !== id && c.hot_cue_index === hotCueIndex)
+        : null;
+    if (occupant) {
+      const occupantMovesTo =
+        cue.hot_cue_index >= 0
+          ? `${cueSlotName(occupant)} takes Hot cue ${HOT_CUE_LABELS[cue.hot_cue_index]}.`
+          : `${cueSlotName(occupant)} becomes a memory cue.`;
+      setConfirmSwap({
+        id,
+        hotCueIndex,
+        oldIndex: cue.hot_cue_index,
+        occupantId: occupant.id,
+        message:
+          `${cueSlotName(occupant)} is taken. Swap: ${cueSlotName(cue)} takes ` +
+          `Hot cue ${HOT_CUE_LABELS[hotCueIndex]} and ${occupantMovesTo}`,
+      });
+      return;
+    }
+    applyTypeChange(id, hotCueIndex);
+  };
+
+  // Confirmed swap: the edited cue takes the requested slot and the cue that
+  // held it takes the edited cue's old slot (-1 = it becomes a memory cue).
+  const confirmSwapCues = async () => {
+    const swap = confirmSwap;
+    if (!swap) return;
+    setConfirmSwap(null);
+    if (deferred) {
+      setCuePoints((prev) =>
+        prev.map((c) => {
+          if (c.id === swap.id) return { ...c, hot_cue_index: swap.hotCueIndex };
+          if (c.id === swap.occupantId) return { ...c, hot_cue_index: swap.oldIndex };
+          return c;
+        })
+      );
+      return;
+    }
+    await window.api.updateCuePoint(swap.id, { hotCueIndex: swap.hotCueIndex });
+    await window.api.updateCuePoint(swap.occupantId, { hotCueIndex: swap.oldIndex });
+    reload();
   };
 
   const { seek } = usePlayer() ?? {};
@@ -442,6 +502,35 @@ export default function CuePointsEditor({
           <button className="cpe__btn" onClick={() => setConfirmGen(false)}>
             Cancel
           </button>
+        </div>
+      )}
+
+      {confirmSwap && (
+        <div
+          className="cpe__confirm-backdrop"
+          role="presentation"
+          onClick={() => setConfirmSwap(null)}
+        >
+          <div
+            className="cpe__confirm"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Confirm hot cue swap"
+            // The dialog must swallow its own clicks, or a click on Swap would
+            // reach the backdrop and dismiss the popup first.
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="cpe__confirm-title">Hot cue slot is taken</div>
+            <p className="cpe__confirm-message">{confirmSwap.message}</p>
+            <div className="cpe__confirm-actions">
+              <button className="cpe__btn cpe__btn--add" onClick={confirmSwapCues}>
+                Swap
+              </button>
+              <button className="cpe__btn" onClick={() => setConfirmSwap(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -3,6 +3,7 @@ import { useDownload } from './DownloadContext.jsx';
 import { useTidalDownload } from './TidalDownloadContext.jsx';
 import './Sidebar.css';
 import ImportPlaylistDialog from './ImportPlaylistDialog';
+import FolderSyncModal from './FolderSyncModal';
 
 const MENU_ITEMS = [
   { id: 'music', name: 'Music', icon: '🎵' },
@@ -54,6 +55,20 @@ function Sidebar({
   const newInputRef = useRef(null);
   const renameInputRef = useRef(null);
 
+  const [folderMissing, setFolderMissing] = useState(null); // { playlistId, name, missing }
+  const [folderNotice, setFolderNotice] = useState('');
+
+  // The folder notice is a transient status line, not a panel: every other
+  // progress/status in this component clears itself, and a notice that stayed
+  // forever was the odd one out (report 2026-09-26). The effect re-runs when the
+  // text changes, so a second notice restarts the countdown instead of
+  // inheriting the first one's remaining time.
+  useEffect(() => {
+    if (!folderNotice) return undefined;
+    const id = setTimeout(() => setFolderNotice(''), 6000);
+    return () => clearTimeout(id);
+  }, [folderNotice]);
+
   const loadPlaylists = useCallback(async () => {
     const list = await window.api.getPlaylists();
     setPlaylists(list);
@@ -63,8 +78,105 @@ function Sidebar({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadPlaylists();
     const unsub = window.api.onPlaylistsUpdated(loadPlaylists);
-    return unsub;
+    // #267 — a synced folder playlist changes its track count behind our back.
+    const unsubFolder = window.api.onFolderPlaylistUpdated(loadPlaylists);
+    return () => {
+      unsub?.();
+      unsubFolder?.();
+    };
   }, [loadPlaylists]);
+
+  // #267 — refresh a folder-tracked playlist and surface what went missing.
+  const runFolderRefresh = useCallback(
+    async (result) => {
+      if (!result) return;
+      if (!result.ok) {
+        setFolderNotice(
+          result.error === 'folder-missing'
+            ? `The tracked folder is not reachable: ${result.folder ?? ''}`
+            : 'Could not refresh that playlist.'
+        );
+        return;
+      }
+      const pl = playlists.find((p) => p.id === result.playlistId);
+      if (result.missing?.length) {
+        setFolderMissing({
+          playlistId: result.playlistId,
+          name: pl?.name ?? 'tracked folder',
+          missing: result.missing,
+        });
+      } else {
+        setFolderNotice(
+          `Refreshed “${pl?.name ?? 'playlist'}”: +${result.added ?? 0} added, ` +
+            `${result.linked ?? 0} linked, ${result.found ?? 0} in the folder.`
+        );
+      }
+      loadPlaylists();
+    },
+    [playlists, loadPlaylists]
+  );
+
+  const handleRefreshFolderPlaylist = async (playlistId) => {
+    setPlaylistMenu(null);
+    setFolderNotice('Refreshing…');
+    const res = await window.api.refreshFolderPlaylist(playlistId);
+    setFolderNotice('');
+    await runFolderRefresh(res);
+  };
+
+  const handleToggleFolderRecursive = async (playlistId, recursive) => {
+    setPlaylistMenu(null);
+    const res = await window.api.setFolderPlaylistRecursive({ playlistId, recursive });
+    await runFolderRefresh(res);
+  };
+
+  const handleStopFolderPlaylist = async (playlistId) => {
+    setPlaylistMenu(null);
+    await window.api.stopFolderPlaylist(playlistId);
+    setFolderNotice('Folder tracking stopped. The playlist and its tracks stay.');
+    loadPlaylists();
+  };
+
+  // Attach a folder to a playlist (or point a tracked one somewhere else).
+  const handlePointPlaylistAtFolder = async (playlistId) => {
+    setPlaylistMenu(null);
+    const pl = playlists.find((p) => p.id === playlistId);
+    const dir = await window.api.openDirDialog();
+    if (!dir) return;
+    const res = await window.api.setPlaylistFolder({
+      playlistId,
+      folderPath: dir,
+      recursive: pl?.folder_recursive === 1,
+    });
+    if (!res?.ok) {
+      const why =
+        res?.error === 'missing-folder'
+          ? 'that folder is not reachable right now'
+          : (res?.error ?? 'failed');
+      setFolderNotice(`Could not track the folder: ${why}`);
+      return;
+    }
+    loadPlaylists();
+    if (res.missing?.length) {
+      setFolderMissing({ playlistId, name: pl?.name ?? '', missing: res.missing });
+    } else {
+      setFolderNotice(
+        `Now tracking ${dir}: +${res.added ?? 0} added, ${res.linked ?? 0} linked, ` +
+          `${res.found ?? 0} file(s) in the folder.`
+      );
+    }
+  };
+
+  const handleRemoveMissing = async (trackIds) => {
+    const pending = folderMissing;
+    setFolderMissing(null);
+    if (!pending) return;
+    await window.api.removeFolderPlaylistTracks({ playlistId: pending.playlistId, trackIds });
+    setFolderNotice(
+      `Removed ${trackIds.length} track${trackIds.length === 1 ? '' : 's'} from “${pending.name}”.`
+    );
+    loadPlaylists();
+  };
 
   // Focus new playlist input when it appears
   useEffect(() => {
@@ -391,6 +503,14 @@ function Sidebar({
                 {pl.color && (
                   <span className="playlist-color-dot" style={{ background: pl.color }} />
                 )}
+                {pl.folder_path && (
+                  <span
+                    className="playlist-folder-icon"
+                    title={`Tracked folder: ${pl.folder_path}`}
+                  >
+                    📁
+                  </span>
+                )}
                 <span className="menu-text playlist-name">{pl.name}</span>
                 <span className="playlist-count">{pl.track_count}</span>
               </div>
@@ -400,6 +520,15 @@ function Sidebar({
       </div>
 
       <div className="fixed-bottom-section">
+        {folderNotice && (
+          <div
+            className="folder-sync-notice"
+            onClick={() => setFolderNotice('')}
+            title="Click to dismiss"
+          >
+            {folderNotice}
+          </div>
+        )}
         {importProgress.total > 0 && (
           <div className="import-progress">
             Importing {importProgress.completed} / {importProgress.total}…
@@ -665,6 +794,48 @@ function Sidebar({
             📦 Export All to USB…
           </div>
           <div className="context-menu-separator" />
+          {playlists.find((p) => p.id === playlistMenu.id)?.folder_path ? (
+            <>
+              <div
+                className="context-menu-item"
+                onClick={() => handleRefreshFolderPlaylist(playlistMenu.id)}
+              >
+                🔄 Refresh from folder
+              </div>
+              <div
+                className="context-menu-item"
+                onClick={() =>
+                  handleToggleFolderRecursive(
+                    playlistMenu.id,
+                    !playlists.find((p) => p.id === playlistMenu.id)?.folder_recursive
+                  )
+                }
+              >
+                📁 Sub-folders:{' '}
+                {playlists.find((p) => p.id === playlistMenu.id)?.folder_recursive ? 'on' : 'off'}
+              </div>
+              <div
+                className="context-menu-item"
+                onClick={() => handlePointPlaylistAtFolder(playlistMenu.id)}
+              >
+                📁 Change tracked folder…
+              </div>
+              <div
+                className="context-menu-item"
+                onClick={() => handleStopFolderPlaylist(playlistMenu.id)}
+              >
+                ⏹ Stop tracking folder
+              </div>
+              <div className="context-menu-separator" />
+            </>
+          ) : (
+            <div
+              className="context-menu-item"
+              onClick={() => handlePointPlaylistAtFolder(playlistMenu.id)}
+            >
+              📁 Track a folder…
+            </div>
+          )}
           <div
             className="context-menu-item context-menu-item--danger"
             onClick={() => handleDeletePlaylist(playlistMenu.id)}
@@ -672,6 +843,15 @@ function Sidebar({
             🗑️ Delete playlist
           </div>
         </div>
+      )}
+
+      {folderMissing && (
+        <FolderSyncModal
+          playlistName={folderMissing.name}
+          missing={folderMissing.missing}
+          onKeepAll={() => setFolderMissing(null)}
+          onRemove={handleRemoveMissing}
+        />
       )}
 
       {importDialogFiles && (

@@ -111,6 +111,16 @@ window.api = {
   onUsbCuesDetected: vi.fn().mockImplementation(noop),
   onLibraryUpdated: vi.fn().mockImplementation(noop),
   onPlaylistsUpdated: vi.fn().mockImplementation(noop),
+  // #267 — folder-tracked playlists
+  onFolderPlaylistUpdated: vi.fn().mockImplementation(noop),
+  createFolderPlaylist: vi.fn().mockResolvedValue({ ok: true, added: 0, imported: 0 }),
+  refreshFolderPlaylist: vi
+    .fn()
+    .mockResolvedValue({ ok: true, added: 0, imported: 0, missing: [] }),
+  refreshFolderPlaylists: vi.fn().mockResolvedValue([]),
+  removeFolderPlaylistTracks: vi.fn().mockResolvedValue({ ok: true, removed: 0 }),
+  stopFolderPlaylist: vi.fn().mockResolvedValue({ ok: true }),
+  setFolderPlaylistRecursive: vi.fn().mockResolvedValue({ ok: true }),
   onOpenSettings: vi.fn().mockImplementation(noop),
   onDepsProgress: vi.fn().mockImplementation(noop),
   onMoveLibraryProgress: vi.fn().mockImplementation(noop),
