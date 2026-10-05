@@ -560,14 +560,18 @@ export function buildExtPcobSections(cuePoints) {
  *
  * Layout confirmed against real rekordbox 6 output in
  * reverse-engineering/captures/{40,41,42,44/P062,45,46,47}; offsets are from the
- * start of the PCP2 record:
+ * start of the PCP2 record. Re-measured 2026-10-05 with a byte dumper over
+ * captures 41/42/43/46; an earlier revision of this comment listed the start and
+ * end fields one byte low and the [28] constant wrong — the writer below was
+ * always correct, the prose was not:
  *   [0-11]:  standard header: fourcc='PCP2', len_header=16, len_tag=<record length>
  *   [12-15]: cue slot: 0 = memory cue (capture 42), 1..8 = hot cue A..H
  *   [16]:    type: 1 = cue point, 2 = loop
- *   [17-18]: 00 03 e8 constant
- *   [19-22]: start time, ms
- *   [23-26]: loop end (absolute ms) for a loop, 0xFFFFFFFF otherwise
- *   [27]:    00, [28]: 01 (constants)
+ *   [17-19]: 00 03 e8 constant
+ *   [20-23]: start time, ms
+ *   [24-27]: loop end (absolute ms) for a loop, 0xFFFFFFFF otherwise
+ *   [28-31]: 00 01 00 00 constant (0x00010000)
+ *   [32-35]: zeros
  *   [36-39]: loop length in BEATS + 0x0001 — rekordbox writes 0x0004_0001 for a
  *            4-beat loop (captures 46, 47). We do not write it: it needs the beat
  *            interval at cue-build time and no local capture tells us what a
