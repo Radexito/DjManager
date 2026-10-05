@@ -251,49 +251,48 @@ function buildPvbrSection(fileSize) {
 // causes Rekordbox to reject the entire ANLZ file, silently dropping waveforms
 // and beatgrids even though those sections precede PCOB in the stream.
 //
-// PCOB header (24 bytes): fourcc + len_header(24) + len_tag + type(u4) + pad(u2) + num_cues(u2) + memory_count(u4)
-//   memory_count = 0xffffffff sentinel in all observed native files.
-// PCPT sub-tag (56 bytes, fixed) — verified by hex-diff against native Rekordbox USB export:
+// PCOB header (24 bytes): fourcc + len_header(24) + len_tag + list_kind(u4) + count(u4) + 0xffffffff
+//   list_kind: 1 = hot cue list, 0 = memory cue list (capture 42 puts the memory cue in the 0 list).
+//   count is the number of PCPT records in the section, as a u32 whose top bytes are always 0.
+//   The trailing 0xffffffff is what every captured hot cue list carries; capture 42's populated
+//   a populated memory list carries 0x00000000 there instead, which is what buildPcobSlot now
+//   writes; an empty one carries 0xffffffff (captures 40 and 42).
+// PCPT sub-tag (56 bytes, fixed) — verified byte for byte against native Rekordbox USB exports
+// (captures 40, 41, 42, 46, 47):
 //   [0-11]:  standard header  fourcc='PCPT', len_header=28, len_tag=56
-//   [12-15]: hot_cue (u4): 0=memory cue, 1=A, 2=B, …
+//   [12-15]: cue slot (u4): 0=memory cue, 1=A, 2=B, …
 //   [16-19]: status (u4): 0 — native Rekordbox writes 0 here; KSY label "disabled" is misleading
 //   [20-23]: 0x00010000 (constant)
-//   [24-25]: order_first (u2): 0xffff
-//   [26-27]: order_last  (u2): 0xffff
+//   [24-27]: 0xFFFFFFFF (constant)
 //   [28]:    type (u1): 1=cue_point, 2=loop
-//   [29]:    0x00
-//   [30-31]: 0x03e8 (constant observed in all native files)
-//   [32-35]: time_ms (u32BE)
-//   [36-39]: loop_time (u32BE, 0xffffffff=none)
-//   [40-55]: zeros
+//   [29-31]: 00 03 e8 (constant)
+//   [32-35]: start time, ms (u32BE)
+//   [36-39]: loop end, ms (u32BE, absolute), or 0xffffffff when not a loop
+//   [40-55]: 16 zero bytes in every captured record, coloured cues included
 //
 // PCOB split (verified against a native Rekordbox export with 16 hot cues,
 // "page 2" being hot cues 9-16 continuing the same numbering — there is no
 // separate page marker in the format, paging is purely a Rekordbox/CDJ UI concept):
-//   hot_cue numbers 1-3   (A-C)  → DAT PCOB1
-//   hot_cue numbers 4-16+ (D-P…) → EXT PCOB1
+//   hot_cue numbers 1-3   (A-C)  → DAT PCOB list 1
+//   hot_cue numbers 4-16+ (D-P…) → EXT PCOB list 1
+//   memory cues (slot 0)         → DAT PCOB list 0, and EXT PCO2 list 0 (not EXT PCOB)
 //
-// PCO2 header (20 bytes): fourcc + len_header(20) + len_tag + type(u4) + num_cues(u2) + pad(u2)
-// PCP2 sub-tag (variable) — verified by hex-diff against native Rekordbox USB export:
+// PCO2 header (20 bytes): fourcc + len_header(20) + len_tag + list_kind(u4) + count(u2) + pad(u2)
+// PCP2 sub-tag (variable) — verified byte for byte against native Rekordbox USB exports:
 //   [0-11]:  standard header  fourcc='PCP2', len_header=16, len_tag=variable
-//   [12-15]: hot_cue (u4): 0=memory, 1=A, 2=B, …
-//   body at [16+]:
-//     [0]:    type (u1): 1=cue_point
-//     [1]:    0x00
-//     [2-3]:  0x03e8 (constant)
-//     [4-7]:  time_ms (u32BE)
-//     [8-11]: loop_time (u32BE, 0xffffffff=none)
-//     [12]:   color_id (0x00)
-//     [13]:   0x01 (constant)
-//     [14-23]: zeros
-//     [24-27]: len_comment (u32BE, byte count incl null terminator, 0=no label)
-//     [28+]:   UTF-16BE label (null-terminated), labelByteLen bytes
-//     [28+labelByteLen+0]: color_code (u1): Pioneer palette 1-8 (0=no color)
-//     [28+labelByteLen+1]: color_red   (u1)
-//     [28+labelByteLen+2]: color_green (u1)
-//     [28+labelByteLen+3]: color_blue  (u1)
-//     rest: 40 trailing zeros
-//   Total body = 28 + labelByteLen + 44  (72 for no-label, 88 for 16-byte label)
+//   [12-15]: cue slot (u4): 0=memory, 1=A, 2=B, …
+//   [16]:    type (u1): 1=cue_point, 2=loop
+//   [17-18]: 00 03 e8 (constant)
+//   [19-22]: start time, ms
+//   [23-26]: loop end, ms (absolute), 0xffffffff when not a loop
+//   [27]:    00, [28]: 01 (constants)
+//   [29-39]: zeros — rekordbox stores the loop length in beats at [36-39]; we leave it 0
+//   [40-43]: len_comment (u4): label byte count INCLUDING the null terminator, 0 = no label
+//   [44+]:   UTF-16BE label (null-terminated)
+//   then:    colour block: hue code (u1) + R + G + B
+//   then:    40 trailing zeros
+//   Record length = 16 + 72 + labelByteLen exactly (capture 44/P062: a 10-byte label gives
+//   98 bytes, a 12-byte label 100 — there is no minimum length for short labels).
 //
 // PCPT (DAT/EXT PCOB sections) color palette — read by CDJ hardware.
 // Codes 1–8 are Pioneer's per-slot palette: 1=orange-red(A)…8=violet(H).
@@ -309,25 +308,32 @@ export const PIONEER_PALETTE = new Map([
   ['#cc00ff', 8], // violet     ○
 ]);
 
-function hexToPioneerCode(hex) {
-  if (!hex) return 0;
-  return PIONEER_PALETTE.get(hex.toLowerCase()) ?? 0;
-}
+// NOTE (#574): PIONEER_PALETTE is no longer written into PCPT records. In every
+// captured rekordbox record the 16 bytes at PCPT+40 are zero, coloured hot cues
+// included, and the DAT/EXT cue record carries no packed colour at all — the
+// colour lives only in the EXT PCP2 entries below. The map stays exported
+// because anlzCueReader uses it to name colours read back from PCPT data.
 
-// PCP2 (EXT PCO2 section) uses a DIFFERENT color encoding — a ~64-step extended color wheel
-// where code 1 = blue (0x00,0x00,0xFF) and code 42 = red (0xFF,0x00,0x00).
-// This is NOT the same numbering as PCPT (1-8).  Confirmed from native Rekordbox USB dumps
-// of "Riders on the Storm" with 16 cues using all available colors.
-//   ✓ = confirmed exact RGB from native dump   ~ = interpolated between confirmed neighbors
+// PCP2 (EXT PCO2 section) uses a DIFFERENT color encoding: a hue code byte followed by the
+// R, G, B triple — four bytes in total, written at PCP2+44+len_comment (#574).
+// The hue codes are NOT the PCPT 1-8 numbering. Every entry below marked ✓ was read straight
+// out of a rekordbox capture in this repo with all eight palette slots in use
+// (reverse-engineering/captures/43-hot-cue-colors and 44-labled-cue/P062):
+//   slot 1 red    `00 ff 00 17`   slot 5 cyan   `09 00 e0 ff`
+//   slot 2 orange `26 ff 5e 00`   slot 6 blue   `01 00 00 ff`
+//   slot 3 yellow `20 ff e8 00`   slot 7 violet `38 b3 00 ff`
+//   slot 4 green  `16 1a ff 00`   slot 8 pink   `31 ff 00 a1`
+//   ✓ = confirmed byte for byte from those captures   ~ = still inferred, not in any capture
 export const PIONEER_PCP2_MAP = new Map([
-  ['#ff6b35', { code: 0x27, r: 0xff, g: 0x46, b: 0x00 }], // orange-red  ~ code 39 (hue≈16°, Δ0.5°)
-  ['#ff0000', { code: 0x2a, r: 0xff, g: 0x00, b: 0x00 }], // red         ✓ code 42
-  ['#ff9900', { code: 0x23, r: 0xff, g: 0xa2, b: 0x00 }], // orange      ~ code 35 (hue≈38°, Δ2°)
-  ['#ffff00', { code: 0x1f, r: 0xf3, g: 0xf4, b: 0x00 }], // yellow      ~ code 31 (hue≈57°, Δ3°)
-  ['#00ff00', { code: 0x16, r: 0x1a, g: 0xff, b: 0x00 }], // green       ✓ code 22 (hue=114°, Δ6°)
-  ['#00b4d8', { code: 0x09, r: 0x00, g: 0xe0, b: 0xff }], // cyan        ✓ code 9  (hue=187°, Δ3°)
-  ['#0080ff', { code: 0x05, r: 0x00, g: 0x70, b: 0xff }], // blue        ✓ code 5  (hue=214°, Δ4°)
-  ['#cc00ff', { code: 0x38, r: 0xb3, g: 0x00, b: 0xff }], // violet      ✓ code 56 (hue=282°, Δ6°)
+  ['#ff6b35', { code: 0x27, r: 0xff, g: 0x46, b: 0x00 }], // orange-red  ~ no capture for this hue
+  ['#ff0000', { code: 0x00, r: 0xff, g: 0x00, b: 0x17 }], // red         ✓ capture 43 slot 1
+  ['#ff9900', { code: 0x26, r: 0xff, g: 0x5e, b: 0x00 }], // orange      ✓ capture 43 slot 2
+  ['#ffff00', { code: 0x20, r: 0xff, g: 0xe8, b: 0x00 }], // yellow      ✓ capture 43 slot 3
+  ['#00ff00', { code: 0x16, r: 0x1a, g: 0xff, b: 0x00 }], // green       ✓ capture 43 slot 4
+  ['#00b4d8', { code: 0x09, r: 0x00, g: 0xe0, b: 0xff }], // cyan        ✓ capture 43 slot 5
+  ['#0080ff', { code: 0x01, r: 0x00, g: 0x00, b: 0xff }], // blue        ✓ capture 43 slot 6
+  ['#cc00ff', { code: 0x38, r: 0xb3, g: 0x00, b: 0xff }], // violet      ✓ capture 43 slot 7
+  ['#ff00a1', { code: 0x31, r: 0xff, g: 0x00, b: 0xa1 }], // pink        ✓ capture 43 slot 8
 ]);
 
 const EMPTY_PCOB_1 = Buffer.from([
@@ -410,46 +416,95 @@ const EMPTY_PCO2_2 = Buffer.from([
 ]);
 
 /**
- * Builds a single PCPT sub-tag entry (56 bytes, fixed size).
- * Per crate-digger ksy: [12-15]=hot_cue number (0=memory,1=A,2=B…), [28]=type (1=point,2=loop).
+ * Works out whether a cue row describes a plain cue point or a loop, and the
+ * loop's ABSOLUTE end position in ms (not a length).
+ *
+ * Cue rows come from the `cue_points` table, which has no loop column yet, so
+ * the end position is optional: a row that carries one is written as a loop.
+ * Recognised fields, in priority order:
+ *   cue.loop_end_ms   absolute ms (natural name for DB rows / future column)
+ *   cue.end_ms        alias
+ *   cue.loopTimeMs    the field anlzCueReader produces when cues are read back
+ *                     out of an existing ANLZ file, so a loop survives a round trip
+ *
+ * A null / 0xFFFFFFFF / missing end means "not a loop": the record is a cue
+ * point and gets the 0xFFFFFFFF end sentinel (captures 40, 41).
+ *
+ * @returns {{type: number, endMs: number|null}} type 1 = cue point, 2 = loop
  */
-function buildPcptEntry(hotCueNum, positionMs, color) {
+export function resolveCueSpan(cue) {
+  const raw = cue?.loop_end_ms ?? cue?.end_ms ?? cue?.loopTimeMs ?? null;
+  if (raw === null || raw === undefined) return { type: 1, endMs: null };
+  const endMs = Math.round(Number(raw));
+  if (!Number.isFinite(endMs) || endMs < 0 || endMs === 0xffffffff) {
+    return { type: 1, endMs: null };
+  }
+  return { type: 2, endMs };
+}
+
+/**
+ * Builds a single PCPT sub-tag entry (56 bytes, fixed size).
+ *
+ * Layout confirmed byte for byte against real rekordbox 6 output in
+ * reverse-engineering/captures/{40,41,42,46,47}:
+ *   [0-11]:  standard header: fourcc='PCPT', len_header=28, len_tag=56
+ *   [12-15]: cue slot: 0 = memory cue (capture 42), 1..8 = hot cue A..H (capture 41)
+ *   [16-19]: 0 — native rekordbox writes 0 (the crate-digger "disabled" label is a misnomer)
+ *   [20-23]: 0x00010000 constant
+ *   [24-27]: 0xFFFFFFFF constant
+ *   [28]:    type: 1 = cue point, 2 = loop
+ *   [29-31]: 00 03 e8 constant
+ *   [32-35]: start time, ms
+ *   [36-39]: loop end (absolute ms) for a loop, 0xFFFFFFFF otherwise
+ *            (capture 46: start 0x0000ef81, end 0x0000f595; capture 47: four loops,
+ *             every record type 02 with a real end)
+ *   [40-55]: 16 zero bytes in EVERY captured record, coloured cues included
+ *
+ * @param {number} slot                       cue slot: 0 = memory cue, 1..8 = A..H
+ * @param {number} positionMs                 start time in ms
+ * @param {{type: number, endMs: number|null}} span  cue kind + loop end (see resolveCueSpan)
+ */
+function buildPcptEntry(slot, positionMs, { type = 1, endMs = null } = {}) {
   const buf = Buffer.alloc(56, 0);
   buf.write('PCPT', 0, 'ascii');
   buf.writeUInt32BE(28, 4); // len_header = 28
   buf.writeUInt32BE(56, 8); // len_tag = 56
-  buf.writeUInt32BE(hotCueNum, 12); // hot_cue: 0=memory, 1=A, 2=B, …
+  buf.writeUInt32BE(slot, 12); // slot: 0=memory, 1=A, 2=B, …
   // [16-19]: status = 0 — native Rekordbox writes 0 here (KSY "disabled" is a misnomer)
   buf.writeUInt32BE(0x00010000, 20); // constant observed in all native Rekordbox files
-  buf.writeUInt16BE(0xffff, 24); // order_first
-  buf.writeUInt16BE(0xffff, 26); // order_last
-  buf[28] = 1; // type: 1=cue_point
+  buf.writeUInt32BE(0xffffffff, 24); // order_first/order_last: 0xFFFFFFFF in every capture
+  buf[28] = type === 2 ? 2 : 1; // capture 46/47: a loop is type 2
   buf.writeUInt16BE(0x03e8, 30); // constant
-  buf.writeUInt32BE(positionMs, 32); // time_ms
-  buf.writeUInt32BE(0xffffffff, 36); // loop_time: none
-  buf[40] = hexToPioneerCode(color); // Pioneer palette code (1-8; 0=no color/use CDJ default)
-  // [41-55]: zeros
+  buf.writeUInt32BE(positionMs >>> 0, 32); // start time ms
+  buf.writeUInt32BE(type === 2 && endMs !== null ? endMs >>> 0 : 0xffffffff, 36); // loop end
+  // [40-55]: zeros — no packed colour in a DAT/EXT cue record (#574)
   return buf;
 }
 
-function buildPcobSlot(slotType, cues) {
-  // slotType: 1=hot_cues (slot 1), 0=memory_cues (slot 2)
-  if (cues.length === 0) return slotType === 1 ? EMPTY_PCOB_1 : EMPTY_PCOB_2;
+/**
+ * Builds one populated PCOB section.
+ * @param {number} listKind 1 = hot cue list, 0 = memory cue list
+ * @param {Array<{position_ms, hot_cue_index, [loop_end_ms]}>} cues
+ */
+function buildPcobSlot(listKind, cues) {
+  if (cues.length === 0) return listKind === 1 ? EMPTY_PCOB_1 : EMPTY_PCOB_2;
   const headerSize = 24;
   const tagLen = headerSize + cues.length * 56;
   const buf = Buffer.alloc(tagLen, 0);
   buf.write('PCOB', 0, 'ascii');
   buf.writeUInt32BE(headerSize, 4); // len_header = 24
   buf.writeUInt32BE(tagLen, 8); // len_tag
-  buf.writeUInt32BE(slotType, 12); // type: 1=hot_cues, 0=memory_cues
-  // [16-17]: padding = 0
-  buf.writeUInt16BE(cues.length, 18); // num_cues (u16BE)
-  buf.writeUInt32BE(0xffffffff, 20); // memory_count sentinel
+  buf.writeUInt32BE(listKind, 12); // 1 = hot cue list, 0 = memory cue list
+  buf.writeUInt32BE(cues.length, 16); // entry count (u32; the high bytes are always 0)
+  // +0x14 is 0xFFFFFFFF normally, but a POPULATED memory cue list carries 0 here,
+  // which reads as a head index into that list; an empty one carries 0xFFFFFFFF
+  // (captures 40 and 42). Hot lists always carry 0xFFFFFFFF.
+  buf.writeUInt32BE(listKind === 0 && cues.length > 0 ? 0 : 0xffffffff, 20);
   cues.forEach((cue, i) => {
     // DB hot_cue_index: <0 = memory cue, >=0 = hot cue (0=A, 1=B, …)
     // Pioneer format: 0=memory, 1=A, 2=B, …
-    const hotCueNum = cue.hot_cue_index >= 0 ? cue.hot_cue_index + 1 : 0;
-    buildPcptEntry(hotCueNum, Math.round(cue.position_ms), cue.color).copy(
+    const slot = cue.hot_cue_index >= 0 ? cue.hot_cue_index + 1 : 0;
+    buildPcptEntry(slot, Math.round(cue.position_ms), resolveCueSpan(cue)).copy(
       buf,
       headerSize + i * 56
     );
@@ -458,35 +513,38 @@ function buildPcobSlot(slotType, cues) {
 }
 
 /**
- * Build PCOB buffers for the DAT file [slot1, slot2].
- * Verified split from native Rekordbox: hot_cue numbers 1-3 (A,B,C) go in DAT PCOB1.
- * Cues D-P… (hot_cue numbers 4-16 and up, i.e. "page 2" of hot cues) go in EXT
- * PCOB1 — see buildExtPcobSections().
- * PCOB2 (memory cues): the byte layout was verified via hex-diff against native
- * Rekordbox (issue #208), but real-world testing showed memory cues are unreliable
- * in practice, so writing them is disabled for now — see "Known Issues" in
- * CLAUDE.md. PCOB2 is always the empty stub until re-enabled.
+ * Build PCOB buffers for the DAT file [hot cue list, memory cue list].
+ * Verified split from native Rekordbox: hot_cue numbers 1-3 (A,B,C) go in DAT
+ * PCOB1. Cues D-H (hot_cue numbers 4-8) go in the EXT PCOB1 — see
+ * buildExtPcobSections().
  *
- * @param {Array<{position_ms, color, hot_cue_index}>} cuePoints
+ * Memory cues are real cue records with slot 0 in the SECOND PCOB section, whose
+ * list kind is 0 — not a stub (capture 42-momory_cue: one entry, slot 00 at
+ * +0x0C, type 01 at +0x1C, start 0x00010954, end FFFFFFFF).
+ *
+ * @param {Array<{position_ms, color, hot_cue_index, [loop_end_ms]}>} cuePoints
  * @returns {[Buffer, Buffer]}
  */
 export function buildPcobSections(cuePoints) {
   if (!cuePoints || cuePoints.length === 0) return [EMPTY_PCOB_1, EMPTY_PCOB_2];
   // hot_cue_index 0,1,2 → hot_cue numbers 1,2,3 (A,B,C) — DAT only
   const datHotCues = cuePoints.filter((c) => c.hot_cue_index >= 0 && c.hot_cue_index <= 2);
-  // Memory cue export is temporarily disabled — see "Known Issues" in CLAUDE.md.
-  // PCOB2 is always written as the empty stub until re-enabled.
-  return [buildPcobSlot(1, datHotCues), EMPTY_PCOB_2];
+  const memoryCues = cuePoints.filter((c) => c.hot_cue_index < 0);
+  return [buildPcobSlot(1, datHotCues), buildPcobSlot(0, memoryCues)];
 }
 
 /**
- * Build PCOB buffers for the EXT file [slot1, slot2].
+ * Build PCOB buffers for the EXT file [hot cue list, memory cue list].
  * Verified split: hot_cue numbers 4 and up (D, E, …, "page 2" hot cues 9-16+,
  * hot_cue_index 3 and up) go in EXT PCOB1. Confirmed against a native Rekordbox
  * export with 16 hot cues (EXT PCOB1 held hot_cue numbers 4-16 in one flat list
  * — Rekordbox has no page marker in the format, paging is purely a UI concept).
  *
- * @param {Array<{position_ms, color, hot_cue_index}>} cuePoints
+ * The EXT memory cue list stays the empty stub on purpose: capture 42 has a
+ * memory cue and its EXT PCOB list kind 0 is still empty. Memory cues live in
+ * the DAT PCOB memory list and in the EXT PCO2 memory list.
+ *
+ * @param {Array<{position_ms, color, hot_cue_index, [loop_end_ms]}>} cuePoints
  * @returns {[Buffer, Buffer]}
  */
 export function buildExtPcobSections(cuePoints) {
@@ -498,37 +556,68 @@ export function buildExtPcobSections(cuePoints) {
 }
 
 /**
- * Builds a single PCP2 sub-tag entry.
- * Verified against native Rekordbox USB exports (issue #208 hex-diff):
- *   - No-label entry: len_tag=88 (body=72)
- *   - 16-byte label entry: len_tag=104 (body=88)
- *   - Formula: body = 28 + labelByteLen + 44  (28 fixed + label + 4 color + 40 zeros)
- *   - Color: color_code(u1, Pioneer palette 1-8, via hexToPioneerCode()) + R + G + B
+ * Builds a single PCP2 sub-tag entry (variable length).
+ *
+ * Layout confirmed against real rekordbox 6 output in
+ * reverse-engineering/captures/{40,41,42,44/P062,45,46,47}; offsets are from the
+ * start of the PCP2 record. Re-measured 2026-10-05 with a byte dumper over
+ * captures 41/42/43/46; an earlier revision of this comment listed the start and
+ * end fields one byte low and the [28] constant wrong — the writer below was
+ * always correct, the prose was not:
+ *   [0-11]:  standard header: fourcc='PCP2', len_header=16, len_tag=<record length>
+ *   [12-15]: cue slot: 0 = memory cue (capture 42), 1..8 = hot cue A..H
+ *   [16]:    type: 1 = cue point, 2 = loop
+ *   [17-19]: 00 03 e8 constant
+ *   [20-23]: start time, ms
+ *   [24-27]: loop end (absolute ms) for a loop, 0xFFFFFFFF otherwise
+ *   [28-31]: 00 01 00 00 constant (0x00010000)
+ *   [32-35]: zeros
+ *   [36-39]: loop length in BEATS + 0x0001 — rekordbox writes 0x0004_0001 for a
+ *            4-beat loop (captures 46, 47). We do not write it: it needs the beat
+ *            interval at cue-build time and no local capture tells us what a
+ *            player does with a stored zero. Left as zeros.
+ *   [40-43]: len_comment: byte count of the label INCLUDING its null terminator.
+ *            Capture 44: `00 00 00 0c` for "Break" (5 chars + NUL = 12 bytes) —
+ *            this is the `00 0c` u16 length of #574, written as a u32 whose top
+ *            two bytes are always zero.
+ *   [44..]:  label as UTF-16BE, null-terminated, len_comment bytes in total
+ *   then:    colour block at 44+len_comment: hue code byte + R, G, B
+ *            (capture 43 slot 1 `00 ff 00 17`, slot 3 `20 ff e8 00`,
+ *             slot 5 `09 00 e0 ff`, slot 8 `31 ff 00 a1`)
+ *   then:    40 trailing zero bytes
+ *
+ * Record length = 16 + 72 + labelByteLen, exactly. Capture 44/P062 proves there
+ * is no minimum length for a short label: "Drop" (10-byte label) gives a
+ * 98-byte record and "Break" (12-byte label) a 100-byte one.
+ *
+ * @param {number} slot        cue slot: 0 = memory cue, 1..8 = hot cue A..H
+ * @param {number} positionMs  start time in ms
+ * @param {string} label       label text ('' for none)
+ * @param {string|null} color  hex colour to map through PIONEER_PCP2_MAP
+ * @param {{type: number, endMs: number|null}} span  cue kind + loop end
  */
-function buildPcp2Entry(hotCueNum, positionMs, label, color) {
+function buildPcp2Entry(slot, positionMs, label, color, { type = 1, endMs = null } = {}) {
   const labelStr = label ?? '';
   const labelByteLen = labelStr.length > 0 ? (labelStr.length + 1) * 2 : 0; // UTF-16BE + null terminator
-  // When a label is present, body is always at least 88 bytes (native Rekordbox
-  // always produces lenTag=104 regardless of label length ≤ 7 chars).
-  // For labels > 7 chars the body grows proportionally.
-  const bodySize = labelStr.length > 0 ? Math.max(88, 28 + labelByteLen + 44) : 72;
+  // 28 fixed bytes + label + 4 colour bytes + 40 trailing zeros = 72 + labelByteLen.
+  const bodySize = 72 + labelByteLen;
   const lenTag = 16 + bodySize;
 
   const buf = Buffer.alloc(lenTag, 0);
   buf.write('PCP2', 0, 'ascii');
   buf.writeUInt32BE(16, 4); // len_header = 16
   buf.writeUInt32BE(lenTag, 8); // len_tag
-  buf.writeUInt32BE(hotCueNum, 12); // hot_cue: 0=memory, 1=A, 2=B, …
+  buf.writeUInt32BE(slot, 12); // slot: 0=memory, 1=A, 2=B, … (same numbering as PCPT)
 
   // body at offset 16:
-  buf[16] = 1; // type: 1=cue_point
+  buf[16] = type === 2 ? 2 : 1; // type: 1=cue_point, 2=loop (capture 46/47)
   // [17] = 0x00
   buf.writeUInt16BE(0x03e8, 18); // constant (verified in native)
-  buf.writeUInt32BE(positionMs, 20); // time_ms
-  buf.writeUInt32BE(0xffffffff, 24); // loop_time: none
-  // [28] = 0x00 (color_id)
-  buf[29] = 0x01; // constant (verified in native)
-  // [30-39]: zeros
+  buf.writeUInt32BE(positionMs >>> 0, 20); // start time ms
+  buf.writeUInt32BE(type === 2 && endMs !== null ? endMs >>> 0 : 0xffffffff, 24); // loop end
+  // [28] = 0x00, [29] = 0x01 — constants (verified in native)
+  buf[29] = 0x01;
+  // [30-39]: zeros (see the beat-count note above)
   buf.writeUInt32BE(labelByteLen, 40); // len_comment (byte count incl null terminator)
 
   if (labelStr.length > 0) {
@@ -541,8 +630,9 @@ function buildPcp2Entry(hotCueNum, positionMs, label, color) {
     // null terminator bytes remain 0x00 0x00
   }
 
-  // Color at [28+labelByteLen]: color_code(u1) + R + G + B
-  // PCP2 color_code uses the extended wheel (PIONEER_PCP2_MAP) — NOT the PCPT 1-8 palette.
+  // Colour at [44+len_comment]: hue code(u1) + R + G + B (4 bytes — the
+  // "three colour bytes" of #574 are the RGB triple, the hue code sits in front).
+  // PCP2 colour codes come from PIONEER_PCP2_MAP — NOT the PCPT 1-8 palette.
   const colorOff = 44 + labelByteLen;
   const pcp2Color = color ? PIONEER_PCP2_MAP.get(color.toLowerCase()) : null;
   if (pcp2Color) {
@@ -557,13 +647,23 @@ function buildPcp2Entry(hotCueNum, positionMs, label, color) {
   return buf;
 }
 
-function buildPco2Slot(slotType, cues) {
-  // slotType: 1=hot_cues (slot 1), 0=memory_cues (slot 2)
-  if (cues.length === 0) return slotType === 1 ? EMPTY_PCO2_1 : EMPTY_PCO2_2;
+/**
+ * Builds one populated PCO2 section.
+ * @param {number} listKind 1 = hot cue list, 0 = memory cue list
+ * @param {Array<{position_ms, label, color, hot_cue_index, [loop_end_ms]}>} cues
+ */
+function buildPco2Slot(listKind, cues) {
+  if (cues.length === 0) return listKind === 1 ? EMPTY_PCO2_1 : EMPTY_PCO2_2;
   const headerSize = 20;
   const entries = cues.map((cue) => {
-    const hotCueNum = cue.hot_cue_index >= 0 ? cue.hot_cue_index + 1 : 0;
-    return buildPcp2Entry(hotCueNum, Math.round(cue.position_ms), cue.label, cue.color);
+    const slot = cue.hot_cue_index >= 0 ? cue.hot_cue_index + 1 : 0;
+    return buildPcp2Entry(
+      slot,
+      Math.round(cue.position_ms),
+      cue.label,
+      cue.color,
+      resolveCueSpan(cue)
+    );
   });
   const bodyLen = entries.reduce((s, e) => s + e.length, 0);
   const tagLen = headerSize + bodyLen;
@@ -572,30 +672,29 @@ function buildPco2Slot(slotType, cues) {
   header.write('PCO2', 0, 'ascii');
   header.writeUInt32BE(headerSize, 4); // len_header = 20
   header.writeUInt32BE(tagLen, 8); // len_tag
-  header.writeUInt32BE(slotType, 12); // type: 1=hot_cues, 0=memory_cues
-  header.writeUInt16BE(cues.length, 16); // num_cues (u16BE)
+  header.writeUInt32BE(listKind, 12); // 1 = hot cue list, 0 = memory cue list
+  header.writeUInt16BE(cues.length, 16); // entry count (u16BE)
   // [18-19]: padding = 0
 
   return Buffer.concat([header, ...entries]);
 }
 
 /**
- * Build populated PCO2 section buffers [slot1, slot2] (EXT file only).
- * Slot 1 (type=1) contains ALL hot cues in one flat list, including "page 2"
+ * Build populated PCO2 section buffers [hot cue list, memory cue list] (EXT file only).
+ * List 1 (kind=1) contains ALL hot cues in one flat list, including "page 2"
  * cues (hot_cue numbers 9-16+) — confirmed against a native Rekordbox export
- * with 16 hot cues (PCO2 slot 1 held all 16 entries, hot_cue 1-16).
- * Slot 2 (type=0, memory cues) is disabled for now — see "Known Issues" in
- * CLAUDE.md — and always written as the empty stub.
+ * with 16 hot cues (PCO2 list 1 held all 16 entries, hot_cue 1-16).
+ * List 2 (kind=0) holds the memory cues as real records with slot 0
+ * (capture 42-momory_cue: one PCP2 entry, slot 00, type 01).
  *
- * @param {Array<{position_ms, label, color, hot_cue_index}>} cuePoints
+ * @param {Array<{position_ms, label, color, hot_cue_index, [loop_end_ms]}>} cuePoints
  * @returns {[Buffer, Buffer]}
  */
 export function buildPco2Sections(cuePoints) {
   if (!cuePoints || cuePoints.length === 0) return [EMPTY_PCO2_1, EMPTY_PCO2_2];
   const hotCues = cuePoints.filter((c) => c.hot_cue_index >= 0);
-  // Memory cue export is temporarily disabled — see "Known Issues" in CLAUDE.md.
-  // PCO2 slot 2 is always written as the empty stub until re-enabled.
-  return [buildPco2Slot(1, hotCues), EMPTY_PCO2_2];
+  const memoryCues = cuePoints.filter((c) => c.hot_cue_index < 0);
+  return [buildPco2Slot(1, hotCues), buildPco2Slot(0, memoryCues)];
 }
 
 // ─── PMAI file header ──────────────────────────────────────────────────────────
@@ -798,10 +897,13 @@ export async function writeAnlz(opts) {
   const pvbrSection = buildPvbrSection(audioFileSize);
 
   // ── Build cue sections ──────────────────────────────────────────────────────
-  // DAT PCOB: hot cues A,B,C (hot_cue numbers 1-3) only
+  // DAT PCOB: hot cues A,B,C (hot_cue numbers 1-3) in list 1, memory cues (slot 0)
+  // in list 0 (capture 42 — a real record, not a stub)
   const [pcob1, pcob2] = buildPcobSections(cuePoints ?? []);
-  // EXT PCOB: hot cues D-H (hot_cue numbers 4-8) only
+  // EXT PCOB: hot cues D-H (hot_cue numbers 4-8) only; its memory list stays empty
+  // (capture 42 keeps the EXT PCOB memory list empty even with a memory cue)
   const [extPcob1, extPcob2] = buildExtPcobSections(cuePoints ?? []);
+  // EXT PCO2: list 1 = every hot cue with labels/colours, list 0 = memory cues
   const [pco2_1, pco2_2] = buildPco2Sections(cuePoints ?? []);
 
   // ── ANLZ0000.DAT ─────────────────────────────────────────────────────────────
@@ -818,9 +920,11 @@ export async function writeAnlz(opts) {
 
   // ── ANLZ0000.EXT ─────────────────────────────────────────────────────────────
   // Section order confirmed from native Rekordbox: PPTH, PWV3, PCOB×2, PCO2×2, PQT2, PWV5, PWV4
-  // EXT PCOB1: hot cues D-H (numbers 4-8); EXT PCOB2: empty stub — memory
-  // cues live only in DAT's PCOB2 (see buildPcobSections), not duplicated here
-  // PCO2 carries all cues with labels/colors for both DAT and EXT cues.
+  // EXT PCOB1: hot cues D-H (numbers 4-8); EXT PCOB2 stays empty, as in capture 42
+  // (memory cues are not duplicated into the EXT PCOB — they go to DAT PCOB list 0
+  // and EXT PCO2 list 0 below).
+  // PCO2 list 1 carries all hot cues with labels/colors; PCO2 list 0 carries the
+  // memory cues (capture 42).
   const extSections = [buildPathTag(usbFilePath)];
   if (waveforms) {
     extSections.push(buildPwv3Section(waveforms.pwv3));
