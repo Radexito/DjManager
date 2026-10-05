@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { generateWaveform } from './waveformGenerator.js';
+import { generateWaveform, generateFlatWaveform } from './waveformGenerator.js';
 
 // ─── Path hashing (ported from beirbox-gui/ANLZ/ANLZ.go) ──────────────────────
 // Pioneer CDJs store ANLZ files at PIONEER/USBANLZ/{hash}/ANLZ0000.DAT
@@ -757,6 +757,12 @@ function buildSectionWithBigHeader(fourcc, specificHeader, data) {
  * @param {number}  [opts.beatgridOffset=0] - Grid shift in ms (beatgrid_offset from DB)
  * @param {string}  opts.usbRoot            - Absolute path to USB root on disk
  * @param {Array}   [opts.cuePoints]        - Cue point rows from cue_points table
+ * @param {boolean} [opts.blind=false]      - #258 "real DJ mode": write an ANLZ
+ *   that still looks analysed (so the player does NOT run its own analysis) but
+ *   carries an empty beat grid and a FLAT waveform. Cue points are still
+ *   written. BPM and key are zeroed on the PDB row by applyBlindMode.
+ * @param {number}  [opts.durationSec=0]    - length of the exported audio, used
+ *   to size the flat waveform sections in blind mode.
  */
 export async function writeAnlz(opts) {
   const {
@@ -768,6 +774,8 @@ export async function writeAnlz(opts) {
     usbRoot,
     ffmpegPath,
     cuePoints,
+    blind = false,
+    durationSec = 0,
   } = opts;
 
   const folderHash = getFolderName(usbFilePath);
@@ -775,8 +783,15 @@ export async function writeAnlz(opts) {
   fs.mkdirSync(anlzDir, { recursive: true });
 
   // ── Generate waveforms from source audio ─────────────────────────────────
+  // Blind mode still writes every waveform section, but FLAT (user decision
+  // 2026-09-26). Omitting them left the player without any waveform data, so it
+  // drew one of its own and the scrolling strip stayed visible in rekordbox —
+  // the opposite of the point. Silence encodes to a straight line and needs no
+  // ffmpeg pass, so the mode stays fast as well as blind.
   let waveforms = null;
-  if (sourceFilePath) {
+  if (blind) {
+    waveforms = generateFlatWaveform(durationSec);
+  } else if (sourceFilePath) {
     try {
       waveforms = await generateWaveform(sourceFilePath, ffmpegPath || 'ffmpeg');
     } catch (err) {
@@ -785,7 +800,8 @@ export async function writeAnlz(opts) {
   }
 
   // ── Compute beat array once — shared by PQTZ (DAT) and PQT2 (EXT) ──────────
-  const beats = computeBeats(beatgrid, bpm, beatgridOffset);
+  // Blind mode forces an empty beat array: both grids come out header-only.
+  const beats = blind ? [] : computeBeats(beatgrid, bpm, beatgridOffset);
 
   // ── PVBR seek table ───────────────────────────────────────────────────────────
   // Native Rekordbox always includes PVBR between PPTH and PQTZ in the DAT file.
