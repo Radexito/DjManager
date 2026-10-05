@@ -3089,7 +3089,7 @@ ipcMain.handle(
         });
       }
 
-      // #561 — real values for the PDB rows (see export-rekordbox above)
+      // #561 — real values for the PDB rows (probe the file when a row has none)
       const sampleInfo = await resolveExportSampleInfo(allTracks, {
         reusedIds,
         manifestTracks: existingTracks,
@@ -3202,8 +3202,8 @@ ipcMain.handle(
       const mergedPlaylists = new Map(existingPlaylists);
       for (const pl of newPdbPlaylists) mergedPlaylists.set(pl.id, pl);
 
-      // #561 — same backfill as export-rekordbox: manifest rows with no values
-      // are probed once from the file on the stick.
+      // #561 — manifest rows with no values are probed once from the file on the
+      // stick, so the PDB describes the audio that is really there.
       await backfillPdbSampleInfo([...mergedTracks.values()], { usbRoot });
 
       runPdbExporter(
