@@ -75,6 +75,11 @@ export function initDB() {
     // NULL on either side = no trim (play the whole file).
     'ALTER TABLE tracks ADD COLUMN trim_start_ms REAL',
     'ALTER TABLE tracks ADD COLUMN trim_end_ms REAL',
+    // #561: what the audio file really is, captured from the import-time
+    // ffprobe (or backfilled at export time). NULL / 0 = not captured, which
+    // the PDB export must not mistake for 44100 Hz / 16 bit.
+    'ALTER TABLE tracks ADD COLUMN sample_rate INTEGER',
+    'ALTER TABLE tracks ADD COLUMN bit_depth INTEGER',
   ]) {
     try {
       db.prepare(col).run();
@@ -126,6 +131,12 @@ export function initDB() {
     'ALTER TABLE playlists ADD COLUMN color TEXT',
     'ALTER TABLE playlists ADD COLUMN created_at INTEGER',
     'ALTER TABLE playlists ADD COLUMN source_url TEXT',
+    // #267: folder-tracked playlists mirror a local folder. A NULL folder_path
+    // means an ordinary (or smart) playlist; folder_recursive decides whether
+    // sub-folders are part of the mirror.
+    'ALTER TABLE playlists ADD COLUMN folder_path TEXT',
+    'ALTER TABLE playlists ADD COLUMN folder_recursive INTEGER DEFAULT 0',
+    'ALTER TABLE playlists ADD COLUMN folder_synced_at INTEGER',
     'ALTER TABLE playlist_tracks ADD COLUMN position INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE playlist_tracks ADD COLUMN date_added INTEGER',
   ]) {

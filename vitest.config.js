@@ -26,6 +26,9 @@ export default defineConfig({
             'src/__tests__/playlistRepository.test.js',
             'src/__tests__/cuePointRepository.test.js',
             'src/__tests__/libraryRepository.test.js',
+            // #561 — needs the real tracks table (migration + write-back) with
+            // ffprobe mocked
+            'src/__tests__/sampleInfo.test.js',
           ],
           setupFiles: ['./src/__tests__/setup.js'],
         },
@@ -39,6 +42,8 @@ export default defineConfig({
             'src/__tests__/importManager.test.js',
             'src/__tests__/dbLocation.test.js',
             'src/__tests__/autoTagger.test.js',
+            'src/__tests__/libraryWatcher.test.js',
+            'src/__tests__/folderPlaylistSync.test.js',
             'src/__tests__/anlzCueReader.test.js',
             'src/__tests__/id3Writer.test.js',
             'src/__tests__/mp4Tags.test.js',
@@ -58,6 +63,7 @@ export default defineConfig({
             'src/__tests__/ffmpegConvert.test.js',
             'src/__tests__/exportReuse.test.js',
             'src/__tests__/trackTrim.test.js',
+            'src/__tests__/m3uPath.test.js',
           ],
         },
       },
