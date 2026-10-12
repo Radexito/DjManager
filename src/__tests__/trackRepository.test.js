@@ -5,6 +5,7 @@ import {
   getTrackById,
   getTrackByHash,
   updateTrack,
+  setTrackSampleInfo,
   removeTrack,
   removeTracks,
   getTrackCountByFilePath,
@@ -43,6 +44,51 @@ describe('trackRepository', () => {
       expect(track.title).toBe('Test Track');
       expect(track.artist).toBe('Test Artist');
       expect(track.duration).toBeCloseTo(180.5);
+    });
+  });
+
+  // #561 — the exported Rekordbox PDB described every track as 44100 Hz / 16 bit
+  // because these two columns did not exist.
+  describe('sample_rate / bit_depth (#561)', () => {
+    it('addTrack stores both real values', () => {
+      const id = addTrack({ ...SAMPLE, sample_rate: 48000, bit_depth: 24 });
+
+      const track = getTrackById(id);
+      expect(track.sample_rate).toBe(48000);
+      expect(track.bit_depth).toBe(24);
+    });
+
+    it('addTrack leaves both NULL when the caller has nothing to store', () => {
+      const track = getTrackById(addTrack(SAMPLE));
+
+      expect(track.sample_rate).toBeNull();
+      expect(track.bit_depth).toBeNull();
+    });
+
+    it('setTrackSampleInfo fills only the missing value', () => {
+      const id = addTrack({ ...SAMPLE, sample_rate: 88200 });
+
+      expect(setTrackSampleInfo(id, { sampleRate: null, bitDepth: 24 })).toBe(true);
+      const track = getTrackById(id);
+      expect(track.sample_rate).toBe(88200);
+      expect(track.bit_depth).toBe(24);
+    });
+
+    it('setTrackSampleInfo ignores a missing or zero value instead of overwriting', () => {
+      const id = addTrack({ ...SAMPLE, sample_rate: 44100, bit_depth: 16 });
+
+      expect(setTrackSampleInfo(id, { sampleRate: 0, bitDepth: null })).toBe(false);
+      const track = getTrackById(id);
+      expect(track.sample_rate).toBe(44100);
+      expect(track.bit_depth).toBe(16);
+    });
+
+    it('setTrackSampleInfo does not mark the track as analyzed', () => {
+      const id = addTrack(SAMPLE);
+      expect(getTrackById(id).analyzed).toBe(0);
+
+      setTrackSampleInfo(id, { sampleRate: 96000, bitDepth: 24 });
+      expect(getTrackById(id).analyzed).toBe(0);
     });
   });
 
@@ -108,6 +154,65 @@ describe('trackRepository', () => {
         file_path: '/tmp/dh1.mp3',
       });
       const results = getTracks({ filters: [{ field: 'title', op: 'contains', value: 'house' }] });
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('Deep House Banger');
+    });
+
+    it('filters by ARTIST starts with, including inside a credit', () => {
+      addTrack({
+        ...SAMPLE,
+        artist: 'Merage, Ghost in Real Life, Egzod',
+        file_hash: 'c1',
+        file_path: '/tmp/c1.mp3',
+      });
+      addTrack({
+        ...SAMPLE,
+        artist: 'Ghost in Real Life',
+        file_hash: 'c2',
+        file_path: '/tmp/c2.mp3',
+      });
+      addTrack({ ...SAMPLE, artist: 'Egzod', file_hash: 'c3', file_path: '/tmp/c3.mp3' });
+
+      const credit = getTracks({
+        filters: [{ field: 'artist', op: 'starts with', value: 'Ghost in Real' }],
+      });
+      expect(credit.map((t) => t.artist).sort()).toEqual([
+        'Ghost in Real Life',
+        'Merage, Ghost in Real Life, Egzod',
+      ]);
+
+      // start of the whole tag, first name of a credit, and a later name
+      const whole = getTracks({
+        filters: [{ field: 'artist', op: 'starts with', value: 'Merage' }],
+      });
+      expect(whole).toHaveLength(1);
+      expect(whole[0].artist).toBe('Merage, Ghost in Real Life, Egzod');
+
+      const later = getTracks({
+        filters: [{ field: 'artist', op: 'starts with', value: 'Egzod' }],
+      });
+      expect(later.map((t) => t.artist).sort()).toEqual([
+        'Egzod',
+        'Merage, Ghost in Real Life, Egzod',
+      ]);
+
+      // a name that only appears mid-word is not a prefix
+      expect(
+        getTracks({ filters: [{ field: 'artist', op: 'starts with', value: 'Real' }] })
+      ).toHaveLength(0);
+    });
+
+    it('filters by TITLE starts with', () => {
+      addTrack(SAMPLE);
+      addTrack({
+        ...SAMPLE,
+        title: 'Deep House Banger',
+        file_hash: 'df2',
+        file_path: '/tmp/df2.mp3',
+      });
+      const results = getTracks({
+        filters: [{ field: 'title', op: 'starts with', value: 'deep ' }],
+      });
       expect(results).toHaveLength(1);
       expect(results[0].title).toBe('Deep House Banger');
     });
@@ -699,5 +804,71 @@ describe('getTrackRank', () => {
 
   it('returns null for an unknown track id', () => {
     expect(getTrackRank({ trackId: 999999, sort: { key: 'title', asc: true } })).toBeNull();
+  });
+});
+
+// #463 — trim range columns (Prepare Track)
+describe('trackRepository — trim columns', () => {
+  it('defaults trim_start_ms / trim_end_ms to NULL when addTrack() gets none', () => {
+    const id = addTrack(SAMPLE);
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBeNull();
+    expect(track.trim_end_ms).toBeNull();
+  });
+
+  it('persists trim columns passed to addTrack()', () => {
+    const id = addTrack({ ...SAMPLE, trim_start_ms: 15_000, trim_end_ms: 145_000 });
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBe(15_000);
+    expect(track.trim_end_ms).toBe(145_000);
+  });
+
+  it('stores and reads back a trim range set through updateTrack()', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'trim-upd', file_path: '/tmp/trim-upd.mp3' });
+    updateTrack(id, { trim_start_ms: 30_000, trim_end_ms: 120_000 });
+
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBe(30_000);
+    expect(track.trim_end_ms).toBe(120_000);
+  });
+
+  it('exposes the trim columns through getTracks()', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'trim-list', file_path: '/tmp/trim-list.mp3' });
+    updateTrack(id, { trim_start_ms: 5000, trim_end_ms: 60_000 });
+
+    const rows = getTracks({ limit: 10 });
+    const row = rows.find((t) => t.id === id);
+    expect(row.trim_start_ms).toBe(5000);
+    expect(row.trim_end_ms).toBe(60_000);
+  });
+
+  it('clears both trim points when updateTrack() gets nulls (reset to full track)', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'trim-reset', file_path: '/tmp/trim-reset.mp3' });
+    updateTrack(id, { trim_start_ms: 30_000, trim_end_ms: 120_000 });
+    updateTrack(id, { trim_start_ms: null, trim_end_ms: null });
+
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBeNull();
+    expect(track.trim_end_ms).toBeNull();
+  });
+
+  it('allows a start-only trim (end = end of file)', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'trim-start', file_path: '/tmp/trim-start.mp3' });
+    updateTrack(id, { trim_start_ms: 12_345 });
+
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBe(12_345);
+    expect(track.trim_end_ms).toBeNull();
+  });
+
+  it('keeps the trim columns after an analysis update (updateTrack always sets analyzed = 1)', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'trim-analysis', file_path: '/tmp/trim-a.mp3' });
+    updateTrack(id, { trim_start_ms: 7000, trim_end_ms: 90_000 });
+    updateTrack(id, { bpm: 128, key_camelot: '8A' });
+
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBe(7000);
+    expect(track.trim_end_ms).toBe(90_000);
+    expect(track.analyzed).toBe(1);
   });
 });

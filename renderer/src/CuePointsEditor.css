@@ -356,21 +356,48 @@
   flex-shrink: 0;
 }
 
-.cpe__confirm {
+/* The swap confirmation is a modal popup, not a status line in the cue list:
+   it blocks the panel until it is answered (user request 2026-09-26). */
+.cpe__confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  background: #2a1a00;
+  justify-content: center;
+  z-index: 4000;
+}
+
+.cpe__confirm {
+  width: 340px;
+  max-width: 90vw;
+  background: #1a1a1a;
   border: 1px solid #5a3800;
-  border-radius: 4px;
-  margin-bottom: 8px;
-  font-size: 11px;
+  border-radius: 8px;
+  padding: 14px 16px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.75);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cpe__confirm-title {
+  font-size: 12px;
+  font-weight: 600;
   color: #ffb347;
 }
 
-.cpe__confirm span {
-  flex: 1;
+.cpe__confirm-message {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #ccc;
+}
+
+.cpe__confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .cpe__btn--danger {

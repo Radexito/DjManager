@@ -9,6 +9,7 @@ import {
   createContext,
   useContext,
   startTransition,
+  Fragment,
 } from 'react';
 import {
   DndContext,
@@ -27,7 +28,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
-import { parseQuery } from './searchParser.js';
+import { parseQuery, buildArtistQuery, splitArtists } from './searchParser.js';
 import TrackDetails from './TrackDetails.jsx';
 import RatingStars from './RatingStars.jsx';
 import BeatGridEditor from './BeatGridEditor.jsx';
@@ -146,13 +147,50 @@ function fmtDuration(secs) {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-function renderCell(t, colKey) {
+function renderCell(t, colKey, onArtistClick) {
   const bpmValue = t.bpm_override ?? t.bpm;
   switch (colKey) {
     case 'title':
       return t.title;
-    case 'artist':
-      return t.artist || 'Unknown';
+    case 'artist': {
+      const name = t.artist || 'Unknown';
+      // #505 — clicking the artist searches the library by them, like the
+      // artist in the player bar. Unknown/empty artists stay plain text.
+      if (!t.artist || !onArtistClick) return name;
+      // #505 — a credit can list several artists ("Sigma, Doctor P"). Each name
+      // is its own link, so a click narrows to one artist instead of searching
+      // the whole credit string.
+      const names = splitArtists(t.artist);
+      if (names.length < 2) {
+        return (
+          <span
+            className="cell-artist--clickable"
+            title={`Search: ARTIST is ${name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onArtistClick(name);
+            }}
+          >
+            {name}
+          </span>
+        );
+      }
+      return names.map((one, i) => (
+        <Fragment key={one}>
+          {i > 0 ? ', ' : null}
+          <span
+            className="cell-artist--clickable"
+            title={`Search: ARTIST contains ${one}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onArtistClick(one, true);
+            }}
+          >
+            {one}
+          </span>
+        </Fragment>
+      ));
+    }
     case 'bpm': {
       const display = bpmValue ?? '...';
       const hasGridShift = (t.beatgrid_offset ?? 0) !== 0;
@@ -256,6 +294,7 @@ function LibraryRow({
   onContextMenu,
   onRatingChange,
   onCueClick,
+  onArtistClick,
   onDragStart,
   visibleColumns,
   gridTemplate,
@@ -365,7 +404,7 @@ function LibraryRow({
           </div>
         ) : (
           <div key={col.key} className={cellClass(col.key, t)}>
-            {renderCell(t, col.key)}
+            {renderCell(t, col.key, onArtistClick)}
           </div>
         )
       )}
@@ -388,6 +427,7 @@ function SortableRow({
   onContextMenu,
   onRatingChange,
   onCueClick,
+  onArtistClick,
   visibleColumns,
   gridTemplate,
   minScrollWidth,
@@ -502,7 +542,7 @@ function SortableRow({
           </div>
         ) : (
           <div key={col.key} className={cellClass(col.key, t)}>
-            {renderCell(t, col.key)}
+            {renderCell(t, col.key, onArtistClick)}
           </div>
         )
       )}
@@ -585,6 +625,7 @@ function TrackTableBody({
   handleContextMenu,
   handleRatingChange,
   handleCueClick,
+  onArtistClick,
   handleTrackDragStart,
   visibleColumns,
   mediaPort,
@@ -679,6 +720,7 @@ function TrackTableBody({
           onContextMenu={handleContextMenu}
           onRatingChange={handleRatingChange}
           onCueClick={handleCueClick}
+          onArtistClick={onArtistClick}
           visibleColumns={visibleColumns}
           gridTemplate={gridTemplate}
           minScrollWidth={minScrollWidth}
@@ -839,6 +881,7 @@ function TrackTableBody({
             onContextMenu={handleContextMenu}
             onRatingChange={handleRatingChange}
             onCueClick={handleCueClick}
+            onArtistClick={onArtistClick}
             onDragStart={handleTrackDragStart}
             visibleColumns={visibleColumns}
             gridTemplate={gridTemplate}
@@ -875,6 +918,8 @@ function MusicLibrary({
   onSearchChange,
   openDetailsRequest,
   locateTrack,
+  onImportUsbCues,
+  onArtistSearch,
 }) {
   const isPlaylistView = selectedPlaylist !== 'music';
   const {
@@ -953,6 +998,10 @@ function MusicLibrary({
   const [bpmEditValue, setBpmEditValue] = useState(''); // value for inline Set BPM input
 
   const offsetRef = useRef(0);
+  // #528 — generation whose first page has not committed yet. While it is
+  // pending the refs already describe the NEW view but `tracks` still holds the
+  // previous view's rows, so a lazy page merged now would double the window.
+  const resetPendingRef = useRef(null);
   const windowStartRef = useRef(0); // global index of tracks[0] (windowed list)
   // Full natural-order track ids of the OPEN playlist (position order from SQL)
   // — DnD reorder needs the WHOLE order, not just the loaded window.
@@ -1160,12 +1209,20 @@ function MusicLibrary({
         }
         if (mode === 'append') {
           appendedPageRef.current = true;
-          setTracks((prev) => [...prev, ...rows]);
+          setTracks((prev) => {
+            const seen = new Set(prev.map((t) => t.id));
+            const fresh = rows.filter((r) => !seen.has(r.id));
+            return fresh.length ? [...prev, ...fresh] : prev;
+          });
           offsetRef.current = at + rows.length; // next append offset
         } else if (mode === 'prepend') {
           appendedPageRef.current = true;
           windowStartRef.current = at;
-          setTracks((prev) => [...rows, ...prev]);
+          setTracks((prev) => {
+            const seen = new Set(prev.map((t) => t.id));
+            const fresh = rows.filter((r) => !seen.has(r.id));
+            return fresh.length ? [...fresh, ...prev] : prev;
+          });
         } else {
           windowStartRef.current = at;
           setTracks(rows);
@@ -1183,6 +1240,7 @@ function MusicLibrary({
         }
       } finally {
         inflightRef.current -= 1;
+        if (!lazy && resetPendingRef.current === token) resetPendingRef.current = null;
         // Note: reset callers force loadingRef=false themselves; the counter
         // keeps it true while OTHER lazy fetches are still flying, so locate
         // waits for the scroll to settle.
@@ -1237,6 +1295,7 @@ function MusicLibrary({
       loadingRef.current = false;
       hasMoreRef.current = true;
       resetTokenRef.current += 1;
+      resetPendingRef.current = resetTokenRef.current;
       appendedPageRef.current = false;
       setHasMore(true);
       const t = setTimeout(() => loadPage({ at: 0, mode: 'reset' }), 0);
@@ -1251,6 +1310,7 @@ function MusicLibrary({
       loadingRef.current = false;
       hasMoreRef.current = true;
       resetTokenRef.current += 1;
+      resetPendingRef.current = resetTokenRef.current;
       appendedPageRef.current = false;
       setHasMore(true);
       const { filters, remaining } = parseQuery(search);
@@ -1302,6 +1362,7 @@ function MusicLibrary({
     // row to the follow effect, which fetches the full set in the new order
     // (sortByRef is already updated) and scrolls once it has committed.
     resetTokenRef.current += 1;
+    resetPendingRef.current = resetTokenRef.current;
     loadingRef.current = false;
     sortFollowNonceRef.current += 1;
     setSortFollow({ id: singleSel, nonce: sortFollowNonceRef.current });
@@ -1394,6 +1455,7 @@ function MusicLibrary({
     loadingRef.current = false;
     hasMoreRef.current = true;
     resetTokenRef.current += 1;
+    resetPendingRef.current = resetTokenRef.current;
     appendedPageRef.current = false; // a full reload is not a lazy append
     setHasMore(true);
     if (viewChanged) {
@@ -1873,7 +1935,8 @@ function MusicLibrary({
       }
       // Materialize the full set (matches the playing queue scope) and let the
       // re-run below do the scroll once the new rows are committed.
-      resetTokenRef.current += 1; // invalidate any in-flight page load
+      resetTokenRef.current += 1;
+      resetPendingRef.current = resetTokenRef.current; // invalidate any in-flight page load
       loadingRef.current = false; // ...and make sure that load can never get stuck
       windowStartRef.current = 0; // the full set starts at global index 0
       offsetRef.current = full.length;
@@ -1905,6 +1968,21 @@ function MusicLibrary({
   const handleCueClick = useCallback((track) => {
     setBeatGridEditorTrack(track);
   }, []);
+
+  // ── #505 — artist click searches the library by that artist ────────────────
+  // Same behaviour as clicking the artist in the player bar: the query goes
+  // through the normal search bar, so it composes with existing filter chips.
+  // Without a wired handler the cell stays plain text (no fake affordance).
+  const handleArtistClick = useMemo(() => {
+    if (!onArtistSearch && !onSearchChange) return undefined;
+    return (artist, fromCredit) => {
+      const query = buildArtistQuery(artist, { fromCredit });
+      if (!query) return;
+      // always an explicit boolean: App folds it into the query operator
+      if (onArtistSearch) onArtistSearch(artist, Boolean(fromCredit));
+      else onSearchChange(query);
+    };
+  }, [onArtistSearch, onSearchChange]);
 
   const handleDetailsSave = useCallback((result) => {
     if (Array.isArray(result)) {
@@ -2084,6 +2162,22 @@ function MusicLibrary({
     setToast({ msg, ok });
     toastTimerRef.current = setTimeout(() => setToast(null), 4000);
   }, []);
+
+  // #474 — write the analyzed BPM/key into the selected tracks' own file tags
+  const handleWriteBpmKeyTags = useCallback(async () => {
+    const targetIds = contextMenu?.targetIds ?? [];
+    setContextMenu(null);
+    if (targetIds.length === 0) return;
+    try {
+      const res = await window.api.writeBpmKeyTags({ trackIds: targetIds });
+      showToast(
+        `BPM & Key tags — written: ${res.written}, skipped: ${res.skipped}`,
+        res.written > 0
+      );
+    } catch (err) {
+      showToast(`BPM & Key tag write failed: ${err.message}`, false);
+    }
+  }, [contextMenu, showToast]);
 
   const handleNormalizeTracks = useCallback(async () => {
     const targetIds = contextMenu?.targetIds ?? [];
@@ -2273,9 +2367,12 @@ function MusicLibrary({
   );
 
   const handleApplyBeatGrid = useCallback(
-    async (trackId, { beatgrid_offset, bpm_override }) => {
+    async (trackId, { beatgrid_offset, bpm_override, trim_start_ms, trim_end_ms }) => {
       const update = { beatgrid_offset };
       if (bpm_override != null) update.bpm_override = bpm_override;
+      // #463: trim range travels with the same Apply — null clears it
+      update.trim_start_ms = trim_start_ms ?? null;
+      update.trim_end_ms = trim_end_ms ?? null;
       setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, ...update } : t)));
       patchCurrentTrack(trackId, update);
       await window.api.updateTrack(trackId, update);
@@ -2369,6 +2466,9 @@ function MusicLibrary({
 
   const handleItemsRendered = useCallback(
     ({ startIndex, stopIndex }) => {
+      // #528 — a page fetched now would use the new view's filters while the
+      // window still holds the old view's rows: the merge doubles them.
+      if (resetPendingRef.current === resetTokenRef.current) return;
       // Keep the loaded window covering the visible range: append downward when
       // the viewport nears the bottom of the loaded rows, prepend upward when it
       // climbs back above a mid-list jump point. When the viewport has run far
@@ -2541,6 +2641,7 @@ function MusicLibrary({
             handleContextMenu={handleContextMenu}
             handleRatingChange={handleRatingChange}
             handleCueClick={handleCueClick}
+            onArtistClick={handleArtistClick}
             handleTrackDragStart={handleTrackDragStart}
             visibleColumns={visibleColumns}
             mediaPort={mediaPort}
@@ -3076,6 +3177,23 @@ function MusicLibrary({
                         </div>
                       </SubItem>
                     </SubItem>
+
+                    {/* ── Cue points from hardware (#259) ── */}
+                    <div className="context-menu-separator" />
+                    <div
+                      className="context-menu-item"
+                      onClick={() => {
+                        setContextMenu(null);
+                        onImportUsbCues?.();
+                      }}
+                    >
+                      🎧 Import cue points from USB
+                    </div>
+
+                    {/* ── Write BPM & Key tags (#474) ── */}
+                    <div className="context-menu-item" onClick={handleWriteBpmKeyTags}>
+                      🏷️ Save BPM &amp; Key to file{selectionLabel}
+                    </div>
 
                     {/* ── Remove ── */}
                     {isPlaylistView ? (

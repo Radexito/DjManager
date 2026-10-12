@@ -23,6 +23,16 @@ const ROWSET_SIZE = 36; // 16×u16 positions + u16 ActiveRows + u16 LastWrittenR
 const MAX_ROWS_PER_ROWSET = 16;
 const EMPTY_TABLE_SENTINEL = 0x03ffffff;
 
+/**
+ * #561 — last-resort values for the SAMPLERATE / BITDEPTH columns of a track
+ * row. A row is expected to carry the FILE's own values (tracks.sample_rate /
+ * tracks.bit_depth); these are only written when a track has none and the
+ * export-time probe could not tell either (see src/audio/sampleInfo.js), and
+ * the export logs when that happens.
+ */
+export const DEFAULT_SAMPLE_RATE = 44100;
+export const DEFAULT_BIT_DEPTH = 16;
+
 export const TABLE_TYPES = {
   Tracks: 0,
   Genres: 1,
@@ -138,7 +148,7 @@ const UNKNOWN17_DATASET = [
   { Unknown1: 0x16, Unknown2: 0x1b, Unknown3: 0x63, Unknown4: 0x0a },
 ];
 
-const UNKNOWN18_DATASET = [
+export const UNKNOWN18_DATASET = [
   { Unknown1: 0x01, Unknown2: 0x06, Unknown3: 0x01, Unknown4: 0x00 },
   { Unknown1: 0x15, Unknown2: 0x07, Unknown3: 0x01, Unknown4: 0x00 },
   { Unknown1: 0x0e, Unknown2: 0x08, Unknown3: 0x01, Unknown4: 0x00 },
@@ -151,7 +161,7 @@ const UNKNOWN18_DATASET = [
   { Unknown1: 0x16, Unknown2: 0x11, Unknown3: 0x01, Unknown4: 0x00 },
   { Unknown1: 0x19, Unknown2: 0x00, Unknown3: 0x100, Unknown4: 0x00 },
   { Unknown1: 0x1a, Unknown2: 0x01, Unknown3: 0x200, Unknown4: 0x00 },
-  { Unknown1: 0x02, Unknown2: 0x02, Unknown3: 0x302, Unknown4: 0x00 },
+  { Unknown1: 0x02, Unknown2: 0x02, Unknown3: 0x300, Unknown4: 0x00 },
   { Unknown1: 0x03, Unknown2: 0x03, Unknown3: 0x400, Unknown4: 0x00 },
   { Unknown1: 0x05, Unknown2: 0x04, Unknown3: 0x500, Unknown4: 0x00 },
   { Unknown1: 0x06, Unknown2: 0x05, Unknown3: 0x600, Unknown4: 0x00 },
@@ -318,14 +328,16 @@ export function buildTrackRow(params) {
     title = '',
     filePath = '',
     filename = '',
-    sampleRate = 44100,
+    // #561 — defaults only apply to callers that pass nothing at all; the
+    // export path always passes what the track's file actually is.
+    sampleRate = DEFAULT_SAMPLE_RATE,
     fileSize = 0,
     checksum = 0,
     bitrate = 320,
     trackNumber = 0,
     tempo = 0,
     year = 0,
-    sampleDepth = 16,
+    sampleDepth = DEFAULT_BIT_DEPTH,
     duration = 0,
     discNumber = 0,
     playCount = 0,
@@ -667,14 +679,27 @@ export class DataPage {
     buf.writeUInt32LE(nextPage, 12); // NextPage
     buf.writeUInt32LE(transaction, 16); // Transaction
     buf.writeUInt32LE(0, 20); // Unknown2
-    buf[24] = this.numRows & 0xff; // NumRowsSmall
-    buf[25] = (this.numRows * 0x20) & 0xff; // Unknown3
-    buf[26] = 0; // Unknown4
-    buf[27] = 0x34; // PageFlags (data page)
+    // Bytes 24..26 pack two counters: the low 13 bits count the row-offset slots
+    // ever allocated and the high 11 bits count the live rows. Writing the low
+    // bytes only drops the carry into byte 26, which makes a reader compute
+    // num_rows modulo 8 (verified against device output, see issue #581).
+    buf.writeUIntLE(this.numRows | (this.numRows << 13), 24, 3);
+    // Bit 4 marks a data page that contains deleted or invalid rows. Device output
+    // sets it only on pages that really carry stale slots (0x34) and uses 0x24 on
+    // pages without them. Pages are written fresh here and never reuse a slot, so
+    // 0x24 is the honest value (verified against device output, see issue #582).
+    buf[27] = 0x24; // PageFlags (data page, no stale rows)
     buf.writeUInt16LE(freeSize, 28); // FreeSize
     buf.writeUInt16LE(this._topSize, 30); // NextHeapWriteOffset
 
     // ── Data Page Header (8 bytes at offset 32) ──
+    // Unknown5. Measured against rekordbox 7.2.11's own export of the same tracks (2026-10-05):
+    // the device writes 1 here on every dynamic table (Tracks, Artists, Keys, PlaylistEntries,
+    // PlaylistTree, even one holding 11 rows) and the live row count only on the four static
+    // datasets (Columns 27, Unknown17 22, Unknown18 17, Colors 8). This writer inserts rows one
+    // at a time, which is the "1" case, so the value stays 1 until the field's meaning is settled.
+    // An earlier revision of this patch wrote the live row count here, which diverged from the
+    // device on every dynamic table; the packed counters at bytes 24-26 are the actual fix.
     buf.writeUInt16LE(1, 32); // Unknown5
     buf.writeUInt16LE(0, 34); // NumRowsLarge
     buf.writeUInt16LE(0, 36); // Unknown6
@@ -872,8 +897,11 @@ function buildPdbBuffer(input) {
         analyzePath: t.analyzePath || '',
         dateAdded: now,
         analyzeDate: now,
-        sampleRate: 44100,
-        sampleDepth: 16,
+        // #561 — the file's real values, never a blanket 44100/16. The caller
+        // is responsible for resolving them (import capture or export-time
+        // backfill); a row that still has none falls back to the defaults here.
+        sampleRate: t.sample_rate || DEFAULT_SAMPLE_RATE,
+        sampleDepth: t.bit_depth || DEFAULT_BIT_DEPTH,
         replayGain: t.replay_gain ?? null,
       })
     );

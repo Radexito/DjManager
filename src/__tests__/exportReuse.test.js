@@ -54,3 +54,89 @@ describe('reuseExistingUsbTrack', () => {
     expect(usedNames.get('other - song.mp3')).toBe(true);
   });
 });
+
+// #463 — a track whose trim range changed must be copied again, otherwise the
+// stick keeps the audio of the OLD trim range.
+describe('reuseExistingUsbTrack — trim range handling (#463)', () => {
+  const withTrim = (trim_start_ms, trim_end_ms) => ({
+    file_path: '/music/Artist - Title.mp3',
+    file_size: 12345,
+    bitrate: 320,
+    trim_start_ms,
+    trim_end_ms,
+  });
+
+  it('reuses the file when the stored trim matches the current trim', () => {
+    const existingTracks = new Map([['track-1', withTrim(30_000, 120_000)]]);
+    const usedNames = new Map();
+
+    const result = reuseExistingUsbTrack(existingTracks, 'track-1', usedNames, {
+      trimStartMs: 30_000,
+      trimEndMs: 120_000,
+    });
+
+    expect(result).toEqual({
+      path: '/music/Artist - Title.mp3',
+      meta: { fileSize: 12345, bitrate: 320 },
+    });
+  });
+
+  it('forces a re-copy when a trim was added to an untrimmed export', () => {
+    const existingTracks = new Map([['track-1', withTrim(null, null)]]);
+
+    expect(
+      reuseExistingUsbTrack(existingTracks, 'track-1', new Map(), {
+        trimStartMs: 15_000,
+        trimEndMs: null,
+      })
+    ).toBeNull();
+  });
+
+  it('forces a re-copy when the trim was cleared after a trimmed export', () => {
+    const existingTracks = new Map([['track-1', withTrim(15_000, 120_000)]]);
+
+    expect(
+      reuseExistingUsbTrack(existingTracks, 'track-1', new Map(), {
+        trimStartMs: null,
+        trimEndMs: null,
+      })
+    ).toBeNull();
+  });
+
+  it('forces a re-copy when either trim point moved', () => {
+    const existingTracks = new Map([['track-1', withTrim(15_000, 120_000)]]);
+
+    expect(
+      reuseExistingUsbTrack(existingTracks, 'track-1', new Map(), {
+        trimStartMs: 20_000,
+        trimEndMs: 120_000,
+      })
+    ).toBeNull();
+    expect(
+      reuseExistingUsbTrack(existingTracks, 'track-1', new Map(), {
+        trimStartMs: 15_000,
+        trimEndMs: 119_000,
+      })
+    ).toBeNull();
+  });
+
+  it('treats a manifest without trim fields as untrimmed', () => {
+    const existingTracks = new Map([
+      ['track-1', { file_path: '/music/Artist - Title.mp3' }], // pre-#463 manifest
+    ]);
+
+    expect(reuseExistingUsbTrack(existingTracks, 'track-1', new Map(), {})).not.toBeNull();
+    expect(
+      reuseExistingUsbTrack(existingTracks, 'track-1', new Map(), { trimStartMs: 15_000 })
+    ).toBeNull();
+  });
+
+  it('keeps the trim check before registering the filename', () => {
+    const existingTracks = new Map([['track-1', withTrim(15_000, null)]]);
+    const usedNames = new Map();
+
+    reuseExistingUsbTrack(existingTracks, 'track-1', usedNames, { trimStartMs: 9999 });
+
+    expect(usedNames.size).toBe(0);
+  });
+});

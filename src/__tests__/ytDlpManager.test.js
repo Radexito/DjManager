@@ -10,9 +10,14 @@ vi.mock('../deps.js', () => ({
 vi.mock('fs', () => ({
   default: {
     existsSync: vi.fn().mockReturnValue(true),
-    promises: { mkdir: vi.fn().mockResolvedValue(undefined) },
+    statSync: vi.fn().mockReturnValue({ mtimeMs: Date.now() }),
+    promises: {
+      mkdir: vi.fn().mockResolvedValue(undefined),
+      readdir: vi.fn().mockResolvedValue([]),
+    },
   },
   existsSync: vi.fn().mockReturnValue(true),
+  statSync: vi.fn().mockReturnValue({ mtimeMs: Date.now() }),
 }));
 
 // child_process.spawn mock. Two modes, selected per-test via `fakeProc`:
@@ -24,12 +29,14 @@ vi.mock('fs', () => ({
 //    availability), used by the checkYouTubeAvailability tests
 const spawnCalls = [];
 let lastSpawnArgs = null;
+let lastSpawnOptions = null;
 let fakeProc = null;
 
 vi.mock('child_process', () => ({
-  spawn: vi.fn((_cmd, args) => {
+  spawn: vi.fn((_cmd, args, options) => {
     spawnCalls.push(args);
     lastSpawnArgs = args;
+    lastSpawnOptions = options;
 
     if (fakeProc) {
       return fakeProc;
@@ -76,11 +83,13 @@ function makeFakeProc() {
 }
 
 import fs from 'fs';
+import path from 'path';
 import {
   detectPlatform,
   fetchPlaylistInfo,
   searchYouTube,
   createPreviewAudioStream,
+  downloadUrl,
 } from '../audio/ytDlpManager.js';
 
 describe('detectPlatform', () => {
@@ -258,5 +267,92 @@ describe('createPreviewAudioStream', () => {
   it('does NOT add --cookies-from-browser when cookiesBrowser is omitted', () => {
     createPreviewAudioStream('https://www.youtube.com/watch?v=abc123');
     expect(lastSpawnArgs).not.toContain('--cookies-from-browser');
+  });
+});
+
+// ── Non-ASCII titles on Windows (#615) ────────────────────────────────────────
+// yt-dlp writes its `--print` output into a PIPE; on Windows the interpreter
+// encodes that pipe with the ANSI code page, so "Canopée" arrives as a byte that
+// is invalid UTF-8. Decoding with chunk.toString() produced U+FFFD, the reported
+// file path then did not exist on disk (ENOENT on import) and, because
+// destinationFiles was non-empty, the tmpDir fallback scan never ran, so the
+// correctly-named file actually sitting in %TEMP%\djman-ytdlp was never imported.
+describe('yt-dlp UTF-8 stdio (#615)', () => {
+  beforeEach(() => {
+    spawnCalls.length = 0;
+    lastSpawnArgs = null;
+    lastSpawnOptions = null;
+    fakeProc = makeFakeProc();
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+  });
+
+  it('forces UTF-8 text output with --encoding on the yt-dlp command line', () => {
+    createPreviewAudioStream('https://www.youtube.com/watch?v=abc123');
+
+    const idx = lastSpawnArgs.indexOf('--encoding');
+    expect(idx).toBeGreaterThan(-1);
+    expect(lastSpawnArgs[idx + 1]).toBe('utf-8');
+  });
+
+  it('forces the interpreter stdio to UTF-8 through the spawn env', () => {
+    createPreviewAudioStream('https://www.youtube.com/watch?v=abc123');
+
+    expect(lastSpawnOptions.env.PYTHONIOENCODING).toBe('utf-8');
+    expect(lastSpawnOptions.env.PYTHONUTF8).toBe('1');
+  });
+
+  it('keeps a multi-byte title intact when a chunk boundary splits the character', async () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        entries: [
+          {
+            id: 'abc123',
+            title: 'Canopée – Impératrice',
+            url: 'https://youtu.be/abc123',
+            duration: 200,
+          },
+        ],
+      }),
+      'utf8'
+    );
+    // cut the buffer inside the two bytes of the "é" in "Canopée"
+    const cut = payload.indexOf(Buffer.from('é', 'utf8')) + 1;
+    expect(cut).toBeGreaterThan(0);
+
+    const resultPromise = searchYouTube('canopee', { limit: 1 });
+    fakeProc.stdout.emit('data', payload.subarray(0, cut));
+    fakeProc.stdout.emit('data', payload.subarray(cut));
+    fakeProc.emit('close', 0);
+
+    const results = await resultPromise;
+    expect(results[0].title).toBe('Canopée – Impératrice');
+  });
+
+  it('rescans tmpDir when the path reported by the marker is not on disk', async () => {
+    const tmpDir = path.join('/tmp', 'djman-ytdlp');
+    const mangled = path.join(tmpDir, 'Canop\ufffde [abc123].mp3');
+    const realFile = path.join(tmpDir, 'Canopée [abc123].mp3');
+
+    fs.existsSync.mockImplementation((p) => p !== mangled);
+    fs.promises.readdir.mockResolvedValue(['Canopée [abc123].mp3']);
+    fs.statSync.mockReturnValue({ mtimeMs: Date.now() });
+
+    const onFileReady = vi.fn();
+    const resultPromise = downloadUrl('https://www.youtube.com/watch?v=abc123', undefined, {
+      onFileReady,
+    });
+    // _downloadUrlOnce awaits mkdir before spawning, so let that settle before
+    // driving the fake process.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    fakeProc.stdout.emit('data', Buffer.from('__YTDLP_TRACK__:1:Canop\ufffde\n'));
+    // no trailing newline on the marker line: it must still be flushed on close
+    fakeProc.stdout.emit('data', Buffer.from(`__YTDLP_FILE__:${mangled}`));
+    fakeProc.emit('close', 0);
+
+    const result = await resultPromise;
+
+    expect(onFileReady).toHaveBeenCalledWith(expect.objectContaining({ filePath: realFile }));
+    expect(result.files.map((f) => f.filePath)).toEqual([realFile]);
   });
 });

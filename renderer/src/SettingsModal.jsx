@@ -36,6 +36,19 @@ function SettingsModal({ onClose }) {
   const [activeSection, setActiveSection] = useState('library');
   const [targetInput, setTargetInput] = useState(String(DEFAULT_TARGET));
   const [autoNormalizeOnImport, setAutoNormalizeOnImport] = useState(false);
+  // #256 — ingest folder watchdog
+  const [watchEnabled, setWatchEnabled] = useState(false);
+  const [scanOnStartup, setScanOnStartup] = useState(false);
+  const [watchFolders, setWatchFolders] = useState([]);
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState(null);
+  // #267 — folder-tracked playlists (managed in the sidebar / explorer)
+  const [folderPlaylists, setFolderPlaylists] = useState([]);
+  const [folderRefresh, setFolderRefresh] = useState(null);
+  // #474 — write analyzed BPM & key into the file's own tags
+  const [autoWriteLibrary, setAutoWriteLibrary] = useState(false);
+  const [autoWriteLinked, setAutoWriteLinked] = useState(false);
+  const [overwriteTags, setOverwriteTags] = useState(false);
   const [autoCueOnImport, setAutoCueOnImport] = useState(false);
   const [generatingCues, setGeneratingCues] = useState(false);
   const [cueGenProgress, setCueGenProgress] = useState(null); // { completed, total } | null
@@ -123,6 +136,44 @@ function SettingsModal({ onClose }) {
       .getSetting('cloud_preview_playback_mode', 'overlay')
       .then((v) => setCloudPreviewPlaybackMode(v || 'overlay'));
     window.api.getSetting('waveform_color_mode', 'rgb').then((v) => setWaveformColorMode(v));
+    // #474 — BPM/key tag writing
+    window.api
+      .getSetting('metadata_autowrite_library', 'false')
+      .then((v) => setAutoWriteLibrary(v === 'true'));
+    window.api
+      .getSetting('metadata_autowrite_linked', 'false')
+      .then((v) => setAutoWriteLinked(v === 'true'));
+    window.api
+      .getSetting('metadata_overwrite_tags', 'false')
+      .then((v) => setOverwriteTags(v === 'true'));
+    // #256 — folder watch
+    window.api.getSetting('watch_enabled', 'false').then((v) => setWatchEnabled(v === 'true'));
+    window.api
+      .getSetting('autoscan_on_startup', 'false')
+      .then((v) => setScanOnStartup(v === 'true'));
+    window.api.getSetting('watch_folders', '[]').then((v) => {
+      try {
+        const parsed = JSON.parse(v || '[]');
+        setWatchFolders(Array.isArray(parsed) ? parsed : []);
+      } catch {
+        setWatchFolders([]);
+      }
+    });
+    // #267 — how many playlists follow a folder
+    window.api
+      .getPlaylists()
+      .then((list) => setFolderPlaylists((list ?? []).filter((p) => p.folder_path)))
+      .catch(() => setFolderPlaylists([]));
+  }, []);
+  // #256 — live scan/import status for the Folder Watch section
+  useEffect(() => {
+    const unsub = window.api.onWatchStatus((data) => {
+      if (data?.event === 'scan-started') setScanResult({ running: true });
+      else if (data?.event === 'scan-progress') setScanResult({ running: true, ...data });
+      else if (data?.event === 'scan-done' || data?.event === 'scan-failed')
+        setScanResult({ running: false, ...data });
+    });
+    return unsub;
   }, []);
 
   useEffect(() => {
@@ -201,6 +252,74 @@ function SettingsModal({ onClose }) {
     window.api.setSetting('auto_normalize_on_import', String(checked));
   };
 
+  // #256 — folder watch
+  const persistWatchFolders = (next) => {
+    setWatchFolders(next);
+    window.api.setSetting('watch_folders', JSON.stringify(next));
+  };
+
+  const handleWatchEnabledToggle = (checked) => {
+    setWatchEnabled(checked);
+    window.api.setSetting('watch_enabled', String(checked));
+  };
+
+  const handleScanOnStartupToggle = (checked) => {
+    setScanOnStartup(checked);
+    window.api.setSetting('autoscan_on_startup', String(checked));
+  };
+
+  const handleAddWatchFolder = async () => {
+    const dir = await window.api.openDirDialog();
+    if (!dir || watchFolders.includes(dir)) return;
+    persistWatchFolders([...watchFolders, dir]);
+  };
+
+  const handleRemoveWatchFolder = (dir) => {
+    persistWatchFolders(watchFolders.filter((f) => f !== dir));
+  };
+
+  const handleScanNow = async () => {
+    setScanning(true);
+    setScanResult({ running: true });
+    try {
+      const res = await window.api.scanWatchFolders();
+      setScanResult({ running: false, event: 'scan-done', ...res });
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  // #267 — re-scan every folder-tracked playlist in one go.
+  const handleRefreshFolderPlaylists = async () => {
+    setFolderRefresh({ running: true });
+    const results = (await window.api.refreshFolderPlaylists()) ?? [];
+    const ok = results.filter((r) => r?.ok);
+    const missing = results.filter((r) => r?.missing?.length);
+    setFolderRefresh({
+      running: false,
+      done: results.length,
+      added: ok.reduce((sum, r) => sum + (r.added ?? 0), 0),
+      linked: ok.reduce((sum, r) => sum + (r.linked ?? 0), 0),
+      failed: results.length - ok.length,
+      missing: missing.length,
+    });
+  };
+
+  // #474 — BPM/key tag writing settings
+  const handleAutoWriteLibraryToggle = (checked) => {
+    setAutoWriteLibrary(checked);
+    window.api.setSetting('metadata_autowrite_library', String(checked));
+  };
+
+  const handleAutoWriteLinkedToggle = (checked) => {
+    setAutoWriteLinked(checked);
+    window.api.setSetting('metadata_autowrite_linked', String(checked));
+  };
+
+  const handleOverwriteTagsToggle = (checked) => {
+    setOverwriteTags(checked);
+    window.api.setSetting('metadata_overwrite_tags', String(checked));
+  };
   const handleGenerateCueLibrary = async (overwrite) => {
     setConfirmCueGen(false);
     setGeneratingCues(true);
@@ -362,6 +481,8 @@ function SettingsModal({ onClose }) {
 
   const sections = [
     { id: 'library', label: 'Library' },
+    { id: 'ingest', label: 'Folder Watch' },
+    { id: 'metadata', label: 'Metadata' },
     { id: 'normalization', label: 'Normalization' },
     { id: 'cuepoints', label: 'Cue Points' },
     { id: 'waveform', label: 'Waveform' },
@@ -615,6 +736,228 @@ function SettingsModal({ onClose }) {
                     </button>
                   </div>
                 )}
+              </div>
+            </>
+          )}
+
+          {activeSection === 'ingest' && (
+            <>
+              <h3>Folder Watch</h3>
+              <div className="settings-group">
+                <div className="settings-group-title">Ingest folders</div>
+                <p className="settings-group-desc">
+                  DjManager can watch folders for new audio files — anything dropped into a watched
+                  folder is imported and analysed automatically, with no manual import step. Use it
+                  for a downloads or staging folder (network and removable drives work while they
+                  are mounted).
+                </p>
+
+                <div className="settings-row">
+                  <label htmlFor="watch-enabled">Watch folders for new tracks</label>
+                  <div className="settings-toggle-row">
+                    <input
+                      id="watch-enabled"
+                      type="checkbox"
+                      checked={watchEnabled}
+                      onChange={(e) => handleWatchEnabledToggle(e.target.checked)}
+                    />
+                    <span className="settings-toggle-desc">
+                      Imports new audio files as soon as they appear. Off by default.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="settings-row">
+                  <label htmlFor="watch-autoscan">Scan watched folders on startup</label>
+                  <div className="settings-toggle-row">
+                    <input
+                      id="watch-autoscan"
+                      type="checkbox"
+                      checked={scanOnStartup}
+                      onChange={(e) => handleScanOnStartupToggle(e.target.checked)}
+                    />
+                    <span className="settings-toggle-desc">
+                      Catches files that were added while DjManager was closed. Off by default.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="settings-group-title" style={{ marginTop: '1rem' }}>
+                  Watched folders
+                </div>
+                {watchFolders.length === 0 ? (
+                  <p className="settings-group-desc">
+                    No folders yet — add one below, then turn watching on.
+                  </p>
+                ) : (
+                  <div className="library-list">
+                    {watchFolders.map((dir) => (
+                      <div key={dir} className="settings-row">
+                        <span className="settings-action-label" title={dir}>
+                          {dir}
+                        </span>
+                        <button
+                          className="btn-secondary"
+                          onClick={() => handleRemoveWatchFolder(dir)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="settings-row settings-row-action">
+                  <div>
+                    <div className="settings-action-label">Add folder…</div>
+                    <div className="settings-action-desc">
+                      Pick a folder to watch for new audio files.
+                    </div>
+                  </div>
+                  <button className="btn-secondary" onClick={handleAddWatchFolder}>
+                    Add folder
+                  </button>
+                </div>
+
+                <div className="settings-row settings-row-action">
+                  <div>
+                    <div className="settings-action-label">Scan now</div>
+                    <div className="settings-action-desc">
+                      Imports anything new in the watched folders immediately.
+                    </div>
+                  </div>
+                  <button
+                    className="btn-primary"
+                    onClick={handleScanNow}
+                    disabled={scanning || watchFolders.length === 0}
+                  >
+                    {scanning ? 'Scanning…' : 'Scan now'}
+                  </button>
+                </div>
+
+                {scanResult && (
+                  <p className="settings-group-desc">
+                    {scanResult.running
+                      ? `Scanning… ${scanResult.done ?? 0}/${scanResult.total ?? '?'}`
+                      : scanResult.event === 'scan-failed'
+                        ? `Scan failed: ${scanResult.error}`
+                        : `Found ${scanResult.found ?? 0} file(s) — imported ${scanResult.imported ?? 0}, skipped ${scanResult.skipped ?? 0}, failed ${scanResult.failed ?? 0}`}
+                  </p>
+                )}
+
+                {/* #267 — playlists that follow a folder */}
+                <div className="settings-group-title" style={{ marginTop: '1rem' }}>
+                  Folder-tracked playlists
+                </div>
+                <p className="settings-group-desc">
+                  A playlist can follow a folder instead of holding a fixed list: right-click the
+                  folder in Explorer and pick “Track folder as a playlist” (with or without
+                  sub-folders). New files are imported and added as they appear, watched whether or
+                  not the toggle above is on. The folder is re-scanned on every launch, and a track
+                  whose file went missing is never removed without asking. The 📁 marker in the
+                  sidebar shows which playlists are tracked; their right-click menu can refresh the
+                  folder or stop tracking it.
+                </p>
+                <p className="settings-group-desc">
+                  {folderPlaylists.length === 0
+                    ? 'No playlist is tracking a folder yet.'
+                    : `${folderPlaylists.length} playlist(s) tracking a folder: ${folderPlaylists
+                        .map((p) => `${p.name} → ${p.folder_path}`)
+                        .join(' · ')}`}
+                </p>
+
+                <div className="settings-row settings-row-action">
+                  <div>
+                    <div className="settings-action-label">Refresh tracked folders</div>
+                    <div className="settings-action-desc">
+                      Re-scan every folder-tracked playlist now.
+                    </div>
+                  </div>
+                  <button
+                    className="btn-secondary"
+                    onClick={handleRefreshFolderPlaylists}
+                    disabled={folderPlaylists.length === 0 || folderRefresh?.running}
+                  >
+                    {folderRefresh?.running ? 'Refreshing…' : 'Refresh all'}
+                  </button>
+                </div>
+
+                {folderRefresh && !folderRefresh.running && (
+                  <p className="settings-group-desc">
+                    {`Refreshed ${folderRefresh.done} playlist(s): ${folderRefresh.linked} linked, ${folderRefresh.added} added` +
+                      (folderRefresh.missing
+                        ? `, ${folderRefresh.missing} with missing files`
+                        : '') +
+                      (folderRefresh.failed ? `, ${folderRefresh.failed} unreachable` : '') +
+                      '.'}
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+
+          {activeSection === 'metadata' && (
+            <>
+              <h3>Metadata</h3>
+              <div className="settings-group">
+                <div className="settings-group-title">Write BPM &amp; Key to file tags</div>
+                <p className="settings-group-desc">
+                  DjManager analyses BPM and musical key and keeps them in its own database. These
+                  options additionally write the analysed values into the files themselves, so other
+                  applications can read them. Supported: MP3 (ID3 TBPM/TKEY) and FLAC/OGG/Opus
+                  (Vorbis BPM/KEY). M4A/WAV/AIFF are skipped — they have no interoperable tag slot.
+                  Files are rewritten through a temporary copy, so a failure can never corrupt the
+                  original.
+                </p>
+
+                <div className="settings-row">
+                  <label htmlFor="meta-autowrite-library">Auto-write for library tracks</label>
+                  <div className="settings-toggle-row">
+                    <input
+                      id="meta-autowrite-library"
+                      type="checkbox"
+                      checked={autoWriteLibrary}
+                      onChange={(e) => handleAutoWriteLibraryToggle(e.target.checked)}
+                    />
+                    <span className="settings-toggle-desc">
+                      After a library track is analysed, write its BPM &amp; Key into the file.
+                      Imported files are DjManager&apos;s own managed copies. Off by default.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="settings-row">
+                  <label htmlFor="meta-autowrite-linked">Auto-write for linked files</label>
+                  <div className="settings-toggle-row">
+                    <input
+                      id="meta-autowrite-linked"
+                      type="checkbox"
+                      checked={autoWriteLinked}
+                      onChange={(e) => handleAutoWriteLinkedToggle(e.target.checked)}
+                    />
+                    <span className="settings-toggle-desc">
+                      Same, but for linked files — those are your own originals on disk, so this
+                      edits files outside the library folder. Off by default.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="settings-row">
+                  <label htmlFor="meta-overwrite-tags">Overwrite existing BPM/Key tags</label>
+                  <div className="settings-toggle-row">
+                    <input
+                      id="meta-overwrite-tags"
+                      type="checkbox"
+                      checked={overwriteTags}
+                      onChange={(e) => handleOverwriteTagsToggle(e.target.checked)}
+                    />
+                    <span className="settings-toggle-desc">
+                      On: a tag that differs from the analysed value is replaced. Off (default):
+                      only missing tags are filled, existing values are left untouched. Applies to
+                      both auto-write and the manual “Save BPM &amp; Key” action.
+                    </span>
+                  </div>
+                </div>
               </div>
             </>
           )}
@@ -916,7 +1259,7 @@ function SettingsModal({ onClose }) {
                 </p>
                 <div className="settings-row">
                   <button
-                    className="btn"
+                    className="btn-primary"
                     onClick={() => handleGenerateWaveformsLibrary(true)}
                     disabled={generatingWaveforms}
                   >

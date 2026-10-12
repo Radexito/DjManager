@@ -62,27 +62,15 @@ contextBridge.exposeInMainWorld('api', {
   reorderPlaylist: (playlistId, orderedTrackIds) =>
     ipcRenderer.invoke('reorder-playlist', { playlistId, orderedTrackIds }),
   getPlaylistsForTrack: (trackId) => ipcRenderer.invoke('get-playlists-for-track', trackId),
-  exportPlaylistAsM3U: (playlistId) => ipcRenderer.invoke('export-playlist-m3u', playlistId),
-  onExportM3UProgress: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('export-m3u-progress', handler);
-    return () => ipcRenderer.removeListener('export-m3u-progress', handler);
-  },
 
   // USB / Rekordbox export
   checkUsbFormat: (mountPath) => ipcRenderer.invoke('check-usb-format', mountPath),
   formatUsb: (opts) => ipcRenderer.invoke('format-usb', opts),
-  exportRekordbox: (opts) => ipcRenderer.invoke('export-rekordbox', opts),
   exportAll: (opts) => ipcRenderer.invoke('export-all', opts),
   onFormatUsbProgress: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('format-usb-progress', handler);
     return () => ipcRenderer.removeListener('format-usb-progress', handler);
-  },
-  onExportRekordboxProgress: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('export-rekordbox-progress', handler);
-    return () => ipcRenderer.removeListener('export-rekordbox-progress', handler);
   },
   onExportAllProgress: (cb) => {
     const handler = (_, data) => cb(data);
@@ -140,6 +128,18 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('cue-points-updated', handler);
     return () => ipcRenderer.removeListener('cue-points-updated', handler);
   },
+  // #259 — cue points set on a CDJ, read back from a Rekordbox USB.
+  // `mode` is 'extend' (add + refresh, never delete) or 'replace' (mirror the
+  // stick, dropping library cues it does not carry).
+  scanUsbCues: ({ usbRoot, mode = 'extend' }) =>
+    ipcRenderer.invoke('scan-usb-cues', { usbRoot, mode }),
+  importUsbCues: ({ usbRoot, mode = 'extend' }) =>
+    ipcRenderer.invoke('import-usb-cues', { usbRoot, mode }),
+  onUsbCuesDetected: (callback) => {
+    const handler = (_, payload) => callback(payload);
+    ipcRenderer.on('usb-cues-detected', handler);
+    return () => ipcRenderer.removeListener('usb-cues-detected', handler);
+  },
   onNormalizeProgress: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('normalize-progress', handler);
@@ -159,6 +159,27 @@ contextBridge.exposeInMainWorld('api', {
     const handler = () => callback();
     ipcRenderer.on('library-updated', handler);
     return () => ipcRenderer.removeListener('library-updated', handler);
+  },
+  // #256 — ingest folder watchdog: manual scan + live status events
+  scanWatchFolders: () => ipcRenderer.invoke('scan-watch-folders'),
+  getWatchState: () => ipcRenderer.invoke('get-watch-state'),
+  onWatchStatus: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('watch-status', handler);
+    return () => ipcRenderer.removeListener('watch-status', handler);
+  },
+  // #267 — folder-tracked playlists
+  createFolderPlaylist: (opts) => ipcRenderer.invoke('create-folder-playlist', opts),
+  setPlaylistFolder: (opts) => ipcRenderer.invoke('set-playlist-folder', opts),
+  refreshFolderPlaylist: (playlistId) => ipcRenderer.invoke('refresh-folder-playlist', playlistId),
+  refreshFolderPlaylists: () => ipcRenderer.invoke('refresh-folder-playlists'),
+  removeFolderPlaylistTracks: (opts) => ipcRenderer.invoke('remove-folder-playlist-tracks', opts),
+  stopFolderPlaylist: (playlistId) => ipcRenderer.invoke('stop-folder-playlist', playlistId),
+  setFolderPlaylistRecursive: (opts) => ipcRenderer.invoke('set-folder-playlist-recursive', opts),
+  onFolderPlaylistUpdated: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('folder-playlist-updated', handler);
+    return () => ipcRenderer.removeListener('folder-playlist-updated', handler);
   },
   onImportProgress: (callback) => {
     const handler = (_, data) => callback(data);
@@ -226,10 +247,14 @@ contextBridge.exposeInMainWorld('api', {
   tidalInstall: () => ipcRenderer.invoke('tidal-install'),
   tidalFetchInfo: (url) => ipcRenderer.invoke('tidal-fetch-info', url),
   tidalLogin: () => ipcRenderer.invoke('tidal-login'),
+  tidalListCollections: () => ipcRenderer.invoke('tidal-list-collections'),
+  tidalCollectionTracks: (opts) => ipcRenderer.invoke('tidal-collection-tracks', opts),
+  tidalDownloadCollection: (opts) => ipcRenderer.invoke('tidal-download-collection', opts),
   cloudSearch: ({ source, query, types, limit }) =>
     ipcRenderer.invoke('cloud-search', { source, query, types, limit }),
   cloudSearchPreview: (payload) => ipcRenderer.invoke('cloud-search-preview', payload),
   tidalDownloadUrl: (opts) => ipcRenderer.invoke('tidal-download-url', opts),
+  writeBpmKeyTags: ({ trackIds }) => ipcRenderer.invoke('write-bpm-key-tags', { trackIds }),
   onTidalProgress: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('tidal-progress', handler);

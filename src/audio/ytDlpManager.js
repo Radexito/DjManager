@@ -6,6 +6,7 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import { StringDecoder } from 'string_decoder';
 import { app } from 'electron';
 import { getYtDlpRuntimePath, getFfmpegRuntimePath } from '../deps.js';
 
@@ -84,6 +85,69 @@ function resolveBrowser(name) {
   }
   console.log('[ytdlp] resolveBrowser:', name, '->', name);
   return name;
+}
+
+// ── yt-dlp stdio encoding ────────────────────────────────────────────────────
+// Every yt-dlp call site is spawned through `spawnYtDlp()`, which forces UTF-8 on
+// BOTH sides of the pipe, and its output is decoded with a streaming decoder.
+//
+// Why (#615): the final file path and the track title are read back from yt-dlp
+// stdout (`--print after_move:…%(filepath)s`). yt-dlp writes that text with
+// `write_string()`, whose encoding is `params['encoding']` or, when unset, the
+// encoding of the pipe handle. On Windows a piped stdout is encoded with the
+// interpreter's ANSI code page (cp1252/cp1250), so "Impératrice" is written as
+// byte 0xE9, which is invalid UTF-8: `Buffer#toString()` turns it into U+FFFD and
+// the resulting path does not exist on disk → ENOENT on import, red X in the UI.
+// `--encoding utf-8` only affects TEXT written to stdout/stderr (it never touches
+// the binary media stream of `-o -`), and PYTHONUTF8/PYTHONIOENCODING make the
+// interpreter's own stdio UTF-8 regardless of the console code page.
+const YTDLP_TEXT_ENCODING = 'utf-8';
+
+const YTDLP_UTF8_ENV = {
+  PYTHONUNBUFFERED: '1',
+  PYTHONUTF8: '1',
+  PYTHONIOENCODING: YTDLP_TEXT_ENCODING,
+};
+
+/**
+ * Spawn yt-dlp with UTF-8 text output enforced (see the note above).
+ * @param {string} ytDlp resolved binary path
+ * @param {string[]} args yt-dlp arguments (the URL must stay last)
+ * @param {import('child_process').SpawnOptions} [options]
+ */
+function spawnYtDlp(ytDlp, args, options = {}) {
+  return spawn(ytDlp, ['--encoding', YTDLP_TEXT_ENCODING, ...args], {
+    ...options,
+    env: { ...process.env, ...YTDLP_UTF8_ENV },
+  });
+}
+
+/**
+ * Streaming line reader for a child-process pipe: decodes UTF-8 across chunk
+ * boundaries and only emits complete lines, so a marker/progress line that is
+ * split between two chunks is not lost or half-parsed. Call `flush()` on close.
+ * @param {(line: string) => void} onLine receives each trimmed line
+ */
+function createLineReader(onLine) {
+  const decoder = new StringDecoder('utf8');
+  let carry = '';
+  const feed = (text) => {
+    carry += text;
+    const parts = carry.split(/\r\n|\r|\n/);
+    carry = parts.pop();
+    for (const line of parts) onLine(line.trim());
+  };
+  return {
+    write(chunk) {
+      feed(decoder.write(chunk));
+    },
+    flush() {
+      feed(decoder.end());
+      const rest = carry.trim();
+      carry = '';
+      if (rest) onLine(rest);
+    },
+  };
 }
 
 /**
@@ -211,7 +275,8 @@ async function checkYouTubeAvailability(entries, onProgress, onEntryChecked, opt
         args.push('--cookies-from-browser', cookiesArg);
       }
       args.push(`https://www.youtube.com/watch?v=${entry.id}`);
-      const proc = spawn(ytDlp, args);
+      const proc = spawnYtDlp(ytDlp, args);
+      const stdoutDecoder = new StringDecoder('utf8');
       let stdout = '';
       let timedOut = false;
       const timer = setTimeout(() => {
@@ -220,7 +285,7 @@ async function checkYouTubeAvailability(entries, onProgress, onEntryChecked, opt
         resolve(); // timeout → assume available
       }, YTDLP_CHECK_TIMEOUT_MS);
 
-      proc.stdout.on('data', (d) => (stdout += d.toString()));
+      proc.stdout.on('data', (d) => (stdout += stdoutDecoder.write(d)));
       proc.on('close', (code) => {
         clearTimeout(timer);
         if (timedOut) return;
@@ -344,12 +409,14 @@ function _fetchPlaylistInfoOnce(url, options = {}) {
     console.log('[fetchPlaylistInfo] spawning yt-dlp with args:', JSON.stringify(args));
     let stdout = '';
     let stderr = '';
-    const proc = spawn(ytDlp, args);
+    const proc = spawnYtDlp(ytDlp, args);
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
     proc.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
+      stdout += stdoutDecoder.write(chunk);
     });
     proc.stderr.on('data', (chunk) => {
-      const text = chunk.toString();
+      const text = stderrDecoder.write(chunk);
       stderr += text;
       // Log stderr lines to help diagnose issues
       for (const line of text.split('\n')) {
@@ -358,6 +425,8 @@ function _fetchPlaylistInfoOnce(url, options = {}) {
       }
     });
     proc.on('close', (code) => {
+      stdout += stdoutDecoder.end();
+      stderr += stderrDecoder.end();
       console.log(`[fetchPlaylistInfo] process closed code=${code} stdout_len=${stdout.length}`);
       if (code !== 0) {
         console.error('[fetchPlaylistInfo] FAILED. Full stderr:\n' + stderr.trim());
@@ -458,7 +527,7 @@ export function createPreviewAudioStream(url, options = {}) {
     args.push('--cookies-from-browser', resolveBrowser(options.cookiesBrowser));
   }
   args.push(url);
-  return spawn(ytDlp, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  return spawnYtDlp(ytDlp, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 /**
@@ -551,7 +620,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
   args.push(url);
 
   return new Promise((resolve, reject) => {
-    const proc = spawn(ytDlp, args, { env: { ...process.env, PYTHONUNBUFFERED: '1' } });
+    const proc = spawnYtDlp(ytDlp, args);
     const startTime = Date.now();
 
     let currentQuality = 'unknown';
@@ -741,20 +810,24 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
       if (qualityMatch) currentQuality = qualityMatch[1];
     };
 
-    proc.stdout.on('data', (chunk) => {
-      for (const line of chunk.toString().split(/[\r\n]+/)) processLine(line.trim());
+    const stdoutLines = createLineReader(processLine);
+    // stderr carries the same progress/info lines on some yt-dlp builds plus the
+    // ERROR/WARNING lines parsed at close, so accumulate it line by line.
+    const stderrLines = createLineReader((line) => {
+      stderr += line + '\n';
+      processLine(line);
     });
 
-    proc.stderr.on('data', (chunk) => {
-      const text = chunk.toString();
-      stderr += text;
-      // Also scan stderr — some yt-dlp builds emit info lines there
-      for (const line of text.split(/[\r\n]+/)) processLine(line.trim());
-    });
+    proc.stdout.on('data', (chunk) => stdoutLines.write(chunk));
+    proc.stderr.on('data', (chunk) => stderrLines.write(chunk));
 
     let unavailableCount = 0;
 
     proc.on('close', async (code) => {
+      // Flush a trailing line that arrived without a final newline (the
+      // `--print` marker line is the one that matters here).
+      stdoutLines.flush();
+      stderrLines.flush();
       // Parse unavailable/error videos from stderr and fire callbacks.
       // With --ignore-errors, yt-dlp may emit these as WARNING: lines instead of ERROR:.
       const unavailablePattern = /(?:ERROR|WARNING): \[[\w:]+\] ([^:\s][^:]*): (.+)/g;
@@ -800,9 +873,16 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
         return;
       }
 
+      // A path reported via the --print marker is only usable when it exists on
+      // disk. A mis-decoded pipe (#615) or a stale marker yields a path that
+      // cannot be opened, and a non-empty destinationFiles used to suppress the
+      // scans below, so the correctly named file sitting in tmpDir was never
+      // imported. Gate both scans on "no reported path exists" instead.
+      const hasUsableFile = () => destinationFiles.some((f) => fs.existsSync(f));
+
       // Fallback A: scan tmpDir for audio files created during this session.
       // Covers yt-dlp versions that don't support --print after_move.
-      if (destinationFiles.length === 0) {
+      if (!hasUsableFile()) {
         try {
           const entries = await fs.promises.readdir(tmpDir);
           for (const entry of entries) {
@@ -819,7 +899,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
 
       // Fallback B: if still nothing, try ANY file in tmpDir newer than session start
       // (catches unusual audio extensions or unconverted files).
-      if (destinationFiles.length === 0) {
+      if (!hasUsableFile()) {
         try {
           const entries = await fs.promises.readdir(tmpDir);
           for (const entry of entries) {
@@ -837,7 +917,7 @@ async function _downloadUrlOnce(url, onProgress, options = {}) {
         }
       }
 
-      if (destinationFiles.length === 0 && unavailableCount === 0) {
+      if (!hasUsableFile() && unavailableCount === 0) {
         reject(new Error('yt-dlp finished but no output file found'));
         return;
       }

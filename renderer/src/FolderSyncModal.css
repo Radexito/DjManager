@@ -1,0 +1,109 @@
+/* #267 — the "files missing from the tracked folder" confirmation. */
+.fsm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+}
+
+.fsm-modal {
+  background: var(--bg-secondary, #1e1e2e);
+  border: 1px solid var(--border, #333);
+  border-radius: 10px;
+  width: 560px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  gap: 12px;
+}
+
+.fsm-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.fsm-desc {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #aaa;
+}
+
+.fsm-list {
+  overflow-y: auto;
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.fsm-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.fsm-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.fsm-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.fsm-row-title {
+  font-size: 13px;
+  color: #ddd;
+}
+
+.fsm-row-path {
+  font-size: 11px;
+  color: #888;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fsm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.fsm-btn {
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid var(--border, #333);
+}
+
+.fsm-btn--secondary {
+  background: transparent;
+  color: #ddd;
+}
+
+.fsm-btn--primary {
+  background: var(--accent, #3b82f6);
+  border-color: var(--accent, #3b82f6);
+  color: #fff;
+}
+
+.fsm-btn--primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

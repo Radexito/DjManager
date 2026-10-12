@@ -21,6 +21,7 @@ import {
   buildPlaylistEntryRow,
   buildUnknown17Row,
   buildUnknown18Row,
+  UNKNOWN18_DATASET,
   DataPage,
   buildIndexPage,
   buildFileHeader,
@@ -277,6 +278,19 @@ describe('buildTrackRow', () => {
     expect(buf.readUInt32LE(8)).toBe(44100);
   });
 
+  // #561 — the row must carry whatever the track's file really is
+  it('writes the passed SampleRate (offset 8) and SampleDepth (offset 82)', () => {
+    const buf = buildTrackRow({ ...minimal, sampleRate: 96000, sampleDepth: 24 });
+    expect(buf.readUInt32LE(8)).toBe(96000);
+    expect(buf.readUInt16LE(82)).toBe(24);
+  });
+
+  it('falls back to 44100 / 16 only when the caller passes no values at all', () => {
+    const buf = buildTrackRow({ id: 1, title: 'x', filePath: '/m/x.mp3', filename: 'x.mp3' });
+    expect(buf.readUInt32LE(8)).toBe(44100);
+    expect(buf.readUInt16LE(82)).toBe(16);
+  });
+
   it('FileSize at offset 16', () => {
     const buf = buildTrackRow(minimal);
     expect(buf.readUInt32LE(16)).toBe(5000000);
@@ -529,6 +543,22 @@ describe('buildUnknown18Row', () => {
     expect(buf.readUInt16LE(4)).toBe(0x01);
     expect(buf.readUInt16LE(6)).toBe(0x00);
   });
+
+  // The dataset is static reference data that a device-written export.pdb carries
+  // identically. Its Unknown3 column runs 0x100..0x700 with 0x300 in the middle
+  // row; that row used to say 0x302 (issue #583).
+  it('dataset Unknown3 column is 0x100..0x700 in order', () => {
+    const third = UNKNOWN18_DATASET.map((r) => r.Unknown3);
+    expect(third).toEqual([
+      0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x100, 0x200, 0x300, 0x400, 0x500,
+      0x600, 0x700,
+    ]);
+  });
+
+  it('row 12 renders as 020002000003 0000', () => {
+    const buf = buildUnknown18Row(UNKNOWN18_DATASET[12]);
+    expect(buf.toString('hex')).toBe('0200020000030000');
+  });
 });
 
 // ── DataPage ──────────────────────────────────────────────────────────────────
@@ -564,10 +594,25 @@ describe('DataPage', () => {
     expect(buf.readUInt32LE(0)).toBe(0);
   });
 
-  it('PageFlags is 0x34 at offset 27', () => {
+  // Bit 4 of the data page flags means "contains deleted rows". Device output uses
+  // 0x24 for pages without stale slots and 0x34 only when they exist; this writer
+  // never reuses a slot, so every data page it emits is 0x24 (issue #582).
+  it('PageFlags is 0x24 at offset 27 (no stale rows)', () => {
     const page = new DataPage(TABLE_TYPES.Tracks);
     const buf = page.toBuffer(1, 2, 2);
-    expect(buf[27]).toBe(0x34);
+    expect(buf[27]).toBe(0x24);
+  });
+
+  it('PageFlags bit 4 is not set for a page with many rows either', () => {
+    const page = new DataPage(TABLE_TYPES.Columns);
+    for (let i = 0; i < 27; i++) page.insertRow(buildArtistRow(i + 1, 'Col' + i));
+    const buf = page.toBuffer(1, 2, 2);
+    expect(buf[27] & 0x10).toBe(0);
+  });
+
+  it('index pages keep flags 0x64', () => {
+    const idx = buildIndexPage(TABLE_TYPES.Tracks, 1, 2, 2);
+    expect(idx[27]).toBe(0x64);
   });
 
   it('empty page: NumRowsSmall=0 at offset 24', () => {
@@ -596,6 +641,43 @@ describe('DataPage', () => {
     page.insertRow(buildArtistRow(3, 'C'));
     const buf = page.toBuffer(1, 2, 2);
     expect(buf[25]).toBe((3 * 0x20) & 0xff);
+  });
+
+  // Bytes 24..26 pack two counters: low 13 bits = row-offset slots ever allocated,
+  // high 11 bits = live rows. Verified against a device-written export.pdb, where a
+  // 27-row page carries 0x03 in byte 26 (issue #581).
+  it('packs live rows into bytes 24-26 with the carry in byte 26 (27 rows)', () => {
+    const page = new DataPage(TABLE_TYPES.Columns);
+    for (let i = 0; i < 27; i++) page.insertRow(buildArtistRow(i + 1, 'Col' + i));
+    const buf = page.toBuffer(1, 2, 2);
+    expect([buf[24], buf[25], buf[26]]).toEqual([0x1b, 0x60, 0x03]);
+    expect(buf.readUIntLE(24, 3)).toBe(27 | (27 << 13));
+  });
+
+  it('packs exactly 8 rows as [0x08, 0x00, 0x01]', () => {
+    const page = new DataPage(TABLE_TYPES.Colors);
+    for (let i = 0; i < 8; i++) page.insertRow(buildArtistRow(i + 1, 'C' + i));
+    const buf = page.toBuffer(1, 2, 2);
+    expect([buf[24], buf[25], buf[26]]).toEqual([0x08, 0x00, 0x01]);
+  });
+
+  it('packs 7 rows without a carry into byte 26', () => {
+    const page = new DataPage(TABLE_TYPES.Colors);
+    for (let i = 0; i < 7; i++) page.insertRow(buildArtistRow(i + 1, 'C' + i));
+    const buf = page.toBuffer(1, 2, 2);
+    expect([buf[24], buf[25], buf[26]]).toEqual([0x07, 0xe0, 0x00]);
+  });
+
+  it('data page header Unknown5 stays 1, the way the device writes row-by-row inserts', () => {
+    // Measured against rekordbox 7.2.11's own export of the same tracks (2026-10-05): the device
+    // writes the live row count only on the static datasets (Columns 27, Unknown17 22, Unknown18
+    // 17, Colors 8) and 1 on every dynamic table, even one holding 11 rows.
+    const page = new DataPage(TABLE_TYPES.Artists);
+    page.insertRow(buildArtistRow(1, 'A'));
+    page.insertRow(buildArtistRow(2, 'B'));
+    page.insertRow(buildArtistRow(3, 'C'));
+    const buf = page.toBuffer(1, 2, 2);
+    expect(buf.readUInt16LE(32)).toBe(1);
   });
 
   it('row data starts at byte 40 (DataHeaderSize)', () => {
@@ -994,6 +1076,28 @@ describe('writePdb', () => {
     const input = makeInput();
     input.tracks[0].title = 'Röyksopp – I Had This Thing';
     expect(() => writePdb(input, '/tmp/unicode.pdb')).not.toThrow();
+  });
+
+  // #561 — the exported row must describe the track's file. The row sits inside
+  // the Tracks data page, so the tests locate its SampleRate marker (offset 8 of
+  // the row) and check the SampleDepth 74 bytes further on (offset 82).
+  it('#561 writes the row sample_rate / bit_depth of the file', () => {
+    const input = makeInput();
+    input.tracks[0].sample_rate = 96000;
+    input.tracks[0].bit_depth = 24;
+    writePdb(input, '/usb/PIONEER/rekordbox/export.pdb');
+    const [, data] = fs.writeFileSync.mock.calls[0];
+    const rateIdx = data.indexOf(Buffer.from([0x00, 0x77, 0x01, 0x00])); // 96000 LE
+    expect(rateIdx).toBeGreaterThan(-1);
+    expect(data.readUInt16LE(rateIdx + 74)).toBe(24);
+  });
+
+  it('#561 writes 44100 / 16 only for a row that has neither value', () => {
+    writePdb(makeInput(), '/usb/PIONEER/rekordbox/export.pdb');
+    const [, data] = fs.writeFileSync.mock.calls[0];
+    const rateIdx = data.indexOf(Buffer.from([0x44, 0xac, 0x00, 0x00])); // 44100 LE
+    expect(rateIdx).toBeGreaterThan(-1);
+    expect(data.readUInt16LE(rateIdx + 74)).toBe(16);
   });
 
   it('uses mkdirSync to ensure output directory exists', () => {

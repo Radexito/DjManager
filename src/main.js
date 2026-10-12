@@ -49,6 +49,10 @@ import {
   reorderPlaylistTracks,
   getPlaylistsForTrack,
   getPlaylistTracks,
+  getFolderPlaylists,
+  setPlaylistFolder,
+  clearPlaylistFolder,
+  markPlaylistFolderSynced,
 } from './db/playlistRepository.js';
 import {
   addTrack,
@@ -91,7 +95,11 @@ import {
   moveTrackToLibrary,
   getLibraryDiskUsage,
   getLibraryFreeSpace,
+  scanFoldersForNewTracks,
+  writeBpmKeyTagsForTrack,
 } from './audio/importManager.js';
+import { createLibraryWatcher, listAudioFiles } from './library/libraryWatcher.js';
+import { planFolderSync, isInsideFolder } from './library/folderPlaylistSync.js';
 import {
   listLibraries,
   createLibrary,
@@ -103,6 +111,12 @@ import {
 } from './db/libraryRepository.js';
 import { getDbPath, setDbPath } from './db/dbLocation.js';
 import { convertAudio } from './audio/ffmpeg.js';
+import {
+  resolveExportSampleInfo,
+  backfillPdbSampleInfo,
+  sampleInfoFromProbe,
+} from './audio/sampleInfo.js';
+import { exportTrimRange, shiftBeatgridForTrim, shiftCuePointsForTrim } from './audio/trackTrim.js';
 
 import {
   searchMusicBrainz,
@@ -121,6 +135,10 @@ import {
   startLogin as tidalStartLogin,
   downloadTidal,
   fetchTidalInfo,
+  fetchTidalCollections,
+  fetchTidalCollectionTracks,
+  splitTidalCollectionEntries,
+  reindexTidalEntries,
   searchTidal,
   getTidalPreviewUrl,
 } from './audio/tidalDlManager.js';
@@ -136,9 +154,17 @@ import {
   updateAll,
 } from './deps.js';
 import { initLogger, getLogDir, initRendererLogger, logRendererMessage } from './logger.js';
-import { detectFilesystem, formatDrive, describeFilesystem } from './usb/usbUtils.js';
+import {
+  detectFilesystem,
+  formatDrive,
+  describeFilesystem,
+  toM3uRelativePath,
+  usbAudioDir,
+  usbAudioPath,
+} from './usb/usbUtils.js';
 import { detectWindowsDrives } from './explorer/drives.js';
 import { writeAnlz, getAnlzFolder } from './audio/anlzWriter.js';
+import { readTrackCues, buildCueImportPlan } from './usb/anlzCueReader.js';
 import { writeSettingFiles } from './usb/settingWriter.js';
 import { writePdb } from './usb/pdbWriter.js';
 import { resolveExportFormat } from './usb/deviceFormats.js';
@@ -164,7 +190,7 @@ let mainWindow;
 import { startMediaServer as _startMediaServer } from './audio/mediaServer.js';
 import { moveFileSafe } from './utils/fsMove.js';
 import { getArtworkBase } from './audio/importManager.js';
-import { writeId3Tags } from './audio/id3Writer.js';
+import { writeId3Tags, writeBpmKeyTags } from './audio/id3Writer.js';
 
 // Serve audio files over a local HTTP server so Chromium's media pipeline can
 // issue standard Range requests during seeking. Custom Electron protocols have
@@ -480,6 +506,22 @@ async function initApp() {
       sendDepsProgress(null);
       // Auto-generate waveforms for any analyzed tracks missing overview data
       autoGenerateMissingWaveforms();
+      // #256 — start watching the ingest folders, and optionally scan them once
+      // now. Runs after deps so freshly discovered tracks can be analysed
+      // immediately (analysis needs the bundled analyzer binary).
+      restartLibraryWatcher();
+      if (getSetting('autoscan_on_startup', 'false') === 'true') {
+        scanWatchFolders().catch((err) =>
+          console.error('[watcher] startup scan failed:', err.message)
+        );
+      }
+      // #267 — a folder-tracked playlist re-syncs on every launch, whatever the
+      // autoscan setting says: that is the whole point of tracking a folder.
+      refreshFolderPlaylists().catch((err) =>
+        console.error('[folder-playlist] startup refresh failed:', err.message)
+      );
+      // #259 — notice a Rekordbox stick being plugged in and offer a cue import
+      startUsbCueWatch();
     })
     .catch((err) => {
       console.error('[deps] Failed to download FFmpeg:', err.message);
@@ -520,13 +562,102 @@ ipcMain.handle('get-track-waveform', (_, trackId) => {
   const buf = getTrackWaveform(trackId);
   return buf ? new Uint8Array(buf) : null;
 });
+// #474 — write the analyzed BPM/key into the tracks' own file tags (manual
+// action from the library context menu). Respects the metadata settings:
+// `metadata_overwrite_tags` decides whether differing tags are overwritten,
+// otherwise only missing tags are filled.
+ipcMain.handle('write-bpm-key-tags', async (_event, { trackIds = [] } = {}) => {
+  const results = [];
+  for (const id of trackIds) {
+    try {
+      results.push(await writeBpmKeyTagsForTrack(id));
+    } catch (err) {
+      results.push({ trackId: id, ok: false, reason: 'error', error: err.message });
+    }
+  }
+  const written = results.filter((r) => r.ok && (r.wrote?.length ?? 0) > 0).length;
+  return { ok: true, written, skipped: results.length - written, results };
+});
 ipcMain.handle('get-setting', (_, key, def) => getSetting(key, def));
 ipcMain.handle('set-setting', (_, key, value) => {
   setSetting(key, value);
+  // #256 — folder-watch settings rebuild the watcher immediately.
+  if (key === 'watch_folders' || key === 'watch_enabled') restartLibraryWatcher();
   // Let the renderer react to settings changes live (e.g. hide the cue
   // indicator column when auto-cue generation is toggled, #263).
   global.mainWindow?.webContents.send('settings-updated', { key, value });
 });
+// #256 — manual "scan now" for the watched folders + state for the settings UI.
+ipcMain.handle('scan-watch-folders', () => scanWatchFolders());
+ipcMain.handle('get-watch-state', () => ({
+  folders: getWatchFolders(),
+  enabled: watchFoldersEnabled(),
+  scanning: watchScanRunning,
+}));
+// #267 — folder-tracked playlists: the playlist mirrors the folder.
+ipcMain.handle(
+  'create-folder-playlist',
+  async (_, { folderPath, name, recursive = false } = {}) => {
+    if (!folderPath || !fs.existsSync(folderPath)) {
+      return { ok: false, error: 'folder-missing', folder: folderPath ?? null };
+    }
+    const playlistName = (name || '').trim() || path.basename(folderPath) || 'Watched folder';
+    let id;
+    try {
+      id = createPlaylist(playlistName, null, null);
+    } catch (err) {
+      return {
+        ok: false,
+        error: err.code === 'DUPLICATE_PLAYLIST_NAME' ? 'duplicate-name' : 'failed',
+        message: err.message,
+      };
+    }
+    setPlaylistFolder(id, folderPath, recursive);
+    if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+    restartLibraryWatcher();
+    const sync = await syncFolderPlaylist(id);
+    return { ok: true, playlistId: id, name: playlistName, recursive, ...sync };
+  }
+);
+ipcMain.handle('refresh-folder-playlist', (_, playlistId) => syncFolderPlaylist(playlistId));
+ipcMain.handle('refresh-folder-playlists', () => refreshFolderPlaylists());
+ipcMain.handle('remove-folder-playlist-tracks', (_, { playlistId, trackIds = [] } = {}) => {
+  for (const trackId of trackIds) removeTrackFromPlaylist(playlistId, trackId);
+  if (trackIds.length > 0) {
+    send('library-updated');
+    // The sidebar counts come from the playlists list, so tell it to re-read.
+    if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+  }
+  return { ok: true, playlistId, removed: trackIds.length };
+});
+ipcMain.handle('stop-folder-playlist', (_, playlistId) => {
+  clearPlaylistFolder(playlistId);
+  restartLibraryWatcher();
+  if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+  return { ok: true, playlistId };
+});
+// Give an existing playlist a folder to follow, or point it at a new one.
+ipcMain.handle('set-playlist-folder', async (_, { playlistId, folderPath, recursive } = {}) => {
+  const playlist = getPlaylist(playlistId);
+  if (!playlist) return { ok: false, error: 'unknown-playlist' };
+  if (!folderPath) return { ok: false, error: 'no-folder' };
+  if (!fs.existsSync(folderPath)) return { ok: false, error: 'missing-folder', folder: folderPath };
+  const useRecursive = recursive ?? playlist.folder_recursive === 1;
+  setPlaylistFolder(playlistId, folderPath, useRecursive);
+  restartLibraryWatcher();
+  if (global.mainWindow) global.mainWindow.webContents.send('playlists-updated');
+  return syncFolderPlaylist(playlistId);
+});
+ipcMain.handle(
+  'set-folder-playlist-recursive',
+  async (_, { playlistId, recursive = false } = {}) => {
+    const playlist = getPlaylist(playlistId);
+    if (!playlist?.folder_path) return { ok: false, playlistId, error: 'not-a-folder-playlist' };
+    setPlaylistFolder(playlistId, playlist.folder_path, recursive);
+    restartLibraryWatcher();
+    return syncFolderPlaylist(playlistId);
+  }
+);
 // `libraryId` defaults to the current "import target" library when omitted —
 // most existing call sites predate multi-library support and don't pass one.
 ipcMain.handle('get-library-path', (_, libraryId) =>
@@ -1045,59 +1176,6 @@ ipcMain.handle('reorder-playlist', (_, { playlistId, orderedTrackIds }) => {
 ipcMain.handle('get-playlists-for-track', (_, trackId) => getPlaylistsForTrack(trackId));
 ipcMain.handle('get-playlist', (_, id) => getPlaylist(id));
 
-ipcMain.handle('export-playlist-m3u', async (_, playlistId) => {
-  const playlist = getPlaylist(playlistId);
-  if (!playlist) throw new Error(`Playlist ${playlistId} not found`);
-
-  const { canceled, filePaths } = await dialog.showOpenDialog({
-    title: 'Choose export destination folder',
-    properties: ['openDirectory', 'createDirectory'],
-  });
-  if (canceled || !filePaths[0]) return { canceled: true };
-
-  // Sanitize playlist name for use as a folder/file name
-  const safeName = playlist.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
-  const destDir = path.join(filePaths[0], safeName);
-  fs.mkdirSync(destDir, { recursive: true });
-
-  const tracks = getPlaylistTracks(playlistId);
-  const total = tracks.length;
-  const m3uLines = ['#EXTM3U'];
-  const usedNames = new Set();
-
-  for (let i = 0; i < tracks.length; i++) {
-    const t = tracks[i];
-    const ext = path.extname(t.file_path);
-    const rawBase =
-      [t.artist, t.title].filter(Boolean).join(' - ') || path.basename(t.file_path, ext);
-    const safeBase = rawBase.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
-    const pad = String(i + 1).padStart(2, '0');
-    let filename = `${pad} - ${safeBase}${ext}`;
-    // Resolve any collisions
-    let n = 1;
-    while (usedNames.has(filename)) filename = `${pad} - ${safeBase} (${n++})${ext}`;
-    usedNames.add(filename);
-
-    if (fs.existsSync(t.file_path)) {
-      fs.copyFileSync(t.file_path, path.join(destDir, filename));
-    }
-
-    const duration = Math.floor(t.duration ?? -1);
-    const label = [t.artist, t.title].filter(Boolean).join(' - ') || safeBase;
-    m3uLines.push(`#EXTINF:${duration},${label}`);
-    m3uLines.push(filename); // relative — same folder as M3U
-
-    const pct = Math.round(((i + 1) / total) * 100);
-    if (global.mainWindow)
-      global.mainWindow.webContents.send('export-m3u-progress', { copied: i + 1, total, pct });
-  }
-
-  const m3uPath = path.join(destDir, `${safeName}.m3u`);
-  await fs.promises.writeFile(m3uPath, m3uLines.join('\n') + '\n', 'utf8');
-  if (global.mainWindow) global.mainWindow.webContents.send('export-m3u-progress', null);
-  return { destDir, trackCount: tracks.length };
-});
-
 ipcMain.handle('add-track', (event, track) => addTrack(track));
 // Remove old commented-out stubs
 
@@ -1605,131 +1683,262 @@ ipcMain.handle('tidal-login', async () => {
   }
 });
 
-ipcMain.handle(
-  'tidal-download-url',
-  async (_event, { url, selectedEntries, linkTrackIds, existingPlaylistId, newPlaylistName }) => {
-    const send = (ch, data) => {
-      if (global.mainWindow) global.mainWindow.webContents.send(ch, data);
+// Build the TIDAL URL handed to tdn for one entry. Entries resolved from an
+// account collection carry their own URL (tracks and videos), so prefer it and
+// only fall back to the conventional track URL for search/single-track entries.
+function tidalEntryUrl(entry) {
+  if (entry?.url) return entry.url;
+  if (entry?.id) return `https://tidal.com/browse/track/${entry.id}`;
+  return null;
+}
+
+// Share URL of an account collection, used for provenance and as the default
+// playlist name source when a collection is downloaded without a URL.
+function tidalCollectionUrl(type, id) {
+  switch (type) {
+    case 'playlist':
+      return `https://tidal.com/browse/playlist/${id}`;
+    case 'mix':
+      return `https://tidal.com/browse/mix/${id}`;
+    case 'album':
+      return `https://tidal.com/browse/album/${id}`;
+    case 'artist':
+      return `https://tidal.com/browse/artist/${id}`;
+    default:
+      return 'https://tidal.com/my-collection';
+  }
+}
+
+/**
+ * Shared TIDAL download routine: resolves the URLs handed to tdn, imports every
+ * downloaded file into the library and reports per-track progress.
+ * Used by both `tidal-download-url` and `tidal-download-collection`.
+ */
+async function runTidalDownload({
+  url,
+  selectedEntries,
+  linkTrackIds,
+  existingPlaylistId,
+  newPlaylistName,
+}) {
+  const send = (ch, data) => {
+    if (global.mainWindow) global.mainWindow.webContents.send(ch, data);
+  };
+  const sendTrackUpdate = (data) => send('tidal-track-update', data);
+  const sendProgress = (msg) => send('tidal-progress', { msg });
+
+  try {
+    const tmpDir = path.join(app.getPath('userData'), 'tidal_tmp');
+
+    // Contiguous indices: progress is reported positionally (Nth file -> Nth
+    // entry), so a selection with gaps would desync the per-track status list.
+    const entries = reindexTidalEntries(selectedEntries);
+
+    // Resolve the download URLs: individual entries when selectedEntries are provided,
+    // otherwise the raw URL (for mixes and direct single-URL downloads).
+    const downloadUrls =
+      entries.length > 0 ? entries.map((e) => tidalEntryUrl(e)).filter(Boolean) : [url];
+
+    // Create playlist before starting download so tracks can be added progressively.
+    let playlistId = null;
+    if (existingPlaylistId) {
+      playlistId = existingPlaylistId;
+    } else if (newPlaylistName?.trim()) {
+      try {
+        const { id } = findOrCreatePlaylist(newPlaylistName.trim(), null, url);
+        playlistId = id;
+        send('playlists-updated');
+      } catch (err) {
+        console.error('[tidal] findOrCreatePlaylist failed:', err.message);
+      }
+    }
+
+    // Emit init event so the UI can render the full track list immediately.
+    if (entries.length > 0) {
+      sendTrackUpdate({ type: 'init', tracks: entries });
+    }
+
+    const trackIds = [];
+    // fileIndex tracks which entry corresponds to the next file reported by onFileReady.
+    // tdn downloads in the order we pass URLs, so positional matching is reliable.
+    let fileIndex = 0;
+
+    const onFileReady = async (filePath) => {
+      const entry = entries[fileIndex] ?? null;
+      const idx = fileIndex;
+      fileIndex++;
+
+      if (entry) {
+        sendTrackUpdate({
+          index: idx,
+          title: entry.title,
+          artist: entry.artist,
+          status: 'importing',
+        });
+      } else {
+        // No entry info (e.g. mix download) — emit a generic update
+        sendTrackUpdate({
+          index: idx,
+          title: path.basename(filePath),
+          artist: '',
+          status: 'importing',
+        });
+      }
+
+      try {
+        const trackSourceUrl = tidalEntryUrl(entry) ?? url;
+        const trackId = await importAudioFile(filePath, {
+          source_url: trackSourceUrl,
+          source_link: url !== trackSourceUrl ? url : null,
+          source_platform: 'tidal',
+        });
+        trackIds.push(trackId);
+        if (playlistId) {
+          addTrackToPlaylist(playlistId, trackId);
+          send('playlists-updated');
+        }
+        send('library-updated');
+        sendTrackUpdate({
+          index: idx,
+          title: entry?.title ?? path.basename(filePath),
+          artist: entry?.artist ?? '',
+          status: 'done',
+          trackId,
+        });
+      } catch (err) {
+        console.error('[tidal] importAudioFile failed:', err.message);
+        sendTrackUpdate({
+          index: idx,
+          title: entry?.title ?? path.basename(filePath),
+          artist: entry?.artist ?? '',
+          status: 'failed',
+          error: err.message,
+        });
+      }
     };
-    const sendTrackUpdate = (data) => send('tidal-track-update', data);
-    const sendProgress = (msg) => send('tidal-progress', { msg });
+
+    sendProgress('Starting download…');
+
+    // Only call tdn if there are new tracks to download
+    const hasDownloads = entries.length > 0 || !selectedEntries;
+    if (hasDownloads) {
+      const files = await downloadTidal(downloadUrls, tmpDir, sendProgress, { onFileReady });
+      if (files.length === 0 && trackIds.length === 0 && (linkTrackIds?.length ?? 0) === 0) {
+        send('tidal-progress', null);
+        return { ok: false, error: 'Download finished but no audio files were found.' };
+      }
+    }
+
+    // Link already-in-library tracks to the playlist (no re-download needed)
+    if (linkTrackIds?.length > 0 && playlistId) {
+      for (const tid of linkTrackIds) {
+        try {
+          addTrackToPlaylist(playlistId, tid);
+        } catch {
+          // ignore duplicate playlist entry errors
+        }
+      }
+      send('playlists-updated');
+    }
+
+    send('tidal-progress', null);
+    return { ok: true, trackIds, playlistId: playlistId ?? null };
+  } catch (err) {
+    send('tidal-progress', null);
+    return { ok: false, error: err.message };
+  }
+}
+
+ipcMain.handle('tidal-download-url', async (_event, opts) => runTidalDownload(opts ?? {}));
+
+ipcMain.handle('tidal-list-collections', async () => {
+  try {
+    const res = await fetchTidalCollections();
+    console.log(`[tidal-list-collections] ok=${res.ok} count=${res.collections?.length ?? 0}`);
+    return res;
+  } catch (err) {
+    console.error('[tidal-list-collections] error:', err.message);
+    return { ok: false, error: err.message, collections: [], warnings: [] };
+  }
+});
+
+// Resolves a collection into its individual entries WITHOUT downloading, so the
+// browser can show them in the same selection table the URL flow uses (#508).
+ipcMain.handle('tidal-collection-tracks', async (_event, { type, id } = {}) => {
+  if (!type || !id) return { ok: false, error: 'Missing collection type or id', entries: [] };
+
+  try {
+    const res = await fetchTidalCollectionTracks(type, id);
+    if (!res.ok) return { ...res, entries: [] };
+    const entries = res.entries ?? [];
+    console.log(`[tidal-collection-tracks] ${type}:${id} entries=${entries.length}`);
+    return {
+      ok: true,
+      title: res.title,
+      type: res.type,
+      entries,
+      total: res.total,
+      truncated: res.truncated === true,
+      videoCount: entries.filter((e) => e.mediaType === 'video').length,
+    };
+  } catch (err) {
+    console.error('[tidal-collection-tracks] error:', err.message);
+    return { ok: false, error: err.message, entries: [] };
+  }
+});
+
+ipcMain.handle(
+  'tidal-download-collection',
+  async (
+    _event,
+    { type, id, title, selectedEntries, existingPlaylistId, newPlaylistName } = {}
+  ) => {
+    if (!type || !id) return { ok: false, error: 'Missing collection type or id' };
 
     try {
-      const tmpDir = path.join(app.getPath('userData'), 'tidal_tmp');
+      // The browser may hand back the tracks the user ticked; without them the
+      // whole collection is resolved. Both paths go through the same split, so
+      // videos are dropped and the indices stay contiguous.
+      const picked =
+        Array.isArray(selectedEntries) && selectedEntries.length > 0 ? selectedEntries : null;
+      const resolved = picked
+        ? { ok: true, title, entries: picked }
+        : await fetchTidalCollectionTracks(type, id);
+      if (!resolved.ok) return resolved;
 
-      // Resolve the download URLs: individual track URLs when selectedEntries are provided,
-      // otherwise the raw URL (for mixes and direct single-URL downloads).
-      const downloadUrls =
-        selectedEntries?.length > 0
-          ? selectedEntries.map((e) => `https://tidal.com/browse/track/${e.id}`)
-          : [url];
+      // Videos download as .mp4/.ts, which the audio importer cannot read.
+      const { tracks, videoCount: splitVideos } = splitTidalCollectionEntries(resolved.entries);
+      const videoCount = Math.max(splitVideos, picked ? 0 : Number(resolved.videoCount) || 0);
+      const collectionTitle = resolved.title || title || id;
 
-      // Create playlist before starting download so tracks can be added progressively.
-      let playlistId = null;
-      if (existingPlaylistId) {
-        playlistId = existingPlaylistId;
-      } else if (newPlaylistName?.trim()) {
-        try {
-          const { id } = findOrCreatePlaylist(newPlaylistName.trim(), null, url);
-          playlistId = id;
-          send('playlists-updated');
-        } catch (err) {
-          console.error('[tidal] findOrCreatePlaylist failed:', err.message);
-        }
+      if (tracks.length === 0) {
+        return {
+          ok: false,
+          error:
+            videoCount > 0
+              ? `"${collectionTitle}" contains only video items. DjManager imports audio tracks only.`
+              : 'This collection has no downloadable tracks.',
+          videoCount,
+        };
       }
 
-      // Emit init event so the UI can render the full track list immediately.
-      if (selectedEntries?.length > 0) {
-        sendTrackUpdate({ type: 'init', tracks: selectedEntries });
+      if (global.mainWindow) {
+        global.mainWindow.webContents.send('tidal-progress', {
+          msg: `Downloading ${tracks.length} tracks from ${collectionTitle}...`,
+        });
       }
 
-      const trackIds = [];
-      // fileIndex tracks which selectedEntry corresponds to the next file reported by onFileReady.
-      // tdn downloads in the order we pass URLs, so positional matching is reliable.
-      let fileIndex = 0;
+      const res = await runTidalDownload({
+        url: tidalCollectionUrl(type, id),
+        selectedEntries: tracks,
+        linkTrackIds: [],
+        existingPlaylistId: existingPlaylistId ?? null,
+        newPlaylistName: newPlaylistName ?? collectionTitle,
+      });
 
-      const onFileReady = async (filePath) => {
-        const entry = selectedEntries?.[fileIndex] ?? null;
-        const idx = fileIndex;
-        fileIndex++;
-
-        if (entry) {
-          sendTrackUpdate({
-            index: idx,
-            title: entry.title,
-            artist: entry.artist,
-            status: 'importing',
-          });
-        } else {
-          // No entry info (e.g. mix download) — emit a generic update
-          sendTrackUpdate({
-            index: idx,
-            title: path.basename(filePath),
-            artist: '',
-            status: 'importing',
-          });
-        }
-
-        try {
-          const trackSourceUrl = entry?.id ? `https://tidal.com/browse/track/${entry.id}` : url;
-          const trackId = await importAudioFile(filePath, {
-            source_url: trackSourceUrl,
-            source_link: url !== trackSourceUrl ? url : null,
-            source_platform: 'tidal',
-          });
-          trackIds.push(trackId);
-          if (playlistId) {
-            addTrackToPlaylist(playlistId, trackId);
-            send('playlists-updated');
-          }
-          send('library-updated');
-          sendTrackUpdate({
-            index: idx,
-            title: entry?.title ?? path.basename(filePath),
-            artist: entry?.artist ?? '',
-            status: 'done',
-            trackId,
-          });
-        } catch (err) {
-          console.error('[tidal] importAudioFile failed:', err.message);
-          sendTrackUpdate({
-            index: idx,
-            title: entry?.title ?? path.basename(filePath),
-            artist: entry?.artist ?? '',
-            status: 'failed',
-            error: err.message,
-          });
-        }
-      };
-
-      sendProgress('Starting download…');
-
-      // Only call tdn if there are new tracks to download
-      const hasDownloads = selectedEntries?.length > 0 || !selectedEntries;
-      if (hasDownloads) {
-        const files = await downloadTidal(downloadUrls, tmpDir, sendProgress, { onFileReady });
-        if (files.length === 0 && trackIds.length === 0 && (linkTrackIds?.length ?? 0) === 0) {
-          send('tidal-progress', null);
-          return { ok: false, error: 'Download finished but no audio files were found.' };
-        }
-      }
-
-      // Link already-in-library tracks to the playlist (no re-download needed)
-      if (linkTrackIds?.length > 0 && playlistId) {
-        for (const tid of linkTrackIds) {
-          try {
-            addTrackToPlaylist(playlistId, tid);
-          } catch {
-            // ignore duplicate playlist entry errors
-          }
-        }
-        send('playlists-updated');
-      }
-
-      send('tidal-progress', null);
-      return { ok: true, trackIds, playlistId: playlistId ?? null };
+      return { ...res, videoCount };
     } catch (err) {
-      send('tidal-progress', null);
+      console.error('[tidal-download-collection] error:', err.message);
       return { ok: false, error: err.message };
     }
   }
@@ -1750,6 +1959,226 @@ function trackToFilename(track, ext) {
     rawBase.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() +
     (ext || path.extname(track.file_path || ''))
   );
+}
+
+// ── #256: ingest folder watchdog ──────────────────────────────────────────────
+// A configurable list of folders is watched for new audio files; anything new
+// is imported (and therefore analysed). Optionally the same folders are scanned
+// once on startup. Settings: watch_enabled, watch_folders (JSON array),
+// autoscan_on_startup.
+
+let libraryWatcher = null;
+let watchScanRunning = false;
+
+function getWatchFolders() {
+  try {
+    const parsed = JSON.parse(getSetting('watch_folders', '[]') || '[]');
+    return Array.isArray(parsed) ? parsed.filter((p) => typeof p === 'string' && p) : [];
+  } catch {
+    return [];
+  }
+}
+
+function watchFoldersEnabled() {
+  return getSetting('watch_enabled', 'false') === 'true';
+}
+
+/** (Re)build the watcher from current settings — safe to call any time. */
+function restartLibraryWatcher() {
+  libraryWatcher?.close();
+  libraryWatcher = null;
+
+  // The global ingest list is opt-in (#256); a folder-tracked playlist (#267) is
+  // its own promise to follow that folder, so it is always watched while the app
+  // runs. One watcher covers both — a folder can be in both lists.
+  const ingestFolders = watchFoldersEnabled() ? getWatchFolders() : [];
+  const folders = [...new Set([...ingestFolders, ...folderPlaylistFolders()])];
+  if (folders.length === 0) return;
+
+  libraryWatcher = createLibraryWatcher({
+    folders,
+    onNewFile: async (filePath) => {
+      // #267 — a file inside a tracked folder is linked (its path stays put, so
+      // the mirror keeps matching) and joins its playlist(s) at once. Anything
+      // else is a plain ingest, which keeps its managed copy in the library.
+      const targets = playlistsForFile(filePath);
+      let id = null;
+      if (targets.length > 0) {
+        const res = await linkAudioFile(filePath);
+        if (!res?.id) return;
+        id = res.id;
+        if (!res.duplicate) spawnAnalysis(id, filePath);
+        for (const pl of targets) {
+          try {
+            addTrackToPlaylist(pl.id, id);
+          } catch (err) {
+            console.warn(`[folder-playlist] add to ${pl.id} failed:`, err.message);
+          }
+          send('folder-playlist-updated', {
+            playlistId: pl.id,
+            event: 'added',
+            added: 1,
+            filePath,
+          });
+        }
+      } else {
+        id = await importAudioFile(filePath, {});
+      }
+      if (!id) return;
+      send('library-updated');
+      send('watch-status', { event: 'imported', filePath });
+    },
+    onError: (err, folder) => console.warn(`[watcher] ${folder ?? ''} ${err.message}`),
+  });
+  console.log(`[watcher] watching ${folders.length} folder(s): ${folders.join(', ')}`);
+}
+
+/** Scan the watched folders now (startup auto-scan + manual action). */
+async function scanWatchFolders() {
+  const folders = getWatchFolders();
+  if (folders.length === 0 || watchScanRunning) {
+    return { found: 0, imported: 0, skipped: 0, failed: 0 };
+  }
+  watchScanRunning = true;
+  send('watch-status', { event: 'scan-started', folders: folders.length });
+  try {
+    const res = await scanFoldersForNewTracks(folders, {
+      onProgress: (p) => send('watch-status', { event: 'scan-progress', ...p }),
+    });
+    if (res.imported > 0) send('library-updated');
+    send('watch-status', { event: 'scan-done', ...res });
+    return res;
+  } catch (err) {
+    console.error('[watcher] scan failed:', err.message);
+    send('watch-status', { event: 'scan-failed', error: err.message });
+    return { found: 0, imported: 0, skipped: 0, failed: 0, error: err.message };
+  } finally {
+    watchScanRunning = false;
+  }
+}
+
+// ── Folder-tracked playlists (#267) ───────────────────────────────────────────
+//
+// A playlist whose `folder_path` is set mirrors that folder: its tracks are the
+// audio files in the folder. New files are imported and added (live via the
+// watcher, and on every scan/startup); files that disappeared are reported and
+// only removed once the user confirms — a moved file should not silently leave
+// the playlist.
+
+let folderPlaylistRunning = false;
+
+function folderPlaylistFolders() {
+  return getFolderPlaylists()
+    .map((p) => p.folder_path)
+    .filter(Boolean);
+}
+
+/** Folder-tracked playlists whose folder contains this file. */
+function playlistsForFile(filePath) {
+  return getFolderPlaylists().filter((p) =>
+    isInsideFolder(filePath, p.folder_path, { recursive: p.folder_recursive === 1 })
+  );
+}
+
+/**
+ * Mirror one folder-tracked playlist: import what is new, add it to the
+ * playlist, and report (never remove) what went missing.
+ */
+async function syncFolderPlaylist(playlistId, { importNew = true } = {}) {
+  const playlist = getPlaylist(playlistId);
+  if (!playlist || !playlist.folder_path) {
+    return { ok: false, playlistId, error: 'not-a-folder-playlist' };
+  }
+  const folder = playlist.folder_path;
+  const recursive = playlist.folder_recursive === 1;
+  if (!fs.existsSync(folder)) {
+    return { ok: false, playlistId, folder, error: 'folder-missing' };
+  }
+
+  const files = await listAudioFiles([folder], { maxDepth: recursive ? 8 : 0 });
+
+  // #267 — the folder stays the source of truth: its files are LINKED (their
+  // paths do not move), not copied into the library. That is what lets the
+  // playlist keep mirroring the folder, and what makes a deleted or moved file
+  // show up as missing instead of leaving a stale copy behind.
+  let linked = 0;
+  if (importNew && files.length > 0) {
+    const known = new Set(getTracksByPaths(files).map((t) => t.file_path));
+    for (const file of files.filter((f) => !known.has(f))) {
+      try {
+        const res = await linkAudioFile(file);
+        if (res?.id && !res.duplicate) {
+          linked++;
+          spawnAnalysis(res.id, file);
+        }
+      } catch (err) {
+        console.warn(`[folder-playlist] link failed for ${file}:`, err.message);
+      }
+    }
+  }
+
+  const rows = files.length > 0 ? getTracksByPaths(files) : [];
+  const byPath = new Map(rows.map((t) => [path.resolve(t.file_path), t]));
+  const playlistTracks = getPlaylistTracks(playlistId);
+  const plan = planFolderSync({
+    folderFiles: files,
+    playlistTracks,
+    folder,
+  });
+
+  const addIds = plan.add.map((f) => byPath.get(path.resolve(f))?.id).filter(Boolean);
+  if (addIds.length > 0) addTracksToPlaylist(playlistId, addIds);
+  markPlaylistFolderSynced(playlistId);
+
+  // Give the confirmation dialog enough to read: a bare file path is not
+  // something anyone wants to tick through.
+  const trackById = new Map(playlistTracks.map((t) => [t.id, t]));
+  const missing = plan.missing.map((m) => ({
+    ...m,
+    title: trackById.get(m.id)?.title ?? '',
+    artist: trackById.get(m.id)?.artist ?? '',
+  }));
+
+  const result = {
+    ok: true,
+    playlistId,
+    folder,
+    recursive,
+    found: files.length,
+    linked,
+    added: addIds.length,
+    unchanged: plan.unchanged,
+    missing,
+  };
+  if (linked > 0 || addIds.length > 0) {
+    send('library-updated');
+    send('folder-playlist-updated', { playlistId, event: 'synced', ...result });
+  }
+  console.log(
+    `[folder-playlist] #${playlistId} ${folder}: ${files.length} file(s), ` +
+      `${linked} linked, ${addIds.length} added, ${missing.length} missing`
+  );
+  return result;
+}
+
+/** Refresh every folder-tracked playlist (startup + manual "Refresh all"). */
+async function refreshFolderPlaylists() {
+  if (folderPlaylistRunning) return [];
+  folderPlaylistRunning = true;
+  const results = [];
+  try {
+    for (const pl of getFolderPlaylists()) {
+      try {
+        results.push(await syncFolderPlaylist(pl.id));
+      } catch (err) {
+        console.error(`[folder-playlist] refresh #${pl.id} failed:`, err.message);
+        results.push({ ok: false, playlistId: pl.id, error: err.message });
+      }
+    }
+  } finally {
+    folderPlaylistRunning = false;
+  }
+  return results;
 }
 
 // ── File Explorer IPC ──────────────────────────────────────────────────────────
@@ -1867,6 +2296,10 @@ ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlis
         duration: 0,
         bitrate: 0,
       };
+      // #561 — the file is copied byte for byte below, so this probe also
+      // describes what lands on the stick.
+      let sampleRate = null;
+      let bitDepth = null;
       try {
         const { ffprobe: runFfprobe } = await import('./audio/ffmpeg.js');
         const data = await runFfprobe(srcPath);
@@ -1882,9 +2315,10 @@ ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlis
           duration: parseFloat(data.format?.duration) || 0,
           bitrate: parseInt(stream.bit_rate || data.format?.bit_rate || 0, 10) || 0,
         };
+        ({ sampleRate, bitDepth } = sampleInfoFromProbe(data));
       } catch {}
 
-      // Copy to USB /music/
+      // Copy to USB /Contents/
       const rawBase =
         [meta.artist, meta.title].filter(Boolean).join(' - ') || path.basename(srcPath, ext);
       const safeBase = rawBase.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
@@ -1895,11 +2329,11 @@ ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlis
       }
       usedNames.set(filename.toLowerCase(), true);
 
-      const destDir = path.join(usbRoot, 'music');
+      const destDir = usbAudioDir(usbRoot);
       fs.mkdirSync(destDir, { recursive: true });
       const destPath = path.join(destDir, filename);
       if (!fs.existsSync(destPath)) fs.copyFileSync(srcPath, destPath);
-      const usbFilePath = `/music/${filename}`;
+      const usbFilePath = usbAudioPath(filename);
 
       // Write minimal ANLZ (path + beatgrid only, no waveform for speed)
       try {
@@ -1936,6 +2370,9 @@ ipcMain.handle('export-explorer-to-usb', async (_, { filePaths, usbRoot, playlis
         genres: [],
         file_size: fileSize,
         bitrate: meta.bitrate,
+        // #561 — real values, probed above from the file that was just copied
+        sample_rate: sampleRate,
+        bit_depth: bitDepth,
         comments: '',
         rating: 0,
         analyzePath: anlzPaths.get(i) || '',
@@ -2199,16 +2636,26 @@ ipcMain.handle('format-usb', async (_, { device, mountPoint }) => {
 });
 
 /**
- * Copies a track's audio file to {usbRoot}/music/, returns { path, meta }.
+ * Copies a track's audio file to {usbRoot}/Contents/, returns { path, meta }.
  * `meta` is non-null only when the file was re-encoded to a different format,
  * in which case it carries the real output fileSize/bitrate for the PDB row
  * (the source DB values no longer apply once the container/codec changes).
+ * #561: it also says whether the audio was re-encoded (`reencoded`) and into
+ * which `format`, so the PDB row can report the depth the output codec really
+ * has instead of the library file's.
  */
 async function copyTrackToUsb(
   track,
   usbRoot,
   usedNames,
-  { useNormalized = false, targetLufs = null, targetDevice = null, forceMp3 = false } = {}
+  {
+    useNormalized = false,
+    targetLufs = null,
+    targetDevice = null,
+    forceMp3 = false,
+    blind = false,
+    applyTrim = true,
+  } = {}
 ) {
   const srcPath = track.file_path;
   const srcExt = path.extname(srcPath || '');
@@ -2223,7 +2670,7 @@ async function copyTrackToUsb(
   }
   usedNames.set(finalName.toLowerCase(), true);
 
-  const destDir = path.join(usbRoot, 'music');
+  const destDir = usbAudioDir(usbRoot);
   fs.mkdirSync(destDir, { recursive: true });
   const destPath = path.join(destDir, finalName);
 
@@ -2235,23 +2682,116 @@ async function copyTrackToUsb(
         ? targetLufs - sourceLoudness
         : 0;
     const sourceBitrateKbps = track.bitrate ? track.bitrate / 1000 : null;
+    // #463: a trimmed track is exported as just its usable range — unless the
+    // export asked for the whole file (applyTrim: false).
+    const trim = exportTrimRange(track, applyTrim);
 
-    if (targetFormat || gainDb !== 0) {
-      await convertAudio(srcPath, destPath, { gainDb, sourceBitrateKbps, format: targetFormat });
-      if (targetFormat) {
+    if (targetFormat || gainDb !== 0 || trim) {
+      await convertAudio(srcPath, destPath, {
+        gainDb,
+        sourceBitrateKbps,
+        format: targetFormat,
+        trimStartSec: trim ? trim.startMs / 1000 : null,
+        trimEndSec: trim ? trim.endMs / 1000 : null,
+      });
+      if (targetFormat || trim) {
+        // Anything that rewrites the payload — a codec/format change or a
+        // trimmed stream copy — invalidates the stored size/bitrate.
         const fileSize = fs.statSync(destPath).size;
-        const durationSec = track.duration || null;
+        const durationSec = trim ? (trim.endMs - trim.startMs) / 1000 : track.duration || null;
         meta = {
           fileSize,
           bitrate: durationSec ? Math.round((fileSize * 8) / durationSec) : track.bitrate || 0,
+          // #561 — was the AUDIO re-encoded (format change and/or gain), and in
+          // which format did it land? A trim-only pass is a stream copy and
+          // keeps the source sample rate / bit depth, so it does not set this.
+          reencoded: Boolean(targetFormat || gainDb !== 0),
+          format: (targetFormat || srcExt.replace(/^\./, '')).toLowerCase() || null,
         };
       }
     } else {
       fs.copyFileSync(srcPath, destPath);
     }
+    // #474 — the exported file must describe itself: title/artist/album always,
+    // BPM/key unless this is a blind (real DJ mode) export.
+    await writeExportTags(destPath, track, blind);
   }
 
-  return { path: `/music/${finalName}`, meta };
+  return { path: usbAudioPath(finalName), meta };
+}
+
+/**
+ * #463: everything the exporters need to know about a track's trim range, in
+ * one place. Returns null when the track has no usable trim (export the whole
+ * file, unchanged behaviour).
+ *
+ * - startMs/endMs  the clamped trim range in milliseconds
+ * - sourceFilePath the file the ANLZ waveform / PVBR size must be read from —
+ *                  the trimmed copy on the USB once it exists, so the exported
+ *                  waveform matches the exported audio (null = no waveform)
+ * - beatgrid       beat grid JSON re-based onto the trimmed timeline
+ * - cuePoints      cue rows re-based onto the trimmed timeline (cues outside
+ *                  the range are dropped — they cannot be represented)
+ *
+ * `applyTrim: false` (the export option) means "write the whole file": the
+ * caller gets null and every trim-derived adjustment (duration, beat grid, cue
+ * shift, waveform source) falls back to the untrimmed values.
+ */
+function resolveExportTrim(track, usbRoot, usbFilePath, cuePoints = [], applyTrim = true) {
+  const range = exportTrimRange(track, applyTrim);
+  if (!range) return null;
+
+  const usbAbsPath = usbFilePath ? path.join(usbRoot, usbFilePath.replace(/^[/\\]/, '')) : null;
+  return {
+    ...range,
+    sourceFilePath: usbAbsPath && fs.existsSync(usbAbsPath) ? usbAbsPath : null,
+    beatgrid: shiftBeatgridForTrim(track.beatgrid, range.startMs, range.endMs),
+    cuePoints: shiftCuePointsForTrim(cuePoints, range.startMs, range.endMs),
+  };
+}
+
+/** Length in seconds of the audio an export writes for this track (#463). */
+function exportDurationSec(track, applyTrim = true) {
+  const trim = exportTrimRange(track, applyTrim);
+  if (trim) return (trim.endMs - trim.startMs) / 1000;
+  return track.duration ?? null;
+}
+
+/**
+ * #474 — write the library metadata into the file that lands on the stick.
+ * The exported file then describes itself for any other tool (tag viewer,
+ * Rekordbox import, Mixed In Key, ...): title/artist/album always, BPM and key
+ * unless this is a blind (real DJ mode) export, which must carry nothing to
+ * sync to. Failures are logged, never fatal: the audio already copied fine.
+ */
+async function writeExportTags(destPath, track, blind = false) {
+  try {
+    await writeId3Tags(destPath, {
+      title: track.title || null,
+      artist: track.artist || null,
+      album: track.album || null,
+    });
+  } catch (err) {
+    console.warn(`Tag write failed for ${path.basename(destPath)}:`, err.message);
+  }
+  if (blind) return;
+
+  const bpm = track.bpm_override ?? track.bpm ?? null;
+  const key = track.key_camelot || track.key_raw || null;
+  if (bpm == null && !key) return;
+  try {
+    // User decision 2026-09-13: an export MIRRORS the library — the BPM/key that
+    // mixxx-analyzer put in the DB must win over whatever the source file carries
+    // (a Traktor-tagged source otherwise ships its own notation, e.g. "12d", while
+    // the library says "7B"). Identical values are still skipped, and a value the
+    // library does not have is never stripped from the file.
+    const res = await writeBpmKeyTags(destPath, { bpm, key, overwrite: true });
+    if (res?.ok === false && res.reason && !['no-values', 'already-current'].includes(res.reason)) {
+      console.warn(`BPM/key tag write failed for ${path.basename(destPath)}: ${res.reason}`);
+    }
+  } catch (err) {
+    console.warn(`BPM/key tag write failed for ${path.basename(destPath)}:`, err.message);
+  }
 }
 
 /** Writes the Rekordbox PDB database file using the pure-JS writer. */
@@ -2298,168 +2838,166 @@ function saveManifest(usbRoot, tracksMap, playlistsMap) {
   );
 }
 
-ipcMain.handle(
-  'export-rekordbox',
-  async (
-    _,
-    {
-      usbRoot,
-      playlistIds,
-      playlistId,
-      useNormalized = false,
-      targetDevice = null,
-      forceMp3 = false,
-    }
-  ) => {
-    try {
-      const targetLufs = useNormalized ? Number(getSetting('normalize_target_lufs', '-9')) : null;
-      const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
-      const allPlaylists = ids?.length
-        ? ids.map((id) => getPlaylist(id)).filter(Boolean)
-        : getPlaylists();
+// ── #259: pull cue points set on hardware back into the library ────────────────
+// The CDJ writes hot/memory cues into the stick's ANLZ files; the export
+// manifest tells us which library track each USB file came from, so a stick we
+// exported can be read straight back.
 
-      const trackMap = new Map();
-      for (const pl of allPlaylists) {
-        for (const t of getPlaylistTracks(pl.id)) {
-          if (!trackMap.has(t.id)) trackMap.set(t.id, t);
-        }
-      }
-      const tracks = [...trackMap.values()];
-      const total = tracks.length;
+/** Everything the stick carries for tracks that still exist in the library. */
+function scanUsbCues(usbRoot, mode = 'extend') {
+  const manifest = loadManifest(usbRoot);
+  const tracks = [];
+  for (const [id, row] of manifest.tracks) {
+    const trackId = Number(id);
+    const track = getTrackById(trackId);
+    if (!track || !row?.file_path) continue;
+    const usbCues = readTrackCues(usbRoot, row.file_path);
+    // 'replace' still plans removals for tracks with no cues on the stick, so
+    // an empty stick is not skipped in that mode.
+    const existingCues = getCuePoints(trackId);
+    if (usbCues.length === 0 && !(mode === 'replace' && existingCues.length > 0)) continue;
+    const plan = buildCueImportPlan({ usbCues, existingCues, mode });
+    tracks.push({
+      trackId,
+      title: track.title || path.basename(track.file_path || ''),
+      usbFilePath: row.file_path,
+      cues: usbCues,
+      add: plan.add,
+      update: plan.update,
+      skip: plan.skip,
+      remove: plan.remove,
+    });
+  }
+  const summary = tracks.reduce(
+    (acc, t) => ({
+      tracks: acc.tracks + 1,
+      cues: acc.cues + t.cues.length,
+      add: acc.add + t.add.length,
+      update: acc.update + t.update.length,
+      skip: acc.skip + t.skip.length,
+      remove: acc.remove + t.remove.length,
+    }),
+    { tracks: 0, cues: 0, add: 0, update: 0, skip: 0, remove: 0 }
+  );
+  return { ok: true, usbRoot, mode: mode === 'replace' ? 'replace' : 'extend', tracks, summary };
+}
 
-      // Load existing manifest so we can merge with previously exported tracks/playlists
-      const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
-      const copyTargets = tracks.filter(
-        (t) => !reuseExistingUsbTrack(existingTracks, t.id, new Map())
-      );
-      const copyTotal = copyTargets.length;
-
-      send('export-rekordbox-progress', {
-        msg: `Exporting ${total} tracks…`,
-        pct: 0,
+/**
+ * Apply the scan: insert missing cues, move slots the hardware moved and — in
+ * 'replace' mode only — drop the cues the stick does not carry.
+ */
+function applyUsbCues(usbRoot, mode = 'extend') {
+  const scan = scanUsbCues(usbRoot, mode);
+  let added = 0;
+  let updated = 0;
+  let skipped = 0;
+  let removed = 0;
+  for (const t of scan.tracks) {
+    for (const cue of t.add) {
+      addCuePoint({
+        trackId: t.trackId,
+        positionMs: Math.round(cue.positionMs),
+        label: cue.label || '',
+        color: cue.color || '#00b4d8',
+        hotCueIndex: cue.hotCueIndex,
       });
+      added += 1;
+    }
+    for (const cue of t.update) {
+      updateCuePoint(cue.existingId, {
+        positionMs: Math.round(cue.positionMs),
+        ...(cue.label ? { label: cue.label } : {}),
+        ...(cue.color ? { color: cue.color } : {}),
+      });
+      updated += 1;
+    }
+    for (const cue of t.remove) {
+      deleteCuePoint(cue.id);
+      removed += 1;
+    }
+    skipped += t.skip.length;
+  }
+  if (added + updated + removed > 0) send('cue-points-updated');
+  return {
+    ok: true,
+    usbRoot,
+    mode: scan.mode,
+    added,
+    updated,
+    skipped,
+    removed,
+    tracks: scan.summary.tracks,
+  };
+}
 
-      // Pre-populate usedNames from existing manifest so copyTrackToUsb won't assign duplicate filenames
-      const usedNames = new Map();
-      for (const et of existingTracks.values()) {
-        const name = path.basename(et.file_path || '').toLowerCase();
-        if (name) usedNames.set(name, true);
+ipcMain.handle('scan-usb-cues', (_, { usbRoot, mode } = {}) => {
+  try {
+    return scanUsbCues(usbRoot, mode);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('import-usb-cues', (_, { usbRoot, mode } = {}) => {
+  try {
+    return applyUsbCues(usbRoot, mode);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// Notice a freshly inserted stick: poll the usual mount points and ask the
+// renderer once per stick (per session) when it actually holds new cues.
+const seenCueUsbRoots = new Set();
+
+function candidateUsbRoots() {
+  const roots = [];
+  const addChildren = (dir) => {
+    try {
+      for (const entry of fs.readdirSync(dir)) roots.push(path.join(dir, entry));
+    } catch {
+      // not mounted / not readable — nothing to do
+    }
+  };
+  if (process.platform === 'win32') {
+    for (let code = 68; code <= 90; code += 1) {
+      const root = `${String.fromCharCode(code)}:\\`;
+      if (fs.existsSync(root)) roots.push(root);
+    }
+  } else if (process.platform === 'darwin') {
+    addChildren('/Volumes');
+  } else {
+    const user = process.env.USER || '';
+    addChildren(`/run/media/${user}`);
+    addChildren(`/media/${user}`);
+    addChildren('/media');
+    addChildren('/mnt');
+  }
+  return roots;
+}
+
+function detectCueUsb() {
+  for (const root of candidateUsbRoots()) {
+    if (seenCueUsbRoots.has(root)) continue;
+    if (!fs.existsSync(getManifestPath(root))) continue;
+    seenCueUsbRoots.add(root);
+    try {
+      const scan = scanUsbCues(root);
+      if (scan.summary.add + scan.summary.update > 0) {
+        send('usb-cues-detected', { usbRoot: root, summary: scan.summary });
       }
-
-      // 2. Copy files to USB, build USB path map
-      const usbPaths = new Map(); // trackId → USB path
-      const usbMeta = new Map(); // trackId → { fileSize, bitrate } override, only set on re-encode
-      let copiedCount = 0;
-      for (let i = 0; i < tracks.length; i++) {
-        const t = tracks[i];
-        const reused = reuseExistingUsbTrack(existingTracks, t.id, usedNames);
-        if (reused) {
-          usbPaths.set(t.id, reused.path);
-          if (reused.meta) usbMeta.set(t.id, reused.meta);
-        } else {
-          const { path: usbPath, meta } = await copyTrackToUsb(t, usbRoot, usedNames, {
-            useNormalized,
-            targetLufs,
-            targetDevice,
-            forceMp3,
-          });
-          usbPaths.set(t.id, usbPath);
-          if (meta) usbMeta.set(t.id, meta);
-          copiedCount += 1;
-        }
-        const copyMsg = copyTotal
-          ? `Copying files… ${copiedCount}/${copyTotal}`
-          : 'Copying files… all tracks already on USB';
-        send('export-rekordbox-progress', {
-          msg: copyMsg,
-          pct: Math.round(((i + 1) / total) * 40),
-        });
-      }
-
-      // 3. Write ANLZ beat grid files (only for tracks in the current export)
-      send('export-rekordbox-progress', { msg: 'Writing beat grids & waveforms…', pct: 40 });
-      const anlzPaths = new Map(); // trackId → Pioneer analyze_path string for PDB
-      for (let i = 0; i < tracks.length; i++) {
-        const t = tracks[i];
-        const usbFilePath = usbPaths.get(t.id);
-        if (!usbFilePath) continue;
-        const anlzFolder = getAnlzFolder(usbFilePath).replace(/\\/g, '/');
-        anlzPaths.set(t.id, `/${anlzFolder}/ANLZ0000.DAT`);
-        const sourceFilePath = t.file_path || null;
-        try {
-          await writeAnlz({
-            usbFilePath,
-            sourceFilePath,
-            beatgrid: t.beatgrid ?? null,
-            bpm: t.bpm_override ?? t.bpm ?? 0,
-            beatgridOffset: t.beatgrid_offset ?? 0,
-            usbRoot,
-            ffmpegPath: getFfmpegRuntimePath(),
-            cuePoints: getCuePoints(t.id).filter((c) => c.enabled !== 0),
-          });
-        } catch (err) {
-          console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
-        }
-        send('export-rekordbox-progress', {
-          msg: `Beat grids & waveforms… ${i + 1}/${total}`,
-          pct: 40 + Math.round(((i + 1) / total) * 30),
-        });
-      }
-
-      // 4. Build PDB tracks for the current export
-      send('export-rekordbox-progress', { msg: 'Writing Rekordbox database…', pct: 70 });
-      const newPdbTracks = tracks.map((t) => ({
-        id: t.id,
-        title: t.title || '',
-        artist: t.artist || '',
-        album: t.album || '',
-        duration: t.duration || 0,
-        bpm: t.bpm_override ?? t.bpm ?? 0,
-        key_raw: t.key_raw || '',
-        file_path: usbPaths.get(t.id) || '',
-        track_number: t.track_number || 0,
-        year: t.year || '',
-        label: t.label || '',
-        genres: t.genres ? JSON.parse(t.genres) : [],
-        file_size: usbMeta.get(t.id)?.fileSize ?? t.file_size ?? 0,
-        bitrate: usbMeta.get(t.id)?.bitrate ?? t.bitrate ?? 0,
-        comments: t.comments || '',
-        rating: t.rating || 0,
-        replay_gain: t.replay_gain ?? null,
-        analyzePath: anlzPaths.get(t.id) || '',
-      }));
-
-      const newPdbPlaylists = allPlaylists.map((pl) => ({
-        id: pl.id,
-        name: pl.name,
-        track_ids: getPlaylistTracks(pl.id)
-          .map((t) => t.id)
-          .filter((id) => usbPaths.has(id)),
-      }));
-
-      // Merge: existing data is the base; new export overrides by id
-      const mergedTracks = new Map(existingTracks);
-      for (const t of newPdbTracks) mergedTracks.set(t.id, t);
-
-      const mergedPlaylists = new Map(existingPlaylists);
-      for (const pl of newPdbPlaylists) mergedPlaylists.set(pl.id, pl);
-
-      runPdbExporter(
-        { usbRoot, tracks: [...mergedTracks.values()], playlists: [...mergedPlaylists.values()] },
-        usbRoot
-      );
-      writeSettingFiles(usbRoot);
-      saveManifest(usbRoot, mergedTracks, mergedPlaylists);
-
-      send('export-rekordbox-progress', { msg: 'Done!', pct: 100 });
-      send('export-rekordbox-progress', null);
-      return { ok: true, trackCount: mergedTracks.size, newTrackCount: total, usbRoot };
     } catch (err) {
-      send('export-rekordbox-progress', null);
-      return { ok: false, error: err.message };
+      console.warn('[usb-cues] detection scan failed:', err.message);
     }
   }
-);
+}
+
+function startUsbCueWatch() {
+  detectCueUsb();
+  const timer = setInterval(detectCueUsb, 15000);
+  if (timer.unref) timer.unref();
+  app.on('will-quit', () => clearInterval(timer));
+}
 
 ipcMain.handle(
   'export-all',
@@ -2472,6 +3010,7 @@ ipcMain.handle(
       useNormalized = false,
       targetDevice = null,
       forceMp3 = false,
+      applyTrim = true,
     }
   ) => {
     try {
@@ -2494,7 +3033,11 @@ ipcMain.handle(
       // Load existing manifest for merging
       const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
       const copyTargets = allTracks.filter(
-        (t) => !reuseExistingUsbTrack(existingTracks, t.id, new Map())
+        (t) =>
+          !reuseExistingUsbTrack(existingTracks, t.id, new Map(), {
+            trimStartMs: applyTrim === false ? null : (t.trim_start_ms ?? null),
+            trimEndMs: applyTrim === false ? null : (t.trim_end_ms ?? null),
+          })
       );
       const copyTotal = copyTargets.length;
 
@@ -2513,12 +3056,17 @@ ipcMain.handle(
       // Copy files once
       const usbPaths = new Map();
       const usbMeta = new Map(); // trackId → { fileSize, bitrate } override, only set on re-encode
+      const reusedIds = new Set(); // files already on the USB from an earlier export
       let copiedCount = 0;
       for (let i = 0; i < allTracks.length; i++) {
         const t = allTracks[i];
-        const reused = reuseExistingUsbTrack(existingTracks, t.id, usedNames);
+        const reused = reuseExistingUsbTrack(existingTracks, t.id, usedNames, {
+          trimStartMs: applyTrim === false ? null : (t.trim_start_ms ?? null),
+          trimEndMs: applyTrim === false ? null : (t.trim_end_ms ?? null),
+        });
         if (reused) {
           usbPaths.set(t.id, reused.path);
+          reusedIds.add(t.id);
           if (reused.meta) usbMeta.set(t.id, reused.meta);
         } else {
           const { path: usbPath, meta } = await copyTrackToUsb(t, usbRoot, usedNames, {
@@ -2526,6 +3074,7 @@ ipcMain.handle(
             targetLufs,
             targetDevice,
             forceMp3,
+            applyTrim,
           });
           usbPaths.set(t.id, usbPath);
           if (meta) usbMeta.set(t.id, meta);
@@ -2540,6 +3089,13 @@ ipcMain.handle(
         });
       }
 
+      // #561 — real values for the PDB rows (probe the file when a row has none)
+      const sampleInfo = await resolveExportSampleInfo(allTracks, {
+        reusedIds,
+        manifestTracks: existingTracks,
+        usbMeta,
+      });
+
       // Write M3U playlists (USB path mode)
       send('export-all-progress', { msg: 'Writing M3U playlists…', pct: 35 });
       const playlistDir = path.join(usbRoot, 'playlists');
@@ -2547,20 +3103,27 @@ ipcMain.handle(
       for (const pl of allPlaylists) {
         const tracks = getPlaylistTracks(pl.id);
         const safeName = pl.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+        const m3uPath = path.join(playlistDir, `${safeName}.m3u`);
+        // Entries must be relative to the M3U file itself (forward slashes) — a
+        // player resolves them against the playlist's directory. A USB-root path
+        // like "/music/x.mp3" instead makes VLC look for file:///music/x.mp3 on
+        // the host filesystem and fail to open the MRL.
+        const m3uDir = path.dirname(m3uPath);
         const lines = ['#EXTM3U'];
         for (const t of tracks) {
           const usbPath = usbPaths.get(t.id);
           if (!usbPath) continue;
-          const duration = Math.floor(t.duration ?? -1);
+          const duration = Math.floor(exportDurationSec(t, applyTrim) ?? -1);
           const label = [t.artist, t.title].filter(Boolean).join(' - ') || path.basename(usbPath);
           lines.push(`#EXTINF:${duration},${label}`);
-          lines.push(usbPath);
+          // usbPaths holds a USB-relative path ("/Contents/x.mp3"), so join it with
+          // the stick root first: path.relative needs two ABSOLUTE paths. Handed the
+          // drive-less value, Windows resolves it against the process CWD and writes
+          // an absolute "C:/Contents/x.mp3" — measured on the dev laptop, that is a
+          // path on the system drive, so the playlist still would not open.
+          lines.push(toM3uRelativePath(m3uDir, path.join(usbRoot, usbPath)));
         }
-        fs.writeFileSync(
-          path.join(playlistDir, `${safeName}.m3u`),
-          lines.join('\n') + '\n',
-          'utf8'
-        );
+        fs.writeFileSync(m3uPath, lines.join('\n') + '\n', 'utf8');
       }
 
       // Write ANLZ beat grids + waveforms (only for tracks in the current export)
@@ -2569,16 +3132,20 @@ ipcMain.handle(
         const t = allTracks[i];
         const usbFilePath = usbPaths.get(t.id);
         if (!usbFilePath) continue;
+        const cues = getCuePoints(t.id).filter((c) => c.enabled !== 0);
+        // #463: re-base the beat grid / cues and read the waveform from the
+        // trimmed copy, so the exported ANLZ describes the exported audio.
+        const trim = resolveExportTrim(t, usbRoot, usbFilePath, cues, applyTrim);
         try {
           await writeAnlz({
             usbFilePath,
-            sourceFilePath: t.file_path || null,
-            beatgrid: t.beatgrid ?? null,
+            sourceFilePath: trim ? trim.sourceFilePath : t.file_path || null,
+            beatgrid: trim ? trim.beatgrid : (t.beatgrid ?? null),
             bpm: t.bpm_override ?? t.bpm ?? 0,
             beatgridOffset: t.beatgrid_offset ?? 0,
             usbRoot,
             ffmpegPath: getFfmpegRuntimePath(),
-            cuePoints: getCuePoints(t.id).filter((c) => c.enabled !== 0),
+            cuePoints: trim ? trim.cuePoints : cues,
           });
         } catch (err) {
           console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
@@ -2596,7 +3163,9 @@ ipcMain.handle(
         title: t.title || '',
         artist: t.artist || '',
         album: t.album || '',
-        duration: t.duration || 0,
+        duration: exportDurationSec(t, applyTrim) ?? 0,
+        trim_start_ms: applyTrim === false ? null : (t.trim_start_ms ?? null),
+        trim_end_ms: applyTrim === false ? null : (t.trim_end_ms ?? null),
         bpm: t.bpm_override ?? t.bpm ?? 0,
         key_raw: t.key_raw || '',
         file_path: usbPaths.get(t.id) || '',
@@ -2606,6 +3175,9 @@ ipcMain.handle(
         genres: t.genres ? JSON.parse(t.genres) : [],
         file_size: usbMeta.get(t.id)?.fileSize ?? t.file_size ?? 0,
         bitrate: usbMeta.get(t.id)?.bitrate ?? t.bitrate ?? 0,
+        // #561 — the file that lands on the stick, not a blanket 44100/16
+        sample_rate: sampleInfo.get(t.id)?.sampleRate ?? null,
+        bit_depth: sampleInfo.get(t.id)?.bitDepth ?? null,
         comments: t.comments || '',
         rating: t.rating || 0,
         replay_gain: t.replay_gain ?? null,
@@ -2629,6 +3201,10 @@ ipcMain.handle(
 
       const mergedPlaylists = new Map(existingPlaylists);
       for (const pl of newPdbPlaylists) mergedPlaylists.set(pl.id, pl);
+
+      // #561 — manifest rows with no values are probed once from the file on the
+      // stick, so the PDB describes the audio that is really there.
+      await backfillPdbSampleInfo([...mergedTracks.values()], { usbRoot });
 
       runPdbExporter(
         { usbRoot, tracks: [...mergedTracks.values()], playlists: [...mergedPlaylists.values()] },
@@ -2657,6 +3233,11 @@ app.on('ready', initApp);
 app.on('window-all-closed', () => {
   console.log('All windows closed.');
   if (process.platform !== 'darwin') app.quit();
+});
+// Stop the ingest-folder watcher so no handle keeps the process alive.
+app.on('will-quit', () => {
+  libraryWatcher?.close();
+  libraryWatcher = null;
 });
 
 // Log child process crashes (network service, GPU process, etc.) for diagnostics

@@ -392,6 +392,45 @@
   white-space: nowrap;
 }
 
+/* ── Account collections browser layout ─────────────────────────────────── */
+
+.tidal-browse-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.tidal-url-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 900px) {
+  .tidal-browse-layout {
+    flex-direction: column;
+  }
+
+  .tidal-collections {
+    flex: 0 0 auto;
+    max-width: none;
+    width: 100%;
+  }
+}
+
+/* Video items inside a collection cannot be imported as audio tracks. */
+
+.tidal-skip-note {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 4px;
+  background: var(--bg-secondary, #1a1a1a);
+  font-size: 11px;
+  color: var(--text-secondary, #999);
+}
+
 /* ── Progress bar fill (deterministic) ──────────────────────────────────── */
 
 .dl-progress-fill {
@@ -399,4 +438,15 @@
   background: var(--accent, #7c5cfc);
   border-radius: 2px;
   transition: width 0.3s ease;
+}
+
+/* Video entries resolve but download as .mp4/.ts, which the audio import cannot
+   read, so they are listed and skipped rather than silently dropped (#508). */
+.dl-entry--video {
+  opacity: 0.55;
+}
+.dl-entry-video-badge {
+  font-size: 0.72rem;
+  color: #de5a9a;
+  white-space: nowrap;
 }

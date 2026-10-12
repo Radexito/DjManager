@@ -230,6 +230,39 @@
   padding: 0 4px;
 }
 
+/* ── Trim range row (#463) ──────────────────────────────────────────────── */
+.bge-trim-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.bge-trim-val {
+  min-width: 62px;
+  text-align: center;
+  font-size: 12px;
+  color: #7eb8f7;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+}
+
+.bge-trim-error {
+  font-size: 11px;
+  color: #e07a7a;
+}
+
+.bge-nudge-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.bge-nudge-btn:disabled:hover {
+  background: #252525;
+  color: #bbb;
+}
+
 /* ── Zoom controls (top-right of waveform) ──────────────────────────────── */
 .bge-zoom-controls {
   position: absolute;

@@ -49,6 +49,22 @@ window.api = {
   generateCuePoints: vi.fn().mockResolvedValue([]),
   generateCuePointsLibrary: vi.fn().mockResolvedValue({ generated: 0, skipped: 0, total: 0 }),
   deleteAllCuePointsLibrary: vi.fn().mockResolvedValue({ deleted: 0 }),
+  // #259 — cue points read back from a Rekordbox USB ('extend' | 'replace')
+  scanUsbCues: vi.fn().mockResolvedValue({
+    ok: true,
+    mode: 'extend',
+    tracks: [],
+    summary: { tracks: 0, cues: 0, add: 0, update: 0, skip: 0, remove: 0 },
+  }),
+  importUsbCues: vi.fn().mockResolvedValue({
+    ok: true,
+    mode: 'extend',
+    added: 0,
+    updated: 0,
+    skipped: 0,
+    removed: 0,
+    tracks: 0,
+  }),
   getPlaylists: vi.fn().mockResolvedValue([]),
   getPlaylist: vi.fn().mockResolvedValue(null),
   createPlaylist: vi.fn().mockResolvedValue({ id: 1 }),
@@ -71,7 +87,6 @@ window.api = {
   adjustBpm: vi.fn().mockResolvedValue([]),
   updateTrack: vi.fn().mockResolvedValue({}),
   getEditorWaveform: vi.fn().mockResolvedValue(null),
-  exportPlaylistAsM3U: vi.fn().mockResolvedValue({ canceled: true }),
   getSetting: vi.fn().mockResolvedValue(null),
   setSetting: vi.fn().mockResolvedValue(undefined),
   normalizeLibrary: vi.fn().mockResolvedValue({ normalized: 0, skipped: 0, total: 0 }),
@@ -92,12 +107,22 @@ window.api = {
   log: vi.fn(),
   onTrackUpdated: vi.fn().mockImplementation(noop),
   onCuePointsUpdated: vi.fn().mockImplementation(noop),
+  onUsbCuesDetected: vi.fn().mockImplementation(noop),
   onLibraryUpdated: vi.fn().mockImplementation(noop),
   onPlaylistsUpdated: vi.fn().mockImplementation(noop),
+  // #267 — folder-tracked playlists
+  onFolderPlaylistUpdated: vi.fn().mockImplementation(noop),
+  createFolderPlaylist: vi.fn().mockResolvedValue({ ok: true, added: 0, imported: 0 }),
+  refreshFolderPlaylist: vi
+    .fn()
+    .mockResolvedValue({ ok: true, added: 0, imported: 0, missing: [] }),
+  refreshFolderPlaylists: vi.fn().mockResolvedValue([]),
+  removeFolderPlaylistTracks: vi.fn().mockResolvedValue({ ok: true, removed: 0 }),
+  stopFolderPlaylist: vi.fn().mockResolvedValue({ ok: true }),
+  setFolderPlaylistRecursive: vi.fn().mockResolvedValue({ ok: true }),
   onOpenSettings: vi.fn().mockImplementation(noop),
   onDepsProgress: vi.fn().mockImplementation(noop),
   onMoveLibraryProgress: vi.fn().mockImplementation(noop),
-  onExportM3UProgress: vi.fn().mockImplementation(noop),
   onImportProgress: vi.fn().mockImplementation(noop),
   onNormalizeProgress: vi.fn().mockImplementation(noop),
   onAnalysisProgress: vi.fn().mockImplementation(noop),
@@ -120,6 +145,9 @@ window.api = {
   tidalInstall: vi.fn().mockResolvedValue({ ok: true }),
   tidalFetchInfo: vi.fn().mockResolvedValue({ ok: false, error: 'not configured' }),
   tidalLogin: vi.fn().mockResolvedValue({ ok: true }),
+  tidalListCollections: vi.fn().mockResolvedValue({ ok: true, collections: [], warnings: [] }),
+  tidalCollectionTracks: vi.fn().mockResolvedValue({ ok: true, entries: [], title: '' }),
+  tidalDownloadCollection: vi.fn().mockResolvedValue({ ok: true, trackIds: [], playlistId: null }),
   tidalDownloadUrl: vi.fn().mockResolvedValue({ ok: true, trackIds: [], playlistId: null }),
   cloudSearch: vi.fn().mockResolvedValue({ ok: true, results: [] }),
   cloudSearchPreview: vi
@@ -151,11 +179,9 @@ window.api = {
     .fn()
     .mockResolvedValue({ needsFormat: false, fs: 'fat32', fsLabel: 'fat32', device: '/dev/sdb1' }),
   formatUsb: vi.fn().mockResolvedValue({ ok: true }),
-  exportRekordbox: vi.fn().mockResolvedValue({ ok: true, trackCount: 5, usbRoot: '/tmp/usb' }),
   exportAll: vi
     .fn()
     .mockResolvedValue({ ok: true, trackCount: 5, playlistCount: 2, usbRoot: '/tmp/usb' }),
-  onExportRekordboxProgress: vi.fn().mockImplementation(noop),
   onExportAllProgress: vi.fn().mockImplementation(noop),
   onFormatUsbProgress: vi.fn().mockImplementation(noop),
   autoTagSearch: vi.fn().mockResolvedValue({ ok: true, results: [] }),
