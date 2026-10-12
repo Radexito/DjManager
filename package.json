@@ -1,6 +1,6 @@
 {
   "name": "dj_manager",
-  "version": "1.0.24",
+  "version": "1.0.25",
   "description": "DJ-focused music library manager",
   "main": "src/main.js",
   "desktopName": "dj_manager.desktop",
