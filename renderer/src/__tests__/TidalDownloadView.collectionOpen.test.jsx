@@ -4,7 +4,8 @@ import TidalDownloadView from '../TidalDownloadView.jsx';
 import { TidalDownloadProvider } from '../TidalDownloadContext.jsx';
 
 // #508 follow-up: clicking a collection name opens it as a selectable track list
-// in the same table the URL flow uses, instead of downloading it whole.
+// in the same table the URL flow uses, instead of downloading it whole. The ↓
+// arrow takes the same route.
 const COLLECTIONS = [
   {
     id: 'pl-1',
@@ -57,7 +58,7 @@ function renderView() {
 
 async function openCollection() {
   // The name button opens the list; the ↓ button (aria-label "Download ...")
-  // still downloads the collection whole.
+  // now opens the same list, with every downloadable track pre-ticked.
   fireEvent.click(await screen.findByRole('button', { name: 'Uptempo' }));
 }
 
