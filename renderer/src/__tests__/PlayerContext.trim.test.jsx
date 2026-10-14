@@ -96,14 +96,17 @@ describe('PlayerProvider — trim range (#463)', () => {
     expect(audio.currentTime).toBe(30);
   });
 
-  it('advances to the next track when the trim end is reached', async () => {
+  it('pauses at the trim end while Prepare Track is open instead of playing the next track', async () => {
     const { result } = await renderReady();
     const queue = [TRACK_TRIMMED, TRACK_PLAIN];
     await act(async () => {
       result.current.play(queue[0], queue, 0);
     });
+    // The Prepare Track screen reports itself open for the loaded track.
+    act(() => result.current.setPrepareTrackOpen(TRACK_TRIMMED.id));
     const audio = result.current.audioRef.current;
     await makePlaying(audio);
+    pauseSpy.mockClear();
 
     // Playhead past the trim end (60 s) — the poll finds it on the next tick
     audio.currentTime = 61;
@@ -111,15 +114,21 @@ describe('PlayerProvider — trim range (#463)', () => {
       await new Promise((resolve) => setTimeout(resolve, 80));
     });
 
-    expect(result.current.currentTrack?.id).toBe(2);
-    expect(result.current.queueIndex).toBe(1);
+    // OUT stops playback: no next track, no auto-advance, playhead pinned to OUT.
+    expect(result.current.isPlaying).toBe(false);
+    expect(pauseSpy).toHaveBeenCalled();
+    expect(audio.currentTime).toBe(60);
+    expect(result.current.currentTrack?.id).toBe(1);
+    expect(result.current.queueIndex).toBe(0);
   });
 
-  it('stops and pauses the element at the trim end of the last track', async () => {
+  it('pauses at the trim end of the last track in the queue while Prepare Track is open', async () => {
     const { result } = await renderReady();
+    const queue = [TRACK_PLAIN, TRACK_TRIMMED];
     await act(async () => {
-      result.current.play(TRACK_TRIMMED, [TRACK_TRIMMED], 0);
+      result.current.play(queue[1], queue, 1);
     });
+    act(() => result.current.setPrepareTrackOpen(TRACK_TRIMMED.id));
     const audio = result.current.audioRef.current;
     await makePlaying(audio);
     pauseSpy.mockClear();
@@ -131,6 +140,9 @@ describe('PlayerProvider — trim range (#463)', () => {
 
     expect(result.current.isPlaying).toBe(false);
     expect(pauseSpy).toHaveBeenCalled();
+    expect(audio.currentTime).toBe(60);
+    expect(result.current.currentTrack?.id).toBe(1);
+    expect(result.current.queueIndex).toBe(1);
   });
 
   it('does not advance while the playhead is still inside the range', async () => {
@@ -209,7 +221,100 @@ describe('PlayerProvider — trim range (#463)', () => {
     expect(result.current.isPlaying).toBe(true);
   });
 
-  it('repeats a trimmed track from its trim start', async () => {
+  // Regression guards: the trim-out pause must not leak into natural 'ended'
+  // behaviour, which keeps advancing / looping / wrapping exactly as before.
+  it('still advances to the next track on the natural end of an untrimmed track', async () => {
+    const { result } = await renderReady();
+    const queue = [TRACK_PLAIN, TRACK_TRIMMED];
+    await act(async () => {
+      result.current.play(queue[0], queue, 0);
+    });
+    const audio = result.current.audioRef.current;
+
+    await act(async () => {
+      audio.dispatchEvent(new Event('ended'));
+    });
+
+    expect(result.current.currentTrack?.id).toBe(1);
+    expect(result.current.queueIndex).toBe(1);
+  });
+
+  it('still loops an untrimmed track in repeat "one" on its natural end', async () => {
+    const { result } = await renderReady();
+    await act(async () => {
+      result.current.play(TRACK_PLAIN, [TRACK_PLAIN], 0);
+    });
+    act(() => {
+      result.current.cycleRepeat(); // none -> all
+      result.current.cycleRepeat(); // all -> one
+    });
+    const audio = result.current.audioRef.current;
+    audio.currentTime = 199;
+    playSpy.mockClear();
+
+    await act(async () => {
+      audio.dispatchEvent(new Event('ended'));
+    });
+
+    expect(result.current.repeat).toBe('one');
+    expect(audio.currentTime).toBe(0);
+    expect(playSpy).toHaveBeenCalled();
+    expect(result.current.queueIndex).toBe(0);
+  });
+
+  it('still wraps to the first track in repeat "all" on a natural end', async () => {
+    const { result } = await renderReady();
+    const queue = [TRACK_PLAIN, TRACK_TRIMMED];
+    await act(async () => {
+      result.current.play(queue[0], queue, 0);
+    });
+    act(() => {
+      result.current.cycleRepeat(); // none -> all
+    });
+    const audio = result.current.audioRef.current;
+
+    await act(async () => {
+      audio.dispatchEvent(new Event('ended')); // 0 -> 1
+    });
+    await act(async () => {
+      audio.dispatchEvent(new Event('ended')); // last -> wrap back to 0
+    });
+
+    expect(result.current.repeat).toBe('all');
+    expect(result.current.currentTrack?.id).toBe(2);
+    expect(result.current.queueIndex).toBe(0);
+  });
+
+  it('pauses at the trim end in repeat "one" while Prepare Track is open', async () => {
+    const { result } = await renderReady();
+    await act(async () => {
+      result.current.play(TRACK_TRIMMED, [TRACK_TRIMMED], 0);
+    });
+    act(() => {
+      result.current.cycleRepeat(); // none -> all
+      result.current.cycleRepeat(); // all -> one
+    });
+    act(() => result.current.setPrepareTrackOpen(TRACK_TRIMMED.id));
+
+    const audio = result.current.audioRef.current;
+    await makePlaying(audio);
+    pauseSpy.mockClear();
+    audio.currentTime = 61;
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+
+    // With the editor open, OUT is the end of the range being edited: repeat
+    // 'one' stops there as well instead of jumping back to the trim start.
+    expect(result.current.repeat).toBe('one');
+    expect(result.current.isPlaying).toBe(false);
+    expect(pauseSpy).toHaveBeenCalled();
+    expect(audio.currentTime).toBe(60);
+    expect(result.current.currentTrack?.id).toBe(1);
+  });
+
+  it('loops the trimmed range in repeat "one" when Prepare Track is closed', async () => {
     const { result } = await renderReady();
     await act(async () => {
       result.current.play(TRACK_TRIMMED, [TRACK_TRIMMED], 0);
@@ -221,14 +326,39 @@ describe('PlayerProvider — trim range (#463)', () => {
 
     const audio = result.current.audioRef.current;
     await makePlaying(audio);
+    playSpy.mockClear();
     audio.currentTime = 61;
 
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 80));
     });
 
-    expect(result.current.currentTrack?.id).toBe(1);
+    // No editor open: the trim end is an ordinary end of track, so repeat 'one'
+    // hands off the way it always has and starts the range again from IN.
+    expect(result.current.repeat).toBe('one');
     expect(audio.currentTime).toBe(30);
+    expect(playSpy).toHaveBeenCalled();
+    expect(result.current.currentTrack?.id).toBe(1);
+  });
+
+  it('advances to the next track at the trim end when Prepare Track is closed', async () => {
+    const { result } = await renderReady();
+    const queue = [TRACK_TRIMMED, TRACK_PLAIN];
+    await act(async () => {
+      result.current.play(queue[0], queue, 0);
+    });
+    const audio = result.current.audioRef.current;
+    await makePlaying(audio);
+
+    audio.currentTime = 61;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+
+    // Prepare Track closed: the trim end behaves like the end of the track and
+    // hands off to the queue (user correction 2026-09-25).
+    await waitFor(() => expect(result.current.currentTrack?.id).toBe(2));
+    expect(result.current.queueIndex).toBe(1);
   });
 
   it('arms the trim stop when a trim is applied to the playing track (#463 follow-up)', async () => {
@@ -237,6 +367,9 @@ describe('PlayerProvider — trim range (#463)', () => {
     await act(async () => {
       result.current.play(queue[0], queue, 0);
     });
+    // The patch below is exactly what the Prepare Track editor does, so that
+    // screen is open here and the OUT stop applies to it.
+    act(() => result.current.setPrepareTrackOpen(2));
     const audio = result.current.audioRef.current;
     await makePlaying(audio);
 
@@ -252,8 +385,12 @@ describe('PlayerProvider — trim range (#463)', () => {
       await new Promise((resolve) => setTimeout(resolve, 80));
     });
 
-    expect(result.current.currentTrack?.id).toBe(1);
-    expect(result.current.queueIndex).toBe(1);
+    // Armed by the patch, so OUT stops the (playing) track right there. Without
+    // the arming nothing would happen at all: this track has a next one.
+    expect(result.current.currentTrack?.id).toBe(2);
+    expect(result.current.queueIndex).toBe(0);
+    expect(result.current.isPlaying).toBe(false);
+    expect(audio.currentTime).toBe(20);
   });
 
   it('arms the stop when the trim is applied while the track is paused', async () => {
@@ -262,6 +399,7 @@ describe('PlayerProvider — trim range (#463)', () => {
     await act(async () => {
       result.current.play(queue[0], queue, 0);
     });
+    act(() => result.current.setPrepareTrackOpen(2));
     const audio = result.current.audioRef.current;
     // Paused: the element is loaded but not running (the user stopped it to edit).
     Object.defineProperty(audio, 'paused', { configurable: true, get: () => true });
@@ -278,8 +416,10 @@ describe('PlayerProvider — trim range (#463)', () => {
       await new Promise((resolve) => setTimeout(resolve, 80));
     });
 
-    expect(result.current.currentTrack?.id).toBe(1);
-    expect(result.current.queueIndex).toBe(1);
+    expect(result.current.currentTrack?.id).toBe(2);
+    expect(result.current.queueIndex).toBe(0);
+    expect(result.current.isPlaying).toBe(false);
+    expect(audio.currentTime).toBe(20);
   });
 
   it('does not arm anything when the patched trim is unchanged', async () => {
