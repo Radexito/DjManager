@@ -46,6 +46,7 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
   const [importDialogFiles, setImportDialogFiles] = useState(null); // pending files waiting for playlist selection
   const [linkDialogFiles, setLinkDialogFiles] = useState(null); // pending files waiting for playlist selection (link mode)
   const [linking, setLinking] = useState(false);
+  const [folderSyncProgress, setFolderSyncProgress] = useState(null); // { phase, done, total } | null
   const newInputRef = useRef(null);
   const renameInputRef = useRef(null);
 
@@ -336,6 +337,22 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
     return unsub;
   }, []);
 
+  // #516 — a folder-tracked playlist sync counts its own files. The analysis
+  // counter above could not: it counts worker batches, so a folder that linked
+  // slowly showed 1/1, 2/2, 3/3 … An event carries the running count; the
+  // terminal `done` phase and the `null` clearing event both end the line.
+  useEffect(() => {
+    if (!window.api.onFolderSyncProgress) return undefined;
+    const unsub = window.api.onFolderSyncProgress((data) => {
+      if (!data || data.phase === 'done') {
+        setFolderSyncProgress(null);
+        return;
+      }
+      setFolderSyncProgress({ phase: data.phase, done: data.done, total: data.total });
+    });
+    return unsub;
+  }, []);
+
   useEffect(() => {
     const unsub = window.api.onYtDlpCheckProgress((data) => {
       setYtDlpCheckProgress(data); // null when done
@@ -507,7 +524,13 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
             Importing {importProgress.completed} / {importProgress.total}…
           </div>
         )}
-        {linking && <div className="import-progress">Linking files…</div>}
+        {(folderSyncProgress || linking) && (
+          <div className="import-progress">
+            {folderSyncProgress
+              ? `${folderSyncProgress.phase === 'adding' ? 'Adding' : 'Linking'} ${folderSyncProgress.done}/${folderSyncProgress.total}…`
+              : 'Linking files…'}
+          </div>
+        )}
         {analysisProgress && (
           <div className="normalize-progress-wrap">
             <div className="normalize-progress-label">
