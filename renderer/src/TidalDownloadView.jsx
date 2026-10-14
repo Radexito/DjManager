@@ -27,7 +27,7 @@ function fmtDuration(secs) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style }) {
+export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style, active = true }) {
   // ── context state (persists across tab switches) ──────────────────────────
   const {
     url,
@@ -741,6 +741,7 @@ export default function TidalDownloadView({ onGoToLibrary, onGoToPlaylist, style
             busyKey={collectionBusy}
             openKey={openCollectionKey}
             disabled={collectionBusy !== null}
+            active={active}
           />
 
           <div className="tidal-url-main">
