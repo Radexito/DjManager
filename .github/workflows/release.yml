@@ -3,6 +3,7 @@ name: Build & Release
 on:
   push:
     branches: [main, staging]
+  workflow_dispatch:
 
 permissions:
   contents: write
