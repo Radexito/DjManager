@@ -1,0 +1,15 @@
+import { beforeAll, afterEach } from 'vitest';
+import { initDB } from '../db/migrations.js';
+import db from '../db/database.js';
+
+beforeAll(() => {
+  initDB();
+});
+
+afterEach(() => {
+  db.prepare('DELETE FROM cue_points').run();
+  db.prepare('DELETE FROM playlist_tracks').run();
+  db.prepare('DELETE FROM playlists').run();
+  db.prepare('DELETE FROM tracks').run();
+  db.prepare('DELETE FROM settings').run();
+});

@@ -1,0 +1,24 @@
+# Binaries: never diff, merge or convert line endings.
+# The "binary" macro is shorthand for "-diff -merge -text".
+*.gif binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.xcf binary
+*.psd binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.mp3 binary
+*.flac binary
+*.wav binary
+*.mp4 binary
+*.zip binary
+*.7z binary
+*.dmg binary
+*.exe binary
+*.msi binary
+*.AppImage binary

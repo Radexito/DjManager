@@ -1,0 +1,3167 @@
+import {
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useRef,
+  useCallback,
+  useMemo,
+  memo,
+  createContext,
+  useContext,
+  startTransition,
+  Fragment,
+} from 'react';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragOverlay,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { usePlayer } from './PlayerContext.jsx';
+import { artworkUrl } from './artworkUrl.js';
+import { parseQuery, buildArtistQuery, splitArtists } from './searchParser.js';
+import TrackDetails from './TrackDetails.jsx';
+import RatingStars from './RatingStars.jsx';
+import BeatGridEditor from './BeatGridEditor.jsx';
+import SearchBar from './SearchBar.jsx';
+import './MusicLibrary.css';
+
+/** Tracks requested per page, both for the initial load and for lazy appends. */
+const PAGE_SIZE = 50;
+
+/**
+ * Effectively "no limit": used when the whole filtered result set is needed in
+ * one query (queue building, export, select-all) instead of a single page.
+ */
+const FULL_RESULT_LIMIT = 999999;
+
+/**
+ * Sorting reference (kept as documentation): display order now comes from the
+ * SQL query (buildTrackOrderSQL in src/db/trackRepository.js) so pagination
+ * pages arrive pre-sorted and lazy appends land at the bottom. NULL/empty
+ * values sort last, ties break by id.
+ */
+const ROW_HEIGHT = 50;
+const ROW_STYLE = { height: ROW_HEIGHT };
+/**
+ * Distance in rows from the loaded window edge at which the next page is
+ * prefetched, so scrolling rarely waits for the database.
+ */
+const PRELOAD_TRIGGER = 3;
+const RIGHT_ALIGNED_COLUMNS = new Set([
+  'bpm',
+  'key_camelot',
+  'loudness',
+  'year',
+  'duration',
+  'bitrate',
+]);
+const EMPTY_SET = new Set();
+
+const SIZE_UNITS = ['MB', 'GB', 'TB'];
+/** Format a byte count as MB/GB/TB with one decimal. */
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB';
+  const mb = bytes / 1024 ** 2;
+  const exp = Math.max(
+    0,
+    Math.min(Math.floor(Math.log(mb) / Math.log(1024)), SIZE_UNITS.length - 1)
+  );
+  const value = mb / 1024 ** exp;
+  return `${value.toFixed(1)} ${SIZE_UNITS[exp]}`;
+}
+
+/** localStorage key for the per-column visibility map. */
+const LS_COL_KEY = 'djman_column_visibility';
+/** localStorage key for the user's column order. */
+const LS_ORDER_KEY = 'djman_column_order';
+
+const ALL_COLUMNS = [
+  { key: 'index', label: '#', width: '40px' },
+  { key: 'title', label: 'Title', width: 'minmax(120px, 2fr)' },
+  { key: 'artist', label: 'Artist', width: 'minmax(90px, 1.5fr)' },
+  { key: 'rating', label: 'Rating', width: '88px' },
+  { key: 'bpm', label: 'BPM', width: '62px' },
+  { key: 'key_camelot', label: 'Key', width: '52px' },
+  { key: 'loudness', label: 'Loudness (LUFS)', width: '115px' },
+  { key: 'cue', label: '◆', width: '28px' },
+  { key: 'album', label: 'Album', width: 'minmax(80px, 1fr)' },
+  { key: 'year', label: 'Year', width: '50px' },
+  { key: 'label', label: 'Label', width: '100px' },
+  { key: 'genres', label: 'Genres', width: '120px' },
+  { key: 'user_tags', label: 'Tags', width: '120px' },
+  { key: 'bitrate', label: 'Bitrate', width: '92px' },
+  { key: 'duration', label: 'Duration', width: '65px' },
+];
+
+const ALL_COLUMN_KEYS = ALL_COLUMNS.map((c) => c.key);
+const COL_BY_KEY = Object.fromEntries(ALL_COLUMNS.map((c) => [c.key, c]));
+
+const DEFAULT_COL_VIS = {
+  index: true,
+  title: true,
+  artist: true,
+  rating: true,
+  bpm: true,
+  key_camelot: true,
+  loudness: true,
+  cue: true,
+  album: false,
+  year: false,
+  label: false,
+  genres: false,
+  user_tags: false,
+  bitrate: false,
+  duration: false,
+};
+
+/**
+ * Read the stored column visibility, merged over the defaults so columns added
+ * in a later version still show up.
+ *
+ * @returns {object} Map of column key to boolean.
+ */
+function loadColVis() {
+  try {
+    return { ...DEFAULT_COL_VIS, ...JSON.parse(localStorage.getItem(LS_COL_KEY) ?? '{}') };
+  } catch {
+    return { ...DEFAULT_COL_VIS };
+  }
+}
+
+/**
+ * Read the stored column order, dropping unknown keys and appending any column
+ * missing from it.
+ *
+ * @returns {string[]} Column keys in display order.
+ */
+function loadColOrder() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_ORDER_KEY) ?? 'null');
+    if (!Array.isArray(saved)) return ALL_COLUMN_KEYS;
+    const merged = saved.filter((k) => COL_BY_KEY[k]);
+    ALL_COLUMN_KEYS.forEach((k) => {
+      if (!merged.includes(k)) merged.push(k);
+    });
+    return merged;
+  } catch {
+    return ALL_COLUMN_KEYS;
+  }
+}
+
+/** Format a duration in seconds as m:ss, or an em dash when unknown. */
+function fmtDuration(secs) {
+  if (secs == null) return '—';
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Render the contents of one track table cell.
+ *
+ * Artist cells become clickable (or split into several links) for multi-artist
+ * tracks, the rating and cue cells render widgets, everything else is plain text.
+ *
+ * @param {object} t Track row from the database.
+ * @param {string} colKey Column to render.
+ * @param {(artist: string) => void} [onArtistClick] Enables the artist links.
+ * @returns {React.ReactNode} Cell content.
+ */
+function renderCell(t, colKey, onArtistClick) {
+  const bpmValue = t.bpm_override ?? t.bpm;
+  switch (colKey) {
+    case 'title':
+      return t.title;
+    case 'artist': {
+      const name = t.artist || 'Unknown';
+      if (!t.artist || !onArtistClick) return name;
+      const names = splitArtists(t.artist);
+      if (names.length < 2) {
+        return (
+          <span
+            className="cell-artist--clickable"
+            title={`Search: ARTIST is ${name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onArtistClick(name);
+            }}
+          >
+            {name}
+          </span>
+        );
+      }
+      return names.map((one, i) => (
+        <Fragment key={one}>
+          {i > 0 ? ', ' : null}
+          <span
+            className="cell-artist--clickable"
+            title={`Search: ARTIST contains ${one}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onArtistClick(one, true);
+            }}
+          >
+            {one}
+          </span>
+        </Fragment>
+      ));
+    }
+    case 'bpm': {
+      const display = bpmValue ?? '...';
+      const hasGridShift = (t.beatgrid_offset ?? 0) !== 0;
+      if (!hasGridShift) return display;
+      return (
+        <span title={`Grid shifted ${t.beatgrid_offset > 0 ? '+' : ''}${t.beatgrid_offset} ms`}>
+          {display}
+          <span className="bpm-grid-shift-dot" />
+        </span>
+      );
+    }
+    case 'key_camelot':
+      return t.key_camelot ?? '...';
+    case 'loudness':
+      return t.loudness != null ? t.loudness : '...';
+    case 'album':
+      return t.album || '—';
+    case 'year':
+      return t.year ?? '—';
+    case 'label':
+      return t.label || '—';
+    case 'genres': {
+      try {
+        return JSON.parse(t.genres ?? '[]').join(', ') || '—';
+      } catch {
+        return '—';
+      }
+    }
+    case 'cue':
+      return null;
+    case 'rating':
+      return null;
+    case 'user_tags':
+      return t.user_tags || '—';
+    case 'duration':
+      return fmtDuration(t.duration);
+    case 'bitrate':
+      return t.bitrate != null ? `${Math.round(t.bitrate / 1000)} kbps` : '—';
+    default:
+      return t[colKey] ?? '—';
+  }
+}
+
+/**
+ * CSS classes for a cell: numeric alignment, plus markers for a BPM override and
+ * for a non-zero beat grid offset.
+ *
+ * @param {string} colKey Column key.
+ * @param {object} t Track row.
+ * @returns {string} Space separated class list.
+ */
+function cellClass(colKey, t) {
+  const numeric = ['bpm', 'key_camelot', 'loudness', 'year', 'duration', 'bitrate'].includes(
+    colKey
+  );
+  const over = colKey === 'bpm' && t.bpm_override != null;
+  const gridShifted = colKey === 'bpm' && (t.beatgrid_offset ?? 0) !== 0;
+  return `cell ${colKey}${numeric ? ' numeric' : ''}${over ? ' bpm--overridden' : ''}${gridShifted ? ' bpm--grid-shifted' : ''}`;
+}
+
+const SubItemCtx = createContext(null);
+
+/**
+ * One entry of the track context menu that opens a submenu. Inside an overlay
+ * menu it drills down into a nested page instead of rendering a hover submenu.
+ *
+ * @param {string} id Identifier used when drilling down.
+ * @param {string} label Menu entry text.
+ * @param {React.ReactNode} children Submenu content.
+ * @param {boolean} [wide] Use the wider submenu variant.
+ * @param {boolean} [scrollable] Cap the submenu height and make it scroll.
+ */
+function SubItem({ id, label, children, wide, scrollable }) {
+  const ctx = useContext(SubItemCtx);
+  if (!ctx) return null;
+  const { isOverlay, onDrillDown } = ctx;
+  if (isOverlay) {
+    return (
+      <div
+        className="context-menu-item context-menu-item--has-submenu"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDrillDown({ id, label, content: children });
+        }}
+      >
+        {label}
+      </div>
+    );
+  }
+  return (
+    <div className="context-menu-item context-menu-item--has-submenu">
+      {label}
+      <div
+        className={[
+          'context-submenu',
+          wide ? 'context-submenu--wide' : '',
+          scrollable ? 'context-submenu--scrollable' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One row of the plain (non drag-and-drop) track table, e.g. the "all music" view.
+ *
+ * @param {number} index Row index in the rendered slice.
+ * @param {object} style Position style supplied by the virtualiser.
+ * @param {object} track Track to render.
+ * @param {Set<string>} selectedIds Ids currently selected.
+ * @param {string|null} currentTrackId Id of the playing track, highlighted.
+ * @param {(event: object, track: object, index: number) => void} onRowClick Selection handler.
+ * @param {(track: object) => void} onDoubleClick Plays the track.
+ * @param {(event: object, track: object) => void} onContextMenu Opens the row menu.
+ * @param {(track: object, rating: number) => void} onRatingChange Sets a rating.
+ * @param {(track: object) => void} onCueClick Jumps to the track's first cue.
+ * @param {(artist: string) => void} onArtistClick Searches for the clicked artist.
+ * @param {(event: object, track: object, index: number) => void} onDragStart Starts a drag.
+ * @param {object[]} visibleColumns Columns to render, in order.
+ * @param {string} gridTemplate CSS grid-template-columns for the row.
+ * @param {number} minScrollWidth Minimum row width in px.
+ * @param {number} mediaPort Local media server port used for artwork.
+ * @param {Set<string>} newTrackIds Rows to flash as freshly imported.
+ * @param {(track: object) => void} onAnimationEnd Clears the animation marker.
+ * @param {Map<string, string>} libraryNames Library names when several are linked.
+ * @param {Set<string>} unavailableLinkedIds Linked tracks whose drive is offline.
+ */
+function LibraryRow({
+  index,
+  style,
+  track,
+  selectedIds,
+  currentTrackId,
+  onRowClick,
+  onDoubleClick,
+  onContextMenu,
+  onRatingChange,
+  onCueClick,
+  onArtistClick,
+  onDragStart,
+  visibleColumns,
+  gridTemplate,
+  minScrollWidth,
+  mediaPort,
+  newTrackIds,
+  onAnimationEnd,
+  libraryNames,
+  unavailableLinkedIds,
+}) {
+  const t = track;
+  const isSelected = selectedIds.has(t.id);
+  const isPlaying = currentTrackId === t.id;
+  const isNew = newTrackIds?.has(t.id);
+  const isUnavailable = t.is_linked && unavailableLinkedIds?.has(t.id);
+  return (
+    <div
+      style={{ ...style, gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
+      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}${isNew ? ' row--new' : ''}${isUnavailable ? ' row--unavailable' : ''}`}
+      title={
+        isUnavailable
+          ? `⚠ File not found — "${t.title}" may be on a disconnected drive`
+          : t.analyzed === 0
+            ? `⏳ Analyzing / processing — "${t.title}" will be available shortly`
+            : `${t.title} - ${t.artist || 'Unknown'}`
+      }
+      draggable={true}
+      onDragStart={(e) => onDragStart(e, t)}
+      onClick={(e) => onRowClick(e, t, index)}
+      onDoubleClick={() => onDoubleClick(t, index)}
+      onContextMenu={(e) => onContextMenu(e, t, index)}
+      onAnimationEnd={isNew ? () => onAnimationEnd?.(t.id) : undefined}
+    >
+      {visibleColumns.map((col) =>
+        col.key === 'index' ? (
+          <div key="index" className="cell index">
+            <span className="index-num">{index + 1}</span>
+            <button
+              className="index-play"
+              title="Play"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.currentTarget.blur();
+                onDoubleClick(t, index);
+              }}
+            >
+              ▶
+            </button>
+          </div>
+        ) : col.key === 'cue' ? (
+          <div
+            key="cue"
+            className="cell cue"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCueClick?.(t);
+            }}
+            title={
+              t.cue_count > 0
+                ? `${t.cue_count} cue point(s) — click to edit`
+                : 'No cue points — click to add'
+            }
+          >
+            {t.cue_count > 0 ? (
+              <span className="cue-dot cue-dot--has">◆</span>
+            ) : (
+              <span className="cue-dot cue-dot--empty">◇</span>
+            )}
+          </div>
+        ) : col.key === 'rating' ? (
+          <div key="rating" className="cell rating" onClick={(e) => e.stopPropagation()}>
+            <RatingStars value={t.rating ?? 0} onChange={(val) => onRatingChange(t.id, val)} />
+          </div>
+        ) : col.key === 'title' ? (
+          <div key="title" className="cell title">
+            {artworkUrl(t.has_artwork ? t.artwork_path : null, mediaPort) ? (
+              <img
+                className="cell-artwork"
+                src={artworkUrl(t.artwork_path, mediaPort)}
+                alt=""
+                draggable={false}
+              />
+            ) : (
+              <span className="cell-artwork cell-artwork--placeholder">♪</span>
+            )}
+            {t.is_linked ? (
+              <span
+                className="cell-linked-badge"
+                title={
+                  isUnavailable
+                    ? `File not found — may be on a disconnected drive\n${t.file_path}`
+                    : `Explorer-linked file\n${t.file_path}`
+                }
+              >
+                🔗
+              </span>
+            ) : null}
+            {!t.is_linked && libraryNames?.has(t.library_id) ? (
+              <span
+                className="cell-library-badge"
+                title={`Library: ${libraryNames.get(t.library_id)}`}
+              >
+                {libraryNames.get(t.library_id)}
+              </span>
+            ) : null}
+            <span className="cell-title-text">{t.title}</span>
+          </div>
+        ) : (
+          <div key={col.key} className={cellClass(col.key, t)}>
+            {renderCell(t, col.key, onArtistClick)}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+const LibraryRowMemo = memo(LibraryRow);
+
+/**
+ * Draggable track row used in playlist views (@dnd-kit), so tracks can be
+ * reordered by dragging them.
+ *
+ * @param {object} t Track to render.
+ * @param {number} index Position in the playlist, drives the row striping.
+ * @param {boolean} isSelected Whether the row is selected.
+ * @param {boolean} isPlaying Whether this track is the playing one.
+ * @param {(event: object, track: object, index: number) => void} onRowClick Selection handler.
+ * @param {(track: object) => void} onDoubleClick Plays the track.
+ * @param {(event: object, track: object) => void} onContextMenu Opens the row menu.
+ * @param {(track: object, rating: number) => void} onRatingChange Sets a rating.
+ * @param {(track: object) => void} onCueClick Jumps to the track's first cue.
+ * @param {(artist: string) => void} onArtistClick Searches for the clicked artist.
+ * @param {object[]} visibleColumns Columns to render, in order.
+ * @param {string} gridTemplate CSS grid-template-columns for the row.
+ * @param {number} minScrollWidth Minimum row width in px.
+ * @param {number} mediaPort Local media server port used for artwork.
+ * @param {boolean} isNew Whether to flash the row as freshly imported.
+ * @param {(track: object) => void} onAnimationEnd Clears the animation marker.
+ * @param {Map<string, string>} libraryNames Library names when several are linked.
+ * @param {boolean} isUnavailable Whether the linked file is currently unreachable.
+ * @param {object} windowStyle Extra positioning style from the virtualiser.
+ */
+function SortableRow({
+  t,
+  index,
+  isSelected,
+  isPlaying,
+  onRowClick,
+  onDoubleClick,
+  onContextMenu,
+  onRatingChange,
+  onCueClick,
+  onArtistClick,
+  visibleColumns,
+  gridTemplate,
+  minScrollWidth,
+  mediaPort,
+  isNew,
+  onAnimationEnd,
+  libraryNames,
+  isUnavailable,
+  windowStyle,
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: t.id,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+    gridTemplateColumns: gridTemplate,
+    minWidth: minScrollWidth,
+    ...windowStyle,
+  };
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`row ${index % 2 === 0 ? 'row-even' : 'row-odd'}${isSelected ? ' row--selected' : ''}${isPlaying ? ' row--playing' : ''}${t.analyzed === 0 ? ' row--analyzing' : ''}${isNew ? ' row--new' : ''}${isUnavailable ? ' row--unavailable' : ''}`}
+      title={
+        isUnavailable
+          ? `⚠ File not found — "${t.title}" may be on a disconnected drive`
+          : t.analyzed === 0
+            ? `⏳ Analyzing / processing — "${t.title}" will be available shortly`
+            : `${t.title} - ${t.artist || 'Unknown'}`
+      }
+      onClick={(e) => onRowClick(e, t, index)}
+      onDoubleClick={() => onDoubleClick(t, index)}
+      onContextMenu={(e) => onContextMenu(e, t, index)}
+      onAnimationEnd={isNew ? () => onAnimationEnd?.(t.id) : undefined}
+    >
+      {visibleColumns.map((col) =>
+        col.key === 'index' ? (
+          <div key="index" className="cell index drag-handle" {...attributes} {...listeners}>
+            <span className="index-num">⠿</span>
+            <button
+              className="index-play"
+              title="Play"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.currentTarget.blur();
+                onDoubleClick(t, index);
+              }}
+            >
+              ▶
+            </button>
+          </div>
+        ) : col.key === 'cue' ? (
+          <div
+            key="cue"
+            className="cell cue"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCueClick?.(t);
+            }}
+            title={
+              t.cue_count > 0
+                ? `${t.cue_count} cue point(s) — click to edit`
+                : 'No cue points — click to add'
+            }
+          >
+            {t.cue_count > 0 ? (
+              <span className="cue-dot cue-dot--has">◆</span>
+            ) : (
+              <span className="cue-dot cue-dot--empty">◇</span>
+            )}
+          </div>
+        ) : col.key === 'rating' ? (
+          <div key="rating" className="cell rating" onClick={(e) => e.stopPropagation()}>
+            <RatingStars value={t.rating ?? 0} onChange={(val) => onRatingChange(t.id, val)} />
+          </div>
+        ) : col.key === 'title' ? (
+          <div key="title" className="cell title">
+            {artworkUrl(t.has_artwork ? t.artwork_path : null, mediaPort) ? (
+              <img
+                className="cell-artwork"
+                src={artworkUrl(t.artwork_path, mediaPort)}
+                alt=""
+                draggable={false}
+              />
+            ) : (
+              <span className="cell-artwork cell-artwork--placeholder">♪</span>
+            )}
+            {t.is_linked ? (
+              <span
+                className="cell-linked-badge"
+                title={
+                  isUnavailable
+                    ? `File not found — may be on a disconnected drive\n${t.file_path}`
+                    : `Explorer-linked file\n${t.file_path}`
+                }
+              >
+                🔗
+              </span>
+            ) : null}
+            {!t.is_linked && libraryNames?.has(t.library_id) ? (
+              <span
+                className="cell-library-badge"
+                title={`Library: ${libraryNames.get(t.library_id)}`}
+              >
+                {libraryNames.get(t.library_id)}
+              </span>
+            ) : null}
+            <span className="cell-title-text">{t.title}</span>
+          </div>
+        ) : (
+          <div key={col.key} className={cellClass(col.key, t)}>
+            {renderCell(t, col.key, onArtistClick)}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+/**
+ * One entry of the column picker: a drag handle plus a checkbox to show or hide
+ * the column.
+ *
+ * @param {string} colKey Column key (also the drag id).
+ * @param {string} label Column label.
+ * @param {boolean} checked Whether the column is visible.
+ * @param {(colKey: string) => void} onToggle Flips the column's visibility.
+ */
+function SortableColItem({ colKey, label, checked, onToggle }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: colKey,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.35 : 1,
+  };
+  return (
+    <div ref={setNodeRef} style={style} className="col-dropdown__item">
+      <span className="col-drag-handle" {...attributes} {...listeners} title="Drag to reorder">
+        ☰
+      </span>
+      <input type="checkbox" checked={checked} onChange={onToggle} />
+      <span className="col-dropdown__label">{label}</span>
+    </div>
+  );
+}
+
+/**
+ * Sticky table header with one clickable, sortable cell per visible column.
+ *
+ * @param {object} headerScrollRef Ref to the horizontal scroll container kept in
+ *   sync with the body.
+ * @param {object} headerRef Ref to the header grid.
+ * @param {string} gridTemplate CSS grid-template-columns shared with the rows.
+ * @param {number} minScrollWidth Minimum header width in px.
+ * @param {object[]} visibleColumns Columns to render, in order.
+ * @param {boolean} isSorting Whether a server-side sort is in flight.
+ * @param {string} pendingSortKey Column being sorted, highlighted while sorting.
+ * @param {(key: string) => void} handleSort Requests a sort by column.
+ * @param {{ key: string, asc: boolean }} sortBy Current sort column and direction.
+ * @param {(event: object) => void} onContextMenu Opens the column visibility menu.
+ */
+function TrackTableHeader({
+  headerScrollRef,
+  headerRef,
+  gridTemplate,
+  minScrollWidth,
+  visibleColumns,
+  isSorting,
+  pendingSortKey,
+  handleSort,
+  sortBy,
+  onContextMenu,
+}) {
+  return (
+    <div ref={headerScrollRef} style={{ overflow: 'hidden' }}>
+      <div
+        ref={headerRef}
+        className="header"
+        style={{ gridTemplateColumns: gridTemplate, minWidth: minScrollWidth }}
+        onContextMenu={onContextMenu}
+      >
+        {visibleColumns.map((col) => (
+          <div
+            key={col.key}
+            className={`header-cell ${RIGHT_ALIGNED_COLUMNS.has(col.key) ? 'right' : ''} ${isSorting && pendingSortKey === col.key ? 'header-cell--sorting' : ''}`}
+            onClick={() => handleSort(col.key)}
+          >
+            {col.label} {sortBy.key === col.key ? (sortBy.asc ? '▲' : '▼') : ''}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Virtualised body of the track table. In playlist views the rows are draggable;
+ * elsewhere they are positioned manually inside a spacer element sized to the
+ * whole result set.
+ *
+ * Only the rows around the viewport (plus an overscan) are mounted, and reaching
+ * the window edge asks the parent to load more pages.
+ *
+ * @param {boolean} isPlaylistView Whether drag-and-drop reordering is enabled.
+ * @param {object[]} tracks Tracks loaded so far.
+ * @param {object[]} sortedTracks Tracks after client-side sorting.
+ * @param {number} windowStart Absolute index of the first loaded track.
+ * @param {number} totalRows Total number of matching rows.
+ * @param {boolean} hasMore Whether more pages can be loaded.
+ * @param {string} gridTemplate CSS grid-template-columns shared with the header.
+ * @param {number} minScrollWidth Minimum row width in px.
+ * @param {object} dndScrollRef Scroll container used in playlist views.
+ * @param {object} listRef Ref to the list container.
+ * @param {(range: { startIndex: number, stopIndex: number }) => void} handleItemsRendered
+ *   Reports the visible range so more pages can be prefetched.
+ * @param {Set<string>} selectedIds Ids currently selected.
+ * @param {string|null} playingTrackId Id of the playing track.
+ * @param {Map<string, string>} libraryNames Library names when several are linked.
+ * @param {(event: object, track: object, index: number) => void} handleRowClick Selection handler.
+ * @param {(track: object) => void} handleDoubleClick Plays the track.
+ * @param {(event: object, track: object) => void} handleContextMenu Opens the row menu.
+ * @param {(track: object, rating: number) => void} handleRatingChange Sets a rating.
+ * @param {(track: object) => void} handleCueClick Jumps to the track's first cue.
+ * @param {(artist: string) => void} onArtistClick Searches for the clicked artist.
+ * @param {(event: object, track: object, index: number) => void} handleTrackDragStart
+ *   Starts a drag towards another playlist.
+ * @param {object[]} visibleColumns Columns to render, in order.
+ * @param {number} mediaPort Local media server port used for artwork.
+ * @param {Set<string>} newTrackIds Rows to flash as freshly imported.
+ * @param {(track: object) => void} handleRowAnimationEnd Clears the animation marker.
+ * @param {Set<string>} unavailableLinkedIds Linked tracks whose drive is offline.
+ * @param {object[]} sensors Drag sensors for the playlist view.
+ * @param {Function} handleDragStart Drag start handler.
+ * @param {Function} handleDragEnd Drag end handler.
+ * @param {object|null} activeTrack Track currently being dragged.
+ */
+function TrackTableBody({
+  isPlaylistView,
+  tracks,
+  sortedTracks,
+  windowStart,
+  totalRows,
+  hasMore,
+  gridTemplate,
+  minScrollWidth,
+  dndScrollRef,
+  listRef,
+  handleItemsRendered,
+  selectedIds,
+  playingTrackId,
+  libraryNames,
+  handleRowClick,
+  handleDoubleClick,
+  handleContextMenu,
+  handleRatingChange,
+  handleCueClick,
+  onArtistClick,
+  handleTrackDragStart,
+  visibleColumns,
+  mediaPort,
+  newTrackIds,
+  handleRowAnimationEnd,
+  unavailableLinkedIds,
+  sensors,
+  handleDragStart,
+  handleDragEnd,
+  activeTrack,
+}) {
+  const [viewTop, setViewTop] = useState(0);
+  const [viewH, setViewH] = useState(800);
+  const plainElRef = useRef(null);
+  const refreshView = useCallback(() => {
+    const el = isPlaylistView ? dndScrollRef?.current : plainElRef.current;
+    if (el) {
+      setViewTop(el.scrollTop);
+      setViewH(el.clientHeight || 800);
+    }
+  }, [isPlaylistView, dndScrollRef]);
+  useLayoutEffect(() => {
+    refreshView();
+    const el = isPlaylistView ? dndScrollRef?.current : plainElRef.current;
+    if (!el) return undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(refreshView);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tracks.length, sortedTracks.length]);
+
+  const visibleStartIdx = Math.max(0, Math.floor(viewTop / ROW_HEIGHT));
+  const visibleStopIdx = Math.max(0, Math.floor((viewTop + viewH) / ROW_HEIGHT));
+  useEffect(() => {
+    handleItemsRendered({ startIndex: visibleStartIdx, stopIndex: visibleStopIdx });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleStartIdx, visibleStopIdx, sortedTracks.length, windowStart, hasMore]);
+
+  const OVERSCAN = 6;
+  const spacerRows = Math.max(totalRows || 0, windowStart + sortedTracks.length);
+  const spacerH = spacerRows * ROW_HEIGHT;
+  const startIdx = Math.max(0, Math.floor(viewTop / ROW_HEIGHT) - OVERSCAN);
+  const endIdx = Math.max(startIdx + 1, Math.ceil((viewTop + viewH) / ROW_HEIGHT) + OVERSCAN);
+  const localStart = Math.max(0, Math.min(sortedTracks.length, startIdx - windowStart));
+  const localEnd = Math.min(sortedTracks.length, endIdx - windowStart);
+  const localRows = localEnd > localStart ? sortedTracks.slice(localStart, localEnd) : [];
+
+  if (isPlaylistView) {
+    if (tracks.length === 0) {
+      return (
+        <div className="playlist-empty-state">
+          No tracks in this playlist.
+          <br />
+          Drag tracks from your library here, or right-click to add.
+        </div>
+      );
+    }
+
+    const rows = localRows.map((t, i) => {
+      const index = windowStart + localStart + i;
+      return (
+        <SortableRow
+          key={t.id}
+          t={t}
+          index={index}
+          isSelected={selectedIds.has(t.id)}
+          isPlaying={playingTrackId === t.id}
+          onRowClick={handleRowClick}
+          onDoubleClick={handleDoubleClick}
+          onContextMenu={handleContextMenu}
+          onRatingChange={handleRatingChange}
+          onCueClick={handleCueClick}
+          onArtistClick={onArtistClick}
+          visibleColumns={visibleColumns}
+          gridTemplate={gridTemplate}
+          minScrollWidth={minScrollWidth}
+          mediaPort={mediaPort}
+          isNew={newTrackIds.has(t.id)}
+          onAnimationEnd={handleRowAnimationEnd}
+          isUnavailable={t.is_linked && unavailableLinkedIds.has(t.id)}
+          libraryNames={libraryNames}
+          windowStyle={{
+            ...ROW_STYLE,
+            position: 'absolute',
+            top: index * ROW_HEIGHT,
+            left: 0,
+            right: 0,
+          }}
+        />
+      );
+    });
+
+    return (
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext items={localRows.map((t) => t.id)} strategy={verticalListSortingStrategy}>
+          <div
+            ref={(el) => {
+              if (!el) {
+                listRef.current = null;
+                plainElRef.current = null;
+                dndScrollRef.current = null;
+                return;
+              }
+              plainElRef.current = el;
+              dndScrollRef.current = el;
+              listRef.current = {
+                get element() {
+                  return el;
+                },
+                scrollToRow: ({ index, align = 'auto', behavior = 'auto' }) => {
+                  const top = index * ROW_HEIGHT;
+                  const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+                  let target;
+                  if (align === 'center') {
+                    target = Math.min(
+                      maxTop,
+                      Math.max(0, top - (el.clientHeight - ROW_HEIGHT) / 2)
+                    );
+                  } else if (align === 'end') {
+                    target = Math.min(maxTop, top + ROW_HEIGHT - el.clientHeight);
+                  } else {
+                    target = Math.min(maxTop, top);
+                  }
+                  el.scrollTo({ top: target, behavior });
+                },
+              };
+            }}
+            className="track-list track-list--plain playlist-dnd-list"
+            style={{ position: 'relative' }}
+            onScroll={refreshView}
+          >
+            <div style={{ height: spacerH }} aria-hidden="true" />
+            {rows}
+            {hasMore && (
+              <div
+                className="row row-loading"
+                style={{
+                  position: 'absolute',
+                  top: (windowStart + sortedTracks.length) * ROW_HEIGHT,
+                  left: 0,
+                  right: 0,
+                  height: ROW_HEIGHT,
+                }}
+              >
+                Loading more tracks...
+              </div>
+            )}
+          </div>
+        </SortableContext>
+        <DragOverlay>
+          {activeTrack && (
+            <div className="row row-drag-overlay" style={{ gridTemplateColumns: gridTemplate }}>
+              <div className="cell index">⠿</div>
+              <div className="cell title">{activeTrack.title}</div>
+              <div className="cell artist">{activeTrack.artist || 'Unknown'}</div>
+            </div>
+          )}
+        </DragOverlay>
+      </DndContext>
+    );
+  }
+
+  return (
+    <div
+      className="track-list track-list--plain"
+      style={{ position: 'relative' }}
+      ref={(el) => {
+        if (!el) {
+          listRef.current = null;
+          plainElRef.current = null;
+          return;
+        }
+        plainElRef.current = el;
+        listRef.current = {
+          get element() {
+            return el;
+          },
+          scrollToRow: ({ index, align = 'auto', behavior = 'auto' }) => {
+            const top = index * ROW_HEIGHT;
+            const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+            let target;
+            if (align === 'center') {
+              target = Math.min(maxTop, Math.max(0, top - (el.clientHeight - ROW_HEIGHT) / 2));
+            } else if (align === 'end') {
+              target = Math.min(maxTop, top + ROW_HEIGHT - el.clientHeight);
+            } else {
+              target = Math.min(maxTop, top);
+            }
+            el.scrollTo({ top: target, behavior });
+          },
+        };
+      }}
+      onScroll={() => {
+        refreshView();
+      }}
+    >
+      {}
+      <div style={{ height: spacerH }} aria-hidden="true" />
+      {localRows.map((t, i) => {
+        const index = windowStart + localStart + i;
+        return (
+          <LibraryRowMemo
+            key={t.id}
+            index={index}
+            style={{
+              ...ROW_STYLE,
+              position: 'absolute',
+              top: index * ROW_HEIGHT,
+              left: 0,
+              right: 0,
+            }}
+            track={t}
+            selectedIds={selectedIds}
+            currentTrackId={playingTrackId}
+            onRowClick={handleRowClick}
+            onDoubleClick={handleDoubleClick}
+            onContextMenu={handleContextMenu}
+            onRatingChange={handleRatingChange}
+            onCueClick={handleCueClick}
+            onArtistClick={onArtistClick}
+            onDragStart={handleTrackDragStart}
+            visibleColumns={visibleColumns}
+            gridTemplate={gridTemplate}
+            minScrollWidth={minScrollWidth}
+            mediaPort={mediaPort}
+            newTrackIds={newTrackIds}
+            onAnimationEnd={handleRowAnimationEnd}
+            unavailableLinkedIds={unavailableLinkedIds}
+            libraryNames={libraryNames}
+          />
+        );
+      })}
+      {hasMore && (
+        <div
+          className="row row-loading"
+          style={{
+            position: 'absolute',
+            top: (windowStart + sortedTracks.length) * ROW_HEIGHT,
+            left: 0,
+            right: 0,
+            height: ROW_HEIGHT,
+          }}
+        >
+          Loading more tracks...
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Main track table: shows all music or one playlist, with search, sorting,
+ * column layout, virtualised paging, multi-selection and the right-click menu of
+ * track actions (details, BPM, cue points, playlists, libraries, export).
+ *
+ * @param {string} selectedPlaylist 'music' for the whole library, else a playlist id.
+ * @param {string} search Current search query (structured syntax supported).
+ * @param {(value: string) => void} onSearchChange Updates the search query.
+ * @param {object|null} openDetailsRequest Request from the player bar to open one
+ *   track's details; carries a token so repeated requests reopen the dialog.
+ * @param {object|null} locateTrack Request to scroll to and highlight one track.
+ * @param {() => void} onImportUsbCues Opens the USB cue import dialog.
+ * @param {(artist: string, fromCredit?: boolean) => void} onArtistSearch Runs an
+ *   artist search from a click on a track credit.
+ */
+function MusicLibrary({
+  selectedPlaylist,
+  search,
+  onSearchChange,
+  openDetailsRequest,
+  locateTrack,
+  onImportUsbCues,
+  onArtistSearch,
+}) {
+  const isPlaylistView = selectedPlaylist !== 'music';
+  const {
+    play,
+    stop,
+    currentTrack,
+    currentPlaylistId,
+    mediaPort,
+    patchCurrentTrack,
+    reloadCurrentTrack,
+    updateQueue,
+    unavailableLinkedIds = EMPTY_SET,
+  } = usePlayer();
+
+  const [libraryNames, setLibraryNames] = useState(new Map());
+  useEffect(() => {
+    window.api.listLibraries().then((libs) => {
+      setLibraryNames(libs.length > 1 ? new Map(libs.map((l) => [l.id, l.name])) : new Map());
+    });
+  }, []);
+
+  const [hideUnavailable, setHideUnavailable] = useState(
+    () => localStorage.getItem('djman_hide_unavailable') === 'true'
+  );
+  useEffect(() => {
+    localStorage.setItem('djman_hide_unavailable', String(hideUnavailable));
+  }, [hideUnavailable]);
+
+  const playingTrackId = isPlaylistView
+    ? String(currentPlaylistId) === String(selectedPlaylist)
+      ? currentTrack?.id
+      : null
+    : currentPlaylistId === null
+      ? currentTrack?.id
+      : null;
+
+  const [tracks, setTracks] = useState([]);
+  const [hasMore, setHasMore] = useState(true);
+  const [newTrackIds, setNewTrackIds] = useState(new Set());
+
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [contextMenu, setContextMenu] = useState(null);
+  const menuRef = useRef(null);
+  const [menuShift, setMenuShift] = useState({ x: 0, y: 0 });
+  const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
+  const [drillStack, setDrillStack] = useState([]);
+  const [playlistSubmenu, setPlaylistSubmenu] = useState(null);
+  const [librarySubmenu, setLibrarySubmenu] = useState(null);
+  const [newPlaylistInputActive, setNewPlaylistInputActive] = useState(false);
+  const [autoCueOnImport, setAutoCueOnImport] = useState(false);
+  const [newPlaylistName, setNewPlaylistName] = useState('');
+  const [newPlaylistError, setNewPlaylistError] = useState('');
+  const newPlaylistInputRef = useRef(null);
+  const [loadKey, setLoadKey] = useState(0);
+  const [playlistInfo, setPlaylistInfo] = useState(null);
+  const [activeId, setActiveId] = useState(null);
+  const [sortSaved, setSortSaved] = useState(true);
+  const [colVis, setColVis] = useState(loadColVis);
+  const [colOrder, setColOrder] = useState(loadColOrder);
+  const [colMenuAnchor, setColMenuAnchor] = useState(null);
+  const [beatGridEditorTrack, setBeatGridEditorTrack] = useState(null);
+  const [detailsTrack, setDetailsTrack] = useState(null);
+  const [detailsBulkTracks, setDetailsBulkTracks] = useState(null);
+  const [detailsPinned, setDetailsPinned] = useState(false);
+  const [detailsDirty, setDetailsDirty] = useState(false);
+  const [bpmEditValue, setBpmEditValue] = useState('');
+
+  const offsetRef = useRef(0);
+  const resetPendingRef = useRef(null);
+  /** Global index of the first track in the windowed list. */
+  const windowStartRef = useRef(0);
+  const playlistOrderRef = useRef([]);
+  const loadingRef = useRef(false);
+  const lazyReqRef = useRef({ append: 0, prepend: 0 });
+  const inflightRef = useRef(0);
+  const hasMoreRef = useRef(true);
+  const resetTokenRef = useRef(0);
+  const [totalRows, setTotalRows] = useState(0);
+  const listRef = useRef();
+  const sortedTracksRef = useRef([]);
+  const lastSelectedIndexRef = useRef(null);
+  const colDropdownRef = useRef(null);
+  const headerRef = useRef(null);
+  const headerScrollRef = useRef(null);
+  const dndScrollRef = useRef(null);
+  const animateNextLoadRef = useRef(false);
+  const preReloadIdsRef = useRef(new Set());
+  const selectedPlaylistRef = useRef(selectedPlaylist);
+  const searchRef = useRef(search);
+  const currentPlaylistIdRef = useRef(currentPlaylistId);
+  const updateQueueRef = useRef(updateQueue);
+  useEffect(() => {
+    selectedPlaylistRef.current = selectedPlaylist;
+  }, [selectedPlaylist]);
+  useEffect(() => {
+    searchRef.current = search;
+  }, [search]);
+  useEffect(() => {
+    currentPlaylistIdRef.current = currentPlaylistId;
+  }, [currentPlaylistId]);
+  useEffect(() => {
+    updateQueueRef.current = updateQueue;
+  }, [updateQueue]);
+
+  const prevSelectedPlaylistRef = useRef(selectedPlaylist);
+  const prevSearchRef = useRef(search);
+
+  const visibleColumns = useMemo(
+    () =>
+      colOrder
+        .map((k) => COL_BY_KEY[k])
+        .filter((c) => c && colVis[c.key] !== false && !(autoCueOnImport && c.key === 'cue')),
+    [colVis, colOrder, autoCueOnImport]
+  );
+  const gridTemplate = useMemo(
+    () => visibleColumns.map((c) => c.width).join(' '),
+    [visibleColumns]
+  );
+  const minScrollWidth = useMemo(() => {
+    const sum = visibleColumns.reduce((acc, c) => {
+      const mm = c.width.match(/minmax\((\d+)px/);
+      if (mm) return acc + parseInt(mm[1], 10);
+      const px = c.width.match(/^(\d+)px$/);
+      if (px) return acc + parseInt(px[1], 10);
+      return acc;
+    }, 0);
+    const gapTotal = Math.max(0, visibleColumns.length - 1) * 6;
+    return sum + gapTotal + 16;
+  }, [visibleColumns]);
+
+  const [sortBy, setSortBy] = useState({ key: 'index', asc: true });
+  const [sortFlash, setSortFlash] = useState(false);
+  const [pendingSortKey, setPendingSortKey] = useState(null);
+  const SORT_FLASH_MIN_ROWS = 1200;
+  const flashStartRef = useRef(0);
+  const flashActiveRef = useRef(false);
+  const clearSortFlash = useCallback(() => {
+    if (!flashActiveRef.current) return;
+    const wait = Math.max(0, 160 - (performance.now() - flashStartRef.current));
+    const finish = () => {
+      flashActiveRef.current = false;
+      setSortFlash(false);
+      setPendingSortKey(null);
+    };
+    if (wait > 0) setTimeout(finish, wait);
+    else finish();
+  }, []);
+
+  const sortByRef = useRef(sortBy);
+  const hideUnavailableRef = useRef(hideUnavailable);
+  const unavailableLinkedIdsRef = useRef(unavailableLinkedIds);
+  const playlistInfoRef = useRef(playlistInfo);
+  useEffect(() => {
+    sortByRef.current = sortBy;
+  }, [sortBy]);
+  useEffect(() => {
+    hideUnavailableRef.current = hideUnavailable;
+  }, [hideUnavailable]);
+  useEffect(() => {
+    unavailableLinkedIdsRef.current = unavailableLinkedIds;
+  }, [unavailableLinkedIds]);
+  useEffect(() => {
+    playlistInfoRef.current = playlistInfo;
+  }, [playlistInfo]);
+  const appendedPageRef = useRef(false);
+  const queueBusyRef = useRef(false);
+  const locateHandledRef = useRef(null);
+  const [queuePreparing, setQueuePreparing] = useState(false);
+  const [locating, setLocating] = useState(false);
+
+  const fetchFullViewTracks = useCallback(async () => {
+    const { filters, remaining } = parseQuery(searchRef.current);
+    const structuredFilters = filters.filter((f) => f.field !== '_text');
+    const textSearch = remaining || filters.find((f) => f.field === '_text')?.value || '';
+    const playlistId =
+      selectedPlaylistRef.current !== 'music' ? selectedPlaylistRef.current : undefined;
+    const sb = sortByRef.current;
+    const rows = await window.api.getTracks({
+      limit: FULL_RESULT_LIMIT,
+      search: textSearch,
+      filters: structuredFilters,
+      playlistId,
+      sort: sb.key === 'index' ? undefined : { key: sb.key, asc: sb.asc },
+    });
+    const base = hideUnavailableRef.current
+      ? rows.filter((r) => !(r.is_linked && unavailableLinkedIdsRef.current.has(r.id)))
+      : rows;
+    return base;
+  }, []);
+
+  const loadPage = useCallback(
+    async ({ at, mode, limit = PAGE_SIZE }) => {
+      if (mode === 'append' && !hasMoreRef.current) return;
+      const lazy = mode === 'append' || mode === 'prepend';
+      const req = lazy ? ++lazyReqRef.current[mode] : null;
+      inflightRef.current += 1;
+      loadingRef.current = true;
+      const token = resetTokenRef.current;
+
+      try {
+        const { filters, remaining } = parseQuery(searchRef.current);
+        const structuredFilters = filters.filter((f) => f.field !== '_text');
+        const textSearch = remaining || filters.find((f) => f.field === '_text')?.value || '';
+        const sb = sortByRef.current;
+
+        const rows = await window.api.getTracks({
+          limit,
+          offset: at,
+          search: textSearch,
+          filters: structuredFilters,
+          playlistId:
+            selectedPlaylistRef.current !== 'music' ? selectedPlaylistRef.current : undefined,
+          sort: sb.key === 'index' ? undefined : { key: sb.key, asc: sb.asc },
+        });
+
+        if (token !== resetTokenRef.current) return;
+        if (req != null && lazyReqRef.current[mode] !== req) {
+          return;
+        }
+
+        if (mode === 'reset' && animateNextLoadRef.current) {
+          animateNextLoadRef.current = false;
+          const truly = new Set(
+            rows.filter((r) => !preReloadIdsRef.current.has(r.id)).map((r) => r.id)
+          );
+          if (truly.size > 0) setNewTrackIds((prev) => new Set([...prev, ...truly]));
+        }
+        if (mode === 'append') {
+          appendedPageRef.current = true;
+          setTracks((prev) => {
+            const seen = new Set(prev.map((t) => t.id));
+            const fresh = rows.filter((r) => !seen.has(r.id));
+            return fresh.length ? [...prev, ...fresh] : prev;
+          });
+          offsetRef.current = at + rows.length;
+        } else if (mode === 'prepend') {
+          appendedPageRef.current = true;
+          windowStartRef.current = at;
+          setTracks((prev) => {
+            const seen = new Set(prev.map((t) => t.id));
+            const fresh = rows.filter((r) => !seen.has(r.id));
+            return fresh.length ? [...fresh, ...prev] : prev;
+          });
+        } else {
+          windowStartRef.current = at;
+          setTracks(rows);
+          offsetRef.current = at + rows.length;
+          clearSortFlash();
+        }
+
+        if (mode !== 'prepend' && rows.length < limit) {
+          hasMoreRef.current = false;
+          setHasMore(false);
+        }
+      } finally {
+        inflightRef.current -= 1;
+        if (!lazy && resetPendingRef.current === token) resetPendingRef.current = null;
+        loadingRef.current = inflightRef.current > 0;
+      }
+    },
+    [clearSortFlash]
+  );
+
+  const sortedTracks = useMemo(() => {
+    const base = hideUnavailable
+      ? tracks.filter((t) => !(t.is_linked && unavailableLinkedIds.has(t.id)))
+      : tracks;
+    sortedTracksRef.current = base;
+    return base;
+  }, [tracks, hideUnavailable, unavailableLinkedIds]);
+
+  const suppressSortReloadRef = useRef(false);
+  const prevSortRef = useRef(sortBy);
+  const [sortFollow, setSortFollow] = useState(null);
+  const sortFollowNonceRef = useRef(0);
+  const sortFollowHandledRef = useRef(null);
+  const sortFollowCommittedRef = useRef(null);
+
+  useEffect(() => {
+    if (suppressSortReloadRef.current) {
+      suppressSortReloadRef.current = false;
+      prevSortRef.current = sortBy;
+      return;
+    }
+    const prev = prevSortRef.current;
+    if (prev.key === sortBy.key && prev.asc === sortBy.asc) return;
+    prevSortRef.current = sortBy;
+    const singleSel = selectedIds.size === 1 ? [...selectedIds][0] : null;
+    const canRank = !hideUnavailable;
+    if (singleSel == null) {
+      loadingRef.current = false;
+      hasMoreRef.current = true;
+      resetTokenRef.current += 1;
+      resetPendingRef.current = resetTokenRef.current;
+      appendedPageRef.current = false;
+      setHasMore(true);
+      const t = setTimeout(() => loadPage({ at: 0, mode: 'reset' }), 0);
+      return () => clearTimeout(t);
+    }
+    if (canRank) {
+      const id = singleSel;
+      loadingRef.current = false;
+      hasMoreRef.current = true;
+      resetTokenRef.current += 1;
+      resetPendingRef.current = resetTokenRef.current;
+      appendedPageRef.current = false;
+      setHasMore(true);
+      const { filters, remaining } = parseQuery(search);
+      const structuredFilters = filters.filter((f) => f.field !== '_text');
+      const textSearch = remaining || filters.find((f) => f.field === '_text')?.value || '';
+      const token = resetTokenRef.current;
+      let cancelled = false;
+      (async () => {
+        const rank = await window.api.getTrackRank({
+          trackId: id,
+          search: textSearch,
+          filters: structuredFilters,
+          playlistId: selectedPlaylist !== 'music' ? selectedPlaylist : undefined,
+          sort: sortBy.key === 'index' ? undefined : { key: sortBy.key, asc: sortBy.asc },
+        });
+        if (cancelled || token !== resetTokenRef.current) return;
+        if (rank == null) {
+          clearSortFlash();
+          return;
+        }
+        const pageStart = Math.max(0, Math.floor(rank / PAGE_SIZE) * PAGE_SIZE);
+        await loadPage({ at: pageStart, mode: 'jump' });
+        if (cancelled || token !== resetTokenRef.current) return;
+        const el = listRef.current?.element;
+        if (el) {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              const top = rank * ROW_HEIGHT;
+              const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+              const centered = Math.min(
+                maxTop,
+                Math.max(0, top - (el.clientHeight - ROW_HEIGHT) / 2)
+              );
+              el.scrollTop = Math.max(centered, pageStart * ROW_HEIGHT);
+            });
+          });
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+    resetTokenRef.current += 1;
+    resetPendingRef.current = resetTokenRef.current;
+    loadingRef.current = false;
+    sortFollowNonceRef.current += 1;
+    setSortFollow({ id: singleSel, nonce: sortFollowNonceRef.current });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortBy.key, sortBy.asc, selectedIds, isPlaylistView, hideUnavailable, search, loadPage]);
+
+  useEffect(() => {
+    if (!sortFollow || sortFollow.nonce === sortFollowHandledRef.current) return;
+    const { id, nonce } = sortFollow;
+    const scrollToRow = (idx) => {
+      const el = isPlaylistView ? dndScrollRef.current : listRef.current?.element;
+      if (!el) return false;
+      const top = idx * ROW_HEIGHT;
+      const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+      const target = Math.min(maxTop, Math.max(0, top - (el.clientHeight - ROW_HEIGHT) / 2));
+      el.scrollTop = target;
+      return true;
+    };
+    if (sortFollowCommittedRef.current === nonce) {
+      sortFollowHandledRef.current = nonce;
+      const idx = sortedTracksRef.current.findIndex((t) => t.id === id);
+      if (idx !== -1) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => scrollToRow(idx));
+        });
+      }
+      clearSortFlash();
+      return;
+    }
+    if (loadingRef.current) return;
+    const playlistAtStart = selectedPlaylist;
+    const searchAtStart = search;
+    let alive = true;
+    (async () => {
+      const token = resetTokenRef.current;
+      const full = await fetchFullViewTracks();
+      if (!alive || token !== resetTokenRef.current) return;
+      if (selectedPlaylistRef.current !== playlistAtStart || searchRef.current !== searchAtStart) {
+        sortFollowHandledRef.current = nonce;
+        return;
+      }
+      if (!full.some((t) => t.id === id)) {
+        sortFollowHandledRef.current = nonce;
+        return;
+      }
+      windowStartRef.current = 0;
+      offsetRef.current = full.length;
+      hasMoreRef.current = false;
+      setHasMore(false);
+      setTotalRows(full.length);
+      sortFollowCommittedRef.current = nonce;
+      const commitToken = resetTokenRef.current;
+      setTimeout(() => {
+        if (alive && commitToken === resetTokenRef.current) {
+          startTransition(() => setTracks(full));
+        }
+      }, 60);
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortFollow, tracks, isPlaylistView]);
+
+  useEffect(() => {
+    preReloadIdsRef.current = new Set(sortedTracksRef.current.map((t) => t.id));
+
+    const viewChanged =
+      prevSelectedPlaylistRef.current !== selectedPlaylist || prevSearchRef.current !== search;
+    prevSelectedPlaylistRef.current = selectedPlaylist;
+    prevSearchRef.current = search;
+
+    offsetRef.current = 0;
+    windowStartRef.current = 0;
+    loadingRef.current = false;
+    hasMoreRef.current = true;
+    resetTokenRef.current += 1;
+    resetPendingRef.current = resetTokenRef.current;
+    appendedPageRef.current = false;
+    setHasMore(true);
+    if (viewChanged) {
+      setSelectedIds(new Set());
+      lastSelectedIndexRef.current = null;
+      setSortBy({ key: 'index', asc: true });
+      setSortSaved(true);
+    }
+
+    const { filters: vf, remaining: vr } = parseQuery(search);
+    const vStructured = vf.filter((f) => f.field !== '_text');
+    const vText = vr || vf.find((f) => f.field === '_text')?.value || '';
+    let countAlive = true;
+    window.api
+      .countTracks({
+        search: vText,
+        filters: vStructured,
+        playlistId: selectedPlaylist !== 'music' ? selectedPlaylist : undefined,
+      })
+      .then((c) => {
+        if (countAlive) setTotalRows(c);
+      })
+      .catch(() => {});
+    if (selectedPlaylist !== 'music') {
+      window.api
+        .getTrackIds({ playlistId: selectedPlaylist })
+        .then((ids) => {
+          if (countAlive) playlistOrderRef.current = ids;
+        })
+        .catch(() => {});
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (!cancelled) loadPage({ at: 0, mode: 'reset' });
+    }, 0);
+    return () => {
+      cancelled = true;
+      countAlive = false;
+      clearTimeout(timer);
+    };
+  }, [search, selectedPlaylist, loadKey, loadPage]);
+
+  useEffect(() => {
+    const unsub = window.api.onTrackUpdated(({ trackId, analysis }) => {
+      const isAnalyzed = analysis.analyzed !== 0;
+      const merged = { ...analysis, analyzed: isAnalyzed ? 1 : 0 };
+
+      setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, ...merged } : t)));
+
+      setDetailsTrack((prev) => (prev && prev.id === trackId ? { ...prev, ...merged } : prev));
+
+      patchCurrentTrack(trackId, merged);
+    });
+    return unsub;
+  }, [patchCurrentTrack, reloadCurrentTrack]);
+
+  useEffect(() => {
+    const unsub = window.api.onCuePointsUpdated(({ trackId, cueCount }) => {
+      if (cueCount == null) return;
+      setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, cue_count: cueCount } : t)));
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = window.api.onLibraryUpdated(async () => {
+      const isDefaultView = selectedPlaylistRef.current === 'music' && !searchRef.current;
+      if (isDefaultView) {
+        const rows = await window.api.getTracks({ limit: PAGE_SIZE, offset: 0 });
+        if (selectedPlaylistRef.current !== 'music' || searchRef.current) return;
+        if (rows.length > 0) {
+          const existingIds = new Set(sortedTracksRef.current.map((t) => t.id));
+          const newRows = rows.filter((r) => !existingIds.has(r.id));
+          if (newRows.length > 0) {
+            setNewTrackIds((prev) => new Set([...prev, ...newRows.map((r) => r.id)]));
+            setTracks((prev) => {
+              const prevIds = new Set(prev.map((t) => t.id));
+              const deduped = newRows.filter((r) => !prevIds.has(r.id));
+              if (deduped.length === 0) return prev;
+              const merged = [...prev, ...deduped];
+              return merged;
+            });
+            offsetRef.current = sortedTracksRef.current.length + newRows.length;
+            if (currentPlaylistIdRef.current === null) {
+              const token = resetTokenRef.current;
+              const full = await fetchFullViewTracks();
+              if (
+                token !== resetTokenRef.current ||
+                currentPlaylistIdRef.current !== null ||
+                selectedPlaylistRef.current !== 'music' ||
+                searchRef.current
+              ) {
+                return;
+              }
+              updateQueueRef.current(full);
+            }
+            if (rows.length < PAGE_SIZE) {
+              hasMoreRef.current = false;
+              setHasMore(false);
+            }
+            window.api
+              .countTracks()
+              .then(setTotalRows)
+              .catch(() => {});
+          }
+        }
+      } else {
+        preReloadIdsRef.current = new Set(sortedTracksRef.current.map((t) => t.id));
+        animateNextLoadRef.current = true;
+        setLoadKey((k) => k + 1);
+      }
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (appendedPageRef.current) {
+      appendedPageRef.current = false;
+      return;
+    }
+    if (!(
+      isPlaylistView &&
+      currentPlaylistId !== null &&
+      String(currentPlaylistId) === String(selectedPlaylist)
+    )) {
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const token = resetTokenRef.current;
+      const full = await fetchFullViewTracks();
+      if (cancelled || token !== resetTokenRef.current) return;
+      if (
+        currentPlaylistIdRef.current === null ||
+        String(currentPlaylistIdRef.current) !== String(selectedPlaylistRef.current)
+      ) {
+        return;
+      }
+      updateQueueRef.current(full);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tracks.length, loadKey, isPlaylistView, selectedPlaylist, currentPlaylistId]);
+
+  useEffect(() => {
+    if (!isPlaylistView) {
+      setPlaylistInfo(null);
+      return;
+    }
+    window.api.getPlaylist(Number(selectedPlaylist)).then(setPlaylistInfo);
+  }, [isPlaylistView, selectedPlaylist, tracks.length]);
+
+  useEffect(() => {
+    const unsub = window.api.onPlaylistsUpdated(() => setLoadKey((k) => k + 1));
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const api = window.api ?? {};
+    if (typeof api.getSetting === 'function') {
+      api.getSetting('auto_cue_on_import', 'false').then((v) => setAutoCueOnImport(v === 'true'));
+    }
+    if (typeof api.onSettingsUpdated === 'function') {
+      return api.onSettingsUpdated(({ key, value }) => {
+        if (key === 'auto_cue_on_import') setAutoCueOnImport(value === 'true');
+      });
+    }
+    return undefined;
+  }, []);
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  useEffect(() => {
+    const onKeyDown = async (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        const target = e.target;
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+        e.preventDefault();
+        const { filters, remaining } = parseQuery(search);
+        const structuredFilters = filters.filter((f) => f.field !== '_text');
+        const textSearch = remaining || filters.find((f) => f.field === '_text')?.value || '';
+        const ids = await window.api.getTrackIds({
+          search: textSearch,
+          filters: structuredFilters,
+          playlistId: selectedPlaylist !== 'music' ? selectedPlaylist : undefined,
+        });
+        setSelectedIds(new Set(ids));
+        return;
+      }
+      if ((e.key === 'Enter' || e.key === 'e') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const target = e.target;
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+        setSelectedIds((prev) => {
+          if (prev.size === 1) {
+            const id = [...prev][0];
+            const track = sortedTracksRef.current.find((t) => t.id === id);
+            if (track) {
+              setDetailsTrack(track);
+              setDetailsPinned(false);
+            }
+          }
+          return prev;
+        });
+        return;
+      }
+      if (e.key === 'Escape') {
+        setDetailsTrack(null);
+        setContextMenu(null);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [search, selectedPlaylist]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => {
+      setContextMenu(null);
+      setDrillStack([]);
+      setNewPlaylistInputActive(false);
+      setNewPlaylistName('');
+      setNewPlaylistError('');
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [contextMenu]);
+
+  const handleRowClick = useCallback((e, track, index) => {
+    if (e.ctrlKey || e.metaKey) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(track.id)) next.delete(track.id);
+        else next.add(track.id);
+        return next;
+      });
+      lastSelectedIndexRef.current = index;
+    } else if (e.shiftKey && lastSelectedIndexRef.current !== null) {
+      const start = Math.min(lastSelectedIndexRef.current, index);
+      const end = Math.max(lastSelectedIndexRef.current, index);
+      const rangeIds = sortedTracksRef.current.slice(start, end + 1).map((t) => t.id);
+      setSelectedIds(new Set(rangeIds));
+    } else {
+      setSelectedIds(new Set([track.id]));
+      lastSelectedIndexRef.current = index;
+    }
+  }, []);
+
+  const playFromList = useCallback(
+    async (track, visibleIndex) => {
+      if (queueBusyRef.current) return;
+      queueBusyRef.current = true;
+      setQueuePreparing(true);
+      const token = resetTokenRef.current;
+      try {
+        const full = await fetchFullViewTracks();
+        if (token !== resetTokenRef.current) return;
+        const playlistId =
+          selectedPlaylistRef.current === 'music' ? null : selectedPlaylistRef.current;
+        const name = playlistId ? (playlistInfoRef.current?.name ?? null) : null;
+        const fullIndex = full.findIndex((t) => t.id === track.id);
+        if (fullIndex !== -1) {
+          play(track, full, fullIndex, playlistId, name);
+        } else {
+          play(track, sortedTracksRef.current, visibleIndex, playlistId, name);
+        }
+      } finally {
+        queueBusyRef.current = false;
+        setQueuePreparing(false);
+      }
+    },
+    [fetchFullViewTracks, play]
+  );
+
+  const handleDoubleClick = useCallback(
+    (track, index) => {
+      playFromList(track, index);
+    },
+    [playFromList]
+  );
+
+  const handleDetailsClose = useCallback(() => {
+    setDetailsTrack(null);
+    setDetailsBulkTracks(null);
+    setDetailsPinned(false);
+    setDetailsDirty(false);
+  }, []);
+
+  const handleDetailsTogglePin = useCallback(() => {
+    setDetailsPinned((p) => !p);
+  }, []);
+
+  useEffect(() => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    if (!detailsTrack && !detailsBulkTracks) return;
+    if (detailsTrack && detailsPinned) return;
+    if (ids.length === 1) {
+      const [id] = ids;
+      const track = sortedTracksRef.current.find((t) => t.id === id);
+      if (!track) return;
+      const inSingle = !!detailsTrack && !detailsBulkTracks;
+      if (inSingle && detailsTrack.id === id) return;
+      if (detailsDirty) {
+        const discard = inSingle
+          ? window.confirm(
+              'The Details panel has unsaved changes.\n\n' +
+                'Click OK to discard them and follow the new selection, or Cancel to pin the panel and keep editing this track.'
+            )
+          : window.confirm(
+              'The Details panel has unsaved changes.\n\n' +
+                'Click OK to discard them and show the selected track in single edit mode, or Cancel to keep the bulk panel open.'
+            );
+        if (!discard) {
+          if (inSingle) setDetailsPinned(true);
+          return;
+        }
+        setDetailsDirty(false);
+      }
+      setDetailsBulkTracks(null);
+      setDetailsTrack(track);
+      return;
+    }
+
+    const bulk = sortedTracksRef.current.filter((t) => selectedIds.has(t.id));
+    if (bulk.length === 0) return;
+    const idsKey = [...selectedIds].map(String).sort().join(',');
+    const openKey = detailsBulkTracks
+      ?.map((t) => String(t.id))
+      .sort()
+      .join(',');
+    if (detailsBulkTracks && openKey === idsKey) return;
+    if (detailsDirty && (detailsTrack || detailsBulkTracks)) {
+      const discard = window.confirm(
+        'The Details panel has unsaved changes.\n\n' +
+          'Click OK to discard them and edit the newly selected tracks, or Cancel to keep the current panel open.'
+      );
+      if (!discard) return;
+      setDetailsDirty(false);
+    }
+    setDetailsTrack(null);
+    setDetailsBulkTracks(bulk);
+  }, [selectedIds, detailsTrack, detailsBulkTracks, detailsPinned, detailsDirty]);
+
+  useEffect(() => {
+    const trackId = openDetailsRequest?.trackId;
+    if (!trackId) return;
+
+    let alive = true;
+    window.api.getTrackById(trackId).then((track) => {
+      if (!alive || !track) return;
+      setDetailsBulkTracks(null);
+      setDetailsTrack(track);
+      setSelectedIds(new Set([track.id]));
+    });
+
+    return () => {
+      alive = false;
+    };
+  }, [openDetailsRequest]);
+
+  useEffect(() => {
+    const req = locateTrack;
+    if (!req || req.nonce === locateHandledRef.current) return;
+    const trackId = req.trackId;
+    const idx = sortedTracksRef.current.findIndex((t) => t.id === trackId);
+    if (idx !== -1) {
+      locateHandledRef.current = req.nonce;
+      try {
+        listRef.current?.scrollToRow?.({ index: idx, align: 'center' });
+      } catch {}
+      if (locating) {
+        setLocating(false);
+      }
+      return;
+    }
+    if (loadingRef.current) {
+      setLocating(true);
+      return;
+    }
+    if (searchRef.current) {
+      setLocating(true);
+      onSearchChange('');
+      return;
+    }
+    setLocating(true);
+    let alive = true;
+    (async () => {
+      const token = resetTokenRef.current;
+      const full = await fetchFullViewTracks();
+      if (!alive || token !== resetTokenRef.current) {
+        setLocating(false);
+        return;
+      }
+      if (selectedPlaylistRef.current !== 'music' || searchRef.current) {
+        locateHandledRef.current = req.nonce;
+        setLocating(false);
+        return;
+      }
+      const fullIndex = full.findIndex((t) => t.id === trackId);
+      if (fullIndex === -1) {
+        locateHandledRef.current = req.nonce;
+        setLocating(false);
+        return;
+      }
+      resetTokenRef.current += 1;
+      resetPendingRef.current = resetTokenRef.current;
+      loadingRef.current = false;
+      windowStartRef.current = 0;
+      offsetRef.current = full.length;
+      hasMoreRef.current = false;
+      setHasMore(false);
+      setTotalRows(full.length);
+      const tokenAfterBump = resetTokenRef.current;
+      setTimeout(() => {
+        if (alive && tokenAfterBump === resetTokenRef.current) {
+          startTransition(() => setTracks(full));
+        }
+      }, 60);
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locateTrack, search, tracks.length, onSearchChange, fetchFullViewTracks]);
+
+  const handleCueClick = useCallback((track) => {
+    setBeatGridEditorTrack(track);
+  }, []);
+
+  const handleArtistClick = useMemo(() => {
+    if (!onArtistSearch && !onSearchChange) return undefined;
+    return (artist, fromCredit) => {
+      const query = buildArtistQuery(artist, { fromCredit });
+      if (!query) return;
+      if (onArtistSearch) onArtistSearch(artist, Boolean(fromCredit));
+      else onSearchChange(query);
+    };
+  }, [onArtistSearch, onSearchChange]);
+
+  const handleDetailsSave = useCallback((result) => {
+    if (Array.isArray(result)) {
+      setTracks((prev) =>
+        prev.map((t) => {
+          const updated = result.find((u) => u.id === t.id);
+          return updated ? { ...t, ...updated } : t;
+        })
+      );
+      setDetailsBulkTracks(null);
+    } else {
+      setTracks((prev) => prev.map((t) => (t.id === result.id ? { ...t, ...result } : t)));
+      setDetailsTrack(result);
+    }
+  }, []);
+
+  const handleDetailsPrev = useCallback(() => {
+    const tracks = sortedTracksRef.current;
+    if (!detailsTrack) return;
+    const idx = tracks.findIndex((t) => t.id === detailsTrack.id);
+    if (idx > 0) {
+      setDetailsTrack(tracks[idx - 1]);
+      setSelectedIds(new Set([tracks[idx - 1].id]));
+    }
+  }, [detailsTrack]);
+
+  const handleDetailsNext = useCallback(() => {
+    const tracks = sortedTracksRef.current;
+    if (!detailsTrack) return;
+    const idx = tracks.findIndex((t) => t.id === detailsTrack.id);
+    if (idx >= 0 && idx < tracks.length - 1) {
+      setDetailsTrack(tracks[idx + 1]);
+      setSelectedIds(new Set([tracks[idx + 1].id]));
+    }
+  }, [detailsTrack]);
+
+  const toggleCol = useCallback((key) => {
+    setColVis((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      localStorage.setItem(LS_COL_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const handleColDragEnd = useCallback(({ active, over }) => {
+    if (!over || active.id === over.id) return;
+    setColOrder((prev) => {
+      const oldIndex = prev.indexOf(active.id);
+      const newIndex = prev.indexOf(over.id);
+      const next = arrayMove(prev, oldIndex, newIndex);
+      localStorage.setItem(LS_ORDER_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!colMenuAnchor) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setColMenuAnchor(null);
+    };
+    const onMouse = (e) => {
+      if (!colDropdownRef.current?.contains(e.target)) setColMenuAnchor(null);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onMouse);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onMouse);
+    };
+  }, [colMenuAnchor]);
+
+  useEffect(() => {
+    const el = isPlaylistView ? dndScrollRef.current : listRef.current?.element;
+    if (!el) return;
+    const sync = () => {
+      if (headerScrollRef.current) headerScrollRef.current.scrollLeft = el.scrollLeft;
+    };
+    el.addEventListener('scroll', sync, { passive: true });
+    return () => el.removeEventListener('scroll', sync);
+  });
+
+  const handleRatingChange = useCallback(
+    async (trackId, newRating) => {
+      try {
+        await window.api.updateTrack(trackId, { rating: newRating });
+        setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, rating: newRating } : t)));
+      } catch (e) {
+        console.error('Failed to save rating:', e);
+      }
+    },
+    [setTracks]
+  );
+
+  const handleContextMenu = useCallback(
+    async (e, track, index) => {
+      e.preventDefault();
+      if (!selectedIds.has(track.id)) {
+        setSelectedIds(new Set([track.id]));
+        lastSelectedIndexRef.current = index;
+      }
+      const targetIds = selectedIds.has(track.id) ? [...selectedIds] : [track.id];
+      const playlists = await window.api.getPlaylistsForTrack(targetIds[0]);
+      setPlaylistSubmenu(playlists);
+      const libraries = await window.api.listLibrariesWithFreeSpace();
+      setLibrarySubmenu(libraries);
+
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const MENU_W = 200;
+
+      const overlayMode = vw < 500 || vh < 420;
+
+      const x = Math.min(e.clientX, vw - MENU_W - 8);
+      const y = Math.min(e.clientY, vh - 16);
+      const flipLeft = x > vw / 2;
+      const flipUp = e.clientY > vh * 0.5;
+      const submenuMaxH = Math.max(120, vh - y - 8);
+
+      const targetTracks = targetIds
+        .map((id) => sortedTracksRef.current.find((t) => t.id === id))
+        .filter(Boolean);
+
+      setContextMenu({
+        x,
+        y,
+        targetIds,
+        track,
+        targetTracks,
+        overlayMode,
+        flipLeft,
+        flipUp,
+        submenuMaxH,
+      });
+    },
+    [selectedIds]
+  );
+
+  useLayoutEffect(() => {
+    if (!contextMenu) {
+      setMenuShift({ x: 0, y: 0 });
+      return;
+    }
+    const el = menuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const shiftX = Math.max(0, rect.right - window.innerWidth + 8);
+    const shiftY = Math.max(0, rect.bottom - window.innerHeight + 8);
+    setMenuShift((prev) =>
+      prev.x === -shiftX && prev.y === -shiftY ? prev : { x: -shiftX, y: -shiftY }
+    );
+  }, [contextMenu, drillStack, playlistSubmenu]);
+
+  const handleReanalyze = useCallback(async () => {
+    const targetIds = contextMenu?.targetIds ?? [];
+    setContextMenu(null);
+    setTracks((prev) => prev.map((t) => (targetIds.includes(t.id) ? { ...t, analyzed: 0 } : t)));
+    for (const id of targetIds) await window.api.reanalyzeTrack(id);
+  }, [contextMenu]);
+
+  const showToast = useCallback((msg, ok = true) => {
+    clearTimeout(toastTimerRef.current);
+    setToast({ msg, ok });
+    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+  }, []);
+
+  const handleWriteBpmKeyTags = useCallback(async () => {
+    const targetIds = contextMenu?.targetIds ?? [];
+    setContextMenu(null);
+    if (targetIds.length === 0) return;
+    try {
+      const res = await window.api.writeBpmKeyTags({ trackIds: targetIds });
+      showToast(
+        `BPM & Key tags — written: ${res.written}, skipped: ${res.skipped}`,
+        res.written > 0
+      );
+    } catch (err) {
+      showToast(`BPM & Key tag write failed: ${err.message}`, false);
+    }
+  }, [contextMenu, showToast]);
+
+  const handleNormalizeTracks = useCallback(async () => {
+    const targetIds = contextMenu?.targetIds ?? [];
+    setContextMenu(null);
+
+    const { normalized, skipped } = await window.api.normalizeTracksAudio({ trackIds: targetIds });
+    if (normalized === 0) {
+      showToast(
+        skipped > 0
+          ? 'No analyzed tracks — analyze tracks first to get loudness data.'
+          : 'Nothing to normalize.',
+        false
+      );
+    } else {
+      showToast(`Gain applied to ${normalized} track${normalized !== 1 ? 's' : ''}.`);
+    }
+  }, [contextMenu, showToast]);
+
+  const handleResetNormalization = useCallback(async () => {
+    const targetIds = contextMenu?.targetIds ?? [];
+    setContextMenu(null);
+    await window.api.resetNormalization({ trackIds: targetIds });
+    showToast(`Gain reset for ${targetIds.length} track${targetIds.length !== 1 ? 's' : ''}.`);
+  }, [contextMenu, showToast]);
+
+  const handleRemove = useCallback(async () => {
+    const targetIds = contextMenu?.targetIds ?? [];
+    const n = targetIds.length;
+    const msg =
+      n === 1
+        ? 'Remove this track from your library? Imported tracks also have their audio file deleted from disk. This cannot be undone.'
+        : `Remove ${n} tracks from your library? Imported tracks also have their audio files deleted from disk. This cannot be undone.`;
+    if (!window.confirm(msg)) return;
+    if (currentTrack && targetIds.includes(currentTrack.id)) stop();
+    setContextMenu(null);
+    await window.api.removeTracks(targetIds);
+    setTracks((prev) => prev.filter((t) => !targetIds.includes(t.id)));
+    setSelectedIds(new Set());
+    offsetRef.current = Math.max(0, offsetRef.current - targetIds.length);
+  }, [contextMenu, currentTrack, stop]);
+
+  const handleRemoveFromPlaylist = useCallback(async () => {
+    const targetIds = contextMenu?.targetIds ?? [];
+    const n = targetIds.length;
+    const msg =
+      n === 1 ? 'Remove this track from the playlist?' : `Remove ${n} tracks from the playlist?`;
+    if (!window.confirm(msg)) return;
+    if (currentTrack && targetIds.includes(currentTrack.id)) stop();
+    setContextMenu(null);
+    for (const id of targetIds) {
+      await window.api.removeTrackFromPlaylist(Number(selectedPlaylist), id);
+    }
+    setTracks((prev) => prev.filter((t) => !targetIds.includes(t.id)));
+    setSelectedIds(new Set());
+    offsetRef.current = Math.max(0, offsetRef.current - targetIds.length);
+  }, [contextMenu, selectedPlaylist, currentTrack, stop]);
+
+  const handleAddToPlaylist = useCallback(async (playlistId, targetIds) => {
+    setContextMenu(null);
+    if (!targetIds?.length) return;
+    try {
+      await window.api.addTracksToPlaylist(playlistId, targetIds);
+    } catch (err) {
+      console.error('addTracksToPlaylist failed:', err);
+    }
+  }, []);
+
+  const handleMoveToLibrary = useCallback(
+    async (targetLibraryId, targetIds) => {
+      setContextMenu(null);
+      if (!targetIds?.length) return;
+      const { moved, failed } = await window.api.moveTracksToLibrary(targetIds, targetLibraryId);
+      const patchById = new Map(
+        moved.map(({ trackId, newPath }) => [
+          trackId,
+          { library_id: targetLibraryId, is_linked: 0, ...(newPath ? { file_path: newPath } : {}) },
+        ])
+      );
+      if (patchById.size > 0) {
+        setTracks((prev) =>
+          prev.map((t) => (patchById.has(t.id) ? { ...t, ...patchById.get(t.id) } : t))
+        );
+        setDetailsTrack((prev) =>
+          prev && patchById.has(prev.id) ? { ...prev, ...patchById.get(prev.id) } : prev
+        );
+        setDetailsBulkTracks((prev) =>
+          prev
+            ? prev.map((t) => (patchById.has(t.id) ? { ...t, ...patchById.get(t.id) } : t))
+            : prev
+        );
+      }
+      const movedCount = moved.length;
+      const failedCount = failed.length;
+      if (failedCount === 0) {
+        showToast(`Moved ${movedCount} track${movedCount !== 1 ? 's' : ''} to library.`);
+      } else if (movedCount === 0) {
+        showToast(`Failed to move track${targetIds.length !== 1 ? 's' : ''}.`, false);
+      } else {
+        showToast(`Moved ${movedCount}, failed to move ${failedCount}.`, false);
+      }
+    },
+    [showToast]
+  );
+
+  const handleAddToNewPlaylist = useCallback(
+    async (e) => {
+      e?.preventDefault();
+      const name = newPlaylistName.trim();
+      if (!name) {
+        setNewPlaylistInputActive(false);
+        setNewPlaylistName('');
+        return;
+      }
+      const targetIds = contextMenu?.targetIds ?? [];
+      const result = await window.api.createPlaylist(name, null);
+      if (result?.error === 'duplicate') {
+        setNewPlaylistError('Name already exists');
+        newPlaylistInputRef.current?.focus();
+        return;
+      }
+      if (result?.id && targetIds.length) {
+        await window.api.addTracksToPlaylist(result.id, targetIds);
+      }
+      setNewPlaylistInputActive(false);
+      setNewPlaylistName('');
+      setNewPlaylistError('');
+      setContextMenu(null);
+    },
+    [contextMenu, newPlaylistName]
+  );
+
+  const handleBpmAdjust = useCallback(
+    async (factor) => {
+      const targetIds = contextMenu?.targetIds ?? [];
+      setContextMenu(null);
+      if (!targetIds.length) return;
+
+      setTracks((prev) =>
+        prev.map((t) => {
+          if (!targetIds.includes(t.id)) return t;
+          const base = t.bpm_override ?? t.bpm;
+          if (base == null) return t;
+          return { ...t, bpm_override: Math.round(base * factor * 10) / 10 };
+        })
+      );
+
+      const updated = await window.api.adjustBpm({ trackIds: targetIds, factor });
+      if (!Array.isArray(updated)) {
+        console.error('[bpm] adjust failed:', updated?.code ?? 'unknown');
+        return;
+      }
+      const updatedById = new Map(updated.map((r) => [r.id, r]));
+      setTracks((prev) =>
+        prev.map((t) => {
+          const u = updatedById.get(t.id);
+          return u ? { ...t, bpm_override: u.bpm_override } : t;
+        })
+      );
+    },
+    [contextMenu]
+  );
+
+  const handleSetBpm = useCallback(
+    async (rawValue) => {
+      const targetIds = contextMenu?.targetIds ?? [];
+      const parsed = parseFloat(rawValue);
+      if (!Number.isFinite(parsed) || parsed <= 0) return;
+      const bpmOverride = Math.round(parsed * 10) / 10;
+      setContextMenu(null);
+      setBpmEditValue('');
+      if (!targetIds.length) return;
+
+      setTracks((prev) =>
+        prev.map((t) => (targetIds.includes(t.id) ? { ...t, bpm_override: bpmOverride } : t))
+      );
+
+      await Promise.all(
+        targetIds.map((id) => window.api.updateTrack(id, { bpm_override: bpmOverride }))
+      );
+    },
+    [contextMenu]
+  );
+
+  const handleApplyBeatGrid = useCallback(
+    async (trackId, { beatgrid_offset, bpm_override, trim_start_ms, trim_end_ms }) => {
+      const update = { beatgrid_offset };
+      if (bpm_override != null) update.bpm_override = bpm_override;
+      update.trim_start_ms = trim_start_ms ?? null;
+      update.trim_end_ms = trim_end_ms ?? null;
+      setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, ...update } : t)));
+      patchCurrentTrack(trackId, update);
+      await window.api.updateTrack(trackId, update);
+    },
+    [patchCurrentTrack]
+  );
+
+  const handleFindSimilar = useCallback(
+    (queryText) => {
+      setContextMenu(null);
+      onSearchChange(queryText);
+    },
+    [onSearchChange]
+  );
+
+  const handleDragStart = useCallback(({ active }) => setActiveId(active.id), []);
+
+  const handleDragEnd = useCallback(
+    ({ active, over }) => {
+      setActiveId(null);
+      if (!over || active.id === over.id) return;
+      suppressSortReloadRef.current = true;
+      const sb = sortByRef.current;
+      if (sb.key !== 'index') {
+        setSortBy({ key: 'index', asc: true });
+        setSortSaved(true);
+        return;
+      }
+      const full = playlistOrderRef.current;
+      const fullOld = full.findIndex((id) => id === active.id);
+      const fullNew = full.findIndex((id) => id === over.id);
+      if (fullOld === -1 || fullNew === -1) {
+        loadPage({ at: 0, mode: 'reset' });
+        return;
+      }
+      playlistOrderRef.current = arrayMove(full, fullOld, fullNew);
+      const win = sortedTracksRef.current;
+      const wOld = win.findIndex((t) => t.id === active.id);
+      const wNew = win.findIndex((t) => t.id === over.id);
+      if (wOld !== -1 && wNew !== -1) {
+        setTracks(arrayMove(win, wOld, wNew));
+      }
+      window.api.reorderPlaylist(Number(selectedPlaylist), playlistOrderRef.current);
+      setSortSaved(true);
+    },
+    [selectedPlaylist, loadPage]
+  );
+
+  const handleTrackDragStart = useCallback(
+    (e, track) => {
+      const ids = selectedIds.has(track.id) ? [...selectedIds] : [track.id];
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('application/dj-tracks', JSON.stringify(ids));
+    },
+    [selectedIds]
+  );
+
+  const handleRowAnimationEnd = useCallback((trackId) => {
+    setNewTrackIds((prev) => {
+      if (!prev.has(trackId)) return prev;
+      const next = new Set(prev);
+      next.delete(trackId);
+      return next;
+    });
+  }, []);
+
+  const handleSaveOrder = useCallback(async () => {
+    const full = await fetchFullViewTracks();
+    if (!full || full.length === 0) return;
+    await window.api.reorderPlaylist(
+      Number(selectedPlaylist),
+      full.map((t) => t.id)
+    );
+    suppressSortReloadRef.current = true;
+    setSortBy({ key: 'index', asc: true });
+    setSortSaved(true);
+  }, [fetchFullViewTracks, selectedPlaylist]);
+
+  const handleItemsRendered = useCallback(
+    ({ startIndex, stopIndex }) => {
+      if (resetPendingRef.current === resetTokenRef.current) return;
+      const winStart = windowStartRef.current;
+      const loadedEnd = winStart + sortedTracksRef.current.length;
+      if (stopIndex >= loadedEnd - PRELOAD_TRIGGER) {
+        const gapDown = Math.max(1, Math.ceil((stopIndex - loadedEnd) / PAGE_SIZE) + 1);
+        const fwd = Math.min(gapDown, 4);
+        loadPage({ at: offsetRef.current, mode: 'append', limit: fwd * PAGE_SIZE });
+      } else if (startIndex <= winStart + PRELOAD_TRIGGER && winStart > 0) {
+        const gapUp = Math.max(1, Math.ceil((winStart - startIndex) / PAGE_SIZE));
+        const back = Math.min(gapUp, 4);
+        const at = Math.max(0, winStart - back * PAGE_SIZE);
+        loadPage({ at, mode: 'prepend', limit: winStart - at });
+      }
+    },
+    [loadPage]
+  );
+
+  const handleSort = useCallback(
+    (key) => {
+      setPendingSortKey(key);
+      flashStartRef.current = performance.now();
+      flashActiveRef.current = true;
+      setSortFlash(true);
+      const apply = () => {
+        setSortBy((prev) => {
+          const next = { key, asc: prev.key === key ? !prev.asc : true };
+          if (isPlaylistView) setSortSaved(next.key === 'index');
+          return next;
+        });
+      };
+      if (tracks.length >= SORT_FLASH_MIN_ROWS) {
+        setTimeout(apply, 60);
+      } else {
+        apply();
+      }
+      setTimeout(clearSortFlash, 3500);
+    },
+    [isPlaylistView, tracks.length, clearSortFlash]
+  );
+
+  const selectionLabel =
+    contextMenu?.targetIds?.length > 1 ? ` (${contextMenu.targetIds.length} tracks)` : '';
+
+  const formatDuration = (secs) => {
+    if (!secs) return '';
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
+
+  const activeTrack = activeId ? tracks.find((t) => t.id === activeId) : null;
+
+  const subItemCtxValue = useMemo(
+    () => ({
+      isOverlay: !!contextMenu?.overlayMode,
+      onDrillDown: ({ id, label, content }) =>
+        setDrillStack((prev) => [...prev, { id, label, content }]),
+    }),
+    [contextMenu?.overlayMode]
+  );
+
+  return (
+    <div
+      className={`music-library${detailsTrack || detailsBulkTracks ? ' music-library--with-panel' : ''}`}
+    >
+      <div className="music-library__main">
+        <div className="music-library__search">
+          <SearchBar value={search} onChange={onSearchChange} />
+        </div>
+        {unavailableLinkedIds.size > 0 && (
+          <label className="hide-unavailable-toggle">
+            <input
+              type="checkbox"
+              checked={hideUnavailable}
+              onChange={(e) => setHideUnavailable(e.target.checked)}
+            />
+            Hide unavailable tracks ({unavailableLinkedIds.size})
+          </label>
+        )}
+        {}
+        {isPlaylistView && playlistInfo && (
+          <div className="playlist-header-bar">
+            <span className="playlist-header-name">{playlistInfo.name}</span>
+            <span className="playlist-header-meta">
+              {playlistInfo.track_count} tracks · {formatDuration(playlistInfo.total_duration)}
+            </span>
+            {!sortSaved && (
+              <button className="btn-save-order" onClick={handleSaveOrder}>
+                💾 Save Order
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="table-scroll-wrap library-mode">
+          {(sortFlash || queuePreparing || locating) && (
+            <div className="table-busy-overlay" role="status">
+              <div className="table-busy-box">
+                <span className="table-busy-spinner" aria-hidden="true" />
+                {sortFlash ? 'Sorting…' : locating ? 'Locating track…' : 'Building queue…'}
+              </div>
+            </div>
+          )}
+          <TrackTableHeader
+            headerScrollRef={headerScrollRef}
+            headerRef={headerRef}
+            gridTemplate={gridTemplate}
+            minScrollWidth={minScrollWidth}
+            visibleColumns={visibleColumns}
+            isSorting={sortFlash}
+            pendingSortKey={pendingSortKey}
+            handleSort={handleSort}
+            sortBy={sortBy}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setColMenuAnchor({ x: e.clientX, y: e.clientY });
+            }}
+          />
+
+          {colMenuAnchor && (
+            <div
+              className="col-dropdown"
+              ref={colDropdownRef}
+              style={{ position: 'fixed', left: colMenuAnchor.x, top: colMenuAnchor.y }}
+            >
+              <DndContext collisionDetection={closestCenter} onDragEnd={handleColDragEnd}>
+                <SortableContext items={colOrder} strategy={verticalListSortingStrategy}>
+                  {colOrder.map((key) => {
+                    const col = COL_BY_KEY[key];
+                    if (!col) return null;
+                    return (
+                      <SortableColItem
+                        key={key}
+                        colKey={key}
+                        label={col.label}
+                        checked={colVis[key] !== false}
+                        onToggle={() => toggleCol(key)}
+                      />
+                    );
+                  })}
+                </SortableContext>
+              </DndContext>
+            </div>
+          )}
+
+          <TrackTableBody
+            isPlaylistView={isPlaylistView}
+            tracks={tracks}
+            sortedTracks={sortedTracks}
+            windowStart={windowStartRef.current}
+            totalRows={totalRows}
+            hasMore={hasMore}
+            gridTemplate={gridTemplate}
+            minScrollWidth={minScrollWidth}
+            dndScrollRef={dndScrollRef}
+            listRef={listRef}
+            handleItemsRendered={handleItemsRendered}
+            selectedIds={selectedIds}
+            playingTrackId={playingTrackId}
+            handleRowClick={handleRowClick}
+            handleDoubleClick={handleDoubleClick}
+            handleContextMenu={handleContextMenu}
+            handleRatingChange={handleRatingChange}
+            handleCueClick={handleCueClick}
+            onArtistClick={handleArtistClick}
+            handleTrackDragStart={handleTrackDragStart}
+            visibleColumns={visibleColumns}
+            mediaPort={mediaPort}
+            newTrackIds={newTrackIds}
+            handleRowAnimationEnd={handleRowAnimationEnd}
+            unavailableLinkedIds={unavailableLinkedIds}
+            libraryNames={libraryNames}
+            sensors={sensors}
+            handleDragStart={handleDragStart}
+            handleDragEnd={handleDragEnd}
+            activeTrack={activeTrack}
+          />
+        </div>
+        {}
+
+        {contextMenu && (
+          <SubItemCtx.Provider value={subItemCtxValue}>
+            <>
+              {contextMenu.overlayMode && (
+                <div
+                  className="context-backdrop"
+                  onClick={() => {
+                    setContextMenu(null);
+                    setDrillStack([]);
+                  }}
+                />
+              )}
+              <div
+                className={[
+                  'context-menu',
+                  contextMenu.overlayMode ? 'context-menu--overlay' : '',
+                  contextMenu.flipLeft ? 'context-menu--flip-left' : '',
+                  contextMenu.flipUp ? 'context-menu--flip-up' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                ref={menuRef}
+                style={
+                  contextMenu.overlayMode
+                    ? undefined
+                    : {
+                        top: contextMenu.y + menuShift.y,
+                        left: contextMenu.x + menuShift.x,
+                        '--submenu-max-h': `${contextMenu.submenuMaxH}px`,
+                      }
+                }
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                {}
+                {contextMenu.overlayMode && drillStack.length > 0 ? (
+                  <>
+                    <div
+                      className="context-menu__back"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDrillStack((prev) => prev.slice(0, -1));
+                      }}
+                    >
+                      ‹ {drillStack.length > 1 ? drillStack[drillStack.length - 2].label : 'Back'}
+                    </div>
+                    <div className="context-menu-item context-menu-item--header">
+                      {drillStack[drillStack.length - 1].label}
+                    </div>
+                    {drillStack[drillStack.length - 1].content}
+                  </>
+                ) : (
+                  <>
+                    {}
+                    {playlistSubmenu !== null &&
+                      (playlistSubmenu.length === 0 ? (
+                        <>
+                          {newPlaylistInputActive ? (
+                            <form
+                              className="ctx-new-playlist-form"
+                              onSubmit={handleAddToNewPlaylist}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <input
+                                ref={newPlaylistInputRef}
+                                className="ctx-new-playlist-input"
+                                value={newPlaylistName}
+                                onChange={(e) => {
+                                  setNewPlaylistName(e.target.value);
+                                  setNewPlaylistError('');
+                                }}
+                                placeholder="Playlist name"
+                                autoFocus
+                                onBlur={handleAddToNewPlaylist}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Escape') {
+                                    setNewPlaylistInputActive(false);
+                                    setNewPlaylistName('');
+                                    setNewPlaylistError('');
+                                  }
+                                }}
+                              />
+                              {newPlaylistError && (
+                                <div className="ctx-new-playlist-error">{newPlaylistError}</div>
+                              )}
+                            </form>
+                          ) : (
+                            <div
+                              className="context-menu-item"
+                              onClick={() => {
+                                setNewPlaylistInputActive(true);
+                                setTimeout(() => newPlaylistInputRef.current?.focus(), 0);
+                              }}
+                            >
+                              ➕ Add to new playlist…
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <SubItem id="add-to-playlist" label="➕ Add to playlist" scrollable>
+                          <div
+                            className="context-menu-item ctx-new-playlist-item"
+                            onClick={() => {
+                              setNewPlaylistInputActive(true);
+                              setTimeout(() => newPlaylistInputRef.current?.focus(), 0);
+                            }}
+                          >
+                            {newPlaylistInputActive ? (
+                              <form
+                                className="ctx-new-playlist-form"
+                                onSubmit={handleAddToNewPlaylist}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <input
+                                  ref={newPlaylistInputRef}
+                                  className="ctx-new-playlist-input"
+                                  value={newPlaylistName}
+                                  onChange={(e) => {
+                                    setNewPlaylistName(e.target.value);
+                                    setNewPlaylistError('');
+                                  }}
+                                  placeholder="Playlist name"
+                                  autoFocus
+                                  onBlur={handleAddToNewPlaylist}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Escape') {
+                                      setNewPlaylistInputActive(false);
+                                      setNewPlaylistName('');
+                                      setNewPlaylistError('');
+                                    }
+                                  }}
+                                />
+                                {newPlaylistError && (
+                                  <div className="ctx-new-playlist-error">{newPlaylistError}</div>
+                                )}
+                              </form>
+                            ) : (
+                              '✚ New playlist…'
+                            )}
+                          </div>
+                          <div className="context-menu-separator" />
+                          {playlistSubmenu.map((pl) => (
+                            <div
+                              key={pl.id}
+                              className={`context-menu-item${pl.is_member ? ' context-menu-item--checked' : ''}`}
+                              onClick={() =>
+                                !pl.is_member &&
+                                handleAddToPlaylist(pl.id, contextMenu?.targetIds ?? [])
+                              }
+                            >
+                              {pl.color && (
+                                <span className="ctx-color-dot" style={{ background: pl.color }} />
+                              )}
+                              {pl.is_member ? '✓ ' : ''}
+                              {pl.name}
+                            </div>
+                          ))}
+                        </SubItem>
+                      ))}
+
+                    {}
+                    {librarySubmenu !== null && librarySubmenu.length > 1 && (
+                      <SubItem id="move-to-library" label="📚 Move to library" wide>
+                        {librarySubmenu.map((lib) => {
+                          const targetTracks = contextMenu.targetTracks ?? [];
+                          const isCurrent =
+                            targetTracks.length > 0 &&
+                            targetTracks.every((t) => !t.is_linked && t.library_id === lib.id);
+                          return (
+                            <div
+                              key={lib.id}
+                              className={`context-menu-item context-menu-item--library${isCurrent ? ' context-menu-item--checked' : ''}`}
+                              onClick={() =>
+                                !isCurrent &&
+                                handleMoveToLibrary(lib.id, contextMenu?.targetIds ?? [])
+                              }
+                            >
+                              <span>
+                                {isCurrent ? '✓ ' : ''}
+                                {lib.name}
+                              </span>
+                              <span className="ctx-library-free">
+                                {formatBytes(lib.free_bytes)} free
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </SubItem>
+                    )}
+
+                    {}
+                    {contextMenu.targetTracks?.length > 0 && (
+                      <SubItem id="find-similar" label="🔍 Find similar" wide>
+                        {contextMenu.targetTracks.length === 1 ? (
+                          <>
+                            {contextMenu.track.key_camelot && (
+                              <>
+                                <div className="context-menu-item context-menu-item--header">
+                                  🎹 Key: {contextMenu.track.key_camelot.toUpperCase()}
+                                </div>
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleFindSimilar(
+                                      `KEY is ${contextMenu.track.key_camelot.toUpperCase()}`
+                                    )
+                                  }
+                                >
+                                  Same key
+                                </div>
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleFindSimilar(
+                                      `KEY adjacent ${contextMenu.track.key_camelot.toUpperCase()}`
+                                    )
+                                  }
+                                >
+                                  Adjacent — energy shift
+                                </div>
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleFindSimilar(
+                                      `KEY mode switch ${contextMenu.track.key_camelot.toUpperCase()}`
+                                    )
+                                  }
+                                >
+                                  Mode switch — minor↔major
+                                </div>
+                                <div
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleFindSimilar(
+                                      `KEY matches ${contextMenu.track.key_camelot.toUpperCase()}`
+                                    )
+                                  }
+                                >
+                                  All compatible keys
+                                </div>
+                              </>
+                            )}
+                            {(contextMenu.track.bpm_override ?? contextMenu.track.bpm) != null &&
+                              (() => {
+                                const bpm = Math.round(
+                                  contextMenu.track.bpm_override ?? contextMenu.track.bpm
+                                );
+                                return (
+                                  <>
+                                    {contextMenu.track.key_camelot && (
+                                      <div className="context-menu-separator" />
+                                    )}
+                                    <div className="context-menu-item context-menu-item--header">
+                                      ♩ BPM: {bpm}
+                                    </div>
+                                    <div
+                                      className="context-menu-item"
+                                      onClick={() => handleFindSimilar(`BPM is ${bpm}`)}
+                                    >
+                                      Exact BPM
+                                    </div>
+                                    <div
+                                      className="context-menu-item"
+                                      onClick={() =>
+                                        handleFindSimilar(`BPM in range ${bpm - 5}-${bpm + 5}`)
+                                      }
+                                    >
+                                      Similar BPM (±5)
+                                    </div>
+                                    <div
+                                      className="context-menu-item"
+                                      onClick={() =>
+                                        handleFindSimilar(`BPM in range ${bpm - 2}-${bpm + 2}`)
+                                      }
+                                    >
+                                      Very similar BPM (±2)
+                                    </div>
+                                  </>
+                                );
+                              })()}
+                            {contextMenu.track.key_camelot &&
+                              (contextMenu.track.bpm_override ?? contextMenu.track.bpm) != null &&
+                              (() => {
+                                const bpm = Math.round(
+                                  contextMenu.track.bpm_override ?? contextMenu.track.bpm
+                                );
+                                return (
+                                  <>
+                                    <div className="context-menu-separator" />
+                                    <div className="context-menu-item context-menu-item--header">
+                                      🎯 Combined
+                                    </div>
+                                    <div
+                                      className="context-menu-item"
+                                      onClick={() =>
+                                        handleFindSimilar(
+                                          `KEY matches ${contextMenu.track.key_camelot.toUpperCase()} AND BPM in range ${bpm - 5}-${bpm + 5}`
+                                        )
+                                      }
+                                    >
+                                      Compatible key + similar BPM
+                                    </div>
+                                  </>
+                                );
+                              })()}
+                            {(() => {
+                              try {
+                                const genres = JSON.parse(contextMenu.track.genres ?? '[]');
+                                if (!genres.length) return null;
+                                return (
+                                  <>
+                                    <div className="context-menu-separator" />
+                                    <div className="context-menu-item context-menu-item--header">
+                                      🏷 Genre
+                                    </div>
+                                    {genres.slice(0, 3).map((g) => (
+                                      <div
+                                        key={g}
+                                        className="context-menu-item"
+                                        onClick={() => handleFindSimilar(`GENRE is ${g}`)}
+                                      >
+                                        {g}
+                                      </div>
+                                    ))}
+                                  </>
+                                );
+                              } catch {
+                                return null;
+                              }
+                            })()}
+                          </>
+                        ) : (
+                          (() => {
+                            const tt = contextMenu.targetTracks;
+                            const bpms = tt
+                              .map((t) => t.bpm_override ?? t.bpm)
+                              .filter((b) => b != null)
+                              .map((b) => Math.round(b));
+                            const keys = tt.map((t) => t.key_camelot).filter(Boolean);
+                            const allGenres = tt.flatMap((t) => {
+                              try {
+                                return JSON.parse(t.genres ?? '[]');
+                              } catch {
+                                return [];
+                              }
+                            });
+                            const genreCount = allGenres.reduce((acc, g) => {
+                              acc[g] = (acc[g] ?? 0) + 1;
+                              return acc;
+                            }, {});
+                            const topGenres = Object.entries(genreCount)
+                              .sort((a, b) => b[1] - a[1])
+                              .slice(0, 3)
+                              .map(([g]) => g);
+                            const keyCounts = keys.reduce((acc, k) => {
+                              const n = k.toLowerCase();
+                              acc[n] = (acc[n] ?? 0) + 1;
+                              return acc;
+                            }, {});
+                            const topKey = Object.entries(keyCounts).sort(
+                              (a, b) => b[1] - a[1]
+                            )[0]?.[0];
+                            const bpmMin = bpms.length ? Math.min(...bpms) : null;
+                            const bpmMax = bpms.length ? Math.max(...bpms) : null;
+                            return (
+                              <>
+                                <div className="context-menu-item context-menu-item--header">
+                                  📦 {tt.length} tracks selected
+                                </div>
+                                {bpms.length > 0 && bpmMin !== bpmMax && (
+                                  <div
+                                    className="context-menu-item"
+                                    onClick={() =>
+                                      handleFindSimilar(`BPM in range ${bpmMin}-${bpmMax}`)
+                                    }
+                                  >
+                                    BPM range {bpmMin}–{bpmMax}
+                                  </div>
+                                )}
+                                {bpms.length > 0 && bpmMin === bpmMax && (
+                                  <div
+                                    className="context-menu-item"
+                                    onClick={() => handleFindSimilar(`BPM is ${bpmMin}`)}
+                                  >
+                                    BPM {bpmMin} (all same)
+                                  </div>
+                                )}
+                                {topKey && (
+                                  <div
+                                    className="context-menu-item"
+                                    onClick={() =>
+                                      handleFindSimilar(`KEY matches ${topKey.toUpperCase()}`)
+                                    }
+                                  >
+                                    Keys compatible with {topKey.toUpperCase()}
+                                  </div>
+                                )}
+                                {topKey && bpms.length > 0 && (
+                                  <div
+                                    className="context-menu-item"
+                                    onClick={() =>
+                                      handleFindSimilar(
+                                        `KEY matches ${topKey.toUpperCase()} AND BPM in range ${bpmMin}-${bpmMax}`
+                                      )
+                                    }
+                                  >
+                                    Compatible key + BPM range
+                                  </div>
+                                )}
+                                {topGenres.map((g) => (
+                                  <div
+                                    key={g}
+                                    className="context-menu-item"
+                                    onClick={() => handleFindSimilar(`GENRE is ${g}`)}
+                                  >
+                                    Genre: {g}
+                                  </div>
+                                ))}
+                              </>
+                            );
+                          })()
+                        )}
+                      </SubItem>
+                    )}
+
+                    {}
+                    <div className="context-menu-separator" />
+
+                    {}
+                    <div
+                      className="context-menu-item"
+                      onClick={() => {
+                        const targetTracks = contextMenu?.targetTracks ?? [];
+                        setContextMenu(null);
+                        if (targetTracks.length === 1) {
+                          setDetailsBulkTracks(null);
+                          setDetailsTrack(targetTracks[0]);
+                          setDetailsPinned(false);
+                          setSelectedIds(new Set([targetTracks[0].id]));
+                        } else if (targetTracks.length > 1) {
+                          setDetailsTrack(null);
+                          setDetailsBulkTracks(targetTracks);
+                          setDetailsPinned(false);
+                        }
+                      }}
+                    >
+                      ✏️ Edit Details{selectionLabel}
+                    </div>
+
+                    {}
+                    {contextMenu?.targetTracks?.length === 1 && (
+                      <div
+                        className="context-menu-item"
+                        onClick={() => {
+                          const track =
+                            tracks.find((tr) => tr.id === contextMenu.targetTracks[0]?.id) ??
+                            contextMenu.targetTracks[0];
+                          setContextMenu(null);
+                          if (track) setBeatGridEditorTrack(track);
+                        }}
+                      >
+                        🎛 Prepare Track…
+                      </div>
+                    )}
+
+                    {}
+                    <SubItem id="analysis" label={`🔬 Analysis${selectionLabel}`}>
+                      <div className="context-menu-item" onClick={handleReanalyze}>
+                        🔄 Re-analyze
+                      </div>
+                      <div className="context-menu-separator" />
+                      <div className="context-menu-item" onClick={handleNormalizeTracks}>
+                        🔊 Normalize
+                      </div>
+                      <div className="context-menu-item" onClick={handleResetNormalization}>
+                        ↩ Reset normalization
+                      </div>
+                      <div className="context-menu-separator" />
+                      <SubItem id="bpm" label="🥁 Beat Grid">
+                        <div className="context-menu-item" onClick={() => handleBpmAdjust(2)}>
+                          ✕2 Double BPM
+                        </div>
+                        <div className="context-menu-item" onClick={() => handleBpmAdjust(0.5)}>
+                          ÷2 Halve BPM
+                        </div>
+                        <div className="context-menu-separator" />
+                        <div
+                          className="context-menu-item context-menu-item--set-bpm"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <span className="set-bpm-label">Set BPM:</span>
+                          <input
+                            className="set-bpm-input"
+                            type="number"
+                            min="20"
+                            max="400"
+                            step="0.1"
+                            placeholder="e.g. 128"
+                            value={bpmEditValue}
+                            onChange={(e) => setBpmEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSetBpm(bpmEditValue);
+                              if (e.key === 'Escape') {
+                                setBpmEditValue('');
+                                setContextMenu(null);
+                              }
+                            }}
+                            autoFocus={false}
+                          />
+                          <button
+                            className="set-bpm-apply"
+                            disabled={!bpmEditValue}
+                            onClick={() => handleSetBpm(bpmEditValue)}
+                          >
+                            ✓
+                          </button>
+                        </div>
+                      </SubItem>
+                    </SubItem>
+
+                    {}
+                    <div className="context-menu-separator" />
+                    <div
+                      className="context-menu-item"
+                      onClick={() => {
+                        setContextMenu(null);
+                        onImportUsbCues?.();
+                      }}
+                    >
+                      🎧 Import cue points from USB
+                    </div>
+
+                    {}
+                    <div className="context-menu-item" onClick={handleWriteBpmKeyTags}>
+                      🏷️ Save BPM &amp; Key to file{selectionLabel}
+                    </div>
+
+                    {}
+                    {isPlaylistView ? (
+                      <>
+                        <div
+                          className="context-menu-item context-menu-item--danger"
+                          onClick={handleRemoveFromPlaylist}
+                        >
+                          ➖ Remove from playlist{selectionLabel}
+                        </div>
+                        <div
+                          className="context-menu-item context-menu-item--danger"
+                          onClick={handleRemove}
+                        >
+                          🗑️ Remove from library{selectionLabel}
+                        </div>
+                      </>
+                    ) : (
+                      <div
+                        className="context-menu-item context-menu-item--danger"
+                        onClick={handleRemove}
+                      >
+                        🗑️ Remove from library{selectionLabel}
+                      </div>
+                    )}
+                  </>
+                )}{' '}
+                {}
+              </div>
+            </>
+          </SubItemCtx.Provider>
+        )}
+        {toast && (
+          <div className={`music-library-toast${toast.ok ? '' : ' music-library-toast--warn'}`}>
+            {toast.msg}
+          </div>
+        )}
+      </div>
+      {}
+
+      {detailsTrack &&
+        (() => {
+          const idx = sortedTracksRef.current.findIndex((t) => t.id === detailsTrack.id);
+          return (
+            <TrackDetails
+              track={detailsTrack}
+              onSave={handleDetailsSave}
+              onCancel={handleDetailsClose}
+              onPrev={handleDetailsPrev}
+              onNext={handleDetailsNext}
+              hasPrev={idx > 0}
+              hasNext={idx >= 0 && idx < sortedTracksRef.current.length - 1}
+              pinned={detailsPinned}
+              onTogglePin={handleDetailsTogglePin}
+              onDirtyChange={setDetailsDirty}
+            />
+          );
+        })()}
+      {detailsBulkTracks && (
+        <TrackDetails
+          tracks={detailsBulkTracks}
+          onSave={handleDetailsSave}
+          onCancel={handleDetailsClose}
+        />
+      )}
+      {beatGridEditorTrack && (
+        <BeatGridEditor
+          track={beatGridEditorTrack}
+          onClose={() => setBeatGridEditorTrack(null)}
+          onApply={handleApplyBeatGrid}
+        />
+      )}
+    </div>
+  );
+}
+
+export default MusicLibrary;

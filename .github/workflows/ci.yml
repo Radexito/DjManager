@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  guard:
+    if: github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref != 'dev'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Reject direct PRs to main
+        run: |
+          echo "::error title=Wrong target branch::Only 'dev' may target 'main'. Retarget your PR to 'dev'."
+          exit 1
+
+  lint-and-test:
+    if: github.event_name != 'pull_request' || github.base_ref != 'main' || github.head_ref == 'dev'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts --legacy-peer-deps
+
+      - name: Install renderer dependencies
+        run: cd renderer && npm ci --legacy-peer-deps
+
+      - name: Build native modules for Node (tests)
+        run: npm rebuild better-sqlite3
+
+      - name: Lint (main process)
+        run: npm run lint
+
+      - name: Lint (renderer)
+        run: cd renderer && npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Test (main process)
+        run: npx vitest run --coverage
+        env:
+          DB_PATH: ':memory:'
+
+      - name: Test (renderer)
+        run: cd renderer && npm run test:coverage
+
+  e2e:
+    if: github.event_name != 'pull_request' || github.base_ref != 'main' || github.head_ref == 'dev'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts --legacy-peer-deps
+
+      - name: Install Electron binary
+        run: node node_modules/electron/install.js
+
+      - name: Install renderer dependencies
+        run: cd renderer && npm ci --legacy-peer-deps
+
+      - name: Build native modules for Electron
+        run: npx @electron/rebuild -f -w better-sqlite3
+
+      - name: Build renderer
+        run: npm run build-renderer
+
+      - name: Install Playwright system dependencies
+        run: |
+          SUDO=""
+          if command -v sudo >/dev/null 2>&1 && [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
+          $SUDO grep -rl 'dl.google.com' /etc/apt/sources.list.d/ 2>/dev/null | $SUDO xargs -r rm -f || true
+          $SUDO rm -rf /var/lib/apt/lists/* || true
+          npx playwright install-deps chromium
+          $SUDO apt-get install -y --no-install-recommends \
+            libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libatspi2.0-0 libgbm1 libdrm2 xdg-utils
+
+      - name: Run E2E tests
+        run: xvfb-run --auto-servernum npm run test:e2e
+        env:
+          DB_PATH: ':memory:'

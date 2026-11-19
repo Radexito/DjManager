@@ -1,0 +1,44 @@
+version: 2
+updates:
+  - package-ecosystem: 'npm'
+    directory: '/'
+    target-branch: 'dev'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 5
+    groups:
+      electron:
+        patterns:
+          - 'electron*'
+      build-tools:
+        patterns:
+          - 'vite'
+          - 'vitest'
+          - 'eslint*'
+          - 'prettier*'
+          - 'concurrently'
+          - 'lint-staged'
+          - 'husky'
+
+  - package-ecosystem: 'npm'
+    directory: '/renderer'
+    target-branch: 'dev'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 5
+    groups:
+      react:
+        patterns:
+          - 'react'
+          - 'react-dom'
+          - '@types/react*'
+
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    target-branch: 'dev'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 5

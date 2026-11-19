@@ -1,0 +1,181 @@
+{
+  "name": "dj_manager",
+  "version": "1.2.0",
+  "description": "DJ-focused music library manager",
+  "main": "src/main.js",
+  "desktopName": "dj_manager.desktop",
+  "scripts": {
+    "react": "cd renderer && npm run dev",
+    "electron": "wait-on file:.dev-url && electron .",
+    "dev": "node -e \"require('fs').rmSync('.dev-url',{force:true})\" && concurrently -k \"npm:react\" \"npm:electron\"",
+    "build-renderer": "cd renderer && npm run build",
+    "build": "npm run build-renderer",
+    "electron-prod": "NODE_ENV=production electron .",
+    "postinstall": "electron-builder install-app-deps",
+    "postdev-rebuild": "npx @electron/rebuild -f -w better-sqlite3",
+    "prepare": "husky",
+    "dist": "npm run build-renderer && electron-builder",
+    "dist:linux": "npm run build-renderer && electron-builder --linux",
+    "dist:win": "npm run build-renderer && electron-builder --win",
+    "dist:mac": "npm run build-renderer && electron-builder --mac",
+    "lint": "eslint src/",
+    "lint:all": "npm run lint && cd renderer && npm run lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "pretest": "npm rebuild better-sqlite3",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "pretest:coverage:main": "npm rebuild better-sqlite3",
+    "test:coverage:main": "vitest run --project main --project unit --coverage --coverage.include=src/main.js --coverage.include='src/main/**/*.js' --coverage.reportsDirectory=./coverage/main --coverage.thresholds.statements=80 --coverage.thresholds.branches=60 --coverage.thresholds.functions=80 --coverage.thresholds.lines=80",
+    "posttest:coverage:main": "npx @electron/rebuild -f -w better-sqlite3",
+    "test:e2e": "playwright test",
+    "test:watch": "vitest",
+    "posttest": "npx @electron/rebuild -f -w better-sqlite3"
+  },
+  "build": {
+    "appId": "com.djmanager.app",
+    "productName": "DJ Manager",
+    "directories": {
+      "buildResources": "build-resources",
+      "output": "dist-electron"
+    },
+    "files": [
+      "src/**/*",
+      "renderer/dist/**/*",
+      "node_modules/**/*",
+      "!node_modules/.cache/**/*",
+      "!**/*.map"
+    ],
+    "asarUnpack": [
+      "**/node_modules/onnxruntime-node/**"
+    ],
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Audio",
+      "extraResources": [],
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**",
+        "!node_modules/onnxruntime-node/bin/napi-v6/win32/**"
+      ],
+      "artifactName": "${productName}-${version}-Linux.${ext}",
+      "syncDesktopName": true
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.music",
+      "extraResources": [],
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v6/linux/**",
+        "!node_modules/onnxruntime-node/bin/napi-v6/win32/**"
+      ]
+    },
+    "win": {
+      "target": "nsis",
+      "extraResources": [],
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**",
+        "!node_modules/onnxruntime-node/bin/napi-v6/linux/**"
+      ],
+      "artifactName": "djmanager-${version}-win-setup.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "releaseType": "release"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Radexito/DjManager.git"
+  },
+  "keywords": [
+    "music",
+    "music-player",
+    "music-library",
+    "dj",
+    "mixxx",
+    "library-management-system",
+    "traktor",
+    "music-player-application",
+    "organizing-tools",
+    "dj-tools",
+    "electron",
+    "rekordbox",
+    "bpm",
+    "audio-analysis"
+  ],
+  "author": {
+    "name": "Radexito",
+    "email": "ceo@rwtechworks.pl"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/Radexito/DjManager/issues"
+  },
+  "homepage": "https://github.com/Radexito/DjManager#readme",
+  "lint-staged": {
+    "src/**/*.js": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "renderer/src/**/*.{js,jsx}": [
+      "prettier --write"
+    ],
+    "e2e/**/*.js": [
+      "prettier --write"
+    ],
+    "*.{json,md,yml}": [
+      "prettier --write"
+    ],
+    "**/*.css": [
+      "prettier --write"
+    ],
+    "**/*.{mjs,cjs}": [
+      "prettier --write"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
+    "@vitest/coverage-v8": "^5.0.3",
+    "concurrently": "^10.0.5",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "electron-rebuild": "^3.2.9",
+    "eslint": "^10.11.0",
+    "globals": "^17.13.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
+    "prettier": "^3.9.9",
+    "vitest": "^5.0.3",
+    "wait-on": "^9.1.0"
+  },
+  "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "better-sqlite3": "^13.0.3",
+    "onnxruntime-node": "^1.31.1",
+    "react-virtualized": "^9.22.6",
+    "react-window": "^2.3.3"
+  },
+  "overrides": {
+    "@electron/rebuild": {
+      "node-abi": "^4.35.0"
+    }
+  }
+}

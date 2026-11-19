@@ -1,0 +1,69 @@
+.top-bar {
+  min-height: 68px;
+  flex-shrink: 0;
+  background: #111;
+  border-bottom: 1px solid #2a2a2a;
+  display: flex;
+  align-items: stretch;
+  padding: 0 16px;
+  gap: 16px;
+  z-index: 100;
+}
+
+.top-bar__logo {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 160px;
+  cursor: pointer;
+}
+
+.top-bar__logo-img {
+  height: 36px;
+  width: auto;
+  object-fit: contain;
+}
+
+.top-bar__spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.top-bar__actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 160px;
+  justify-content: flex-end;
+}
+
+.top-bar__link-btn,
+.top-bar__settings-btn {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 4px;
+  line-height: 1;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+
+.top-bar__link-btn {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.top-bar__settings-btn {
+  font-size: 20px;
+}
+
+.top-bar__link-btn:hover,
+.top-bar__settings-btn:hover {
+  color: #fff;
+  background: #2a2a2a;
+}

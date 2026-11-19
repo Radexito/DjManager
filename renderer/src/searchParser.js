@@ -1,0 +1,380 @@
+export const FIELDS = {
+  title: { type: 'text', label: 'TITLE' },
+  artist: { type: 'text', label: 'ARTIST' },
+  album: { type: 'text', label: 'ALBUM' },
+  label: { type: 'text', label: 'LABEL' },
+  genre: { type: 'text', label: 'GENRE' },
+  bpm: { type: 'number', label: 'BPM' },
+  key: { type: 'key', label: 'KEY' },
+  loudness: { type: 'number', label: 'LOUDNESS' },
+  year: { type: 'number', label: 'YEAR' },
+  rating: { type: 'number', label: 'RATING' },
+  duration: { type: 'number', label: 'DURATION' },
+  bitrate: { type: 'number', label: 'BITRATE' },
+};
+
+const TEXT_OPS = ['is not', 'starts with', 'is', 'contains'];
+const GENRE_OPS = ['is not', 'is', 'contains'];
+const NUM_OPS = ['in range', '>=', '<=', '>', '<', 'is'];
+const KEY_OPS = ['mode switch', 'adjacent', 'matches', 'is'];
+
+/**
+ * Operators offered for a search field, depending on its type (numeric ranges,
+ * Camelot key relations, genre matching, plain text).
+ *
+ * @param {string} fieldKey Field key from FIELDS.
+ * @returns {string[]} Allowed operator labels.
+ */
+export function getOpsForField(fieldKey) {
+  const t = FIELDS[fieldKey]?.type;
+  if (t === 'number') return NUM_OPS;
+  if (t === 'key') return KEY_OPS;
+  if (fieldKey === 'genre') return GENRE_OPS;
+  return TEXT_OPS;
+}
+
+/** Returns all 24 valid Camelot keys in lowercase (1a…12a, 1b…12b). */
+export const CAMELOT_KEYS = [
+  ...Array.from({ length: 12 }, (_, i) => `${i + 1}a`),
+  ...Array.from({ length: 12 }, (_, i) => `${i + 1}b`),
+];
+
+/**
+ * Parse a Camelot key such as "8A" into its number and letter.
+ *
+ * @param {string} key Key text, case insensitive.
+ * @returns {{ n: number, letter: string }|null} Parsed key, or null when malformed.
+ */
+function parseCamelot(key) {
+  const m = String(key)
+    .trim()
+    .match(/^(\d+)([aAbB])$/);
+  if (!m) return null;
+  return { n: parseInt(m[1], 10), letter: m[2].toUpperCase() };
+}
+
+/** Exact key (normalised). */
+export function camelotExact(key) {
+  const c = parseCamelot(key);
+  return c ? [`${c.n}${c.letter}`.toLowerCase()] : [key.toLowerCase()];
+}
+
+/** Same number, opposite letter — minor ↔ major atmosphere shift. */
+export function camelotModeSwitch(key) {
+  const c = parseCamelot(key);
+  if (!c) return [key.toLowerCase()];
+  const other = c.letter === 'A' ? 'B' : 'A';
+  return [`${c.n}${other}`.toLowerCase()];
+}
+
+/** ±1 on the wheel, same letter — energy boost / drop. */
+export function camelotAdjacent(key) {
+  const c = parseCamelot(key);
+  if (!c) return [key.toLowerCase()];
+  const prev = c.n === 1 ? 12 : c.n - 1;
+  const next = c.n === 12 ? 1 : c.n + 1;
+  return [`${prev}${c.letter}`.toLowerCase(), `${next}${c.letter}`.toLowerCase()];
+}
+
+/** All four compatible keys (exact + adjacent + mode switch). */
+export function camelotMatches(key) {
+  return [...camelotExact(key), ...camelotModeSwitch(key), ...camelotAdjacent(key)];
+}
+
+/**
+ * Parse one clause like "BPM in range 140-145" → Filter object.
+ * Returns null when the clause is empty or doesn't start with a known field.
+ * Returns { field: '_text', ... } for unstructured text.
+ */
+export function parseClause(clause) {
+  const c = clause.trim();
+  if (!c) return null;
+
+  for (const [fieldKey, fieldDef] of Object.entries(FIELDS)) {
+    const label = fieldDef.label;
+    if (!c.toUpperCase().startsWith(label)) continue;
+
+    const afterField = c.slice(label.length);
+    if (afterField.length > 0 && !/^\s/.test(afterField)) continue;
+    const rest = afterField.trim();
+    if (!rest) continue;
+
+    const ops = getOpsForField(fieldKey);
+    for (const op of ops) {
+      if (!rest.toLowerCase().startsWith(op.toLowerCase())) continue;
+      const afterOp = rest.slice(op.length);
+      if (afterOp.length > 0 && !/^\s/.test(afterOp)) continue;
+      const value = afterOp.trim();
+      if (!value) continue;
+
+      if (op === 'in range') {
+        const m = value.match(/^(-?\d+\.?\d*)\s*[-–]\s*(-?\d+\.?\d*)$/);
+        if (!m) continue;
+        return { field: fieldKey, op: 'range', from: Number(m[1]), to: Number(m[2]) };
+      }
+
+      return { field: fieldKey, op, value };
+    }
+  }
+
+  return { field: '_text', op: 'contains', value: c };
+}
+
+/**
+ * Whether `raw` is already an unambiguous, complete filter clause (a full
+ * number, range, or Camelot key). Used to auto-commit a clause into a chip
+ * as soon as it's finished, without waiting for " AND ". Text-field values
+ * are deliberately excluded since they can legitimately contain spaces
+ * mid-typing (e.g. "GENRE is Deep House").
+ */
+export function isCompleteClause(raw) {
+  const filter = parseClause(raw);
+  if (!filter || filter.field === '_text') return false;
+  const fieldDef = FIELDS[filter.field];
+  if (!fieldDef || fieldDef.type === 'text') return false;
+
+  if (fieldDef.type === 'key') {
+    return CAMELOT_KEYS.includes(String(filter.value).trim().toLowerCase());
+  }
+
+  if (filter.op === 'range') return true;
+  return /^-?\d+\.?\d*$/.test(String(filter.value).trim());
+}
+
+/**
+ * Parse the full query string.
+ *
+ * "GENRE is Psytrance AND BPM in range 140-145"
+ *   → { filters: [{field:'genre',op:'is',value:'Psytrance'}, {field:'bpm',op:'range',from:140,to:145}], remaining: '' }
+ *
+ * The last clause is returned as `remaining` when it hasn't been fully typed yet
+ * (i.e. it parses as free-text but earlier clauses were structured).
+ */
+export function parseQuery(queryText) {
+  if (!queryText?.trim()) return { filters: [], remaining: '' };
+
+  const parts = queryText.split(/\s+AND\s+/i);
+  const filters = [];
+
+  for (let i = 0; i < parts.length; i++) {
+    const isLast = i === parts.length - 1;
+    const filter = parseClause(parts[i]);
+    if (!filter) continue;
+
+    if (filter.field === '_text') {
+      if (!isLast) filters.push(filter);
+    } else {
+      filters.push(filter);
+    }
+  }
+
+  const lastParsed = parseClause(parts[parts.length - 1]);
+  const remaining = !lastParsed || lastParsed.field === '_text' ? parts[parts.length - 1] : '';
+
+  return { filters, remaining };
+}
+
+/** Convert a filter back to its display string. */
+export function filterToText(f) {
+  const label = FIELDS[f.field]?.label ?? f.field.toUpperCase();
+  if (f.op === 'range') return `${label} in range ${f.from}-${f.to}`;
+  return `${label} ${f.op} ${f.value}`;
+}
+
+/** Remove the filter at `index` and return the updated query string. */
+export function removeFilter(queryText, index) {
+  const { filters } = parseQuery(queryText);
+  return filters
+    .filter((_, i) => i !== index)
+    .map(filterToText)
+    .join(' AND ');
+}
+
+/**
+ * Returns contextual suggestions for what the user is currently typing.
+ * Each suggestion: { type: 'field'|'operator'|'value'|'hint', text, insertText, description? }
+ */
+export function getSuggestions(queryText) {
+  const andParts = queryText.split(/\s+AND\s+/i);
+  const current = andParts[andParts.length - 1];
+  const currentTrimUp = current.trim().toUpperCase();
+  const prefix = andParts
+    .slice(0, -1)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .join(' AND ');
+
+  const full = (clauseSuffix) => (prefix ? `${prefix} AND ${clauseSuffix}` : clauseSuffix);
+
+  let matchedField = null;
+  let afterField = '';
+  for (const [key, def] of Object.entries(FIELDS)) {
+    const label = def.label;
+    if (currentTrimUp === label || currentTrimUp.startsWith(label + ' ')) {
+      matchedField = [key, def];
+      afterField = current.trim().slice(label.length).trim();
+      break;
+    }
+  }
+
+  if (matchedField) {
+    const [fieldKey, fieldDef] = matchedField;
+    const ops = getOpsForField(fieldKey);
+    const afterLow = afterField.toLowerCase();
+
+    const matchedOp = ops.find(
+      (op) => afterLow === op.toLowerCase() || afterLow.startsWith(op.toLowerCase() + ' ')
+    );
+
+    if (matchedOp) {
+      const afterOp = afterField.slice(matchedOp.length).trim();
+      const clauseBase = `${fieldDef.label} ${matchedOp} `;
+      return getValueHints(fieldKey, matchedOp, full(clauseBase), afterOp);
+    }
+
+    const clauseBase = fieldDef.label + ' ';
+    return ops
+      .filter((op) => afterField === '' || op.toLowerCase().startsWith(afterLow))
+      .map((op) => ({
+        type: 'operator',
+        text: op,
+        insertText: full(clauseBase + op + ' '),
+        description: opDescription(fieldKey, op),
+      }));
+  }
+
+  return Object.entries(FIELDS)
+    .filter(([, def]) => currentTrimUp === '' || def.label.startsWith(currentTrimUp))
+    .map(([, def]) => ({
+      type: 'field',
+      text: def.label,
+      insertText: full(def.label + ' '),
+    }));
+}
+
+/**
+ * Short human description of an operator for the suggestion list, e.g. what
+ * "adjacent" means for a key search or the expected value shape for a range.
+ *
+ * @param {string} fieldKey Field key.
+ * @param {string} op Operator label.
+ * @returns {string|undefined} Description, or undefined when the operator needs none.
+ */
+function opDescription(fieldKey, op) {
+  if (fieldKey === 'key') {
+    const map = {
+      is: 'exact key match',
+      adjacent: '±1 on wheel — energy shift',
+      'mode switch': 'minor ↔ major — atmosphere',
+      matches: 'all compatible keys',
+    };
+    return map[op];
+  }
+  if (op === 'in range') return 'e.g. 130-140';
+  if (op === 'starts with') return 'matches anything beginning with it';
+  return undefined;
+}
+
+/**
+ * Value suggestions for the clause being typed, filtered by field and operator.
+ *
+ * @param {string} fieldKey Field key.
+ * @param {string} op Operator label.
+ * @param {string} base Text inserted before the suggestion (field + operator).
+ * @param {string} [partialValue] What the user has typed so far; complete values
+ *   suppress the hint.
+ * @returns {{ type: string, text: string, insertText: string, description: string }[]}
+ *   Suggestion entries, possibly empty.
+ */
+function getValueHints(fieldKey, op, base, partialValue = '') {
+  if (fieldKey === 'key') {
+    if (!partialValue) return [];
+    const partial = partialValue.toLowerCase();
+    if (CAMELOT_KEYS.includes(partial)) return [];
+    const desc = {
+      is: 'exact — e.g. 8A',
+      adjacent: 'energy shift — e.g. 8A',
+      'mode switch': 'atmosphere — e.g. 8A',
+      matches: 'all compatible — e.g. 8A',
+    };
+    return CAMELOT_KEYS.filter((k) => k.startsWith(partial)).map((k) => ({
+      type: 'value',
+      text: k.toUpperCase(),
+      insertText: base + k.toUpperCase(),
+      description: desc[op],
+    }));
+  }
+
+  if (partialValue) {
+    const trimmed = partialValue.trim();
+    const isComplete =
+      op === 'in range'
+        ? /^-?\d+\.?\d*\s*[-–]\s*-?\d+\.?\d*$/.test(trimmed)
+        : /^-?\d+\.?\d*$/.test(trimmed);
+    if (isComplete) return [];
+  }
+
+  const hints = {
+    bpm: { 'in range': '130-140', is: '128', '>': '130', '<': '140', '>=': '128', '<=': '140' },
+    loudness: { 'in range': '-10--6', is: '-8', '>': '-10', '<': '-6' },
+    year: { 'in range': '2020-2024', is: '2024', '>': '2020' },
+    rating: { 'in range': '3-5', is: '5', '>=': '4' },
+    duration: { '>': '180', '<': '300', 'in range': '180-300' },
+    bitrate: { '>=': '320', '>': '256', '<': '320', 'in range': '192-320' },
+  };
+
+  const hint = hints[fieldKey]?.[op];
+  if (!hint) return [];
+  return [{ type: 'hint', text: hint, insertText: base + hint, description: `e.g. ${hint}` }];
+}
+
+/** The search bar splits clauses on " AND ", so those separators are unsafe. */
+const AND_SEPARATOR_RE = /\s+AND\s+/i;
+
+/**
+ * A tag can list several artists in one string ("Sigma, Doctor P"). Split it into
+ * individual names so the clickable artist cells offer one link per artist
+ * instead of one link for the whole credit string.
+ *
+ * Trims each name, drops empty parts (trailing commas) and ignores duplicates
+ * that differ only in case - the first spelling wins.
+ */
+export function splitArtists(artist) {
+  const raw = String(artist ?? '').trim();
+  if (!raw) return [];
+  if (!raw.includes(',')) return [raw];
+
+  const seen = new Set();
+  const names = [];
+  for (const part of raw.split(',')) {
+    const name = part.trim();
+    if (!name) continue;
+    const dedupe = name.toLowerCase();
+    if (seen.has(dedupe)) continue;
+    seen.add(dedupe);
+    names.push(name);
+  }
+  return names;
+}
+
+/**
+ * Query that searches the library for one artist, used by the clickable artist
+ * cells (Music/playlist tables) and the player bar. Uppercase label matches how
+ * the search bar renders a committed chip, and multi-word names work because a
+ * text field consumes the rest of the clause.
+ *
+ * A name containing " AND " cannot be expressed as a field clause (the query
+ * would split into two clauses), so it degrades to free text - which still
+ * matches the artist column, because `_text` searches artist names too.
+ *
+ * `fromCredit` marks a name that came out of a comma-separated credit. Those are
+ * searched with `contains`: a name pulled out of "Merage, Ghost in Real Life,
+ * Egzod" is almost never a whole tag on its own, so exact `is` returns an empty
+ * list - the collab tracks it came from are exactly what the user wants.
+ */
+export function buildArtistQuery(artist, { fromCredit = false } = {}) {
+  const name = String(artist ?? '').trim();
+  if (!name) return '';
+  if (AND_SEPARATOR_RE.test(name)) return name;
+  return `ARTIST ${fromCredit ? 'contains' : 'is'} ${name}`;
+}

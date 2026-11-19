@@ -1,0 +1,858 @@
+import { describe, it, expect } from 'vitest';
+import {
+  addTrack,
+  getTracks,
+  getTrackById,
+  getTrackByHash,
+  updateTrack,
+  setTrackSampleInfo,
+  removeTrack,
+  removeTracks,
+  getTrackCountByFilePath,
+  getTrackIds,
+  normalizeLibrary,
+  clearTracks,
+  getTrackIdsNeedingNormalization,
+  getNormalizedTrackCount,
+  getLegacyNormalizedTracks,
+  clearLegacyNormalizedPaths,
+  resetNormalization,
+  countTracks,
+  getTrackRank,
+} from '../db/trackRepository.js';
+import { createLibrary } from '../db/libraryRepository.js';
+import { createPlaylist, addTracksToPlaylist } from '../db/playlistRepository.js';
+
+const SAMPLE = {
+  title: 'Test Track',
+  artist: 'Test Artist',
+  album: 'Test Album',
+  duration: 180.5,
+  file_path: '/tmp/test.mp3',
+  file_hash: 'abc123',
+  format: 'mp3',
+  bitrate: 320000,
+};
+
+describe('trackRepository', () => {
+  describe('addTrack / getTrackById', () => {
+    it('inserts a track and returns it by ID', () => {
+      const id = addTrack(SAMPLE);
+      expect(id).toBeGreaterThan(0);
+
+      const track = getTrackById(id);
+      expect(track.title).toBe('Test Track');
+      expect(track.artist).toBe('Test Artist');
+      expect(track.duration).toBeCloseTo(180.5);
+    });
+  });
+
+  describe('sample_rate / bit_depth (#561)', () => {
+    it('addTrack stores both real values', () => {
+      const id = addTrack({ ...SAMPLE, sample_rate: 48000, bit_depth: 24 });
+
+      const track = getTrackById(id);
+      expect(track.sample_rate).toBe(48000);
+      expect(track.bit_depth).toBe(24);
+    });
+
+    it('addTrack leaves both NULL when the caller has nothing to store', () => {
+      const track = getTrackById(addTrack(SAMPLE));
+
+      expect(track.sample_rate).toBeNull();
+      expect(track.bit_depth).toBeNull();
+    });
+
+    it('setTrackSampleInfo fills only the missing value', () => {
+      const id = addTrack({ ...SAMPLE, sample_rate: 88200 });
+
+      expect(setTrackSampleInfo(id, { sampleRate: null, bitDepth: 24 })).toBe(true);
+      const track = getTrackById(id);
+      expect(track.sample_rate).toBe(88200);
+      expect(track.bit_depth).toBe(24);
+    });
+
+    it('setTrackSampleInfo ignores a missing or zero value instead of overwriting', () => {
+      const id = addTrack({ ...SAMPLE, sample_rate: 44100, bit_depth: 16 });
+
+      expect(setTrackSampleInfo(id, { sampleRate: 0, bitDepth: null })).toBe(false);
+      const track = getTrackById(id);
+      expect(track.sample_rate).toBe(44100);
+      expect(track.bit_depth).toBe(16);
+    });
+
+    it('setTrackSampleInfo does not mark the track as analyzed', () => {
+      const id = addTrack(SAMPLE);
+      expect(getTrackById(id).analyzed).toBe(0);
+
+      setTrackSampleInfo(id, { sampleRate: 96000, bitDepth: 24 });
+      expect(getTrackById(id).analyzed).toBe(0);
+    });
+  });
+
+  describe('getTrackByHash', () => {
+    it('returns track by file hash', () => {
+      addTrack(SAMPLE);
+      const track = getTrackByHash('abc123');
+      expect(track).toBeDefined();
+      expect(track.title).toBe('Test Track');
+    });
+
+    it('returns undefined for unknown hash', () => {
+      expect(getTrackByHash('nope')).toBeUndefined();
+    });
+  });
+
+  describe('getTracks', () => {
+    it('returns all tracks', () => {
+      addTrack(SAMPLE);
+      addTrack({ ...SAMPLE, title: 'Second Track', file_hash: 'def456', file_path: '/tmp/b.mp3' });
+      const tracks = getTracks({ limit: 50 });
+      expect(tracks).toHaveLength(2);
+    });
+
+    it('filters by search term (title)', () => {
+      addTrack(SAMPLE);
+      addTrack({ ...SAMPLE, title: 'House Banger', file_hash: 'xyz', file_path: '/tmp/c.mp3' });
+      const results = getTracks({ search: 'house' });
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('House Banger');
+    });
+
+    it('respects limit and offset', () => {
+      for (let i = 0; i < 5; i++) {
+        addTrack({
+          ...SAMPLE,
+          title: `Track ${i}`,
+          file_hash: `h${i}`,
+          file_path: `/tmp/${i}.mp3`,
+        });
+      }
+      const page1 = getTracks({ limit: 2, offset: 0 });
+      const page2 = getTracks({ limit: 2, offset: 2 });
+      expect(page1).toHaveLength(2);
+      expect(page2).toHaveLength(2);
+      expect(page1[0].title).not.toBe(page2[0].title);
+    });
+
+    it('filters by TITLE is', () => {
+      addTrack(SAMPLE);
+      addTrack({ ...SAMPLE, title: 'Other', file_hash: 'o1', file_path: '/tmp/o1.mp3' });
+      const results = getTracks({ filters: [{ field: 'title', op: 'is', value: 'test track' }] });
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('Test Track');
+    });
+
+    it('filters by TITLE contains', () => {
+      addTrack(SAMPLE);
+      addTrack({
+        ...SAMPLE,
+        title: 'Deep House Banger',
+        file_hash: 'dh1',
+        file_path: '/tmp/dh1.mp3',
+      });
+      const results = getTracks({ filters: [{ field: 'title', op: 'contains', value: 'house' }] });
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('Deep House Banger');
+    });
+
+    it('filters by ARTIST starts with, including inside a credit', () => {
+      addTrack({
+        ...SAMPLE,
+        artist: 'Merage, Ghost in Real Life, Egzod',
+        file_hash: 'c1',
+        file_path: '/tmp/c1.mp3',
+      });
+      addTrack({
+        ...SAMPLE,
+        artist: 'Ghost in Real Life',
+        file_hash: 'c2',
+        file_path: '/tmp/c2.mp3',
+      });
+      addTrack({ ...SAMPLE, artist: 'Egzod', file_hash: 'c3', file_path: '/tmp/c3.mp3' });
+
+      const credit = getTracks({
+        filters: [{ field: 'artist', op: 'starts with', value: 'Ghost in Real' }],
+      });
+      expect(credit.map((t) => t.artist).sort()).toEqual([
+        'Ghost in Real Life',
+        'Merage, Ghost in Real Life, Egzod',
+      ]);
+
+      const whole = getTracks({
+        filters: [{ field: 'artist', op: 'starts with', value: 'Merage' }],
+      });
+      expect(whole).toHaveLength(1);
+      expect(whole[0].artist).toBe('Merage, Ghost in Real Life, Egzod');
+
+      const later = getTracks({
+        filters: [{ field: 'artist', op: 'starts with', value: 'Egzod' }],
+      });
+      expect(later.map((t) => t.artist).sort()).toEqual([
+        'Egzod',
+        'Merage, Ghost in Real Life, Egzod',
+      ]);
+
+      expect(
+        getTracks({ filters: [{ field: 'artist', op: 'starts with', value: 'Real' }] })
+      ).toHaveLength(0);
+    });
+
+    it('filters by TITLE starts with', () => {
+      addTrack(SAMPLE);
+      addTrack({
+        ...SAMPLE,
+        title: 'Deep House Banger',
+        file_hash: 'df2',
+        file_path: '/tmp/df2.mp3',
+      });
+      const results = getTracks({
+        filters: [{ field: 'title', op: 'starts with', value: 'deep ' }],
+      });
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('Deep House Banger');
+    });
+
+    it('filters by TITLE is not', () => {
+      addTrack(SAMPLE);
+      addTrack({ ...SAMPLE, title: 'Other', file_hash: 'o2', file_path: '/tmp/o2.mp3' });
+      const results = getTracks({ filters: [{ field: 'title', op: 'is not', value: 'other' }] });
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('Test Track');
+    });
+
+    it('filters by BPM is', () => {
+      const id = addTrack(SAMPLE);
+      updateTrack(id, { bpm: 128 });
+      addTrack({ ...SAMPLE, file_hash: 'bpm2', file_path: '/tmp/bpm2.mp3' });
+      const results = getTracks({ filters: [{ field: 'bpm', op: 'is', value: 128 }] });
+      expect(results).toHaveLength(1);
+    });
+
+    it('filters by BPM range', () => {
+      const id1 = addTrack(SAMPLE);
+      updateTrack(id1, { bpm: 130 });
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'bpm3', file_path: '/tmp/bpm3.mp3' });
+      updateTrack(id2, { bpm: 150 });
+      const results = getTracks({ filters: [{ field: 'bpm', op: 'range', from: 125, to: 135 }] });
+      expect(results).toHaveLength(1);
+    });
+
+    it('filters by BPM > operator', () => {
+      const id1 = addTrack(SAMPLE);
+      updateTrack(id1, { bpm: 140 });
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'bpm4', file_path: '/tmp/bpm4.mp3' });
+      updateTrack(id2, { bpm: 100 });
+      const results = getTracks({ filters: [{ field: 'bpm', op: '>', value: 130 }] });
+      expect(results).toHaveLength(1);
+    });
+
+    it('filters by KEY is', () => {
+      const id = addTrack(SAMPLE);
+      updateTrack(id, { key_camelot: '8a' });
+      addTrack({ ...SAMPLE, file_hash: 'k2', file_path: '/tmp/k2.mp3' });
+      const results = getTracks({ filters: [{ field: 'key', op: 'is', value: '8A' }] });
+      expect(results).toHaveLength(1);
+    });
+
+    it('filters by KEY adjacent', () => {
+      const id1 = addTrack(SAMPLE);
+      updateTrack(id1, { key_camelot: '7a' });
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'k3', file_path: '/tmp/k3.mp3' });
+      updateTrack(id2, { key_camelot: '9a' });
+      const id3 = addTrack({ ...SAMPLE, file_hash: 'k4', file_path: '/tmp/k4.mp3' });
+      updateTrack(id3, { key_camelot: '1a' });
+      const results = getTracks({ filters: [{ field: 'key', op: 'adjacent', value: '8A' }] });
+      expect(results).toHaveLength(2);
+    });
+
+    it('filters by KEY mode switch', () => {
+      const id1 = addTrack(SAMPLE);
+      updateTrack(id1, { key_camelot: '8b' });
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'k5', file_path: '/tmp/k5.mp3' });
+      updateTrack(id2, { key_camelot: '8a' });
+      const results = getTracks({ filters: [{ field: 'key', op: 'mode switch', value: '8A' }] });
+      expect(results).toHaveLength(1);
+    });
+
+    it('filters by KEY matches (all 4)', () => {
+      const id1 = addTrack(SAMPLE);
+      updateTrack(id1, { key_camelot: '8a' });
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'k6', file_path: '/tmp/k6.mp3' });
+      updateTrack(id2, { key_camelot: '8b' });
+      const id3 = addTrack({ ...SAMPLE, file_hash: 'k7', file_path: '/tmp/k7.mp3' });
+      updateTrack(id3, { key_camelot: '7a' });
+      const id4 = addTrack({ ...SAMPLE, file_hash: 'k8', file_path: '/tmp/k8.mp3' });
+      updateTrack(id4, { key_camelot: '1b' });
+      const results = getTracks({ filters: [{ field: 'key', op: 'matches', value: '8A' }] });
+      expect(results).toHaveLength(3);
+    });
+
+    it('filters by GENRE is', () => {
+      const id = addTrack(SAMPLE);
+      updateTrack(id, { genres: JSON.stringify(['Techno', 'Industrial']) });
+      addTrack({ ...SAMPLE, file_hash: 'g2', file_path: '/tmp/g2.mp3' });
+      const results = getTracks({ filters: [{ field: 'genre', op: 'is', value: 'Techno' }] });
+      expect(results).toHaveLength(1);
+    });
+
+    it('filters by GENRE contains', () => {
+      const id = addTrack(SAMPLE);
+      updateTrack(id, { genres: JSON.stringify(['Psytrance']) });
+      addTrack({ ...SAMPLE, file_hash: 'g3', file_path: '/tmp/g3.mp3' });
+      const results = getTracks({ filters: [{ field: 'genre', op: 'contains', value: 'psy' }] });
+      expect(results).toHaveLength(1);
+    });
+
+    it('filters by GENRE is not', () => {
+      const id1 = addTrack(SAMPLE);
+      updateTrack(id1, { genres: JSON.stringify(['Techno']) });
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'g4', file_path: '/tmp/g4.mp3' });
+      updateTrack(id2, { genres: JSON.stringify(['House']) });
+      const results = getTracks({ filters: [{ field: 'genre', op: 'is not', value: 'House' }] });
+      expect(results.map((t) => t.id)).toContain(id1);
+      expect(results.map((t) => t.id)).not.toContain(id2);
+    });
+
+    it('stacks multiple filters (AND)', () => {
+      const id1 = addTrack(SAMPLE);
+      updateTrack(id1, { bpm: 128, key_camelot: '8a' });
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'st2', file_path: '/tmp/st2.mp3' });
+      updateTrack(id2, { bpm: 140, key_camelot: '8a' });
+      const results = getTracks({
+        filters: [
+          { field: 'bpm', op: 'is', value: 128 },
+          { field: 'key', op: 'is', value: '8A' },
+        ],
+      });
+      expect(results).toHaveLength(1);
+      expect(results[0].id).toBe(id1);
+    });
+
+    it('filters by YEAR range', () => {
+      const id1 = addTrack(SAMPLE);
+      updateTrack(id1, { year: 2020 });
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'yr2', file_path: '/tmp/yr2.mp3' });
+      updateTrack(id2, { year: 2015 });
+      const results = getTracks({
+        filters: [{ field: 'year', op: 'range', from: 2018, to: 2022 }],
+      });
+      expect(results).toHaveLength(1);
+    });
+
+    it('filters by LOUDNESS >', () => {
+      const id1 = addTrack(SAMPLE);
+      updateTrack(id1, { loudness: -8 });
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'ld2', file_path: '/tmp/ld2.mp3' });
+      updateTrack(id2, { loudness: -14 });
+      const results = getTracks({ filters: [{ field: 'loudness', op: '>', value: -10 }] });
+      expect(results).toHaveLength(1);
+    });
+
+    it('filters by BITRATE >= (kbps input, stored as bps)', () => {
+      addTrack(SAMPLE);
+      addTrack({ ...SAMPLE, file_hash: 'br2', file_path: '/tmp/br2.mp3', bitrate: 128000 });
+      const results = getTracks({ filters: [{ field: 'bitrate', op: '>=', value: '256' }] });
+      expect(results).toHaveLength(1);
+      expect(results[0].bitrate).toBe(320000);
+    });
+
+    it('filters by BITRATE < (kbps input)', () => {
+      addTrack(SAMPLE);
+      addTrack({ ...SAMPLE, file_hash: 'br3', file_path: '/tmp/br3.mp3', bitrate: 128000 });
+      const results = getTracks({ filters: [{ field: 'bitrate', op: '<', value: '256' }] });
+      expect(results).toHaveLength(1);
+      expect(results[0].bitrate).toBe(128000);
+    });
+
+    it('filters by BITRATE is (kbps input)', () => {
+      addTrack(SAMPLE);
+      addTrack({ ...SAMPLE, file_hash: 'br4', file_path: '/tmp/br4.mp3', bitrate: 192000 });
+      const results = getTracks({ filters: [{ field: 'bitrate', op: 'is', value: '320' }] });
+      expect(results).toHaveLength(1);
+      expect(results[0].bitrate).toBe(320000);
+    });
+
+    it('filters by BITRATE in range (kbps input)', () => {
+      addTrack(SAMPLE);
+      addTrack({ ...SAMPLE, file_hash: 'br5', file_path: '/tmp/br5.mp3', bitrate: 256000 });
+      addTrack({ ...SAMPLE, file_hash: 'br6', file_path: '/tmp/br6.mp3', bitrate: 128000 });
+      const results = getTracks({
+        filters: [{ field: 'bitrate', op: 'range', from: 200, to: 300 }],
+      });
+      expect(results).toHaveLength(1);
+      expect(results[0].bitrate).toBe(256000);
+    });
+  });
+
+  describe('getTrackIds', () => {
+    it('returns array of IDs', () => {
+      const id1 = addTrack(SAMPLE);
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'zzz', file_path: '/tmp/z.mp3' });
+      const ids = getTrackIds({});
+      expect(ids).toContain(id1);
+      expect(ids).toContain(id2);
+    });
+
+    it('returns filtered IDs with filters param', () => {
+      const id1 = addTrack(SAMPLE);
+      updateTrack(id1, { bpm: 128 });
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'fid2', file_path: '/tmp/fid2.mp3' });
+      updateTrack(id2, { bpm: 140 });
+      const ids = getTrackIds({ filters: [{ field: 'bpm', op: 'is', value: 128 }] });
+      expect(ids).toContain(id1);
+      expect(ids).not.toContain(id2);
+    });
+  });
+
+  describe('updateTrack', () => {
+    it('updates specified fields', () => {
+      const id = addTrack(SAMPLE);
+      updateTrack(id, { bpm: 128, key_raw: 'Am' });
+      const track = getTrackById(id);
+      expect(track.bpm).toBe(128);
+      expect(track.key_raw).toBe('Am');
+      expect(track.title).toBe('Test Track');
+    });
+
+    it('persists library_id and is_linked (used by moveTrackToLibrary)', () => {
+      const id = addTrack(SAMPLE);
+      const targetLibrary = createLibrary({ name: 'Backup' });
+      updateTrack(id, {
+        library_id: targetLibrary.id,
+        is_linked: 0,
+        file_path: '/tmp/new/location.mp3',
+      });
+      const track = getTrackById(id);
+      expect(track.library_id).toBe(targetLibrary.id);
+      expect(track.is_linked).toBe(0);
+      expect(track.file_path).toBe('/tmp/new/location.mp3');
+    });
+  });
+
+  describe('removeTrack', () => {
+    it('deletes the track', () => {
+      const id = addTrack(SAMPLE);
+      removeTrack(id);
+      expect(getTrackById(id)).toBeUndefined();
+    });
+
+    it('does not affect other tracks', () => {
+      const id1 = addTrack(SAMPLE);
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'other', file_path: '/tmp/other.mp3' });
+      removeTrack(id1);
+      expect(getTrackById(id2)).toBeDefined();
+    });
+  });
+
+  describe('removeTracks', () => {
+    it('deletes all given tracks in one transaction', () => {
+      const id1 = addTrack(SAMPLE);
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'b', file_path: '/tmp/b.mp3' });
+      const id3 = addTrack({ ...SAMPLE, file_hash: 'c', file_path: '/tmp/c.mp3' });
+      removeTracks([id1, id2]);
+      expect(getTrackById(id1)).toBeUndefined();
+      expect(getTrackById(id2)).toBeUndefined();
+      expect(getTrackById(id3)).toBeDefined();
+    });
+
+    it('handles an empty array without error', () => {
+      expect(() => removeTracks([])).not.toThrow();
+    });
+  });
+
+  describe('getTrackCountByFilePath', () => {
+    it('returns 0 when no track references the path', () => {
+      expect(getTrackCountByFilePath('/tmp/nope.mp3')).toBe(0);
+    });
+
+    it('counts tracks sharing the same file_path', () => {
+      const id1 = addTrack(SAMPLE);
+      const id2 = addTrack({ ...SAMPLE, file_hash: 'dup', file_path: SAMPLE.file_path });
+      expect(getTrackCountByFilePath(SAMPLE.file_path)).toBe(2);
+      removeTrack(id1);
+      expect(getTrackCountByFilePath(SAMPLE.file_path)).toBe(1);
+      removeTrack(id2);
+      expect(getTrackCountByFilePath(SAMPLE.file_path)).toBe(0);
+    });
+  });
+
+  describe('normalizeLibrary', () => {
+    it('sets replay_gain for tracks with loudness', () => {
+      const id = addTrack(SAMPLE);
+      updateTrack(id, { loudness: -14 });
+      const changes = normalizeLibrary(-14);
+      expect(changes).toBeGreaterThan(0);
+      const track = getTrackById(id);
+      expect(track.replay_gain).toBe(0);
+    });
+
+    it('returns 0 when no tracks have loudness', () => {
+      addTrack(SAMPLE);
+      const changes = normalizeLibrary(-14);
+      expect(changes).toBe(0);
+    });
+  });
+
+  describe('clearTracks', () => {
+    it('removes all tracks', () => {
+      addTrack(SAMPLE);
+      addTrack({ ...SAMPLE, file_hash: 'ct2', file_path: '/tmp/ct2.mp3' });
+      clearTracks();
+      expect(getTracks({ limit: 100 })).toHaveLength(0);
+    });
+  });
+});
+
+describe('source_link field', () => {
+  it('addTrack with source_link stores it and getTrackById returns it', () => {
+    const id = addTrack({
+      ...SAMPLE,
+      file_hash: 'sl1',
+      file_path: '/tmp/sl1.mp3',
+      source_link: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    });
+    const track = getTrackById(id);
+    expect(track.source_link).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+  });
+
+  it('addTrack without source_link defaults to null', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'sl2', file_path: '/tmp/sl2.mp3' });
+    const track = getTrackById(id);
+    expect(track.source_link).toBeNull();
+  });
+});
+
+describe('getTrackIdsNeedingNormalization', () => {
+  it('returns ids of all analyzed tracks with loudness data', () => {
+    const id1 = addTrack({ ...SAMPLE, file_hash: 'nin1', file_path: '/tmp/nin1.mp3' });
+    const id2 = addTrack({ ...SAMPLE, file_hash: 'nin2', file_path: '/tmp/nin2.mp3' });
+    updateTrack(id1, { loudness: -14 });
+    updateTrack(id2, { loudness: -12 });
+    const ids = getTrackIdsNeedingNormalization();
+    expect(ids).toContain(id1);
+    expect(ids).toContain(id2);
+  });
+
+  it('includes tracks regardless of normalized_file_path (legacy column)', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'nin3', file_path: '/tmp/nin3.mp3' });
+    updateTrack(id, { loudness: -14, normalized_file_path: '/tmp/nin3_norm.mp3' });
+    const ids = getTrackIdsNeedingNormalization();
+    expect(ids).toContain(id);
+  });
+
+  it('excludes tracks with no loudness data', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'nin4', file_path: '/tmp/nin4.mp3' });
+    const ids = getTrackIdsNeedingNormalization();
+    expect(ids).not.toContain(id);
+  });
+});
+
+describe('getNormalizedTrackCount', () => {
+  it('returns 0 when no tracks have a normalized_file_path', () => {
+    addTrack({ ...SAMPLE, file_hash: 'gnt1', file_path: '/tmp/gnt1.mp3' });
+    expect(getNormalizedTrackCount()).toBe(0);
+  });
+
+  it('returns correct count when some tracks are normalized', () => {
+    const id1 = addTrack({ ...SAMPLE, file_hash: 'gnt2', file_path: '/tmp/gnt2.mp3' });
+    const id2 = addTrack({ ...SAMPLE, file_hash: 'gnt3', file_path: '/tmp/gnt3.mp3' });
+    updateTrack(id1, { normalized_file_path: '/tmp/gnt2_norm.mp3' });
+    updateTrack(id2, { normalized_file_path: '/tmp/gnt3_norm.mp3' });
+    expect(getNormalizedTrackCount()).toBe(2);
+  });
+});
+
+describe('resetNormalization', () => {
+  it('clears normalized_file_path and source_loudness for all tracks when called with no args', () => {
+    const id1 = addTrack({ ...SAMPLE, file_hash: 'rn1', file_path: '/tmp/rn1.mp3' });
+    const id2 = addTrack({ ...SAMPLE, file_hash: 'rn2', file_path: '/tmp/rn2.mp3' });
+    updateTrack(id1, {
+      loudness: -14,
+      normalized_file_path: '/tmp/rn1_norm.mp3',
+      source_loudness: -14,
+    });
+    updateTrack(id2, {
+      loudness: -12,
+      normalized_file_path: '/tmp/rn2_norm.mp3',
+      source_loudness: -12,
+    });
+
+    const count = resetNormalization();
+    expect(count).toBe(2);
+    expect(getTrackById(id1).normalized_file_path).toBeNull();
+    expect(getTrackById(id1).source_loudness).toBeNull();
+    expect(getTrackById(id2).normalized_file_path).toBeNull();
+  });
+
+  it('returns 0 when the table is empty', () => {
+    const count = resetNormalization();
+    expect(count).toBe(0);
+  });
+
+  it('clears only specified track ids when called with an array', () => {
+    const id1 = addTrack({ ...SAMPLE, file_hash: 'rn4', file_path: '/tmp/rn4.mp3' });
+    const id2 = addTrack({ ...SAMPLE, file_hash: 'rn5', file_path: '/tmp/rn5.mp3' });
+    updateTrack(id1, { normalized_file_path: '/tmp/rn4_norm.mp3', source_loudness: -14 });
+    updateTrack(id2, { normalized_file_path: '/tmp/rn5_norm.mp3', source_loudness: -12 });
+
+    resetNormalization([id1]);
+    expect(getTrackById(id1).normalized_file_path).toBeNull();
+    expect(getTrackById(id1).source_loudness).toBeNull();
+    expect(getTrackById(id2).normalized_file_path).toBe('/tmp/rn5_norm.mp3');
+  });
+});
+
+describe('getLegacyNormalizedTracks / clearLegacyNormalizedPaths', () => {
+  it('getLegacyNormalizedTracks returns empty array when no legacy paths exist', () => {
+    expect(getLegacyNormalizedTracks()).toEqual([]);
+  });
+
+  it('getLegacyNormalizedTracks returns tracks that have normalized_file_path set', () => {
+    const id1 = addTrack({ ...SAMPLE, file_hash: 'leg1', file_path: '/tmp/leg1.mp3' });
+    const id2 = addTrack({ ...SAMPLE, file_hash: 'leg2', file_path: '/tmp/leg2.mp3' });
+    updateTrack(id1, { normalized_file_path: '/tmp/leg1_norm.mp3' });
+
+    const legacy = getLegacyNormalizedTracks();
+    expect(legacy).toHaveLength(1);
+    expect(legacy[0].id).toBe(id1);
+    expect(legacy[0].normalized_file_path).toBe('/tmp/leg1_norm.mp3');
+
+    expect(legacy.find((r) => r.id === id2)).toBeUndefined();
+  });
+
+  it('clearLegacyNormalizedPaths nullifies normalized_file_path and source_loudness', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'leg3', file_path: '/tmp/leg3.mp3' });
+    updateTrack(id, { normalized_file_path: '/tmp/leg3_norm.mp3', source_loudness: -14 });
+
+    clearLegacyNormalizedPaths();
+
+    const track = getTrackById(id);
+    expect(track.normalized_file_path).toBeNull();
+    expect(track.source_loudness).toBeNull();
+  });
+
+  it('clearLegacyNormalizedPaths does not touch tracks without a legacy path', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'leg4', file_path: '/tmp/leg4.mp3' });
+    updateTrack(id, { loudness: -12 });
+
+    clearLegacyNormalizedPaths();
+
+    expect(getTrackById(id).loudness).toBeCloseTo(-12);
+  });
+});
+
+describe('countTracks', () => {
+  const seed = () => {
+    addTrack({
+      ...SAMPLE,
+      title: 'Alpha',
+      artist: 'Zed',
+      bpm: 120,
+      file_hash: 'c1',
+      file_path: '/tmp/c1.mp3',
+    });
+    addTrack({
+      ...SAMPLE,
+      title: 'Bravo',
+      artist: 'Ann',
+      bpm: 128,
+      file_hash: 'c2',
+      file_path: '/tmp/c2.mp3',
+    });
+    addTrack({
+      ...SAMPLE,
+      title: 'Charlie',
+      artist: 'Zed',
+      bpm: null,
+      file_hash: 'c3',
+      file_path: '/tmp/c3.mp3',
+    });
+  };
+
+  it('counts the whole library', () => {
+    seed();
+    expect(countTracks()).toBe(3);
+  });
+
+  it('respects the search term', () => {
+    seed();
+    expect(countTracks({ search: 'bravo' })).toBe(1);
+    expect(countTracks({ search: 'zed' })).toBe(2);
+  });
+
+  it('respects structured filters', () => {
+    seed();
+    expect(countTracks({ filters: [{ field: 'artist', op: 'is', value: 'zed' }] })).toBe(2);
+    expect(countTracks({ filters: [{ field: 'bpm', op: 'is', value: 128 }] })).toBe(1);
+  });
+
+  it('agrees with the number of rows getTracks returns', () => {
+    seed();
+    expect(countTracks()).toBe(getTracks({ limit: 999999 }).length);
+    expect(countTracks({ search: 'zed' })).toBe(getTracks({ limit: 999999, search: 'zed' }).length);
+  });
+
+  it('counts only the rows of one playlist', () => {
+    const a = addTrack({ ...SAMPLE, file_hash: 'p1', file_path: '/tmp/p1.mp3' });
+    const b = addTrack({ ...SAMPLE, file_hash: 'p2', file_path: '/tmp/p2.mp3' });
+    addTrack({ ...SAMPLE, file_hash: 'p3', file_path: '/tmp/p3.mp3' });
+    const pl = createPlaylist('Rank Set');
+    addTracksToPlaylist(pl, [a, b]);
+    expect(countTracks()).toBe(3);
+    expect(countTracks({ playlistId: pl })).toBe(2);
+    expect(countTracks({ playlistId: pl })).toBe(
+      getTracks({ playlistId: pl, limit: 999999 }).length
+    );
+  });
+});
+
+describe('getTrackRank', () => {
+  const seedThree = () => {
+    const a = addTrack({
+      ...SAMPLE,
+      title: 'Alpha',
+      artist: 'Zed',
+      bpm: 120,
+      file_hash: 'r1',
+      file_path: '/tmp/r1.mp3',
+    });
+    const b = addTrack({
+      ...SAMPLE,
+      title: 'bravo',
+      artist: 'Ann',
+      bpm: 128,
+      file_hash: 'r2',
+      file_path: '/tmp/r2.mp3',
+    });
+    const c = addTrack({
+      ...SAMPLE,
+      title: 'Charlie',
+      artist: 'Mia',
+      bpm: null,
+      file_hash: 'r3',
+      file_path: '/tmp/r3.mp3',
+    });
+    return { a, b, c };
+  };
+
+  it('agrees with getTracks order for title ASC (NOCASE)', () => {
+    const { a, b, c } = seedThree();
+    const sort = { key: 'title', asc: true };
+    const sorted = getTracks({ limit: 999999, sort });
+    expect(sorted.map((t) => t.title)).toEqual(['Alpha', 'bravo', 'Charlie']);
+    sorted.forEach((t, i) => {
+      expect(getTrackRank({ trackId: t.id, sort })).toBe(i);
+    });
+    expect(getTrackRank({ trackId: a, sort })).toBe(0);
+    expect(getTrackRank({ trackId: b, sort })).toBe(1);
+    expect(getTrackRank({ trackId: c, sort })).toBe(2);
+  });
+
+  it('agrees with getTracks for BPM DESC (NULL/empty last in both directions)', () => {
+    const { a, b, c } = seedThree();
+    const sort = { key: 'bpm', asc: false };
+    const sorted = getTracks({ limit: 999999, sort });
+    expect(sorted.map((t) => t.id)).toEqual([b, a, c]);
+    sorted.forEach((t, i) => {
+      expect(getTrackRank({ trackId: t.id, sort })).toBe(i);
+    });
+  });
+
+  it('returns null for a track outside the searched row set', () => {
+    const { a } = seedThree();
+    const sort = { key: 'title', asc: true };
+    expect(getTrackRank({ trackId: a, sort, search: 'charlie' })).toBeNull();
+  });
+
+  it('ranks within a playlist by position when sort is index', () => {
+    const a = addTrack({ ...SAMPLE, title: 'First', file_hash: 'q1', file_path: '/tmp/q1.mp3' });
+    const b = addTrack({ ...SAMPLE, title: 'Second', file_hash: 'q2', file_path: '/tmp/q2.mp3' });
+    const c = addTrack({ ...SAMPLE, title: 'Third', file_hash: 'q3', file_path: '/tmp/q3.mp3' });
+    const pl = createPlaylist('Position Set');
+    addTracksToPlaylist(pl, [a, b, c]);
+    expect(getTrackRank({ trackId: b, playlistId: pl })).toBe(1);
+    expect(getTrackRank({ trackId: c, playlistId: pl })).toBe(2);
+  });
+
+  it('ranks inside a playlist by a real column sort', () => {
+    const a = addTrack({ ...SAMPLE, title: 'Zulu', file_hash: 'q4', file_path: '/tmp/q4.mp3' });
+    const b = addTrack({ ...SAMPLE, title: 'Alpha', file_hash: 'q5', file_path: '/tmp/q5.mp3' });
+    const c = addTrack({ ...SAMPLE, title: 'Mike', file_hash: 'q6', file_path: '/tmp/q6.mp3' });
+    const pl = createPlaylist('Sorted Set');
+    addTracksToPlaylist(pl, [a, b, c]);
+    const sort = { key: 'title', asc: true };
+    expect(getTrackRank({ trackId: b, playlistId: pl, sort })).toBe(0);
+    expect(getTrackRank({ trackId: c, playlistId: pl, sort })).toBe(1);
+    expect(getTrackRank({ trackId: a, playlistId: pl, sort })).toBe(2);
+  });
+
+  it('returns null for an unknown track id', () => {
+    expect(getTrackRank({ trackId: 999999, sort: { key: 'title', asc: true } })).toBeNull();
+  });
+});
+
+describe('trackRepository — trim columns', () => {
+  it('defaults trim_start_ms / trim_end_ms to NULL when addTrack() gets none', () => {
+    const id = addTrack(SAMPLE);
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBeNull();
+    expect(track.trim_end_ms).toBeNull();
+  });
+
+  it('persists trim columns passed to addTrack()', () => {
+    const id = addTrack({ ...SAMPLE, trim_start_ms: 15_000, trim_end_ms: 145_000 });
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBe(15_000);
+    expect(track.trim_end_ms).toBe(145_000);
+  });
+
+  it('stores and reads back a trim range set through updateTrack()', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'trim-upd', file_path: '/tmp/trim-upd.mp3' });
+    updateTrack(id, { trim_start_ms: 30_000, trim_end_ms: 120_000 });
+
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBe(30_000);
+    expect(track.trim_end_ms).toBe(120_000);
+  });
+
+  it('exposes the trim columns through getTracks()', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'trim-list', file_path: '/tmp/trim-list.mp3' });
+    updateTrack(id, { trim_start_ms: 5000, trim_end_ms: 60_000 });
+
+    const rows = getTracks({ limit: 10 });
+    const row = rows.find((t) => t.id === id);
+    expect(row.trim_start_ms).toBe(5000);
+    expect(row.trim_end_ms).toBe(60_000);
+  });
+
+  it('clears both trim points when updateTrack() gets nulls (reset to full track)', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'trim-reset', file_path: '/tmp/trim-reset.mp3' });
+    updateTrack(id, { trim_start_ms: 30_000, trim_end_ms: 120_000 });
+    updateTrack(id, { trim_start_ms: null, trim_end_ms: null });
+
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBeNull();
+    expect(track.trim_end_ms).toBeNull();
+  });
+
+  it('allows a start-only trim (end = end of file)', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'trim-start', file_path: '/tmp/trim-start.mp3' });
+    updateTrack(id, { trim_start_ms: 12_345 });
+
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBe(12_345);
+    expect(track.trim_end_ms).toBeNull();
+  });
+
+  it('keeps the trim columns after an analysis update (updateTrack always sets analyzed = 1)', () => {
+    const id = addTrack({ ...SAMPLE, file_hash: 'trim-analysis', file_path: '/tmp/trim-a.mp3' });
+    updateTrack(id, { trim_start_ms: 7000, trim_end_ms: 90_000 });
+    updateTrack(id, { bpm: 128, key_camelot: '8A' });
+
+    const track = getTrackById(id);
+    expect(track.trim_start_ms).toBe(7000);
+    expect(track.trim_end_ms).toBe(90_000);
+    expect(track.analyzed).toBe(1);
+  });
+});

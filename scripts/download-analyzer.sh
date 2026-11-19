@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DEST="build-resources"
+mkdir -p "$DEST"
+
+OS=$(uname -s)
+ARCH=$(uname -m)
+
+case "$OS" in
+  Linux)   ASSET="linux-x86_64";   EXT="tar.gz" ;;
+  Darwin)  ASSET="macos-arm64";    EXT="zip"    ;;
+  MINGW*|CYGWIN*|MSYS*) ASSET="windows-x86_64"; EXT="zip" ;;
+  *) echo "Unsupported OS: $OS"; exit 1 ;;
+esac
+
+RELEASE_JSON=$(curl -s https://api.github.com/repos/Radexito/mixxx-analyzer/releases/latest)
+URL=$(echo "$RELEASE_JSON" | node -e "
+const data = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+const asset = data.assets.find(a => a.name.includes('${ASSET}'));
+process.stdout.write(asset.browser_download_url);
+")
+
+echo "Downloading mixxx-analyzer for ${OS}/${ARCH}: $URL"
+
+if [ "$EXT" = "tar.gz" ]; then
+  curl -L "$URL" | tar -xz
+  find . -maxdepth 3 -name "mixxx-analyzer" -not -path "./.git/*" \
+    | head -1 | xargs -I{} mv {} "$DEST/analysis"
+else
+  curl -L "$URL" -o /tmp/analyzer.zip
+  unzip -q /tmp/analyzer.zip -d /tmp/analyzer-tmp
+  BINARY=$(find /tmp/analyzer-tmp -name "mixxx-analyzer*" | head -1)
+  EXE_NAME="analysis"
+  [[ "$BINARY" == *.exe ]] && EXE_NAME="analysis.exe"
+  mv "$BINARY" "$DEST/$EXE_NAME"
+  rm -rf /tmp/analyzer-tmp /tmp/analyzer.zip
+fi
+
+chmod +x "$DEST/analysis" 2>/dev/null || true
+echo "✅ Binary saved to $DEST/analysis"

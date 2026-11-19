@@ -1,0 +1,358 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, within, fireEvent, waitFor, act } from '@testing-library/react';
+import Sidebar from '../Sidebar.jsx';
+import { DownloadProvider } from '../DownloadContext.jsx';
+import { TidalDownloadProvider } from '../TidalDownloadContext.jsx';
+
+/** Renders the sidebar inside the download providers it consumes. */
+function renderSidebar(props = {}) {
+  return render(
+    <DownloadProvider>
+      <TidalDownloadProvider>
+        <Sidebar {...props} />
+      </TidalDownloadProvider>
+    </DownloadProvider>
+  );
+}
+
+describe('Sidebar', () => {
+  const defaultProps = {
+    selectedMenuItemId: 'music',
+    onMenuSelect: vi.fn(),
+    onExportPlaylistAll: vi.fn(),
+  };
+
+  it('renders the Music menu item', () => {
+    renderSidebar({ ...defaultProps });
+    expect(screen.getByText('Music')).toBeInTheDocument();
+  });
+
+  it('renders the PLAYLISTS heading', () => {
+    renderSidebar({ ...defaultProps });
+    expect(screen.getByText('PLAYLISTS')).toBeInTheDocument();
+  });
+
+  it('shows empty state when no playlists exist', async () => {
+    renderSidebar({ ...defaultProps });
+    await waitFor(() => {
+      expect(screen.getByText('No playlists yet')).toBeInTheDocument();
+    });
+  });
+
+  it('renders loaded playlists', async () => {
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 1, name: 'Techno Set', color: '#e63946', track_count: 12, total_duration: 3600 },
+      { id: 2, name: 'House Vibes', color: null, track_count: 8, total_duration: 2400 },
+    ]);
+
+    renderSidebar({ ...defaultProps });
+    await waitFor(() => {
+      expect(screen.getByText('Techno Set')).toBeInTheDocument();
+      expect(screen.getByText('House Vibes')).toBeInTheDocument();
+    });
+  });
+
+  it('calls onMenuSelect when Music is clicked', () => {
+    const onMenuSelect = vi.fn();
+    renderSidebar({ ...defaultProps, onMenuSelect });
+    fireEvent.click(screen.getByText('Music'));
+    expect(onMenuSelect).toHaveBeenCalledWith('music');
+  });
+
+  it('does not render Help in the sidebar', () => {
+    renderSidebar({ ...defaultProps });
+    expect(screen.queryByText('Help')).not.toBeInTheDocument();
+  });
+
+  it('gives the Import button a title, like the Link button', () => {
+    renderSidebar({ ...defaultProps });
+    expect(screen.getByText('Import')).toHaveAttribute('title');
+  });
+
+  it('calls onMenuSelect with playlist id when playlist is clicked', async () => {
+    const onMenuSelect = vi.fn();
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 42, name: 'My Set', color: null, track_count: 5, total_duration: 1500 },
+    ]);
+
+    renderSidebar({ ...defaultProps, onMenuSelect });
+    await waitFor(() => screen.getByText('My Set'));
+    fireEvent.click(screen.getByText('My Set'));
+    expect(onMenuSelect).toHaveBeenCalledWith('42');
+  });
+
+  it('shows new playlist input when + button is clicked', () => {
+    renderSidebar({ ...defaultProps });
+    fireEvent.click(screen.getByTitle('New playlist'));
+    expect(screen.getByPlaceholderText('Playlist name')).toBeInTheDocument();
+  });
+
+  it('shows context menu on right-click of a playlist', async () => {
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 1, name: 'Techno Set', color: null, track_count: 0, total_duration: 0 },
+    ]);
+
+    renderSidebar({ ...defaultProps });
+    await waitFor(() => screen.getByText('Techno Set'));
+    fireEvent.contextMenu(screen.getByText('Techno Set'));
+
+    expect(screen.getByText(/Rename/)).toBeInTheDocument();
+    expect(screen.getByText(/Export All to USB/)).toBeInTheDocument();
+    expect(screen.getByText(/Delete playlist/)).toBeInTheDocument();
+  });
+
+  it('context menu offers only "Export All to USB…" as an export entry', async () => {
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 1, name: 'Techno Set', color: null, track_count: 0, total_duration: 0 },
+    ]);
+
+    renderSidebar({ ...defaultProps });
+    await waitFor(() => screen.getByText('Techno Set'));
+    fireEvent.contextMenu(screen.getByText('Techno Set'));
+
+    expect(screen.getByText(/Export All to USB/)).toBeInTheDocument();
+    expect(screen.queryByText(/Export as M3U/)).toBeNull();
+    expect(screen.queryByText(/Export Rekordbox USB/)).toBeNull();
+  });
+
+  it('auto-dismisses the folder notice instead of leaving it on screen', async () => {
+    vi.useFakeTimers();
+    try {
+      window.api.getPlaylists.mockResolvedValue([
+        {
+          id: 7,
+          name: 'Tracked Folder',
+          color: null,
+          track_count: 3,
+          total_duration: 600,
+          folder_path: '/tmp/tracked',
+        },
+      ]);
+      window.api.stopFolderPlaylist.mockResolvedValue({ ok: true });
+
+      renderSidebar({ ...defaultProps });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      fireEvent.contextMenu(screen.getByText('Tracked Folder'));
+      await act(async () => {
+        fireEvent.click(screen.getByText(/Stop tracking folder/));
+      });
+
+      expect(screen.getByText(/Folder tracking stopped/)).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6000);
+      });
+
+      expect(screen.queryByText(/Folder tracking stopped/)).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('dismisses the folder notice when it is clicked', async () => {
+    window.api.getPlaylists.mockResolvedValue([
+      {
+        id: 8,
+        name: 'Tracked Folder 2',
+        color: null,
+        track_count: 1,
+        total_duration: 120,
+        folder_path: '/tmp/tracked2',
+      },
+    ]);
+    window.api.stopFolderPlaylist.mockResolvedValue({ ok: true });
+
+    renderSidebar({ ...defaultProps });
+    await waitFor(() => expect(screen.getByText('Tracked Folder 2')).toBeInTheDocument());
+
+    fireEvent.contextMenu(screen.getByText('Tracked Folder 2'));
+    await act(async () => {
+      fireEvent.click(screen.getByText(/Stop tracking folder/));
+    });
+
+    const notice = await screen.findByText(/Folder tracking stopped/);
+    fireEvent.click(notice);
+    expect(screen.queryByText(/Folder tracking stopped/)).not.toBeInTheDocument();
+  });
+
+  it('calls onExportPlaylistAll with playlist id when "Export All to USB…" is clicked', async () => {
+    const onExportPlaylistAll = vi.fn();
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 42, name: 'My Set', color: null, track_count: 0, total_duration: 0 },
+    ]);
+
+    renderSidebar({ ...defaultProps, onExportPlaylistAll });
+    await waitFor(() => screen.getByText('My Set'));
+    fireEvent.contextMenu(screen.getByText('My Set'));
+    fireEvent.click(screen.getByText(/Export All to USB/));
+
+    expect(onExportPlaylistAll).toHaveBeenCalledWith(42);
+  });
+
+  it('does not render an "Export USB…" bottom button', () => {
+    renderSidebar({ ...defaultProps });
+    expect(screen.queryByText(/Export USB/)).toBeNull();
+  });
+
+  it('does not flip the Color submenu when opened in the top-left of the screen', async () => {
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 1, name: 'Techno Set', color: null, track_count: 0, total_duration: 0 },
+    ]);
+
+    const { container } = renderSidebar({ ...defaultProps });
+    await waitFor(() => screen.getByText('Techno Set'));
+    fireEvent.contextMenu(screen.getByText('Techno Set'), { clientX: 50, clientY: 50 });
+
+    const menu = container.querySelector('.context-menu');
+    expect(menu).not.toHaveClass('context-menu--flip-left');
+    expect(menu).not.toHaveClass('context-menu--flip-up');
+  });
+
+  it('flips the Color submenu left and up when opened near the bottom-right of the screen', async () => {
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 1, name: 'Techno Set', color: null, track_count: 0, total_duration: 0 },
+    ]);
+
+    const { container } = renderSidebar({ ...defaultProps });
+    await waitFor(() => screen.getByText('Techno Set'));
+    fireEvent.contextMenu(screen.getByText('Techno Set'), {
+      clientX: window.innerWidth - 10,
+      clientY: window.innerHeight - 10,
+    });
+
+    const menu = container.querySelector('.context-menu');
+    expect(menu).toHaveClass('context-menu--flip-left');
+    expect(menu).toHaveClass('context-menu--flip-up');
+  });
+
+  it('uses the dedicated color submenu grid so swatches stay inside the menu panel', async () => {
+    window.api.getPlaylists.mockResolvedValueOnce([
+      { id: 1, name: 'Techno Set', color: null, track_count: 0, total_duration: 0 },
+    ]);
+
+    const { container } = renderSidebar({ ...defaultProps });
+    await waitFor(() => screen.getByText('Techno Set'));
+    fireEvent.contextMenu(screen.getByText('Techno Set'), { clientX: 50, clientY: 50 });
+
+    expect(container.querySelector('.context-submenu--colors')).toBeInTheDocument();
+  });
+});
+
+describe('Sidebar — import dialog playlist association', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const defaultProps = {
+    selectedMenuItemId: 'music',
+    onMenuSelect: vi.fn(),
+    onExportPlaylistAll: vi.fn(),
+  };
+
+  it('passes playlist id (not the whole object) to importAudioFiles when creating new playlist', async () => {
+    window.api.selectAudioFiles.mockResolvedValueOnce(['/tmp/track.mp3']);
+    window.api.createPlaylist.mockResolvedValueOnce({ id: 7 });
+
+    renderSidebar({ ...defaultProps });
+    fireEvent.click(screen.getByText('Import'));
+
+    const dialog = (await waitFor(() => screen.getByText('Import to Playlist'))).closest(
+      '.ipd-modal'
+    );
+
+    fireEvent.click(screen.getByRole('radio', { name: /Create new playlist/ }));
+    fireEvent.change(screen.getByPlaceholderText('New playlist name'), {
+      target: { value: 'My New Set' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Import' }));
+
+    await waitFor(() => {
+      expect(window.api.createPlaylist).toHaveBeenCalledWith('My New Set');
+      expect(window.api.importAudioFiles).toHaveBeenCalledWith(['/tmp/track.mp3'], 7);
+    });
+  });
+
+  it('passes playlist id to importAudioFiles when selecting an existing playlist', async () => {
+    window.api.getPlaylists.mockResolvedValue([
+      { id: 42, name: 'Techno Set', color: null, track_count: 5, total_duration: 1500 },
+    ]);
+    window.api.selectAudioFiles.mockResolvedValueOnce(['/tmp/track.mp3']);
+
+    renderSidebar({ ...defaultProps });
+    await waitFor(() => screen.getByText('Techno Set'));
+
+    fireEvent.click(screen.getByText('Import'));
+    const dialog = (await waitFor(() => screen.getByText('Import to Playlist'))).closest(
+      '.ipd-modal'
+    );
+
+    fireEvent.click(screen.getByRole('radio', { name: /Techno Set/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Import' }));
+
+    await waitFor(() => {
+      expect(window.api.importAudioFiles).toHaveBeenCalledWith(['/tmp/track.mp3'], 42);
+    });
+  });
+
+  it('passes null to importAudioFiles when "Library only" is selected', async () => {
+    window.api.selectAudioFiles.mockResolvedValueOnce(['/tmp/track.mp3']);
+
+    renderSidebar({ ...defaultProps });
+    fireEvent.click(screen.getByText('Import'));
+    const dialog = (await waitFor(() => screen.getByText('Import to Playlist'))).closest(
+      '.ipd-modal'
+    );
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Import' }));
+
+    await waitFor(() => {
+      expect(window.api.importAudioFiles).toHaveBeenCalledWith(['/tmp/track.mp3'], null);
+    });
+  });
+});
+
+describe('Sidebar — normalization progress bar', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const defaultProps = {
+    selectedMenuItemId: 'music',
+    onMenuSelect: vi.fn(),
+    onExportPlaylistAll: vi.fn(),
+  };
+
+  it('shows normalize progress when onNormalizeProgress fires with progress data', async () => {
+    let progressCallback;
+    window.api.onNormalizeProgress.mockImplementation((cb) => {
+      progressCallback = cb;
+      return vi.fn();
+    });
+
+    renderSidebar({ ...defaultProps });
+
+    act(() => {
+      progressCallback({ completed: 3, total: 10, done: false });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Normalizing')).toBeInTheDocument();
+      expect(screen.getByText('3 / 10')).toBeInTheDocument();
+    });
+  });
+
+  it('hides normalize progress bar when done event fires', async () => {
+    let progressCallback;
+    window.api.onNormalizeProgress.mockImplementation((cb) => {
+      progressCallback = cb;
+      return vi.fn();
+    });
+
+    renderSidebar({ ...defaultProps });
+
+    act(() => progressCallback({ completed: 5, total: 5, done: false }));
+    await waitFor(() => expect(screen.getByText('Normalizing')).toBeInTheDocument());
+
+    act(() => progressCallback({ done: true }));
+    await waitFor(() => expect(screen.queryByText('Normalizing')).toBeNull(), { timeout: 2000 });
+  });
+});

@@ -1,0 +1,1078 @@
+/**
+ * Runtime dependency manager.
+ * Downloads FFmpeg and mixxx-analyzer into userData/bin/ on first launch.
+ * Tracks versions and supports update checks / forced re-downloads.
+ */
+import path from 'path';
+import fs from 'fs';
+import https from 'https';
+import { createWriteStream } from 'fs';
+import { app } from 'electron';
+import { exec, spawn } from 'child_process';
+import { promisify } from 'util';
+const execAsync = promisify(exec);
+
+/** Directory in userData where every managed binary lives. */
+function getBinDir() {
+  return path.join(app.getPath('userData'), 'bin');
+}
+
+/** Where FFmpeg goes: a subfolder on Windows (its DLLs sit next to it), the bin dir elsewhere. */
+function getFfmpegBinDir() {
+  return process.platform === 'win32' ? path.join(getBinDir(), 'ffmpeg') : getBinDir();
+}
+
+const EXT = process.platform === 'win32' ? '.exe' : '';
+
+/** Absolute path of the managed ffmpeg executable. */
+export function getFfmpegRuntimePath() {
+  return path.join(getFfmpegBinDir(), `ffmpeg${EXT}`);
+}
+/** Absolute path of the managed ffprobe executable. */
+export function getFfprobeRuntimePath() {
+  return path.join(getFfmpegBinDir(), `ffprobe${EXT}`);
+}
+/** Absolute path of the managed mixxx-analyzer executable, installed as `analysis`. */
+export function getAnalyzerRuntimePath() {
+  return path.join(getBinDir(), `analysis${EXT}`);
+}
+
+/** Absolute path of the managed yt-dlp executable, under the name its release asset uses. */
+export function getYtDlpRuntimePath() {
+  const platform = process.platform;
+  if (platform === 'win32') return path.join(getBinDir(), 'yt-dlp.exe');
+  if (platform === 'darwin') return path.join(getBinDir(), 'yt-dlp_macos');
+  return path.join(getBinDir(), 'yt-dlp');
+}
+
+/** Absolute path of the uv binary used to install tidal-dl-ng. */
+export function getUvRuntimePath() {
+  return path.join(getBinDir(), process.platform === 'win32' ? 'uv.exe' : 'uv');
+}
+
+/** Where a fresh tidal-dl-ng install is expected to land (`tdn`). */
+export function getTidalBinPath() {
+  return path.join(getBinDir(), process.platform === 'win32' ? 'tdn.exe' : 'tdn');
+}
+
+/**
+ * Locate an existing tidal-dl-ng command, accepting either the upstream name or
+ * the short `tdn` alias.
+ * @returns {string|null} full path, or null when neither exists
+ */
+function getTidalBin() {
+  const ext = process.platform === 'win32' ? '.exe' : '';
+  for (const name of ['tidal-dl-ng', 'tdn']) {
+    const p = path.join(getBinDir(), name + ext);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+/**
+ * Environment for uv: tools and their entry points stay inside the app bin dir
+ * instead of the user's home, so an uninstall takes them with it.
+ * @returns {object} process.env plus UV_TOOL_DIR / UV_TOOL_BIN_DIR
+ */
+function uvToolEnv() {
+  const binDir = getBinDir();
+  return {
+    ...process.env,
+    UV_TOOL_DIR: path.join(binDir, 'uv-tools'),
+    UV_TOOL_BIN_DIR: binDir,
+  };
+}
+
+/** Path of the JSON file recording the installed version of a dependency. */
+function versionFile(name) {
+  return path.join(getBinDir(), `${name}.version`);
+}
+
+/**
+ * Record what was installed for a dependency; overwrites the previous record.
+ * @param {string} name dependency key, e.g. "ffmpeg"
+ * @param {object} data version and install metadata
+ */
+function writeVersion(name, data) {
+  fs.mkdirSync(getBinDir(), { recursive: true });
+  fs.writeFileSync(versionFile(name), JSON.stringify(data, null, 2));
+}
+
+/**
+ * Probe all four dependencies in parallel.
+ * @returns {Promise<{ ffmpeg: object|null, analyzer: object|null, ytDlp: object|null,
+ *   tidalDlNg: object|null }>} null for a dependency that is not installed
+ */
+export async function getInstalledVersions() {
+  const [ffmpeg, analyzer, ytDlp, tidalDlNg] = await Promise.all([
+    probeFfmpegVersion(),
+    probeAnalyzerVersion(),
+    probeYtDlpVersion(),
+    probeTidalVersion(),
+  ]);
+  return { ffmpeg, analyzer, ytDlp, tidalDlNg };
+}
+
+/**
+ * Read the ffmpeg version from its own `-version` output.
+ * @returns {Promise<{ version: string }|null>} null when ffmpeg is not installed
+ */
+async function probeFfmpegVersion() {
+  const binPath = getFfmpegRuntimePath();
+  if (!fs.existsSync(binPath)) return null;
+  try {
+    const { stdout } = await execAsync(`"${binPath}" -version`);
+    const match = stdout.match(/ffmpeg version (\S+)/);
+    return { version: match ? match[1] : 'installed' };
+  } catch {
+    return { version: 'installed' };
+  }
+}
+
+/**
+ * Read the mixxx-analyzer version from `--version`.
+ * @returns {Promise<{ version: string }|null>} null when it is not installed
+ */
+async function probeAnalyzerVersion() {
+  const binPath = getAnalyzerRuntimePath();
+  if (!fs.existsSync(binPath)) return null;
+  try {
+    const { stdout } = await execAsync(`"${binPath}" --version`);
+    return { version: stdout.trim() || 'installed' };
+  } catch {
+    return { version: 'installed' };
+  }
+}
+
+/**
+ * Read the yt-dlp version from `--version`.
+ * @returns {Promise<{ version: string }|null>} null when it is not installed
+ */
+async function probeYtDlpVersion() {
+  const binPath = getYtDlpRuntimePath();
+  if (!fs.existsSync(binPath)) return null;
+  try {
+    const { stdout } = await execAsync(`"${binPath}" --version`);
+    return { version: stdout.trim() || 'installed' };
+  } catch {
+    return { version: 'installed' };
+  }
+}
+
+/**
+ * Version of the tidal-dl-ng install, if there is one.
+ * @returns {Promise<{ version: string }|null>}
+ */
+async function probeTidalVersion() {
+  if (!getTidalBin()) return null;
+  return { version: await getTidalDlNgVersion() };
+}
+
+/**
+ * Ask uv for the tidal-dl-ng version and fall back to pip metadata for installs
+ * made outside this app. Returns "installed" when neither reports a version.
+ * @returns {Promise<string>}
+ */
+async function getTidalDlNgVersion() {
+  const uvPath = getUvRuntimePath();
+  if (fs.existsSync(uvPath)) {
+    try {
+      const { stdout } = await execAsync(`"${uvPath}" tool list`, { env: uvToolEnv() });
+      const match = stdout.match(/tidal-dl-ng(?:-for-dj)?\s+v?([\d.]+)/i);
+      if (match) return match[1];
+    } catch {}
+  }
+  const cmds =
+    process.platform === 'win32'
+      ? ['pip show tidal-dl-ng', 'python -m pip show tidal-dl-ng']
+      : ['pip3 show tidal-dl-ng', 'pip show tidal-dl-ng', 'python3 -m pip show tidal-dl-ng'];
+  for (const cmd of cmds) {
+    try {
+      const { stdout } = await execAsync(cmd);
+      const match = stdout.match(/^Version:\s*(.+)$/m);
+      if (match) return match[1].trim();
+    } catch {}
+  }
+  return 'installed';
+}
+
+/**
+ * Download the uv release asset for this platform and install just the binary
+ * into the bin dir. Windows archives are zips, the others tar.gz.
+ * @param {function(string, number=): void} [onProgress] message and percent
+ */
+async function downloadUvBinary(onProgress) {
+  const { platform, arch } = process;
+  const assetMap = {
+    linux:
+      arch === 'arm64'
+        ? 'uv-aarch64-unknown-linux-gnu.tar.gz'
+        : 'uv-x86_64-unknown-linux-gnu.tar.gz',
+    darwin: arch === 'arm64' ? 'uv-aarch64-apple-darwin.tar.gz' : 'uv-x86_64-apple-darwin.tar.gz',
+    win32: 'uv-x86_64-pc-windows-msvc.zip',
+  };
+  const assetName = assetMap[platform];
+  if (!assetName) throw new Error(`Unsupported platform for uv: ${platform}`);
+
+  const release = await getLatestRelease('astral-sh', 'uv');
+  const asset = release.assets.find((a) => a.name === assetName);
+  if (!asset) throw new Error(`No uv asset found: ${assetName}`);
+
+  const tmp = path.join(app.getPath('temp'), 'djman-uv-dl');
+  await fs.promises.mkdir(tmp, { recursive: true });
+  try {
+    const archive = path.join(tmp, assetName);
+    await downloadFile(
+      asset.browser_download_url,
+      archive,
+      (r, t) => t > 0 && onProgress?.(`Downloading uv… ${Math.round((r / t) * 100)}%`, -1)
+    );
+    const dir = path.join(tmp, 'extracted');
+    if (assetName.endsWith('.tar.gz')) await extractTarGz(archive, dir);
+    else await extractZip(archive, dir);
+
+    const uvBinName = platform === 'win32' ? 'uv.exe' : 'uv';
+    const uvSrc = await findFile(dir, uvBinName);
+    if (!uvSrc) throw new Error('uv binary not found in archive');
+
+    const dest = getUvRuntimePath();
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(uvSrc, dest);
+    if (platform !== 'win32') fs.chmodSync(dest, 0o755);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Install tidal-dl-ng as a uv tool, fetching uv first when it is missing, then
+ * record the resulting version.
+ * @param {function(string, number=): void} [onProgress] passthrough of installer output
+ */
+async function installTidalDlNgDep(onProgress) {
+  let uvPath = getUvRuntimePath();
+  if (!fs.existsSync(uvPath)) {
+    onProgress?.('Downloading uv…', -1);
+    await downloadUvBinary(onProgress);
+    uvPath = getUvRuntimePath();
+  }
+
+  onProgress?.('Installing tidal-dl-ng…', -1);
+  await new Promise((resolve, reject) => {
+    const proc = spawn(
+      uvPath,
+      ['tool', 'install', '--reinstall', 'git+https://github.com/Radexito/tidal-dl-ng-For-DJ.git'],
+      {
+        env: uvToolEnv(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }
+    );
+    proc.stdout.on('data', (chunk) => {
+      for (const line of chunk.toString().split('\n')) {
+        const t = line.trim();
+        if (t) onProgress?.(t, -1);
+      }
+    });
+    proc.stderr.on('data', (chunk) => {
+      for (const line of chunk.toString().split('\n')) {
+        const t = line.trim();
+        if (t) onProgress?.(t, -1);
+      }
+    });
+    proc.on('close', (code) =>
+      code === 0 ? resolve() : reject(new Error(`uv tool install exited with code ${code}`))
+    );
+    proc.on('error', reject);
+  });
+
+  const version = await getTidalDlNgVersion();
+  writeVersion('tidal-dl-ng', { version, installedAt: new Date().toISOString() });
+}
+
+export { installTidalDlNgDep as ensureTidalDlNg };
+
+/**
+ * Reinstall tidal-dl-ng to pick up the latest commit, through uv when available
+ * and through pip otherwise, then record the resulting version.
+ * @param {function(string, number=): void} [onProgress] passthrough of installer output
+ */
+async function upgradeTidalDlNgDep(onProgress) {
+  const uvPath = getUvRuntimePath();
+  if (fs.existsSync(uvPath)) {
+    await new Promise((resolve, reject) => {
+      const proc = spawn(
+        uvPath,
+        [
+          'tool',
+          'install',
+          '--reinstall',
+          'git+https://github.com/Radexito/tidal-dl-ng-For-DJ.git',
+        ],
+        {
+          env: uvToolEnv(),
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }
+      );
+      proc.stdout.on('data', (chunk) => {
+        for (const line of chunk.toString().split('\n')) {
+          const t = line.trim();
+          if (t) onProgress?.(t, -1);
+        }
+      });
+      proc.stderr.on('data', (chunk) => {
+        for (const line of chunk.toString().split('\n')) {
+          const t = line.trim();
+          if (t) onProgress?.(t, -1);
+        }
+      });
+      proc.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`uv tool upgrade exited with code ${code}`))
+      );
+      proc.on('error', reject);
+    });
+  } else {
+    const candidates =
+      process.platform === 'win32'
+        ? [
+            ['pip', ['install', '--upgrade', 'tidal-dl-ng']],
+            ['python', ['-m', 'pip', 'install', '--upgrade', 'tidal-dl-ng']],
+          ]
+        : [
+            ['pip3', ['install', '--upgrade', 'tidal-dl-ng']],
+            ['pip', ['install', '--upgrade', 'tidal-dl-ng']],
+            ['python3', ['-m', 'pip', 'install', '--upgrade', 'tidal-dl-ng']],
+            ['python', ['-m', 'pip', 'install', '--upgrade', 'tidal-dl-ng']],
+          ];
+    let lastErr;
+    for (const [cmd, args] of candidates) {
+      try {
+        await new Promise((resolve, reject) => {
+          const proc = spawn(cmd, args, {
+            env: { ...process.env, PYTHONUNBUFFERED: '1' },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          proc.stdout.on('data', (chunk) => {
+            for (const line of chunk.toString().split('\n')) {
+              const t = line.trim();
+              if (t) onProgress?.(t, -1);
+            }
+          });
+          proc.stderr.on('data', (chunk) => {
+            for (const line of chunk.toString().split('\n')) {
+              const t = line.trim();
+              if (t) onProgress?.(t, -1);
+            }
+          });
+          proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`exit ${code}`))));
+          proc.on('error', reject);
+        });
+        break;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    if (lastErr) throw lastErr;
+  }
+
+  const version = await getTidalDlNgVersion();
+  writeVersion('tidal-dl-ng', { version, installedAt: new Date().toISOString() });
+}
+
+/** Whether the four core binaries exist on disk; tidal-dl-ng is optional and not checked. */
+export function areDepsReady() {
+  return (
+    fs.existsSync(getFfmpegRuntimePath()) &&
+    fs.existsSync(getFfprobeRuntimePath()) &&
+    fs.existsSync(getAnalyzerRuntimePath()) &&
+    fs.existsSync(getYtDlpRuntimePath())
+  );
+}
+
+/**
+ * Stream an HTTP(S) URL to a file, following redirects and creating the parent
+ * directory. Reports progress as byte counts rather than percentages.
+ * @param {string} url
+ * @param {string} dest destination file path
+ * @param {function(number, number): void} [onProgress] bytes received, total bytes
+ * @returns {Promise<void>}
+ */
+function downloadFile(url, dest, onProgress) {
+  return new Promise((resolve, reject) => {
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    const follow = (u) => {
+      https
+        .get(u, { headers: { 'User-Agent': 'djman-dep-downloader' } }, (res) => {
+          if (res.statusCode === 301 || res.statusCode === 302) return follow(res.headers.location);
+          if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}: ${u}`));
+          const total = parseInt(res.headers['content-length'] || '0', 10);
+          let received = 0;
+          const out = createWriteStream(dest);
+          res.on('data', (chunk) => {
+            received += chunk.length;
+            onProgress?.(received, total);
+          });
+          res.pipe(out);
+          out.on('finish', resolve);
+          out.on('error', reject);
+          res.on('error', reject);
+        })
+        .on('error', reject);
+    };
+    follow(url);
+  });
+}
+
+/**
+ * Fetch the latest GitHub release of a repository.
+ * @param {string} owner
+ * @param {string} repo
+ * @returns {Promise<object>} the release JSON, including its assets
+ */
+export function getLatestRelease(owner, repo) {
+  return new Promise((resolve, reject) => {
+    https
+      .get(
+        `https://api.github.com/repos/${owner}/${repo}/releases/latest`,
+        {
+          headers: { 'User-Agent': 'djman-dep-downloader', Accept: 'application/vnd.github+json' },
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (c) => (body += c));
+          res.on('end', () => {
+            try {
+              resolve(JSON.parse(body));
+            } catch (e) {
+              reject(e);
+            }
+          });
+          res.on('error', reject);
+        }
+      )
+      .on('error', reject);
+  });
+}
+
+/**
+ * Fetch one GitHub release by tag.
+ * @param {string} owner
+ * @param {string} repo
+ * @param {string} tag
+ * @returns {Promise<object>} the release JSON
+ */
+export function getReleaseByTag(owner, repo, tag) {
+  return new Promise((resolve, reject) => {
+    https
+      .get(
+        `https://api.github.com/repos/${owner}/${repo}/releases/tags/${tag}`,
+        {
+          headers: { 'User-Agent': 'djman-dep-downloader', Accept: 'application/vnd.github+json' },
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (c) => (body += c));
+          res.on('end', () => {
+            try {
+              const data = JSON.parse(body);
+              if (data.message) reject(new Error(`GitHub: ${data.message} (tag: ${tag})`));
+              else resolve(data);
+            } catch (e) {
+              reject(e);
+            }
+          });
+          res.on('error', reject);
+        }
+      )
+      .on('error', reject);
+  });
+}
+
+/**
+ * Replace destDir and unpack a gzipped tarball into it with the system tar.
+ * @param {string} archive
+ * @param {string} destDir
+ */
+async function extractTarGz(archive, destDir) {
+  if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
+  await fs.promises.mkdir(destDir, { recursive: true });
+  await execAsync(`tar -xzf "${archive}" -C "${destDir}"`);
+}
+
+/**
+ * Replace destDir and unpack an xz tarball into it with the system tar.
+ * @param {string} archive
+ * @param {string} destDir
+ */
+async function extractTarXz(archive, destDir) {
+  if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
+  await fs.promises.mkdir(destDir, { recursive: true });
+  await execAsync(`tar -xJf "${archive}" -C "${destDir}"`);
+}
+
+/**
+ * Replace destDir and unpack a zip into it, with PowerShell on Windows and
+ * unzip elsewhere.
+ * @param {string} archive
+ * @param {string} destDir
+ */
+async function extractZip(archive, destDir) {
+  if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
+  await fs.promises.mkdir(destDir, { recursive: true });
+  if (process.platform === 'win32') {
+    await execAsync(
+      `powershell -Command "Expand-Archive -Path '${archive}' -DestinationPath '${destDir}' -Force"`
+    );
+  } else {
+    await execAsync(`unzip -q -o "${archive}" -d "${destDir}"`);
+  }
+}
+
+/**
+ * Depth-first search for a file by name inside an extracted archive.
+ * @param {string} dir
+ * @param {string} name file name, with or without .exe
+ * @returns {Promise<string|null>} full path, or null when it is not there
+ */
+async function findFile(dir, name) {
+  const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      const f = await findFile(full, name).catch(() => null);
+      if (f) return f;
+    } else if (e.name === name || e.name === name + '.exe') return full;
+  }
+  return null;
+}
+
+/**
+ * Fetch ffmpeg and ffprobe for the current platform, install them into the bin
+ * dir (plus the DLLs on Windows) and record the version.
+ * @param {string} tmp scratch directory
+ * @param {function(string, number=, object=): void} [onProgress] message, percent, byte meta
+ */
+async function downloadFFmpeg(tmp, onProgress) {
+  const platform = process.platform;
+
+  if (platform === 'linux') {
+    const url = 'https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz';
+    const archive = path.join(tmp, 'ffmpeg.tar.xz');
+    onProgress?.(`Downloading FFmpeg…`, 0);
+    await downloadFile(
+      url,
+      archive,
+      (r, t) =>
+        t > 0 &&
+        onProgress?.(`Downloading FFmpeg…`, Math.round((r / t) * 100), {
+          bytesReceived: r,
+          bytesTotal: t,
+        })
+    );
+    onProgress?.('Extracting FFmpeg…', 99);
+    const dir = path.join(tmp, 'ffmpeg-extracted');
+    await extractTarXz(archive, dir);
+    const ffmpeg = await findFile(dir, 'ffmpeg');
+    const ffprobe = await findFile(dir, 'ffprobe');
+    fs.copyFileSync(ffmpeg, getFfmpegRuntimePath());
+    fs.copyFileSync(ffprobe, getFfprobeRuntimePath());
+    fs.chmodSync(getFfmpegRuntimePath(), 0o755);
+    fs.chmodSync(getFfprobeRuntimePath(), 0o755);
+  } else if (platform === 'win32') {
+    const release = await getLatestRelease('BtbN', 'FFmpeg-Builds');
+    const asset = release.assets.find(
+      (a) => a.name.includes('win64-gpl.zip') && a.name.includes('latest')
+    );
+    const archive = path.join(tmp, 'ffmpeg-win.zip');
+    onProgress?.(`Downloading FFmpeg…`, 0);
+    await downloadFile(
+      asset.browser_download_url,
+      archive,
+      (r, t) =>
+        t > 0 &&
+        onProgress?.(`Downloading FFmpeg…`, Math.round((r / t) * 100), {
+          bytesReceived: r,
+          bytesTotal: t,
+        })
+    );
+    onProgress?.('Extracting FFmpeg…', 99);
+    const dir = path.join(tmp, 'ffmpeg-win-extracted');
+    await extractZip(archive, dir);
+    const ffmpegExe = await findFile(dir, 'ffmpeg.exe');
+    const ffprobeExe = await findFile(dir, 'ffprobe.exe');
+    const ffmpegBinDir = getFfmpegBinDir();
+    fs.mkdirSync(ffmpegBinDir, { recursive: true });
+    fs.copyFileSync(ffmpegExe, getFfmpegRuntimePath());
+    fs.copyFileSync(ffprobeExe, getFfprobeRuntimePath());
+    const ffmpegDir = path.dirname(ffmpegExe);
+    for (const entry of fs.readdirSync(ffmpegDir)) {
+      if (entry.toLowerCase().endsWith('.dll')) {
+        fs.copyFileSync(path.join(ffmpegDir, entry), path.join(ffmpegBinDir, entry));
+      }
+    }
+  } else if (platform === 'darwin') {
+    const ffmpegZip = path.join(tmp, 'ffmpeg-mac.zip');
+    const ffprobeZip = path.join(tmp, 'ffprobe-mac.zip');
+    onProgress?.(`Downloading FFmpeg…`, 0);
+    await downloadFile(
+      'https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip',
+      ffmpegZip,
+      (r, t) =>
+        t > 0 &&
+        onProgress?.(`Downloading FFmpeg…`, Math.round((r / t) * 50), {
+          bytesReceived: r,
+          bytesTotal: t,
+        })
+    );
+    await downloadFile(
+      'https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip',
+      ffprobeZip,
+      (r, t) =>
+        t > 0 &&
+        onProgress?.(`Downloading FFprobe…`, 50 + Math.round((r / t) * 49), {
+          bytesReceived: r,
+          bytesTotal: t,
+        })
+    );
+    onProgress?.('Extracting FFmpeg…', 99);
+    await extractZip(ffmpegZip, path.join(tmp, 'ffmpeg-mac'));
+    await extractZip(ffprobeZip, path.join(tmp, 'ffprobe-mac'));
+    fs.copyFileSync(await findFile(path.join(tmp, 'ffmpeg-mac'), 'ffmpeg'), getFfmpegRuntimePath());
+    fs.copyFileSync(
+      await findFile(path.join(tmp, 'ffprobe-mac'), 'ffprobe'),
+      getFfprobeRuntimePath()
+    );
+    fs.chmodSync(getFfmpegRuntimePath(), 0o755);
+    fs.chmodSync(getFfprobeRuntimePath(), 0o755);
+  }
+
+  try {
+    const { stdout } = await execAsync(`"${getFfmpegRuntimePath()}" -version`);
+    const match = stdout.match(/ffmpeg version (\S+)/);
+    writeVersion('ffmpeg', {
+      version: match?.[1] ?? 'unknown',
+      installedAt: new Date().toISOString(),
+    });
+  } catch {
+    writeVersion('ffmpeg', { version: 'unknown', installedAt: new Date().toISOString() });
+  }
+}
+
+/**
+ * Release asset name and archive extension of mixxx-analyzer for this platform.
+ * @returns {Promise<{ name: string, ext: string }>}
+ */
+async function analyzerAssetName() {
+  const p = process.platform;
+  if (p === 'linux') return { name: 'linux-x86_64', ext: 'tar.gz' };
+  if (p === 'darwin') return { name: 'macos-arm64', ext: 'zip' };
+  if (p === 'win32') return { name: 'windows-x86_64', ext: 'zip' };
+  throw new Error(`Unsupported platform: ${p}`);
+}
+
+/**
+ * Download the mixxx-analyzer release for this platform and copy the binary with
+ * its whole bundle into the bin dir, skipping Windows system DLLs that are
+ * already in System32. Records the release tag as the version.
+ * @param {string} tmp scratch directory
+ * @param {function(string, number=, object=): void} [onProgress] message, percent, byte meta
+ */
+async function downloadAnalyzer(tmp, onProgress) {
+  onProgress?.('Downloading mixxx-analyzer…', 0);
+  const release = await getLatestRelease('Radexito', 'mixxx-analyzer');
+  const { name, ext } = await analyzerAssetName();
+  const asset = release.assets.find((a) => a.name.includes(name) && a.name.endsWith(`.${ext}`));
+  if (!asset) throw new Error(`No mixxx-analyzer asset for ${name}`);
+
+  const archive = path.join(tmp, `analyzer.${ext}`);
+  await downloadFile(
+    asset.browser_download_url,
+    archive,
+    (r, t) =>
+      t > 0 &&
+      onProgress?.(`Downloading mixxx-analyzer…`, Math.round((r / t) * 100), {
+        bytesReceived: r,
+        bytesTotal: t,
+      })
+  );
+
+  onProgress?.('Extracting mixxx-analyzer…', 99);
+  const dir = path.join(tmp, 'analyzer-extracted');
+  if (ext === 'tar.gz') await extractTarGz(archive, dir);
+  else await extractZip(archive, dir);
+
+  const binDir = getBinDir();
+  const binName = process.platform === 'win32' ? 'mixxx-analyzer.exe' : 'mixxx-analyzer';
+  const src = await findFile(dir, binName);
+  if (!src) throw new Error('mixxx-analyzer binary not found in archive');
+  const bundleDir = path.dirname(src);
+
+  const WIN_SYSTEM_DLLS = new Set([
+    'msvcp_win.dll',
+    'cfgmgr32.dll',
+    'dwrite.dll',
+    'iphlpapi.dll',
+    'usp10.dll',
+    'd2d1.dll',
+    'ncrypt.dll',
+    'kernel32.dll',
+    'user32.dll',
+    'ntdll.dll',
+    'advapi32.dll',
+    'shell32.dll',
+    'ole32.dll',
+  ]);
+
+  for (const entry of await fs.promises.readdir(bundleDir)) {
+    if (process.platform === 'win32' && WIN_SYSTEM_DLLS.has(entry.toLowerCase())) continue;
+    const srcFile = path.join(bundleDir, entry);
+    const dstFile = path.join(binDir, entry);
+    fs.copyFileSync(srcFile, dstFile);
+    if (process.platform !== 'win32') {
+      const stat = await fs.promises.stat(srcFile);
+      if (stat.mode & 0o111) fs.chmodSync(dstFile, 0o755);
+    }
+  }
+
+  const analyzerDest = getAnalyzerRuntimePath();
+  const realBin = path.join(binDir, binName);
+  if (fs.existsSync(analyzerDest) && analyzerDest !== realBin) fs.unlinkSync(analyzerDest);
+  if (analyzerDest !== realBin) fs.copyFileSync(realBin, analyzerDest);
+  if (process.platform !== 'win32') fs.chmodSync(analyzerDest, 0o755);
+
+  writeVersion('analyzer', {
+    version: release.tag_name,
+    releaseUrl: release.html_url,
+    installedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * Download the yt-dlp binary for this platform, either the latest release or a
+ * specific tag, and record it as the installed version.
+ * @param {string} tmp scratch directory
+ * @param {function(string, number=, object=): void} [onProgress] message, percent, byte meta
+ * @param {string|null} [tag] release tag to pin, latest when null
+ */
+async function downloadYtDlp(tmp, onProgress, tag = null) {
+  onProgress?.('Downloading yt-dlp…', 0);
+  const release = tag
+    ? await getReleaseByTag('yt-dlp', 'yt-dlp', tag)
+    : await getLatestRelease('yt-dlp', 'yt-dlp');
+
+  const platform = process.platform;
+  let assetName;
+  if (platform === 'win32') assetName = 'yt-dlp.exe';
+  else if (platform === 'darwin') assetName = 'yt-dlp_macos';
+  else assetName = 'yt-dlp';
+
+  const asset = release.assets.find((a) => a.name === assetName);
+  if (!asset) throw new Error(`No yt-dlp asset found for platform: ${platform}`);
+
+  const dest = getYtDlpRuntimePath();
+  await downloadFile(
+    asset.browser_download_url,
+    dest,
+    (r, t) =>
+      t > 0 &&
+      onProgress?.(`Downloading yt-dlp…`, Math.round((r / t) * 100), {
+        bytesReceived: r,
+        bytesTotal: t,
+      })
+  );
+
+  if (platform !== 'win32') fs.chmodSync(dest, 0o755);
+
+  writeVersion('yt-dlp', {
+    version: release.tag_name,
+    releaseUrl: release.html_url,
+    installedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * Install whatever is missing on first launch: FFmpeg, mixxx-analyzer, yt-dlp
+ * and — optionally, failures are only warned about — tidal-dl-ng. Progress
+ * callbacks receive a step-aware object with percentage, download speed, ETA
+ * and the list of steps already satisfied.
+ * @param {function(object): void} [onProgress]
+ * @returns {Promise<void>}
+ */
+export async function ensureDeps(onProgress) {
+  const ffmpegReady =
+    fs.existsSync(getFfmpegRuntimePath()) && fs.existsSync(getFfprobeRuntimePath());
+  const analyzerReady = fs.existsSync(getAnalyzerRuntimePath());
+  const ytDlpReady = fs.existsSync(getYtDlpRuntimePath());
+  const tidalReady = getTidalBin() != null;
+
+  const STEP_DEFS = [
+    !ffmpegReady && { id: 'ffmpeg', label: 'FFmpeg' },
+    !analyzerReady && { id: 'analyzer', label: 'mixxx-analyzer' },
+    !ytDlpReady && { id: 'ytdlp', label: 'yt-dlp' },
+  ].filter(Boolean);
+  const totalSteps = STEP_DEFS.length;
+
+  const readyStepIds = [
+    ffmpegReady && 'ffmpeg',
+    analyzerReady && 'analyzer',
+    ytDlpReady && 'ytdlp',
+    tidalReady && 'tidal',
+  ].filter(Boolean);
+
+  if (totalSteps === 0 && tidalReady) {
+    onProgress?.({ msg: 'Dependencies up to date.', pct: 100, stepIndex: 0, stepTotal: 0 });
+    return;
+  }
+
+  const binDir = getBinDir();
+  await fs.promises.mkdir(binDir, { recursive: true });
+  const tmp = path.join(app.getPath('temp'), 'djman-deps');
+  await fs.promises.mkdir(tmp, { recursive: true });
+  let stepIndex = 0;
+  let currentStep = null;
+  let stepsCompleted = 0;
+
+  let _lastBytes = 0,
+    _lastBytesTime = Date.now(),
+    _speedSamples = [];
+  const resetTracker = () => {
+    _lastBytes = 0;
+    _lastBytesTime = Date.now();
+    _speedSamples = [];
+  };
+
+  const stepCb = (msg, pct, meta = {}) => {
+    let bytesPerSec = 0,
+      etaSec = -1;
+    const { bytesReceived, bytesTotal } = meta;
+    if (bytesReceived != null && bytesTotal > 0) {
+      const now = Date.now();
+      const dt = (now - _lastBytesTime) / 1000;
+      if (dt > 0.25) {
+        const speed = (bytesReceived - _lastBytes) / dt;
+        _speedSamples = [..._speedSamples.slice(-4), speed];
+        _lastBytesTime = now;
+        _lastBytes = bytesReceived;
+      }
+      const avg = _speedSamples.length
+        ? _speedSamples.reduce((a, b) => a + b) / _speedSamples.length
+        : 0;
+      bytesPerSec = avg;
+      etaSec = avg > 0 ? (bytesTotal - bytesReceived) / avg : -1;
+    }
+    onProgress?.({
+      msg,
+      pct,
+      stepId: currentStep?.id ?? null,
+      stepLabel: currentStep?.label ?? null,
+      stepIndex,
+      stepTotal: totalSteps,
+      stepsCompleted,
+      readyStepIds,
+      stepPct: pct,
+      bytesDownloaded: bytesReceived ?? 0,
+      bytesTotal: bytesTotal ?? -1,
+      bytesPerSec,
+      etaSec,
+    });
+  };
+
+  try {
+    if (!ffmpegReady) {
+      currentStep = STEP_DEFS.find((s) => s.id === 'ffmpeg');
+      stepIndex++;
+      resetTracker();
+      await downloadFFmpeg(tmp, stepCb);
+      stepsCompleted++;
+    }
+    if (!analyzerReady) {
+      currentStep = STEP_DEFS.find((s) => s.id === 'analyzer');
+      stepIndex++;
+      resetTracker();
+      await downloadAnalyzer(tmp, stepCb);
+      stepsCompleted++;
+    }
+    if (!ytDlpReady) {
+      currentStep = STEP_DEFS.find((s) => s.id === 'ytdlp');
+      stepIndex++;
+      resetTracker();
+      await downloadYtDlp(tmp, stepCb);
+      stepsCompleted++;
+    }
+    if (!tidalReady) {
+      stepsCompleted = totalSteps;
+      currentStep = { id: 'tidal', label: 'tidal-dl-ng' };
+      onProgress?.({
+        msg: 'Installing tidal-dl-ng…',
+        pct: 0,
+        stepId: 'tidal',
+        stepLabel: 'tidal-dl-ng',
+        optional: true,
+        stepIndex,
+        stepTotal: totalSteps,
+        stepsCompleted,
+        readyStepIds,
+      });
+      try {
+        await installTidalDlNgDep((msg) =>
+          onProgress?.({
+            msg,
+            pct: -1,
+            stepId: 'tidal',
+            stepLabel: 'tidal-dl-ng',
+            optional: true,
+            stepIndex,
+            stepTotal: totalSteps,
+            stepsCompleted,
+            readyStepIds,
+          })
+        );
+        onProgress?.({
+          msg: 'tidal-dl-ng installed.',
+          pct: 100,
+          stepId: 'tidal',
+          stepLabel: 'tidal-dl-ng',
+          optional: true,
+          stepIndex,
+          stepTotal: totalSteps,
+          stepsCompleted,
+          readyStepIds,
+        });
+      } catch (err) {
+        console.warn('[deps] tidal-dl-ng install failed (non-fatal):', err.message);
+        onProgress?.({
+          msg: 'tidal-dl-ng install failed — Python 3.12+ may not be available.',
+          pct: -1,
+          stepId: 'tidal',
+          stepLabel: 'tidal-dl-ng',
+          optional: true,
+          stepIndex,
+          stepTotal: totalSteps,
+          stepsCompleted,
+          readyStepIds,
+        });
+      }
+    }
+    onProgress?.({
+      msg: totalSteps > 0 ? 'Setup complete.' : 'Dependencies up to date.',
+      pct: 100,
+      stepIndex: totalSteps,
+      stepTotal: totalSteps,
+    });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Compare the installed analyzer and yt-dlp versions against the latest GitHub
+ * releases. A failed lookup is reported per dependency, not thrown.
+ * @returns {Promise<{ analyzer: object, ytDlp: object }>} installed and latest tag,
+ *   hasUpdate, release URL — or { error } when the check failed
+ */
+export async function checkForUpdates() {
+  const installed = await getInstalledVersions();
+  const result = { analyzer: null, ytDlp: null };
+
+  try {
+    const release = await getLatestRelease('Radexito', 'mixxx-analyzer');
+    result.analyzer = {
+      installedTag: installed.analyzer?.version ?? null,
+      latestTag: release.tag_name,
+      hasUpdate: installed.analyzer?.version !== release.tag_name,
+      releaseUrl: release.html_url,
+    };
+  } catch {
+    result.analyzer = { error: 'Could not check for updates' };
+  }
+
+  try {
+    const release = await getLatestRelease('yt-dlp', 'yt-dlp');
+    result.ytDlp = {
+      installedTag: installed.ytDlp?.version ?? null,
+      latestTag: release.tag_name,
+      hasUpdate: installed.ytDlp?.version !== release.tag_name,
+      releaseUrl: release.html_url,
+    };
+  } catch {
+    result.ytDlp = { error: 'Could not check for updates' };
+  }
+
+  return result;
+}
+
+/**
+ * Re-download mixxx-analyzer over the installed copy.
+ * @param {function(string, number=, object=): void} [onProgress]
+ */
+export async function updateAnalyzer(onProgress) {
+  const binDir = getBinDir();
+  await fs.promises.mkdir(binDir, { recursive: true });
+  const tmp = path.join(app.getPath('temp'), 'djman-deps');
+  await fs.promises.mkdir(tmp, { recursive: true });
+  try {
+    await downloadAnalyzer(tmp, onProgress);
+    onProgress?.('mixxx-analyzer updated.', 100);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Re-download yt-dlp, optionally pinning a release tag.
+ * @param {function(string, number=, object=): void} [onProgress]
+ * @param {string|null} [tag]
+ */
+export async function updateYtDlp(onProgress, tag = null) {
+  const binDir = getBinDir();
+  await fs.promises.mkdir(binDir, { recursive: true });
+  const tmp = path.join(app.getPath('temp'), 'djman-deps');
+  await fs.promises.mkdir(tmp, { recursive: true });
+  try {
+    await downloadYtDlp(tmp, onProgress, tag);
+    onProgress?.(tag ? `yt-dlp ${tag} installed.` : 'yt-dlp updated.', 100);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Upgrade tidal-dl-ng and rethrow on failure, after reporting the error through
+ * onProgress.
+ * @param {function(string, number=): void} [onProgress]
+ */
+export async function updateTidalDlNg(onProgress) {
+  try {
+    onProgress?.('Upgrading tidal-dl-ng…', 0);
+    await upgradeTidalDlNgDep(onProgress);
+    onProgress?.('tidal-dl-ng updated.', 100);
+  } catch (err) {
+    onProgress?.(`tidal-dl-ng update failed: ${err.message}`, -1);
+    throw err;
+  }
+}
+
+/**
+ * Update every dependency in one pass, numbering the steps; a failing
+ * tidal-dl-ng upgrade is non-fatal.
+ * @param {function(string, number=): void} [onProgress]
+ */
+export async function updateAll(onProgress) {
+  const binDir = getBinDir();
+  await fs.promises.mkdir(binDir, { recursive: true });
+  const tmp = path.join(app.getPath('temp'), 'djman-deps');
+  await fs.promises.mkdir(tmp, { recursive: true });
+  try {
+    await downloadFFmpeg(tmp, (msg, pct) => onProgress?.(`[1/4] ${msg}`, pct));
+    await downloadAnalyzer(tmp, (msg, pct) => onProgress?.(`[2/4] ${msg}`, pct));
+    await downloadYtDlp(tmp, (msg, pct) => onProgress?.(`[3/4] ${msg}`, pct));
+    onProgress?.('[4/4] Upgrading tidal-dl-ng…', 0);
+    try {
+      await upgradeTidalDlNgDep((msg) => onProgress?.(`[4/4] ${msg}`, -1));
+    } catch (err) {
+      console.warn('[deps] tidal-dl-ng upgrade failed (non-fatal):', err.message);
+    }
+    onProgress?.('All dependencies updated.', 100);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}

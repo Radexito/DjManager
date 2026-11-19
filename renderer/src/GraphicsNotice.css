@@ -1,0 +1,28 @@
+.graphics-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  background: #4a3a00;
+  border-bottom: 1px solid #6b5500;
+  color: #ffe9a8;
+  font-size: 12px;
+}
+
+.graphics-notice-text {
+  flex: 1 1 320px;
+}
+
+.graphics-notice-report {
+  flex: 1 1 100%;
+  border-top: 1px solid #6b5500;
+  padding-top: 8px;
+  color: #f5e6b8;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.graphics-notice-meta {
+  color: #cbb887;
+}

@@ -1,0 +1,221 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Commands
+
+```bash
+# Development (starts Vite dev server + Electron concurrently)
+npm run dev
+
+# Lint main process / all / renderer only
+npm run lint
+npm run lint:all
+cd renderer && npm run lint
+
+# Format
+npm run format
+npm run format:check
+
+# Build renderer for production
+npm run build
+
+# Package (all platforms or specific)
+npm run dist
+npm run dist:linux   # or :win / :mac
+
+# Unit tests (Vitest) — the main process suite, 78 files
+npm test
+npx vitest run src/__tests__/trackRepository.test.js
+npm run test:coverage
+
+# Renderer unit tests (React Testing Library)
+cd renderer && npm test
+cd renderer && npx vitest run src/__tests__/MusicLibrary.contextmenu.test.jsx
+cd renderer && npm run test:coverage
+
+# E2E tests (Playwright, also run by CI under xvfb)
+npm run test:e2e
+```
+
+**Before running tests**: the Electron app must be closed. `pretest` rebuilds `better-sqlite3` for Node.js (needed by Vitest); if Electron holds the `.node` file open the rebuild fails with EBUSY. `posttest` rebuilds it back for Electron automatically.
+
+Coverage thresholds (v8), all enforced in CI: `src/db/**` 65 statements, 44 branches, 70 functions, 65 lines; `src/main/**` 80/60/80/80 via `npm run test:coverage:main`; renderer 50/43/42/51.
+
+**Vitest projects** (`vitest.config.js`):
+
+- `db` — tests needing real SQLite (in-memory via `DB_PATH=:memory:`): `trackRepository`, `playlistRepository`. Uses `src/__tests__/setup.js` which calls `initDB()`.
+- `unit` — no DB, no setup: `importManager`, `ytDlpManager`, `mediaServer`, `anlzWriter`, `waveformGenerator`, `usbUtils`, `settingWriter`, `pdbWriter`, plus the IPC modules and services extracted from `src/main.js`.
+- `main` — the contract suite for `src/main.js` (real entry point, in-memory DB, OS boundaries stubbed). Coverage gate: `npm run test:coverage:main` over `src/main.js` and `src/main/**/*.js`, thresholds 80/60/80/80.
+
+Agent-facing detail for the test layout, the gate scope and the IPC answer contract lives in `AGENTS.md`.
+
+## Architecture
+
+Three distinct execution contexts:
+
+1. **Main process** (`src/main.js`) — Node.js ESM, an entry point only (about 150 lines): it sets the app name, decides the launch profile before `ready`, builds the services, starts the lifecycle and wires IPC. The work itself lives in `src/main/`. Owns SQLite database, file system, IPC handlers, local media HTTP server.
+
+2. **Renderer process** (`renderer/`) — React 19 + Vite. Sandboxed browser context; no direct Node.js access. Communicates with main exclusively via `window.api` (exposed by preload).
+
+3. **Worker threads** (`src/audio/analysisWorker.js`) — Spawned per-import by main. Runs `mixxx-analyzer` binary (BPM, key, loudness, intro/outro). Results go back via `parentPort.postMessage` → written to DB → pushed to renderer via `mainWindow.webContents.send('track-updated', ...)`.
+
+### IPC Pattern
+
+- `src/preload.js` (CommonJS — Electron requirement) bridges main ↔ renderer via `contextBridge.exposeInMainWorld('api', ...)`
+- Main registers handlers: `ipcMain.handle('<channel>', handler)`
+- Renderer calls: `window.api.<method>(...)` → `ipcRenderer.invoke('<channel>', ...)`
+- **Adding a new IPC channel requires changes in all three**: `preload.js`, `main.js`, and the renderer component
+- All `window.api.on*()` methods return a cleanup function — always call it in `useEffect` cleanup
+- `global.mainWindow` is set in `main.js` so analysis worker result handlers can push IPC events to the renderer without importing BrowserWindow directly
+
+### Dev Server Signaling
+
+`npm run dev` uses a `.dev-url` file (not `wait-on http://localhost:5173`). Vite writes the URL to `.dev-url` when ready; Electron waits on `file:.dev-url`. The dev script deletes `.dev-url` first to avoid stale signals. `.dev-url` is gitignored.
+
+### Audio Import Pipeline
+
+```
+selectAudioFiles → dialog → filePaths
+importAudioFiles(filePaths) →
+  for each file:
+    1. SHA-1 hash → copy to userData/audio/{hash[0:2]}/{hash}.ext (deduplication)
+    2. ffprobe → extract tags + format metadata
+    3. addTrack() → insert row into SQLite (analyzed = 0)
+    4. spawn Worker(analysisWorker.js, { filePath, trackId })
+       → mixxx-analyzer binary (BPM, key, loudness, intro/outro)
+       → parentPort.postMessage(result)
+    5. updateTrack(trackId, analysis) → sets analyzed = 1
+    6. send 'track-updated' IPC → renderer updates row in-place
+```
+
+`spawnAnalysis()` **must** attach `worker.on('error', ...)` and `worker.on('exit', ...)` — an unhandled `'error'` event on a Worker crashes the main process.
+
+### Rekordbox USB Export Pipeline
+
+`src/usb/` contains the full Pioneer CDJ-compatible export. Triggered via `export-rekordbox` / `export-all` IPC handlers in `main.js`.
+
+```
+export-rekordbox IPC →
+  1. Collect tracks from playlist(s) (deduplicated by trackId)
+  2. copyTrackToUsb() → copy audio to {usbRoot}/Contents/ (skipped if file exists)
+  3. writeAnlz() → per track: ANLZ0000.DAT + .EXT + .2EX in PIONEER/USBANLZ/{hash}/
+  4. writePdb() → export.pdb (DeviceSQL binary, full rebuild every time)
+  5. writeSettingFiles() → PIONEER/MYSETTING.DAT, MYSETTING2.DAT, DEVSETTING.DAT
+```
+
+Key files:
+
+- `src/usb/index.js` — the format registry: `detectUsbFormat()` and `openUsbDevice()`. Adding Traktor or VirtualDJ means one entry here plus one folder next to `pioneer/`.
+- `src/usb/generic/` — what is not Pioneer: `fs.js` (filesystem detection and formatting: lsblk/diskutil/fsutil), `m3u.js` (playlist export, independent of the stick format), `roots.js` (where the OS mounts removable media), `contract.js` (the `UsbFormat`/`UsbDevice` shapes).
+- `src/usb/pioneer/index.js` — `createPioneerUsb({ root })`, the manager: paths, manifest, `read.cues()`, `write.track/database/settings/tags`.
+- `src/usb/pioneer/formats/` — the binary formats: `anlz.js` (all ANLZ sections; PVBR **must** sit between PPTH and PQTZ or Rekordbox silently ignores waveform/beatgrid data), `pdb.js` (DeviceSQL writer), `pdbRead.js` (reader: header, page chain, rows, DeviceSQL strings, and decoded tracks/artists/albums/playlists), `pssi.js` (phrases), `cues.js` (cue reader), `settings.js` (CRC-16/XMODEM setting files), `profiles.js` (per-device export formats), `reuse.js`.
+- `src/usb/pioneer/write.js`, `read.js`, `manifest.js` — the export pipeline, the cue scan and the manifest, each taking the mount point as an argument.
+- `src/main/services/pioneerExportService.js` — application layer only: cue rows in the library database, the watcher, the renderer bridge.
+- `src/main/services/` — everything else `main.js` delegates to: `graphicsCrashService.js` (record a dead child process, write the report, restart with acceleration off on a crash loop), `mediaServerService.js` (media server on the default library roots and the explorer allowlist), `waveformService.js` (overview backfill and hires regeneration), `depsProgressService.js` (dependency progress to the renderer), `legacyCleanupService.js` (pre-#260 normalized files).
+- `src/main/startupDiagnostics.js` — the startup path report. Every path is passed in; nothing here reads a module-level variable, which is what made the old `logDiagnostics` throw on Windows.
+- `src/main/ipc/registerAllIpc.js` — registers all 18 channels in one place. It is the composition root for IPC: it imports the repositories and audio modules itself, so `main.js` does not have to know them. Handler behaviour stays in the per-domain `*Ipc.js` files.
+- `src/main/services/createAppServices.js` — builds every long-lived service (pioneer export, watcher, preview registry, media server, crash recorder, waveform, dependency progress, legacy cleanup, TIDAL import) and returns them as one object.
+- `src/main/lifecycle/registerAppEvents.js` — `window-all-closed`, `will-quit`, `child-process-gone`. `ready` stays in `main.js` next to the bootstrap it starts.
+- **Ordering rule:** `app.name`, `readGraphicsConfig`, `resolveLaunchProfile` and `applyLaunchProfile` must keep running at module load in `main.js`. Electron reads the acceleration flag and the Chromium switches only before `ready`, and the userData path is derived from `app.name`. `e2e/graphics.spec.js` asserts Chromium's own verdict for both profiles, so moving this later turns it red.
+- `src/audio/waveformGenerator.js` — generates waveform data from PCM via ffmpeg. `COLS_PER_SEC = 150` (not 10ms/col).
+
+### Database
+
+- **better-sqlite3** (synchronous API) — all DB calls in main process are blocking, no async needed
+- Production DB: `app.getPath('userData')/library.db`
+- Dev/test DB: `./library.db` in project root (when Electron `app` is unavailable)
+- WAL mode + foreign keys enforced via pragmas in `database.js`
+- Schema lives in `src/db/migrations.js` — add new columns/tables there; `initDB()` called once at startup
+- New columns: add `ALTER TABLE … ADD COLUMN …` inside the safe try-catch loop in `initDB()` — **never** change the `CREATE TABLE IF NOT EXISTS` block
+- `updateTrack()` in `trackRepository.js` builds SET clauses dynamically from object keys — always sets `analyzed = 1`
+- `addTrack()` SQL must include **all** tag columns (`year`, `label`, `genres`, `source_url`, `source_link`, etc.) — omitting a column silently stores NULL even if the caller passes a value
+
+### Media Server
+
+Audio is served over a local HTTP server (`src/audio/mediaServer.js`) instead of a custom Electron protocol. Electron 28+'s `protocol.handle` has unreliable Range request handling, causing `PIPELINE_ERROR_READ` errors on seek.
+
+- `startMediaServer(audioBase, artworkBase?)` starts on `127.0.0.1` on an ephemeral port
+- Called in `initApp()` **before** `createWindow()` so the port is ready before any IPC
+- Security: only files inside `audioBase` or `artworkBase` are served (403 otherwise)
+- Port exposed via `ipcMain.handle('get-media-port', () => port)` → `window.api.getMediaPort()`
+- URL format: `http://127.0.0.1:${port}/${encodedPath.replace(/^\//, '')}?t=${gen}` — on Windows the path is `/C:/path/to/file`; the server strips the leading slash and converts to backslashes. `?t=` cache-busts the pipeline when replaying the same file.
+
+### yt-dlp Download Flow (2-step)
+
+`src/audio/ytDlpManager.js`:
+
+1. **Fetch metadata**: `fetchPlaylistInfo(url)` — runs yt-dlp with `--flat-playlist --dump-single-json`. Returns `{ type, title, entries }`. Fast — reads only the index page.
+2. **Download**: `downloadUrl(url, onProgress, { playlistItems })` — primary file detection via `--print after_move:__YTDLP_FILE__:%(filepath)s` marker on stdout. Falls back to scanning tmpDir.
+
+`--playlist-items "1,3,5"` is passed when the user deselects tracks in the selection step.
+
+### TIDAL Download
+
+`src/audio/tidalDlManager.js` wraps the `tdn` CLI from the [tidal-dl-ng](https://github.com/Radexito/tidal-dl-ng-For-DJ) Python package:
+
+- `findTidalDlPath()` — searches `~/.local/bin`, common platform paths, then falls back to `which tdn`
+- `checkTidalSetup()` — checks binary presence + reads `~/.config/tidal-dl-ng/token.json` for login state
+- `startLogin(onUrl)` — spawns `tdn login` with `NO_COLOR=1 TERM=dumb`, parses `link.tidal.com` URL from stdout via regex, resolves when the process exits 0
+- `downloadTidal(url, outputDir, onProgress)` — saves the tidal-dl-ng `settings.json`, patches `download_base_path` to `userData/tidal_tmp` and `quality_audio` to `HiRes_Lossless`, spawns `tdn dl <url>`, **always restores** the original config in both success and error paths, then scans the output dir for new audio files by mtime
+
+IPC channels: `tidal-check`, `tidal-login`, `tidal-download-url`. Events pushed to renderer: `tidal-progress` (per-line stdout), `tidal-login-url` (device-link URL for browser).
+
+### Top-level navigation
+
+`Sidebar.jsx` has a `MENU_ITEMS` array that drives the main left-side navigation. `App.jsx` receives `selectedPlaylistId` and branches on it:
+
+- `'download'` → `<DownloadView>` (yt-dlp)
+- `'tidal'` → `<TidalDownloadView>`
+- `'help'` → `<HelpView>` (opened from the header, next to Settings)
+- anything else → `<MusicLibrary selectedPlaylist={id}>` (handles both `'music'` and playlist UUIDs)
+
+**Adding a new top-level view**: add entry to `MENU_ITEMS` when it belongs in the sidebar, or wire a header action in `TopBar.jsx` when it belongs there; in both cases add a branch in `App.jsx` and create the view component.
+
+### Renderer / UI
+
+- Track list uses `react-window` (`FixedSizeList`) for virtualization — `ROW_HEIGHT = 50`, `PAGE_SIZE = 50`
+- Pagination is scroll-triggered: loads next page when within `PRELOAD_TRIGGER = 3` rows of the end
+- Sorting is client-side on the loaded `tracks` array, not a DB query
+- Drag-and-drop via `@dnd-kit` — `SortableRow` is defined **outside** `MusicLibrary` to prevent remounts
+- Player state (queue, playback, shuffle/repeat) lives in `PlayerContext.jsx` using React Context + `Audio` element
+- `window.api.onTrackUpdated(callback)` listens for background analysis results and updates rows in-place
+
+### Search
+
+Handled client-side by `renderer/src/searchParser.js`. Supports field-qualified queries (e.g. `BPM >= 120 AND KEY:12A GENRE is Psytrance`). Parsed AST filters the already-loaded `tracks` array — no extra DB queries.
+
+### Dependencies & External Binaries
+
+- On first launch, `src/deps.js` downloads FFmpeg and the mixxx-analyzer binary
+- Progress is pushed to renderer via `onDepsProgress` IPC events (shown as overlay in `App.jsx`)
+- **FFmpeg binaries**: `analysisWorker.js` and `ffmpeg.js` check `./ffmpeg/<binary>` first, then fall back to system PATH
+- **mixxx-analyzer**: located via `workerData.analyzerPath` (runtime-downloaded) or `build-resources/analysis` (dev). Called with `--json <filePath>`, outputs a JSON array
+- Logs: daily to `~/.config/dj_manager/logs/app-YYYY-MM-DD.log`
+
+## Key Conventions
+
+- **ESM throughout**: root `package.json` has `"type": "module"`; `src/` uses `import/export`. `preload.js` uses `require()` (CommonJS, Electron requirement).
+- **Code style**: Prettier (100-char width, 2-space indent, single quotes) enforced via Husky pre-commit hook with lint-staged.
+- **Genres** stored as JSON-stringified array in the `genres TEXT` column.
+- **Playlists**: mutations (`createPlaylist`, `addTracksToPlaylist`, etc.) always emit a `playlists-updated` IPC event so the sidebar stays in sync.
+- **Renderer test mocks**: `renderer/src/__tests__/setup.js` defines the full `window.api` mock. When adding a new IPC method, add a corresponding `vi.fn()` entry there or renderer tests that mount components will fail.
+- **Platform-specific test stubs**: `usbUtils.test.js` stubs `process.platform` via `vi.stubGlobal` so Linux-branch tests run correctly on Windows. Use the same pattern for any test that branches on `process.platform`.
+- **Windows path in tests**: when constructing HTTP URLs from OS file paths in tests, convert with `'/' + filePath.replace(/\\/g, '/')` so paths are valid on Windows (e.g. `/C:/path/to/file`).
+- **Help content must stay current**: whenever user-facing features, navigation, or workflows change, update `renderer/src/HelpView.jsx` in the same change so the in-app Help screen does not drift out of date.
+
+## GitHub API
+
+`gh` CLI is **not installed** on this machine. Use `git credential fill` to retrieve the stored OAuth token, then call the GitHub REST API directly with `curl`:
+
+```bash
+TOKEN=$(git credential fill <<< $'protocol=https\nhost=github.com' | grep password | cut -d= -f2)
+curl -s -X POST "https://api.github.com/repos/Radexito/DjManager/issues" \
+  -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+  -d '{"title":"...", "body":"..."}'
+```
+
+## Known Issues
+
+- **yt-dlp ffmpeg path**: yt-dlp spawned as subprocess can't find bundled ffmpeg. Pass `--ffmpeg-location <bundled ffmpeg dir>` to the yt-dlp spawn call using `getFfmpegRuntimePath()` from `deps.js`.
+- **Memory cue export disabled** ([#367](https://github.com/Radexito/DjManager/issues/367)): `buildPcobSections()` and `buildPco2Sections()` in `anlzWriter.js` now always write PCOB2/PCO2-slot-2 as the empty stub, regardless of `cuePoints` content. The byte layout for memory cues was verified correct via hex-diff against native Rekordbox (issue #208), but real-world Rekordbox 7 testing showed memory cues are unreliable in practice (reports of only 1 memory cue working reliably, multiple reportedly causing crashes). Disabled for now until root-caused. Re-enable by reverting the DAT PCOB2 and EXT PCO2 slot-2 builders to filter/emit `hot_cue_index < 0` cues again (see git history for `buildPcobSections`/`buildPco2Sections`). Hot cues (A-H) are unaffected and continue to export normally.

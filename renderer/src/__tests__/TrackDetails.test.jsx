@@ -1,0 +1,511 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import TrackDetails from '../TrackDetails.jsx';
+
+const SAMPLE_TRACK = {
+  id: 1,
+  title: 'Test Track',
+  artist: 'Test Artist',
+  album: 'Test Album',
+  year: 2022,
+  genres: '["Techno"]',
+  label: 'Some Label',
+  comments: '',
+  bpm: 128,
+  bpm_override: null,
+  key_camelot: '8a',
+  key_raw: 'Am',
+  loudness: -8,
+  duration: 185,
+  format: 'mp3',
+  bitrate: 320000,
+};
+
+const SAMPLE_TRACK_2 = {
+  ...SAMPLE_TRACK,
+  id: 2,
+  title: 'Second Track',
+  file_hash: 'def456',
+};
+
+describe('TrackDetails — single mode', () => {
+  const onSave = vi.fn();
+  const onCancel = vi.fn();
+  const onPrev = vi.fn();
+  const onNext = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.api.updateTrack.mockResolvedValue({});
+  });
+
+  it('renders "Track Details" header', () => {
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={true}
+      />
+    );
+    expect(screen.getByText('Track Details')).toBeInTheDocument();
+  });
+
+  it('pre-fills Title field with track title', () => {
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+      />
+    );
+    expect(screen.getByDisplayValue('Test Track')).toBeInTheDocument();
+  });
+
+  it('shows Prev and Next navigation buttons', () => {
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={true}
+        hasNext={true}
+      />
+    );
+    expect(screen.getByTitle('Previous track')).toBeInTheDocument();
+    expect(screen.getByTitle('Next track')).toBeInTheDocument();
+  });
+
+  it('disables Prev when hasPrev=false', () => {
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={true}
+      />
+    );
+    expect(screen.getByTitle('Previous track')).toBeDisabled();
+    expect(screen.getByTitle('Next track')).not.toBeDisabled();
+  });
+
+  it('shows read-only info section with BPM, Key, Bitrate', () => {
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+      />
+    );
+    expect(screen.getByText('BPM')).toBeInTheDocument();
+    expect(screen.getByText('Key')).toBeInTheDocument();
+    expect(screen.getByText('Bitrate')).toBeInTheDocument();
+    expect(screen.getByText('320 kbps')).toBeInTheDocument();
+  });
+
+  it('calls onCancel when Cancel is clicked', () => {
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+      />
+    );
+    fireEvent.click(screen.getByText('Cancel'));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('save button is disabled when form is clean', () => {
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+      />
+    );
+    expect(screen.getByText('Save')).toBeDisabled();
+  });
+
+  it('enables Save and calls updateTrack when field is changed and saved', async () => {
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+      />
+    );
+    fireEvent.change(screen.getByDisplayValue('Test Artist'), { target: { value: 'New Artist' } });
+    const saveBtn = screen.getByText('Save');
+    expect(saveBtn).not.toBeDisabled();
+    fireEvent.click(saveBtn);
+    await waitFor(() =>
+      expect(window.api.updateTrack).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ artist: 'New Artist' })
+      )
+    );
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes the track list thumbnail after auto-tag applies a cover', async () => {
+    window.api.autoTagSearch.mockResolvedValueOnce({
+      ok: true,
+      results: [
+        {
+          source: 'Deezer',
+          title: 'Test Track',
+          artist: 'Test Artist',
+          album: 'Test Album',
+          label: '',
+          year: '2022',
+          genres: [],
+          coverUrl: 'https://example.com/cover.jpg',
+        },
+      ],
+    });
+    window.api.fetchArtworkUrl.mockResolvedValueOnce({
+      ok: true,
+      artwork_path: '/tmp/new-cover.jpg',
+    });
+
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+      />
+    );
+
+    fireEvent.click(screen.getByText('🔍 Auto-tag'));
+    fireEvent.click(screen.getByText('Search'));
+    await waitFor(() => screen.getByText(/result/));
+
+    fireEvent.click(screen.getByText('Apply'));
+
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, artwork_path: '/tmp/new-cover.jpg', has_artwork: 1 })
+      )
+    );
+  });
+
+  it('applying an auto-tag result saves directly to the DB without a separate Save step', async () => {
+    window.api.autoTagSearch.mockResolvedValueOnce({
+      ok: true,
+      results: [
+        {
+          source: 'Deezer',
+          title: 'Test Track',
+          artist: 'New Artist',
+          album: 'New Album',
+          label: '',
+          year: '2023',
+          genres: ['House'],
+          coverUrl: '',
+        },
+      ],
+    });
+
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+      />
+    );
+
+    fireEvent.click(screen.getByText('🔍 Auto-tag'));
+    fireEvent.click(screen.getByText('Search'));
+    await waitFor(() => screen.getByText(/result/));
+
+    fireEvent.click(screen.getByText('Apply'));
+
+    await waitFor(() =>
+      expect(window.api.updateTrack).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ artist: 'New Artist', album: 'New Album' })
+      )
+    );
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, artist: 'New Artist', album: 'New Album' })
+    );
+    expect(screen.getByText('Save')).toBeDisabled();
+  });
+
+  it('shows an error instead of failing silently when auto-tag cover art fails to download', async () => {
+    window.api.autoTagSearch.mockResolvedValueOnce({
+      ok: true,
+      results: [
+        {
+          source: 'Deezer',
+          title: 'Test Track',
+          artist: 'Test Artist',
+          album: 'Test Album',
+          label: '',
+          year: '2022',
+          genres: [],
+          coverUrl: 'https://example.com/cover.jpg',
+        },
+      ],
+    });
+
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+      />
+    );
+
+    fireEvent.click(screen.getByText('🔍 Auto-tag'));
+    fireEvent.click(screen.getByText('Search'));
+    await waitFor(() => screen.getByText(/result/));
+
+    fireEvent.click(screen.getByText('Apply'));
+    window.api.fetchArtworkUrl.mockResolvedValueOnce({ ok: false, error: 'HTTP 404' });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to download cover art: HTTP 404/)).toBeInTheDocument();
+    });
+  });
+
+  it('shows a clearer message when the cover art fetch fails generically', async () => {
+    window.api.autoTagSearch.mockResolvedValueOnce({
+      ok: true,
+      results: [
+        {
+          source: 'Deezer',
+          title: 'Test Track',
+          artist: 'Test Artist',
+          album: 'Test Album',
+          label: '',
+          year: '2022',
+          genres: [],
+          coverUrl: 'https://example.com/cover.jpg',
+        },
+      ],
+    });
+
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+      />
+    );
+
+    fireEvent.click(screen.getByText('🔍 Auto-tag'));
+    fireEvent.click(screen.getByText('Search'));
+    await waitFor(() => screen.getByText(/result/));
+
+    fireEvent.click(screen.getByText('Apply'));
+    window.api.fetchArtworkUrl.mockResolvedValueOnce({ ok: false, error: 'fetch failed' });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Failed to download cover art. The selected image could not be fetched.')
+      ).toBeInTheDocument();
+    });
+  });
+  it('reports dirty state changes via onDirtyChange as the form is edited and saved', async () => {
+    const onDirtyChange = vi.fn();
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+        onDirtyChange={onDirtyChange}
+      />
+    );
+    expect(onDirtyChange).toHaveBeenCalledWith(false);
+    onDirtyChange.mockClear();
+
+    fireEvent.change(screen.getByDisplayValue('Test Artist'), { target: { value: 'New Artist' } });
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
+  });
+
+  it('does not render a pin button when onTogglePin is not provided', () => {
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+      />
+    );
+    expect(screen.queryByTitle(/pin/i)).not.toBeInTheDocument();
+  });
+
+  it('renders a pin toggle button and calls onTogglePin when clicked', () => {
+    const onTogglePin = vi.fn();
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+        pinned={false}
+        onTogglePin={onTogglePin}
+      />
+    );
+    const pinBtn = screen.getByTitle('Pin — keep this track open regardless of selection');
+    fireEvent.click(pinBtn);
+    expect(onTogglePin).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the pinned state and unpin label when pinned=true', () => {
+    const onTogglePin = vi.fn();
+    render(
+      <TrackDetails
+        track={SAMPLE_TRACK}
+        onSave={onSave}
+        onCancel={onCancel}
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={false}
+        hasNext={false}
+        pinned={true}
+        onTogglePin={onTogglePin}
+      />
+    );
+    expect(screen.getByTitle('Unpin — resume following the row selection')).toBeInTheDocument();
+    expect(screen.getByText('📌 Pinned')).toBeInTheDocument();
+  });
+});
+
+describe('TrackDetails — bulk mode', () => {
+  const onSave = vi.fn();
+  const onCancel = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.api.updateTrack.mockResolvedValue({});
+  });
+
+  it('shows "Edit 2 Tracks" header', () => {
+    render(
+      <TrackDetails tracks={[SAMPLE_TRACK, SAMPLE_TRACK_2]} onSave={onSave} onCancel={onCancel} />
+    );
+    expect(screen.getByText('Edit 2 Tracks')).toBeInTheDocument();
+  });
+
+  it('shows bulk hint text', () => {
+    render(
+      <TrackDetails tracks={[SAMPLE_TRACK, SAMPLE_TRACK_2]} onSave={onSave} onCancel={onCancel} />
+    );
+    expect(screen.getByText(/Leave a field blank/i)).toBeInTheDocument();
+  });
+
+  it('does not render Title field in bulk mode', () => {
+    render(
+      <TrackDetails tracks={[SAMPLE_TRACK, SAMPLE_TRACK_2]} onSave={onSave} onCancel={onCancel} />
+    );
+    expect(screen.queryByText('Title')).not.toBeInTheDocument();
+  });
+
+  it('hides Prev/Next navigation in bulk mode', () => {
+    render(
+      <TrackDetails tracks={[SAMPLE_TRACK, SAMPLE_TRACK_2]} onSave={onSave} onCancel={onCancel} />
+    );
+    expect(screen.queryByTitle('Previous track')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Next track')).not.toBeInTheDocument();
+  });
+
+  it('hides read-only info section in bulk mode', () => {
+    render(
+      <TrackDetails tracks={[SAMPLE_TRACK, SAMPLE_TRACK_2]} onSave={onSave} onCancel={onCancel} />
+    );
+    expect(screen.queryByText('BPM')).not.toBeInTheDocument();
+    expect(screen.queryByText('Bitrate')).not.toBeInTheDocument();
+  });
+
+  it('calls updateTrack for each track on save with only filled fields', async () => {
+    render(
+      <TrackDetails tracks={[SAMPLE_TRACK, SAMPLE_TRACK_2]} onSave={onSave} onCancel={onCancel} />
+    );
+    const inputs = screen.getAllByPlaceholderText('Leave blank to keep existing');
+    fireEvent.change(inputs[1], { target: { value: 'VA' } });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(window.api.updateTrack).toHaveBeenCalledTimes(2));
+    expect(window.api.updateTrack).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ album: 'VA' })
+    );
+    expect(window.api.updateTrack).toHaveBeenCalledWith(
+      2,
+      expect.objectContaining({ album: 'VA' })
+    );
+    expect(window.api.updateTrack).toHaveBeenCalledWith(
+      1,
+      expect.not.objectContaining({ artist: expect.anything() })
+    );
+  });
+
+  it('does not call updateTrack if all fields left blank', async () => {
+    render(
+      <TrackDetails tracks={[SAMPLE_TRACK, SAMPLE_TRACK_2]} onSave={onSave} onCancel={onCancel} />
+    );
+    const inputs = screen.getAllByPlaceholderText('Leave blank to keep existing');
+    fireEvent.change(inputs[0], { target: { value: 'x' } });
+    fireEvent.change(inputs[0], { target: { value: '' } });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(window.api.updateTrack).not.toHaveBeenCalled());
+  });
+});

@@ -1,0 +1,1168 @@
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { usePlayer } from './PlayerContext.jsx';
+import CuePointsEditor from './CuePointsEditor.jsx';
+import { clampTrimRange, formatTrimTime, trimColumns } from './trackTrim.js';
+import './BeatGridEditor.css';
+
+/** Colour of the trim in/out markers and handles in both waveforms. */
+const TRIM_COLOR = '#7eb8f7';
+
+/**
+ * Waveform columns per second assumed when a track has no known duration, so the
+ * grid can still be laid out from the column count alone.
+ */
+const FALLBACK_COLS_PER_SEC = 150;
+const ZOOM_LEVELS = [1000, 2000, 4000, 8000, 16000, 32000];
+
+/**
+ * Milliseconds covered by one column of the detail waveform.
+ *
+ * @param {number[]|null} detail Interleaved detail samples, three values per column.
+ * @param {number} trackDurationMs Track duration in ms, used to scale the columns.
+ * @returns {number|null} ms per column, or null when there is no usable detail data.
+ */
+function getDetailMsPerCol(detail, trackDurationMs) {
+  if (!detail || detail.length < 3) return null;
+  const numCols = Math.floor(detail.length / 3);
+  if (numCols <= 0) return null;
+  const totalMs = trackDurationMs > 0 ? trackDurationMs : (numCols / FALLBACK_COLS_PER_SEC) * 1000;
+  return totalMs / numCols;
+}
+
+/**
+ * Snap a time to the nearest detail-waveform column boundary.
+ *
+ * @param {number} ms Time in ms.
+ * @param {number[]|null} detail Interleaved detail samples.
+ * @param {number} trackDurationMs Track duration in ms.
+ * @returns {number} Snapped time in ms, or the input when the grid is unknown.
+ */
+function snapToDetailGrid(ms, detail, trackDurationMs) {
+  const msPerCol = getDetailMsPerCol(detail, trackDurationMs);
+  if (!msPerCol) return ms;
+  return Math.round(ms / msPerCol) * msPerCol;
+}
+
+/** Compute beat array from beatgrid JSON + bpm + offset (ms). */
+function computeBeats(beatgridJson, bpm, offsetMs = 0) {
+  let beats = [];
+  try {
+    if (beatgridJson) {
+      const raw = typeof beatgridJson === 'string' ? JSON.parse(beatgridJson) : beatgridJson;
+      if (Array.isArray(raw) && raw.length > 0) {
+        beats =
+          typeof raw[0] === 'number'
+            ? raw.map((t, i) => ({ time: Math.round(t * 1000), beatNum: (i % 4) + 1 }))
+            : raw.map((b, i) => ({
+                time: Math.round((b.position ?? b.time ?? b.offset ?? 0) * 1000),
+                beatNum: (i % 4) + 1,
+              }));
+      }
+    }
+  } catch {}
+
+  if (!beats.length && bpm > 0) {
+    const intervalMs = (60 / bpm) * 1000;
+    const count = Math.ceil(600_000 / intervalMs);
+    beats = Array.from({ length: count }, (_, i) => ({
+      time: Math.round(i * intervalMs),
+      beatNum: (i % 4) + 1,
+    }));
+  }
+
+  return beats.map((b) => ({ ...b, time: b.time + offsetMs })).filter((b) => b.time >= 0);
+}
+
+/**
+ * Draw the scrollable detail waveform.
+ * viewMs         — milliseconds visible in the canvas (zoom level)
+ * trackDurationMs — real track duration (ms), used to derive the buffer's
+ *                    actual cols/sec so this renders correctly whether
+ *                    `detail` is the 600 cols/sec hires buffer, the legacy
+ *                    150 cols/sec buffer, or a mix during the lazy-regen
+ *                    transition period (#262)
+ */
+function drawDetail(canvas, detail, viewCenter, beats, cuePoints, viewMs, trackDurationMs, trim) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+  const pxPerMs = W / viewMs;
+  const midY = H / 2;
+
+  ctx.clearRect(0, 0, W, H);
+
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, W, H);
+
+  if (detail && detail.length >= 3) {
+    const numCols = Math.floor(detail.length / 3);
+    const totalMs =
+      trackDurationMs > 0 ? trackDurationMs : (numCols / FALLBACK_COLS_PER_SEC) * 1000;
+
+    for (let px = 0; px < W; px++) {
+      const msAtPx = viewCenter - viewMs / 2 + (px / W) * viewMs;
+      if (msAtPx < 0 || msAtPx > totalMs) continue;
+
+      const col = Math.floor((msAtPx / totalMs) * numCols);
+      if (col < 0 || col >= numCols) continue;
+
+      const treble = detail[col * 3 + 0];
+      const mid = detail[col * 3 + 1];
+      const bass = detail[col * 3 + 2];
+
+      const amplitude = Math.max(treble, mid, bass) / 255;
+      const halfH = Math.max(1, amplitude * midY * 0.85);
+
+      const bassC = Math.pow(bass / 255, 0.55);
+      const midC = Math.pow(mid / 255, 0.3);
+      const trebleC = Math.pow(treble / 255, 0.2);
+      const dominant = Math.max(bassC, midC, trebleC) || 0.001;
+      const brightness = Math.min(1, amplitude * 2.5);
+      const r = Math.round((trebleC / dominant) * brightness * 255);
+      const g = Math.round((midC / dominant) * brightness * 255);
+      const b = Math.round((bassC / dominant) * brightness * 255);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(px, midY - halfH, 1, halfH * 2);
+    }
+  } else {
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#1a1a2e');
+    grad.addColorStop(1, '#111');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, midY);
+  ctx.lineTo(W, midY);
+  ctx.stroke();
+
+  ctx.fillStyle = '#555';
+  ctx.font = '10px monospace';
+  const secStart = Math.floor((viewCenter - viewMs / 2) / 1000);
+  const secEnd = Math.ceil((viewCenter + viewMs / 2) / 1000);
+  for (let s = secStart; s <= secEnd; s++) {
+    const x = W / 2 + (s * 1000 - viewCenter) * pxPerMs;
+    ctx.strokeStyle = '#2a2a2a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, 8);
+    ctx.stroke();
+    ctx.fillText(`${s}s`, x + 2, 16);
+  }
+
+  let measureNum = 0;
+  for (let i = 0; i < beats.length; i++) {
+    const b = beats[i];
+    const x = W / 2 + (b.time - viewCenter) * pxPerMs;
+    if (x < -4 || x > W + 4) continue;
+
+    if (b.beatNum === 1) measureNum = Math.floor(i / 4) + 1;
+
+    const isBeat1 = b.beatNum === 1;
+    const lineH = isBeat1 ? H * 0.65 : H * 0.28;
+    ctx.strokeStyle = isBeat1 ? 'rgba(255,255,255,0.85)' : 'rgba(160,160,160,0.45)';
+    ctx.lineWidth = isBeat1 ? 2 : 1;
+    ctx.beginPath();
+    ctx.moveTo(x, midY - lineH / 2);
+    ctx.lineTo(x, midY + lineH / 2);
+    ctx.stroke();
+
+    if (isBeat1) {
+      ctx.fillStyle = 'rgba(200,200,200,0.7)';
+      ctx.font = '10px monospace';
+      ctx.fillText(measureNum, x + 3, midY - lineH / 2 - 3);
+    }
+  }
+
+  if (cuePoints && cuePoints.length > 0) {
+    for (const cue of cuePoints) {
+      const x = W / 2 + (cue.position_ms - viewCenter) * pxPerMs;
+      if (x < -10 || x > W + 10) continue;
+
+      const color = cue.color || '#00b4d8';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, H);
+      ctx.stroke();
+
+      const label = cue.hot_cue_index >= 0 ? 'ABCDEFGHIJKLMNOP'[cue.hot_cue_index] : '●';
+      ctx.fillStyle = color;
+      ctx.fillRect(x, H - 18, cue.hot_cue_index >= 0 ? 12 : 10, 14);
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(label, x + 2, H - 6);
+    }
+  }
+
+  if (trim) {
+    const xIn = W / 2 + (trim.startMs - viewCenter) * pxPerMs;
+    const xOut = W / 2 + (trim.endMs - viewCenter) * pxPerMs;
+    const dimFrom = Math.max(0, Math.min(xIn, W));
+    const dimTo = Math.max(0, Math.min(xOut, W));
+
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    if (dimFrom > 0) ctx.fillRect(0, 0, dimFrom, H);
+    if (dimTo < W) ctx.fillRect(dimTo, 0, W - dimTo, H);
+
+    for (const [x, label] of [
+      [xIn, 'IN'],
+      [xOut, 'OUT'],
+    ]) {
+      if (x < -14 || x > W + 14) continue;
+      ctx.strokeStyle = TRIM_COLOR;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, H);
+      ctx.stroke();
+
+      ctx.fillStyle = TRIM_COLOR;
+      ctx.fillRect(x, 0, label.length * 6 + 6, 14);
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(label, x + 3, 10);
+    }
+  }
+
+  ctx.strokeStyle = '#e03030';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(W / 2, 0);
+  ctx.lineTo(W / 2, H);
+  ctx.stroke();
+
+  ctx.fillStyle = '#e03030';
+  ctx.beginPath();
+  ctx.moveTo(W / 2 - 5, 0);
+  ctx.lineTo(W / 2 + 5, 0);
+  ctx.lineTo(W / 2, 7);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(W / 2 - 5, H);
+  ctx.lineTo(W / 2 + 5, H);
+  ctx.lineTo(W / 2, H - 7);
+  ctx.closePath();
+  ctx.fill();
+}
+
+/**
+ * Paint the whole-track overview strip: spectrum-coloured waveform, cue markers,
+ * trim handles, the highlighted detail-window range and the playhead.
+ *
+ * @param {HTMLCanvasElement} canvas Target canvas.
+ * @param {number[]|null} overview Interleaved overview samples, four per column.
+ * @param {number} viewCenter Centre of the detail view, in ms.
+ * @param {number} durationMs Track duration in ms.
+ * @param {number|null} playheadMs Playhead position in ms, if this track is loaded.
+ * @param {{ position_ms: number, color?: string }[]} cuePoints Cue markers to draw.
+ * @param {number} viewMs Width of the detail view in ms.
+ * @param {{ startMs: number, endMs: number }|null} trim Pending trim range, if any.
+ */
+function drawOverview(
+  canvas,
+  overview,
+  viewCenter,
+  durationMs,
+  playheadMs,
+  cuePoints,
+  viewMs,
+  trim
+) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#0d0d0d';
+  ctx.fillRect(0, 0, W, H);
+
+  const numCols = overview ? Math.floor(overview.length / 4) : 0;
+
+  if (numCols > 0) {
+    const midY = H / 2;
+    for (let px = 0; px < W; px++) {
+      const col = Math.floor((px / W) * numCols);
+      if (col >= numCols) continue;
+
+      const rms = overview[col * 4 + 0] / 255;
+      const bass = overview[col * 4 + 1];
+      const mid = overview[col * 4 + 2];
+      const treble = overview[col * 4 + 3];
+
+      const amplitude = Math.max(rms, bass / 255, mid / 255, treble / 255);
+      const halfH = Math.max(1, amplitude * midY * 0.9);
+
+      const bassC = Math.pow(bass / 255, 0.55);
+      const midC = Math.pow(mid / 255, 0.3);
+      const trebleC = Math.pow(treble / 255, 0.2);
+      const dominant = Math.max(bassC, midC, trebleC) || 0.001;
+      const brightness = Math.min(1, rms * 2.5);
+      const r = Math.round((trebleC / dominant) * brightness * 255);
+      const g = Math.round((midC / dominant) * brightness * 255);
+      const b = Math.round((bassC / dominant) * brightness * 255);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(px, midY - halfH, 1, halfH * 2);
+    }
+  }
+
+  if (cuePoints && cuePoints.length > 0 && durationMs > 0) {
+    for (const cue of cuePoints) {
+      const px = (cue.position_ms / durationMs) * W;
+      if (px < 0 || px > W) continue;
+      ctx.strokeStyle = cue.color || '#00b4d8';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(px, 0);
+      ctx.lineTo(px, H);
+      ctx.stroke();
+    }
+  }
+
+  if (trim && durationMs > 0) {
+    const pxIn = Math.max(0, Math.min(W, (trim.startMs / durationMs) * W));
+    const pxOut = Math.max(0, Math.min(W, (trim.endMs / durationMs) * W));
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    if (pxIn > 0) ctx.fillRect(0, 0, pxIn, H);
+    if (pxOut < W) ctx.fillRect(pxOut, 0, W - pxOut, H);
+    ctx.fillStyle = TRIM_COLOR;
+    ctx.fillRect(pxIn - 1, 0, 2, H);
+    ctx.fillRect(pxOut - 1, 0, 2, H);
+  }
+
+  if (durationMs > 0) {
+    const viewStart = viewCenter - viewMs / 2;
+    const viewEnd = viewCenter + viewMs / 2;
+    const x1 = Math.max(0, (viewStart / durationMs) * W);
+    const x2 = Math.min(W, (viewEnd / durationMs) * W);
+    ctx.fillStyle = 'rgba(224,48,48,0.08)';
+    ctx.fillRect(x1, 0, x2 - x1, H);
+    ctx.strokeStyle = 'rgba(224,48,48,0.35)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x1, 0, x2 - x1, H);
+  }
+
+  if (playheadMs != null && durationMs > 0) {
+    const px = (playheadMs / durationMs) * W;
+    ctx.strokeStyle = '#e03030';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(px, 0);
+    ctx.lineTo(px, H);
+    ctx.stroke();
+  }
+}
+
+/**
+ * "Prepare Track" modal: detail and overview waveforms on canvas, beat grid offset
+ * nudging, BPM editing with tap tempo, cue point editing and trim handles, all
+ * committed in one apply step.
+ *
+ * @param {object} track Track being prepared.
+ * @param {() => void} onClose Closes the modal without saving.
+ * @param {(trackId: string, patch: object) => void} onApply Receives the beatgrid offset,
+ *   BPM override and trim columns after cue point edits have been written.
+ */
+export default function BeatGridEditor({ track, onClose, onApply }) {
+  const {
+    currentTrack,
+    isPlaying,
+    currentTime,
+    duration,
+    togglePlay,
+    play,
+    seek,
+    stop,
+    queue,
+    patchCurrentTrack,
+  } = usePlayer();
+
+  const [offset, setOffset] = useState(track.beatgrid_offset ?? 0);
+  const [bpmInput, setBpmInput] = useState(() => {
+    const bpm = track.bpm_override ?? track.bpm ?? 0;
+    return bpm > 0 ? String(Math.round(bpm * 10) / 10) : '';
+  });
+  const [waveformLoading, setWaveformLoading] = useState(true);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [trimStart, setTrimStart] = useState(() => track.trim_start_ms ?? null);
+  const [trimEnd, setTrimEnd] = useState(() => track.trim_end_ms ?? null);
+  const initialCuesRef = useRef(null);
+  const showCancelConfirmRef = useRef(false);
+
+  const [zoomIdx, setZoomIdx] = useState(3);
+  const viewMsRef = useRef(ZOOM_LEVELS[3]);
+
+  const [tapBpm, setTapBpm] = useState(null);
+  const tapTimesRef = useRef([]);
+  const tapResetTimerRef = useRef(null);
+
+  const detailCanvasRef = useRef(null);
+  const overviewCanvasRef = useRef(null);
+  const rafRef = useRef(null);
+
+  const waveformDetailRef = useRef(null);
+  const waveformOverviewRef = useRef(null);
+  const beatsRef = useRef([]);
+  const cuePointsRef = useRef([]);
+  const trimRef = useRef(null);
+  const viewCenterRef = useRef(0);
+  const trackDurationMsRef = useRef(0);
+  const isPlayingRef = useRef(false);
+  const isThisTrackRef = useRef(false);
+  const currentTimeSecRef = useRef(0);
+  const lastTimeUpdateRef = useRef(0);
+  const userScrollingRef = useRef(false);
+  const seekRef = useRef(seek);
+
+  const trackDurationMs = (track.duration ?? duration ?? 0) * 1000;
+  const isThisTrack = currentTrack?.id === track.id;
+  const trimRange = clampTrimRange(trimStart, trimEnd, trackDurationMs);
+  const pendingTrim =
+    trimStart != null || trimEnd != null
+      ? { startMs: trimStart ?? 0, endMs: trimEnd ?? trackDurationMs }
+      : null;
+  const trimValidationError =
+    trimStart != null && trimEnd != null && trimEnd <= trimStart
+      ? 'Trim end must be after trim start'
+      : null;
+
+  const previewBpm = (() => {
+    const p = parseFloat(bpmInput);
+    return Number.isFinite(p) && p > 0 ? p : (track.bpm_override ?? track.bpm ?? 0);
+  })();
+
+  const beats = computeBeats(track.beatgrid, previewBpm, offset);
+
+  useLayoutEffect(() => {
+    seekRef.current = seek;
+    beatsRef.current = beats;
+    trimRef.current = pendingTrim;
+    viewMsRef.current = ZOOM_LEVELS[zoomIdx];
+    trackDurationMsRef.current = trackDurationMs;
+    isPlayingRef.current = isPlaying;
+    isThisTrackRef.current = isThisTrack;
+    showCancelConfirmRef.current = showCancelConfirm;
+  });
+
+  useEffect(() => {
+    currentTimeSecRef.current = currentTime;
+    lastTimeUpdateRef.current = performance.now();
+    if (isThisTrackRef.current && !isPlayingRef.current && !userScrollingRef.current) {
+      viewCenterRef.current = currentTime * 1000;
+    }
+  }, [currentTime]);
+
+  useEffect(() => {
+    if (isPlaying) lastTimeUpdateRef.current = performance.now();
+  }, [isPlaying]);
+
+  useEffect(() => {
+    let alive = true;
+    window.api
+      .getEditorWaveform(track.id)
+      .then((result) => {
+        if (!alive || !result) return;
+        waveformDetailRef.current = result.detail ? new Uint8Array(result.detail) : null;
+        waveformOverviewRef.current = result.overview ? new Uint8Array(result.overview) : null;
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (alive) setWaveformLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [track.id]);
+
+  useEffect(() => {
+    const unsub = window.api.onWaveformReady(({ trackId }) => {
+      if (trackId !== track.id) return;
+      window.api.getEditorWaveform(track.id).then((result) => {
+        if (!result) return;
+        waveformDetailRef.current = result.detail ? new Uint8Array(result.detail) : null;
+        waveformOverviewRef.current = result.overview ? new Uint8Array(result.overview) : null;
+      });
+    });
+    return unsub;
+  }, [track.id]);
+
+  useEffect(() => {
+    let alive = true;
+    window.api.getCuePoints(track.id).then((pts) => {
+      if (!alive) return;
+      const list = pts ?? [];
+      cuePointsRef.current = list;
+      if (initialCuesRef.current === null) initialCuesRef.current = list;
+    });
+    return () => {
+      alive = false;
+    };
+  }, [track.id]);
+
+  useEffect(() => {
+    const loop = () => {
+      const elapsed = isPlayingRef.current
+        ? (performance.now() - lastTimeUpdateRef.current) / 1000
+        : 0;
+      const estTimeSec = currentTimeSecRef.current + elapsed;
+      const playheadMs = estTimeSec * 1000;
+      const vms = viewMsRef.current;
+
+      const dur = trackDurationMsRef.current;
+      if (isThisTrackRef.current && isPlayingRef.current && !userScrollingRef.current) {
+        viewCenterRef.current = snapToDetailGrid(playheadMs, waveformDetailRef.current, dur);
+      }
+
+      const vc = viewCenterRef.current;
+      const ph = isThisTrackRef.current ? playheadMs : null;
+      const cues = cuePointsRef.current;
+
+      const dc = detailCanvasRef.current;
+      if (dc)
+        drawDetail(
+          dc,
+          waveformDetailRef.current,
+          vc,
+          beatsRef.current,
+          cues,
+          vms,
+          dur,
+          trimRef.current
+        );
+
+      const oc = overviewCanvasRef.current;
+      if (oc)
+        drawOverview(oc, waveformOverviewRef.current, vc, dur, ph, cues, vms, trimRef.current);
+
+      rafRef.current = requestAnimationFrame(loop);
+    };
+
+    rafRef.current = requestAnimationFrame(loop);
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const canvases = [detailCanvasRef.current, overviewCanvasRef.current].filter(Boolean);
+    if (!canvases.length) return;
+    const ro = new ResizeObserver(() => {
+      for (const canvas of canvases) {
+        canvas.width = canvas.offsetWidth * window.devicePixelRatio;
+        canvas.height = canvas.offsetHeight * window.devicePixelRatio;
+      }
+    });
+    for (const canvas of canvases) ro.observe(canvas);
+    return () => ro.disconnect();
+  }, []);
+
+  const computeIsDirty = useCallback(() => {
+    const initial = initialCuesRef.current;
+    if (initial === null) return false;
+    const pending = cuePointsRef.current;
+    const initialBpmStr = (() => {
+      const bpm = track.bpm_override ?? track.bpm ?? 0;
+      return bpm > 0 ? String(Math.round(bpm * 10) / 10) : '';
+    })();
+    if (bpmInput !== initialBpmStr || offset !== (track.beatgrid_offset ?? 0)) return true;
+    if (trimStart !== (track.trim_start_ms ?? null)) return true;
+    if (trimEnd !== (track.trim_end_ms ?? null)) return true;
+    if (initial.length !== pending.length) return true;
+    return initial.some((c, i) => {
+      const p = pending[i];
+      return (
+        !p ||
+        c.id !== p.id ||
+        c.position_ms !== p.position_ms ||
+        c.hot_cue_index !== p.hot_cue_index ||
+        c.color !== p.color ||
+        (c.label ?? '') !== (p.label ?? '')
+      );
+    });
+  }, [bpmInput, offset, track, trimStart, trimEnd]);
+
+  const handleClose = useCallback(() => {
+    if (computeIsDirty()) {
+      setShowCancelConfirm(true);
+      return;
+    }
+    if (isThisTrackRef.current) stop();
+    onClose();
+  }, [computeIsDirty, stop, onClose]);
+
+  const handleForceClose = useCallback(() => {
+    setShowCancelConfirm(false);
+    if (isThisTrackRef.current) stop();
+    onClose();
+  }, [stop, onClose]);
+
+  const zoomIn = () =>
+    setZoomIdx((i) => {
+      const next = Math.max(0, i - 1);
+      viewMsRef.current = ZOOM_LEVELS[next];
+      return next;
+    });
+  const zoomOut = () =>
+    setZoomIdx((i) => {
+      const next = Math.min(ZOOM_LEVELS.length - 1, i + 1);
+      viewMsRef.current = ZOOM_LEVELS[next];
+      return next;
+    });
+
+  const dragRef = useRef(null);
+  const wasPlayingRef = useRef(false);
+
+  const endDetailDrag = useCallback(() => {
+    if (!dragRef.current) return;
+    if (dragRef.current.dragged && isThisTrackRef.current) {
+      const targetSec = viewCenterRef.current / 1000;
+      seekRef.current(targetSec);
+      currentTimeSecRef.current = targetSec;
+      lastTimeUpdateRef.current = performance.now();
+    }
+    dragRef.current = null;
+    wasPlayingRef.current = false;
+    userScrollingRef.current = false;
+  }, []);
+
+  const onDetailPointerDown = (e) => {
+    if (e.target !== detailCanvasRef.current || e.button !== 0) return;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    userScrollingRef.current = true;
+    wasPlayingRef.current = isThisTrackRef.current && isPlayingRef.current;
+    dragRef.current = { startX: e.clientX, startCenter: viewCenterRef.current, dragged: false };
+
+    if (wasPlayingRef.current) togglePlay();
+  };
+
+  const onDetailPointerMove = useCallback(
+    (e) => {
+      if (!dragRef.current) return;
+      if (e.buttons === 0) {
+        endDetailDrag();
+        return;
+      }
+      const canvas = detailCanvasRef.current;
+      if (!canvas) return;
+      const deltaPx = dragRef.current.startX - e.clientX;
+      if (Math.abs(deltaPx) > 4) dragRef.current.dragged = true;
+      if (!dragRef.current.dragged) return;
+      const pxPerMs = canvas.offsetWidth / viewMsRef.current;
+      const deltaMs = deltaPx / pxPerMs;
+      const maxCenter = trackDurationMsRef.current || 600_000;
+      viewCenterRef.current = Math.max(
+        0,
+        Math.min(maxCenter, dragRef.current.startCenter + deltaMs)
+      );
+    },
+    [endDetailDrag]
+  );
+
+  useEffect(() => {
+    const finish = () => endDetailDrag();
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    window.addEventListener('blur', finish);
+    return () => {
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      window.removeEventListener('blur', finish);
+    };
+  }, [endDetailDrag]);
+
+  const onDetailWheel = useCallback((e) => {
+    e.preventDefault();
+    const delta = e.deltaY || e.deltaX;
+    if (delta < 0) {
+      setZoomIdx((i) => {
+        const next = Math.max(0, i - 1);
+        viewMsRef.current = ZOOM_LEVELS[next];
+        return next;
+      });
+    } else if (delta > 0) {
+      setZoomIdx((i) => {
+        const next = Math.min(ZOOM_LEVELS.length - 1, i + 1);
+        viewMsRef.current = ZOOM_LEVELS[next];
+        return next;
+      });
+    }
+  }, []);
+
+  const bgeWrapRef = useRef(null);
+  useEffect(() => {
+    const el = bgeWrapRef.current;
+    if (!el) return;
+    el.addEventListener('wheel', onDetailWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onDetailWheel);
+  }, [onDetailWheel]);
+
+  const onOverviewClick = useCallback(
+    (e) => {
+      const canvas = overviewCanvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const frac = (e.clientX - rect.left) / rect.width;
+      const ms = frac * (trackDurationMsRef.current || 600_000);
+      const clamped = Math.max(
+        viewMsRef.current / 2,
+        Math.min(trackDurationMsRef.current || 600_000, ms)
+      );
+      viewCenterRef.current = clamped;
+      userScrollingRef.current = false;
+      if (isThisTrackRef.current) seek(clamped / 1000);
+    },
+    [seek]
+  );
+
+  const handlePlayPause = useCallback(() => {
+    if (isThisTrack) {
+      togglePlay();
+    } else {
+      const startMs = Math.max(0, viewCenterRef.current);
+      const startSec = startMs / 1000;
+      currentTimeSecRef.current = startSec;
+      lastTimeUpdateRef.current = performance.now();
+      const list = Array.isArray(queue) ? queue : [];
+      const index = list.findIndex((t) => t.id === track.id);
+      if (index >= 0) play(track, list, index, null, null);
+      else play(track, [track], 0, null, null);
+      if (startSec > 0) requestAnimationFrame(() => seekRef.current(startSec));
+      userScrollingRef.current = false;
+    }
+  }, [isThisTrack, togglePlay, play, track, queue]);
+
+  const nudge = (deltaMs) => setOffset((prev) => prev + deltaMs);
+  const resetOffset = () => setOffset(0);
+
+  const playheadMs = () => {
+    if (!isThisTrack) return Math.round(viewCenterRef.current);
+    const elapsed = isPlayingRef.current
+      ? (performance.now() - lastTimeUpdateRef.current) / 1000
+      : 0;
+    return Math.round((currentTimeSecRef.current + elapsed) * 1000);
+  };
+
+  const setTrimPoint = (side) => {
+    const ms = Math.max(0, playheadMs());
+    if (side === 'in') setTrimStart(ms);
+    else setTrimEnd(ms);
+  };
+
+  const clearTrim = () => {
+    setTrimStart(null);
+    setTrimEnd(null);
+  };
+
+  const savedTrimRef = useRef({
+    start: track.trim_start_ms ?? null,
+    end: track.trim_end_ms ?? null,
+  });
+  useEffect(() => {
+    if (!isThisTrack) return;
+    patchCurrentTrack(track.id, { trim_start_ms: trimStart, trim_end_ms: trimEnd });
+  }, [isThisTrack, patchCurrentTrack, track.id, trimStart, trimEnd]);
+
+  useEffect(() => {
+    const id = track.id;
+    const savedTrim = savedTrimRef.current;
+    return () => {
+      patchCurrentTrack(id, {
+        trim_start_ms: savedTrim.start,
+        trim_end_ms: savedTrim.end,
+      });
+    };
+  }, [patchCurrentTrack, track.id]);
+
+  const handleTap = useCallback(() => {
+    const now = performance.now();
+    const times = tapTimesRef.current;
+    if (times.length > 0 && now - times[times.length - 1] > 3000) times.length = 0;
+    times.push(now);
+    if (times.length > 8) times.splice(0, times.length - 8);
+    if (times.length >= 2) {
+      const intervals = [];
+      for (let i = 1; i < times.length; i++) intervals.push(times[i] - times[i - 1]);
+      const avgMs = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+      setTapBpm(Math.round((60000 / avgMs) * 10) / 10);
+    }
+    clearTimeout(tapResetTimerRef.current);
+    tapResetTimerRef.current = setTimeout(() => {
+      tapTimesRef.current = [];
+      setTapBpm(null);
+    }, 3000);
+  }, []);
+
+  const applyTapBpm = useCallback(() => {
+    if (tapBpm == null) return;
+    setBpmInput(String(tapBpm));
+    setTapBpm(null);
+    tapTimesRef.current = [];
+    clearTimeout(tapResetTimerRef.current);
+  }, [tapBpm]);
+
+  const handleApply = async () => {
+    if (trimValidationError) return;
+    const parsed = parseFloat(bpmInput);
+    const bpmOverride = Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 10) / 10 : null;
+
+    const initial = initialCuesRef.current ?? [];
+    const pending = cuePointsRef.current;
+    const initialMap = new Map(initial.map((c) => [String(c.id), c]));
+    const pendingIds = new Set(pending.map((c) => String(c.id)));
+
+    for (const c of initial) {
+      if (!pendingIds.has(String(c.id))) await window.api.deleteCuePoint(c.id);
+    }
+    for (const c of pending) {
+      const sid = String(c.id);
+      if (sid.startsWith('tmp-')) {
+        await window.api.addCuePoint({
+          trackId: track.id,
+          positionMs: c.position_ms,
+          label: c.label ?? '',
+          color: c.color ?? '#00b4d8',
+          hotCueIndex: c.hot_cue_index,
+        });
+      } else if (initialMap.has(sid)) {
+        const orig = initialMap.get(sid);
+        if (
+          orig.color !== c.color ||
+          (orig.label ?? '') !== (c.label ?? '') ||
+          orig.hot_cue_index !== c.hot_cue_index ||
+          orig.enabled !== c.enabled
+        ) {
+          await window.api.updateCuePoint(c.id, {
+            color: c.color,
+            label: c.label ?? '',
+            hotCueIndex: c.hot_cue_index,
+          });
+        }
+      }
+    }
+
+    onApply(track.id, {
+      beatgrid_offset: offset,
+      bpm_override: bpmOverride,
+      ...trimColumns(trimStart, trimEnd, trackDurationMs),
+    });
+    onClose();
+  };
+
+  const handleApplyRef = useRef(handleApply);
+  useLayoutEffect(() => {
+    handleApplyRef.current = handleApply;
+  });
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.key === 'Escape') {
+        if (showCancelConfirmRef.current) {
+          setShowCancelConfirm(false);
+          return;
+        }
+        handleClose();
+        return;
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        nudge(e.shiftKey ? -10 : -1);
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        nudge(e.shiftKey ? 10 : 1);
+      }
+      if (e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        handlePlayPause();
+      }
+      if (e.key === 't' || e.key === 'T') {
+        e.preventDefault();
+        handleTap();
+      }
+      if (e.key === '+' || e.key === '=') zoomIn();
+      if (e.key === '-') zoomOut();
+      if (e.key === 'Enter') handleApplyRef.current();
+    };
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
+  }, [handlePlayPause, handleClose, handleTap]);
+
+  const handleCuePointsChange = useCallback((pts) => {
+    const list = pts ?? [];
+    cuePointsRef.current = list;
+    if (initialCuesRef.current === null) initialCuesRef.current = list;
+  }, []);
+
+  const handleCuesRebase = useCallback((pts) => {
+    initialCuesRef.current = pts ?? [];
+  }, []);
+
+  const offsetLabel = offset === 0 ? '0 ms' : `${offset > 0 ? '+' : ''}${offset} ms`;
+  const analyzerBpm = track.bpm_override != null ? null : track.bpm;
+  const viewMs = ZOOM_LEVELS[zoomIdx];
+
+  return (
+    <div className="bge-overlay">
+      <div className="bge-modal">
+        {}
+        <div className="bge-header">
+          <span className="bge-title">
+            🎛 Prepare Track
+            <span className="bge-track-name">
+              {track.title}
+              {track.artist ? ` — ${track.artist}` : ''}
+            </span>
+          </span>
+          <button className="bge-close" onClick={handleClose} title="Close (Esc)">
+            ✕
+          </button>
+        </div>
+
+        {}
+        <div className="bge-canvas-wrap" ref={bgeWrapRef}>
+          {waveformLoading && <div className="bge-loading">Loading waveform…</div>}
+          <button
+            className={`bge-play-overlay${isThisTrack && isPlaying ? ' bge-play-overlay--playing' : ''}`}
+            onClick={handlePlayPause}
+            title={isThisTrack && isPlaying ? 'Pause (Space)' : 'Play (Space)'}
+          >
+            {isThisTrack && isPlaying ? '⏸' : '▶'}
+          </button>
+          {}
+          <div className="bge-zoom-controls">
+            <button
+              className="bge-zoom-btn"
+              onClick={zoomOut}
+              disabled={zoomIdx === ZOOM_LEVELS.length - 1}
+              title="Zoom out (−)"
+            >
+              −
+            </button>
+            <span className="bge-zoom-label">
+              {viewMs >= 1000 ? `${viewMs / 1000}s` : `${viewMs}ms`}
+            </span>
+            <button
+              className="bge-zoom-btn"
+              onClick={zoomIn}
+              disabled={zoomIdx === 0}
+              title="Zoom in (+)"
+            >
+              +
+            </button>
+          </div>
+          <canvas
+            ref={detailCanvasRef}
+            className="bge-canvas"
+            onPointerDown={onDetailPointerDown}
+            onPointerMove={onDetailPointerMove}
+            onPointerUp={endDetailDrag}
+            onPointerCancel={endDetailDrag}
+            title="Click to seek · Drag to scrub · Scroll to zoom"
+          />
+          <div className="bge-canvas-hint">
+            click / drag to seek · scroll to zoom · ← → nudge grid · +/− zoom
+          </div>
+        </div>
+
+        {}
+        <div className="bge-overview-wrap">
+          <canvas
+            ref={overviewCanvasRef}
+            className="bge-overview-canvas"
+            onClick={onOverviewClick}
+            title="Click to jump to position"
+          />
+        </div>
+
+        {}
+        <div className="bge-controls">
+          {}
+          <div className="bge-row">
+            <span className="bge-label">Grid offset</span>
+            <div className="bge-nudge-group">
+              <button className="bge-nudge-btn" onClick={() => nudge(-10)}>
+                −10
+              </button>
+              <button className="bge-nudge-btn" onClick={() => nudge(-5)}>
+                −5
+              </button>
+              <button className="bge-nudge-btn" onClick={() => nudge(-1)}>
+                −1
+              </button>
+              <span className="bge-offset-val">{offsetLabel}</span>
+              <button className="bge-nudge-btn" onClick={() => nudge(1)}>
+                +1
+              </button>
+              <button className="bge-nudge-btn" onClick={() => nudge(5)}>
+                +5
+              </button>
+              <button className="bge-nudge-btn" onClick={() => nudge(10)}>
+                +10
+              </button>
+              {offset !== 0 && (
+                <button
+                  className="bge-nudge-btn bge-nudge-reset"
+                  onClick={resetOffset}
+                  title="Reset offset to 0"
+                >
+                  ↺
+                </button>
+              )}
+            </div>
+          </div>
+
+          {}
+          <div className="bge-row">
+            <span className="bge-label">BPM</span>
+            <div className="bge-bpm-row">
+              <input
+                className="bge-bpm-input"
+                type="number"
+                min="20"
+                max="400"
+                step="0.1"
+                value={bpmInput}
+                onChange={(e) => setBpmInput(e.target.value)}
+                placeholder={previewBpm > 0 ? String(Math.round(previewBpm * 10) / 10) : 'e.g. 128'}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleApply();
+                }}
+              />
+              {}
+              <button
+                className={`bge-tap-btn${tapBpm != null ? ' bge-tap-btn--active' : ''}`}
+                onClick={handleTap}
+                title="Tap to the beat (T)"
+              >
+                {tapBpm != null ? `${tapBpm}` : 'TAP'}
+              </button>
+              {}
+              <div
+                className={`bge-tap-apply-wrap${tapBpm != null ? ' bge-tap-apply-wrap--visible' : ''}`}
+              >
+                <button
+                  className="bge-tap-apply-btn"
+                  onClick={applyTapBpm}
+                  title={`Click to use ${tapBpm} BPM`}
+                >
+                  ✓ Use {tapBpm}
+                </button>
+              </div>
+              {analyzerBpm != null && <span className="bge-bpm-hint">analyzer: {analyzerBpm}</span>}
+              {track.bpm_override != null && (
+                <span className="bge-bpm-hint bge-bpm-hint--override">override active</span>
+              )}
+            </div>
+          </div>
+
+          {}
+          <div className="bge-row">
+            <span className="bge-label">Trim</span>
+            <div className="bge-trim-group">
+              <button
+                className="bge-nudge-btn"
+                onClick={() => setTrimPoint('in')}
+                title="Set the trim start at the playhead"
+              >
+                Set IN
+              </button>
+              <span className="bge-trim-val" title="Trim start">
+                {trimStart != null ? formatTrimTime(trimStart) : 'file start'}
+              </span>
+              {trimStart != null && (
+                <button
+                  className="bge-nudge-btn bge-nudge-reset"
+                  onClick={() => setTrimStart(null)}
+                  title="Clear the trim start"
+                >
+                  ↺
+                </button>
+              )}
+              <button
+                className="bge-nudge-btn"
+                onClick={() => setTrimPoint('out')}
+                title="Set the trim end at the playhead"
+              >
+                Set OUT
+              </button>
+              <span className="bge-trim-val" title="Trim end">
+                {trimEnd != null ? formatTrimTime(trimEnd) : 'file end'}
+              </span>
+              {trimEnd != null && (
+                <button
+                  className="bge-nudge-btn bge-nudge-reset"
+                  onClick={() => setTrimEnd(null)}
+                  title="Clear the trim end"
+                >
+                  ↺
+                </button>
+              )}
+              <button
+                className="bge-nudge-btn"
+                onClick={clearTrim}
+                disabled={trimStart == null && trimEnd == null}
+                title="Clear both trim points and play/export the whole track"
+              >
+                Clear trim
+              </button>
+              {trimRange && (
+                <span className="bge-bpm-hint">
+                  {formatTrimTime(trimRange.endMs - trimRange.startMs)} usable
+                </span>
+              )}
+            </div>
+            {trimValidationError && <span className="bge-trim-error">{trimValidationError}</span>}
+          </div>
+        </div>
+
+        {}
+        <div className="bge-cue-section">
+          <CuePointsEditor
+            trackId={track.id}
+            onCuePointsChange={handleCuePointsChange}
+            deferred
+            onRebase={handleCuesRebase}
+          />
+        </div>
+
+        {}
+        <div className="bge-footer">
+          {showCancelConfirm ? (
+            <div className="bge-cancel-confirm">
+              <span className="bge-cancel-confirm__msg">Discard unsaved changes?</span>
+              <button className="bge-btn bge-btn--apply" onClick={handleApply}>
+                Save &amp; Close
+              </button>
+              <button className="bge-btn bge-btn--cancel" onClick={handleForceClose}>
+                Discard
+              </button>
+              <button className="bge-btn" onClick={() => setShowCancelConfirm(false)}>
+                Keep Editing
+              </button>
+            </div>
+          ) : (
+            <>
+              <button className="bge-btn bge-btn--cancel" onClick={handleClose}>
+                Cancel
+              </button>
+              <button className="bge-btn bge-btn--apply" onClick={handleApply}>
+                Apply
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
