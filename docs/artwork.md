@@ -26,6 +26,10 @@ PIONEER/Artwork/00001/a1_m.jpg   240x240
   `artwork_m.jpg` (240x240).
 - Sources larger than that are scaled down and centre-cropped to a square: the
   exported track carried a 1500x1500 cover and the medium got 80 and 240.
+- A folder holds twenty covers: a rekordbox-prepared stick seen in the field has
+  `00001` with a1..a19, `00002` with a20..a39 and `00003` starting at a40. The
+  boundaries fall on multiples of twenty, so the folder of an id is
+  `floor(id / 20) + 1` and the first folder holds one fewer.
 - The same export also wrote `b1.jpg` and `b1_m.jpg`, byte-identical to the `a`
   pair, with no row in the PDB pointing at them. We do not write `b`.
 - Re-exporting a track does not necessarily rewrite its artwork files:

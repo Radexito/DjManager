@@ -27,12 +27,17 @@ afterEach(() => {
 });
 
 describe('artwork paths', () => {
-  it('packs a thousand covers into one folder, five digits', () => {
+  it('packs twenty covers into a folder, five digits, as rekordbox does', () => {
+    // Measured on a rekordbox-prepared stick: 00001 holds a1..a19, 00002 holds
+    // a20..a39, 00003 starts at a40.
     expect(artworkFolderFor(1)).toBe('00001');
     expect(artworkFolderFor(19)).toBe('00001');
-    expect(artworkFolderFor(1000)).toBe('00001');
-    expect(artworkFolderFor(1001)).toBe('00002');
-    expect(artworkFolderFor(2000)).toBe('00002');
+    expect(artworkFolderFor(20)).toBe('00002');
+    expect(artworkFolderFor(39)).toBe('00002');
+    expect(artworkFolderFor(40)).toBe('00003');
+    expect(artworkFolderFor(59)).toBe('00003');
+    expect(artworkFolderFor(60)).toBe('00004');
+    expect(artworkFolderFor(61)).toBe('00004');
   });
 
   it('writes the path rekordbox writes, leading /. included', () => {

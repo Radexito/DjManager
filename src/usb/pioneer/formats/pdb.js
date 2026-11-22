@@ -335,14 +335,16 @@ export function buildAlbumRow(id, artistId, name) {
 }
 
 /**
- * Folder rekordbox puts artwork in, five digits. A thousand covers share
- * `00001`; the next thousand goes to `00002`. Measured on a real export:
- * artwork id 1 lives in `00001` (`/.PIONEER/Artwork/00001/a1.jpg`).
+ * Folder rekordbox puts artwork in, five digits. A folder holds twenty covers,
+ * not a thousand: a rekordbox-prepared stick from a CDJ-2000 user carries
+ * `00001` with a1..a19, `00002` with a20..a39 and `00003` starting at a40
+ * (measured 2026-11-22). The first folder is short because the boundaries fall
+ * on multiples of twenty: folder = floor(id / 20) + 1.
  * @param {number} id artwork id
  * @returns {string}
  */
 export function artworkFolderFor(id) {
-  return String(Math.floor((id - 1) / 1000) + 1).padStart(5, '0');
+  return String(Math.floor(id / 20) + 1).padStart(5, '0');
 }
 
 /**
