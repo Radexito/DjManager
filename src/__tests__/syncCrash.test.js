@@ -68,6 +68,16 @@ function seedOldGeneration(root) {
   );
 }
 
+/**
+ * Whether the child really died from the kill.
+ * POSIX reports the signal; Windows terminates the process and reports a
+ * non-zero exit code with no signal, which is the same outcome.
+ */
+function wasKilled(result) {
+  if (process.platform === 'win32') return result.signal === null && result.status !== 0;
+  return result.signal === 'SIGKILL';
+}
+
 function runChild(root, killPoint) {
   return spawnSync(process.execPath, [child, root, killPoint], {
     cwd: repoRoot,
@@ -100,7 +110,7 @@ describe('crash-safe publication', () => {
 
       const childResult = runChild(root, killPoint);
 
-      expect(childResult.signal, `kill point ${killPoint}`).toBe('SIGKILL');
+      expect(wasKilled(childResult), `kill point ${killPoint}`).toBe(true);
       const count = databaseTrackCount(root);
       expect([1, 2], `database at kill point ${killPoint}`).toContain(count);
       if (killPoint === 'publish-first' || killPoint === 'publish-all') {
@@ -119,7 +129,7 @@ describe('crash-safe publication', () => {
     const root = stick();
     seedOldGeneration(root);
 
-    expect(runChild(root, 'database-staged').signal).toBe('SIGKILL');
+    expect(wasKilled(runChild(root, 'database-staged'))).toBe(true);
     expect(fs.existsSync(lockPath(root))).toBe(true);
     expect(databaseTrackCount(root)).toBe(1);
 
@@ -163,7 +173,7 @@ describe('crash-safe publication', () => {
     const root = stick();
     seedOldGeneration(root);
 
-    expect(runChild(root, 'publish-first').signal).toBe('SIGKILL');
+    expect(wasKilled(runChild(root, 'publish-first'))).toBe(true);
     expect(databaseTrackCount(root)).toBe(2);
 
     const restart = runChild(root, 'none');
