@@ -69,6 +69,14 @@ const activeAnalysisWorkers = new Map();
 let analysisQueue = [];
 
 /**
+ * True while an analysis worker is running or waiting for one.
+ * The sync engine reads this to stay out of the library while it is written.
+ */
+export function isAnalysisBusy() {
+  return analysisActive > 0 || analysisQueue.length > 0;
+}
+
+/**
  * Close out a job exactly once. A cancelled worker is dropped from the batch
  * (total goes down) while a worker that finished is counted as done, so a
  * re-analysed track can never leave the bar stuck part-way.

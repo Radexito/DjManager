@@ -228,15 +228,23 @@ vi.mock('../usb/pioneer/formats/anlz.js', async (importOriginal) => ({
   writeAnlz: vi.fn(),
 }));
 
-vi.mock('../usb/pioneer/formats/pdb.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  writePdb: vi.fn(),
-}));
+vi.mock('../usb/pioneer/formats/pdb.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    // The export now publishes a staged file, so the writer has to really write;
+    // the spy still records the payload each test asserts on.
+    writePdb: vi.fn(actual.writePdb),
+  };
+});
 
-vi.mock('../usb/pioneer/formats/settings.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  writeSettingFiles: vi.fn(),
-}));
+vi.mock('../usb/pioneer/formats/settings.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    writeSettingFiles: vi.fn(actual.writeSettingFiles),
+  };
+});
 
 vi.mock('../usb/generic/fs.js', async (importOriginal) => ({
   ...(await importOriginal()),

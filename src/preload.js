@@ -72,6 +72,18 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('export-all-progress', handler);
     return () => ipcRenderer.removeListener('export-all-progress', handler);
   },
+  syncStatus: () => ipcRenderer.invoke('sync-status'),
+  syncCancel: (opts) => ipcRenderer.invoke('sync-cancel', opts),
+  onSyncProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('sync-progress', handler);
+    return () => ipcRenderer.removeListener('sync-progress', handler);
+  },
+  onSyncFinished: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('sync-finished', handler);
+    return () => ipcRenderer.removeListener('sync-finished', handler);
+  },
 
   getSetting: (key, def) => ipcRenderer.invoke('get-setting', key, def),
   setSetting: (key, value) => ipcRenderer.invoke('set-setting', key, value),
