@@ -9,6 +9,7 @@ import { writeSettingFiles } from '../usb/pioneer/formats/settings.js';
 import { loadManifest, saveManifest } from '../usb/pioneer/manifest.js';
 import { reuseExistingUsbTrack } from '../usb/pioneer/formats/reuse.js';
 import { createPioneerExportRunner } from '../usb/pioneer/exportRunner.js';
+import { readLibrary as readDeviceLibrary } from '../usb/pioneer/onelibrary/index.js';
 import { startJob } from '../sync/job.js';
 import { generationDir } from '../sync/paths.js';
 
@@ -261,6 +262,41 @@ describe('export runner', () => {
       getPlaylistTracks: () => changedTracks,
     }).runner.plan({ playlistIds: [7] });
     expect(runner.fingerprint(changed)).not.toBe(runner.fingerprint(first));
+  });
+
+  it('writes no device library unless it is turned on and has a key', async () => {
+    const root = stick();
+    const { runner } = buildRunner();
+    await runOn(root, runner, runner.plan({ playlistIds: [7] }));
+
+    expect(fs.existsSync(path.join(root, 'PIONEER', 'rekordbox', 'exportLibrary.db'))).toBe(false);
+  });
+
+  it('writes an encrypted device library that agrees with the pdb', async () => {
+    const root = stick();
+    const { runner } = buildRunner({
+      getSetting: (name, fallback) =>
+        name === 'export_onelibrary'
+          ? '1'
+          : name === 'rekordbox_library_key'
+            ? 'test-library-key'
+            : fallback,
+    });
+    await runOn(root, runner, runner.plan({ playlistIds: [7] }));
+
+    const file = path.join(root, 'PIONEER', 'rekordbox', 'exportLibrary.db');
+    expect(fs.existsSync(file)).toBe(true);
+    // SQLCipher writes a salt where SQLite writes its header.
+    expect(fs.readFileSync(file).subarray(0, 16).toString('utf8')).not.toBe('SQLite format 3\0');
+
+    const library = readDeviceLibrary(file, { key: 'test-library-key' });
+    expect(library.content).toHaveLength(2);
+    expect(library.membership).toHaveLength(2);
+    expect(library.content[0]).toMatchObject({
+      title: 'Opening',
+      path: '/Contents/1 - Opening.mp3',
+      fileType: 1,
+    });
   });
 
   it('plans an automatic sync from the playlists the manifest carries', async () => {

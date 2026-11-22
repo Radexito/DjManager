@@ -20,6 +20,11 @@ in `protocol_rekordbox.md`:
 prebuilds for linux/darwin/win32 x64 and arm64, so no compiler is needed and the
 same binary works under Electron.
 
+On a machine without a C++ toolchain, install with `npm install --ignore-scripts`
+(or `npm ci --ignore-scripts`): the package ships the prebuilds, but npm still
+tries `node-gyp` because `binding.gyp` is present. CI has a compiler and builds
+it normally.
+
 **The key is not in this repository.** `resolveLibraryKey()` reads
 `REKORDBOX_LIBRARY_KEY` or the `rekordbox_library_key` setting. Without a key the
 feature stays off and the export is the same as before.
@@ -57,6 +62,10 @@ about the medium, which is the failure #10 describes.
   first, and a `property` row in `export.pdb` that points at it.
 - Cue and history rows are empty in a native export as well; they live in the
   ANLZ files and are not part of this writer.
-- The writer is not wired into the export pipeline yet. The next step is to write
-  it into staging when a key is configured and to fail the export if the
-  consistency check disagrees.
+- The writer runs in the pipeline behind the `export_onelibrary` setting plus a
+  key. It is staged and published with the PDB, and publication fails if the
+  consistency check disagrees. The setting is off by default until a rekordbox
+  round trip confirms the file.
+- rekordbox has not been asked to open a generated library yet; the file was
+  verified with rekordbox's own `sqlite3.dll`, which reads 22 tables and the
+  expected rows.
