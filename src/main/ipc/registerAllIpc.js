@@ -164,6 +164,18 @@ import { createSelectiveSyncService } from '../services/selectiveSyncService.js'
 import { readTrackCues } from '../../usb/pioneer/formats/cues.js';
 import { readDeviceIdentity } from '../../usb/generic/identity.js';
 import { registerYtdlpIpc } from './ytdlpIpc.js';
+import { registerMyTagIpc } from './myTagIpc.js';
+import {
+  assignMyTag,
+  createMyTag,
+  deleteMyTag,
+  getAssignmentsForTracks,
+  getMyTagMasterId,
+  getMyTagTree,
+  getTagsForTrack,
+  listMyTags,
+  renameMyTag,
+} from '../../db/myTagRepository.js';
 
 /** Handler modules already own their behaviour; this file only wires them. */
 export function registerAllIpc({
@@ -212,6 +224,9 @@ export function registerAllIpc({
     hasPendingWork: (usbRoot) => hasPendingWork({ usbRoot, getPlaylist, getPlaylistTracks }),
     recordExportState,
     revisionSummary,
+    getMyTags: listMyTags,
+    getTagAssignmentsForTracks: getAssignmentsForTracks,
+    getMyTagMasterId,
   });
   const syncService = createSyncService({
     send,
@@ -285,6 +300,18 @@ export function registerAllIpc({
     getPlaylistsForTrack,
     getPlaylist,
     getPlaylistSourceUrls,
+  });
+
+  registerMyTagIpc({
+    ipcMain,
+    send,
+    listMyTags,
+    getMyTagTree,
+    createMyTag,
+    renameMyTag,
+    deleteMyTag,
+    assignMyTag,
+    getTagsForTrack,
   });
 
   registerCuePointIpc({

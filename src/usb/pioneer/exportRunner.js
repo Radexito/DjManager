@@ -1,9 +1,11 @@
+import { writeArtworkFiles } from './artwork.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { toM3uRelativePath } from '../../usb/generic/m3u.js';
 import { getAnlzFolder } from '../../usb/pioneer/formats/anlz.js';
 import { readLibrary } from '../../usb/pioneer/formats/pdbRead.js';
+import { planArtwork } from '../../usb/pioneer/formats/pdb.js';
 import {
   ONELIBRARY_FILE,
   checkConsistency,
@@ -88,6 +90,9 @@ export function createPioneerExportRunner(deps) {
     hasPendingWork,
     recordExportState,
     revisionSummary,
+    getMyTags = () => [],
+    getTagAssignmentsForTracks = () => [],
+    getMyTagMasterId = () => null,
   } = deps;
 
   /**
@@ -344,6 +349,7 @@ export function createPioneerExportRunner(deps) {
       bpm: track.bpm_override ?? track.bpm ?? 0,
       key_raw: track.key_raw || '',
       file_path: usbPaths.get(track.id) || '',
+      artwork_path: track.artwork_path || null,
       track_number: track.track_number || 0,
       year: track.year || '',
       label: track.label || '',
@@ -390,8 +396,32 @@ export function createPioneerExportRunner(deps) {
 
     // Every metadata file is written into staging first. Publishing verifies the
     // PDB by reading it back, then renames each file over the live one.
+    // Covers are written before the PDB, so the database can reference only the
+    // ones that really exist: a row pointing at a file nobody wrote is a blank
+    // cover on the deck with no way to tell why.
+    const coverPlan = planArtwork([...mergedTracks.values()]);
+    const artwork = await writeArtworkFiles(job.staging, coverPlan, {
+      ffmpegPath: getFfmpegRuntimePath(),
+    });
+    for (const skippedCover of artwork.skipped) {
+      console.warn(`[sync] cover ${skippedCover.relPath} was skipped: ${skippedCover.reason}`);
+    }
+    for (const note of artwork.notes) {
+      console.warn(`[sync] cover ${note}`);
+    }
+    for (const failure of artwork.failed) {
+      console.warn(`[sync] cover ${failure.relPath} was not written: ${failure.reason}`);
+    }
+    const writtenCovers = new Set(artwork.files);
+    const publishableCovers = coverPlan.filter((cover) => writtenCovers.has(cover.relPath));
+
     runPdbExporter(
-      { usbRoot, tracks: [...mergedTracks.values()], playlists: [...mergedPlaylists.values()] },
+      {
+        usbRoot,
+        tracks: [...mergedTracks.values()],
+        playlists: [...mergedPlaylists.values()],
+        artwork: publishableCovers,
+      },
       job.staging
     );
     writeSettingFiles(job.staging);
@@ -404,6 +434,9 @@ export function createPioneerExportRunner(deps) {
         key: onelibraryKey,
         tracks: [...mergedTracks.values()],
         playlists: [...mergedPlaylists.values()],
+        myTags: getMyTags() ?? [],
+        tagAssignments: getTagAssignmentsForTracks([...mergedTracks.keys()]) ?? [],
+        masterTagId: getMyTagMasterId(),
       });
     }
 
@@ -423,6 +456,9 @@ export function createPioneerExportRunner(deps) {
         verify: (absPath) => verifyJson(absPath, manifestRel),
       },
     ];
+    for (const relPath of artwork.files) {
+      entries.push(job.describeStaged(relPath));
+    }
     if (onelibraryKey) {
       entries.push({
         ...job.describeStaged(ONELIBRARY_FILE),
@@ -434,6 +470,7 @@ export function createPioneerExportRunner(deps) {
             library: deviceLibrary,
             pdbTrackCount: mergedTracks.size,
             pdbPlaylistCount: mergedPlaylists.size,
+            masterTagId: getMyTagMasterId(),
           });
           if (!result.ok) {
             throw new SyncError(

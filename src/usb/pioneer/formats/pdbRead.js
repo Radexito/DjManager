@@ -318,6 +318,15 @@ export function decodeKeyRow(row) {
  * @param {Buffer} row
  * @returns {{id: number, name: string}}
  */
+/**
+ * Artwork row: `u32 id` at 0, device path string at 4.
+ * @param {Buffer} row
+ * @returns {{id: number, path: string}}
+ */
+export function decodeArtworkRow(row) {
+  return { id: row.readUInt32LE(0), path: decodeDeviceSQLString(row, 4).value };
+}
+
 export function decodeColorRow(row) {
   return { id: row.readUInt16LE(5), name: decodeDeviceSQLString(row, 8).value };
 }
@@ -380,6 +389,7 @@ export function readLibrary(buffer) {
     artists: rowsOf(2).map(decodeArtistRow),
     albums: rowsOf(3).map(decodeAlbumRow),
     keys: rowsOf(5).map(decodeKeyRow),
+    artwork: rowsOf(13).map(decodeArtworkRow),
     colors: rowsOf(6).map(decodeColorRow),
     playlists: rowsOf(7).map(decodePlaylistTreeRow),
     entries,

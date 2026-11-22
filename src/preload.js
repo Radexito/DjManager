@@ -59,6 +59,19 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('reorder-playlist', { playlistId, orderedTrackIds }),
   getPlaylistsForTrack: (trackId) => ipcRenderer.invoke('get-playlists-for-track', trackId),
 
+  getMyTags: () => ipcRenderer.invoke('my-tags-list'),
+  getMyTagTree: () => ipcRenderer.invoke('my-tags-tree'),
+  getTrackMyTags: (trackId) => ipcRenderer.invoke('track-my-tags', trackId),
+  createMyTag: (opts) => ipcRenderer.invoke('my-tag-create', opts),
+  renameMyTag: (opts) => ipcRenderer.invoke('my-tag-rename', opts),
+  deleteMyTag: (opts) => ipcRenderer.invoke('my-tag-delete', opts),
+  setTrackMyTag: (opts) => ipcRenderer.invoke('my-tag-assign', opts),
+  onMyTagsUpdated: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on('my-tags-updated', handler);
+    return () => ipcRenderer.removeListener('my-tags-updated', handler);
+  },
+
   checkUsbFormat: (mountPath) => ipcRenderer.invoke('check-usb-format', mountPath),
   formatUsb: (opts) => ipcRenderer.invoke('format-usb', opts),
   exportAll: (opts) => ipcRenderer.invoke('export-all', opts),
