@@ -104,6 +104,18 @@ export-rekordbox IPC →
   5. writeSettingFiles() → PIONEER/MYSETTING.DAT, MYSETTING2.DAT, DEVSETTING.DAT
 ```
 
+The export is crash safe. Each run takes a lock on the medium
+(`.djmanager/sync.lock`), writes new audio into staging and renames it into
+`Contents/`, then stages `export.pdb`, the setting files and the manifest,
+verifies the database by parsing it with the same reader the app uses, and
+publishes each file with one atomic rename. The file it replaces is kept under
+`.djmanager/generations/<jobId>/` until the job commits. An append-only journal
+records every step, so a job interrupted by a kill, a pulled cable or a sleep
+can be settled from the stick alone. Format, events and the initial state a later
+job starts from: `docs/sync-journal.md`. The engine also runs automatic sync on a
+medium that already carries a manifest, driven by a fingerprint of what would be
+exported, and refuses to start while an import or an analysis run is writing.
+
 Key files:
 
 - `src/usb/index.js` — the format registry: `detectUsbFormat()` and `openUsbDevice()`. Adding Traktor or VirtualDJ means one entry here plus one folder next to `pioneer/`.

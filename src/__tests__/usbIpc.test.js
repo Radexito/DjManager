@@ -58,6 +58,21 @@ function setup(overrides = {}) {
     exportDurationSec: vi.fn(() => 200),
     writeExportTags: vi.fn(),
     trackToFilename: vi.fn((t) => `${t.id}.mp3`),
+    exportRunner: {
+      plan: vi.fn(() => ({ tracks: [], playlists: [], cues: new Map(), options: {} })),
+      fingerprint: vi.fn(() => 'test-fingerprint'),
+      run: vi.fn(async ({ plan }) => ({
+        fingerprint: 'test-fingerprint',
+        summary: {
+          trackCount: plan.tracks.length,
+          newTrackCount: plan.tracks.length,
+          playlistCount: plan.playlists.length,
+        },
+      })),
+    },
+    syncService: {
+      runJob: vi.fn(async ({ execute }) => execute({ usbRoot: root })),
+    },
     ...overrides,
   };
   registerUsbIpc(deps);
