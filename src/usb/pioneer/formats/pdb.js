@@ -250,6 +250,35 @@ export function encodeDeviceSQLString(str) {
 }
 
 /**
+ * True when the encoded string uses one of the LONG DeviceSQL forms (`0x40` long
+ * ASCII, `0x90` UTF-16). Only those have to be placed on a 4-byte boundary.
+ *
+ * Issue #3: a CDJ-2000/2000NXS freezes with `E-8709 Communication Error` when a
+ * long string in `export.pdb` does not start on a 4-byte boundary, and the deck
+ * never recovers without a power cycle. rekordbox starts every long string on a
+ * multiple of 4 inside its row and pads the gap with zero bytes, which is a
+ * requirement of the player's string reader, not cosmetics.
+ *
+ * @param {Buffer} enc encoded DeviceSQL string
+ * @returns {boolean}
+ */
+function isLongDeviceSQL(enc) {
+  return enc[0] === 0x40 || enc[0] === 0x90;
+}
+
+/**
+ * Offset of the name string inside an artist/album row: the short forms keep the
+ * historical offsets, a long form moves to the next multiple of 4.
+ *
+ * @param {Buffer} enc encoded DeviceSQL string
+ * @param {number} shortOffset offset a short string sits at
+ * @returns {number}
+ */
+function nameOffsetFor(enc, shortOffset) {
+  return isLongDeviceSQL(enc) ? shortOffset + 2 : shortOffset;
+}
+
+/**
  * Encode an ISRC string.
  * Format: [0x90, u16LE(len+6), 0x00, 0x03, ASCII bytes, 0x00]
  */
@@ -271,13 +300,15 @@ export function encodeISRCString(str) {
  */
 export function buildArtistRow(id, name) {
   const nameEnc = encodeDeviceSQLString(name);
-  const buf = Buffer.alloc(10 + nameEnc.length);
+  // 0x0a for a short string, 0x0c for a long one (4-byte aligned) — issue #3.
+  const nameOfs = nameOffsetFor(nameEnc, 0x0a);
+  const buf = Buffer.alloc(nameOfs + nameEnc.length);
   buf.writeUInt16LE(0x60, 0);
   buf.writeUInt16LE(0, 2);
   buf.writeUInt32LE(id, 4);
   buf[8] = 0x03;
-  buf[9] = 0x0a;
-  nameEnc.copy(buf, 10);
+  buf[9] = nameOfs;
+  nameEnc.copy(buf, nameOfs);
   return buf;
 }
 
@@ -288,7 +319,9 @@ export function buildArtistRow(id, name) {
  */
 export function buildAlbumRow(id, artistId, name) {
   const nameEnc = encodeDeviceSQLString(name);
-  const buf = Buffer.alloc(22 + nameEnc.length);
+  // 0x16 for a short string, 0x18 for a long one (4-byte aligned) — issue #3.
+  const nameOfs = nameOffsetFor(nameEnc, 0x16);
+  const buf = Buffer.alloc(nameOfs + nameEnc.length);
   buf.writeUInt16LE(0x80, 0);
   buf.writeUInt16LE(0, 2);
   buf.writeUInt32LE(0, 4);
@@ -296,8 +329,8 @@ export function buildAlbumRow(id, artistId, name) {
   buf.writeUInt32LE(id, 12);
   buf.writeUInt32LE(0, 16);
   buf[20] = 0x03;
-  buf[21] = 22;
-  nameEnc.copy(buf, 22);
+  buf[21] = nameOfs;
+  nameEnc.copy(buf, nameOfs);
   return buf;
 }
 
@@ -404,10 +437,21 @@ export function buildTrackRow(params) {
   const STRING_OFFSETS_BYTES = 42;
   const RECORD_LEN = HEADER_BYTES + STRING_OFFSETS_BYTES;
 
+  // Long strings (0x40 / 0x90) must start on a 4-byte boundary of the row, with
+  // zero padding in the gap; short strings pack straight on (issue #3 — the deck
+  // freezes otherwise). heapChunks keeps the padding so the heap copy below stays
+  // a plain sequential copy.
   const absOffsets = [];
+  const heapChunks = [];
   let heapPos = 0;
   for (const sbuf of strBufs) {
+    if (isLongDeviceSQL(sbuf) && (heapPos + RECORD_LEN) % 4 !== 0) {
+      const pad = 4 - ((heapPos + RECORD_LEN) % 4);
+      heapChunks.push(Buffer.alloc(pad));
+      heapPos += pad;
+    }
     absOffsets.push(heapPos + RECORD_LEN);
+    heapChunks.push(sbuf);
     heapPos += sbuf.length;
   }
 
@@ -481,9 +525,9 @@ export function buildTrackRow(params) {
     pos += 2;
   }
 
-  for (const sbuf of strBufs) {
-    sbuf.copy(result, pos);
-    pos += sbuf.length;
+  for (const chunk of heapChunks) {
+    chunk.copy(result, pos);
+    pos += chunk.length;
   }
 
   return result;
