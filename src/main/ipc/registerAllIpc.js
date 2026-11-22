@@ -150,6 +150,9 @@ import { candidateRoots } from '../../usb/generic/roots.js';
 import { createPioneerExportRunner } from '../../usb/pioneer/exportRunner.js';
 import { createSyncService, hasDjManagerData } from '../../sync/service.js';
 import { createWriteActivity } from '../../sync/writeActivity.js';
+import { hasPendingWork } from '../../sync/pendingWork.js';
+import { recordExportState } from '../../sync/recordExportState.js';
+import { revisionSummary } from '../../db/revision.js';
 import { registerYtdlpIpc } from './ytdlpIpc.js';
 
 /** Handler modules already own their behaviour; this file only wires them. */
@@ -196,6 +199,9 @@ export function registerAllIpc({
     runPdbExporter,
     getFfmpegRuntimePath,
     send,
+    hasPendingWork: (usbRoot) => hasPendingWork({ usbRoot, getPlaylist, getPlaylistTracks }),
+    recordExportState,
+    revisionSummary,
   });
   const syncService = createSyncService({
     send,
