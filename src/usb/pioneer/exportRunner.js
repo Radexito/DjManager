@@ -1,3 +1,4 @@
+import { writeArtworkFiles } from './artwork.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -347,6 +348,7 @@ export function createPioneerExportRunner(deps) {
       bpm: track.bpm_override ?? track.bpm ?? 0,
       key_raw: track.key_raw || '',
       file_path: usbPaths.get(track.id) || '',
+      artwork_path: track.artwork_path || null,
       track_number: track.track_number || 0,
       year: track.year || '',
       label: track.label || '',
@@ -393,11 +395,21 @@ export function createPioneerExportRunner(deps) {
 
     // Every metadata file is written into staging first. Publishing verifies the
     // PDB by reading it back, then renames each file over the live one.
-    runPdbExporter(
+    const artworkPlan = runPdbExporter(
       { usbRoot, tracks: [...mergedTracks.values()], playlists: [...mergedPlaylists.values()] },
       job.staging
     );
     writeSettingFiles(job.staging);
+
+    // Covers are part of what a deck shows, and a missing one is invisible in
+    // the PDB: the file simply does not load. Written into staging like every
+    // other file, and published with them.
+    const artwork = await writeArtworkFiles(job.staging, artworkPlan, {
+      ffmpegPath: getFfmpegRuntimePath(),
+    });
+    for (const failure of artwork.failed) {
+      console.warn(`[sync] cover ${failure.relPath} was not written: ${failure.reason}`);
+    }
 
     // rekordbox reads its own database next to the PDB. Writing it is opt-in:
     // without a key there is nothing to encrypt it with.
@@ -429,6 +441,9 @@ export function createPioneerExportRunner(deps) {
         verify: (absPath) => verifyJson(absPath, manifestRel),
       },
     ];
+    for (const relPath of artwork.files) {
+      entries.push(job.describeStaged(relPath));
+    }
     if (onelibraryKey) {
       entries.push({
         ...job.describeStaged(ONELIBRARY_FILE),
