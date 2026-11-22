@@ -95,6 +95,7 @@ export function createPioneerExportRunner(deps) {
     targetDevice = null,
     forceMp3 = false,
     applyTrim = true,
+    mirror = false,
   } = {}) {
     const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
     const selected = ids?.length
@@ -107,7 +108,7 @@ export function createPioneerExportRunner(deps) {
       for (const track of tracks) {
         if (!trackMap.has(track.id)) trackMap.set(track.id, track);
       }
-      return { id: playlist.id, name: playlist.name, tracks };
+      return { id: playlist.id, name: playlist.name, rev: playlist.rev ?? null, tracks };
     });
 
     const tracks = [...trackMap.values()];
@@ -126,6 +127,7 @@ export function createPioneerExportRunner(deps) {
         targetDevice,
         forceMp3,
         applyTrim,
+        mirror,
       },
       playlists,
       tracks,
@@ -219,7 +221,7 @@ export function createPioneerExportRunner(deps) {
    * @param {object} args.plan snapshot from `plan()`
    * @returns {Promise<{fingerprint: string, summary: object}>}
    */
-  async function run({ job, plan: snapshot }) {
+  async function run({ job, plan: snapshot, recordState = true }) {
     const usbRoot = job.usbRoot;
     const { options } = snapshot;
     const total = snapshot.tracks.length;
@@ -357,13 +359,21 @@ export function createPioneerExportRunner(deps) {
     const newPdbPlaylists = snapshot.playlists.map((playlist) => ({
       id: playlist.id,
       name: playlist.name,
+      rev: playlist.rev ?? null,
+      // What the player carries: only tracks with a file on the medium.
       track_ids: playlist.tracks.map((track) => track.id).filter((id) => usbPaths.has(id)),
+      // What the library playlist is: the change tracker compares this, and a
+      // track that could not be copied must not look like a membership edit.
+      trackIds: playlist.tracks.map((track) => track.id),
     }));
 
-    const mergedTracks = new Map(existingTracks);
+    // A mirror sync describes the device exactly: the rows it writes replace the
+    // previous set instead of merging into it, so a track outside the selection
+    // disappears from the database the moment the new one is published.
+    const mergedTracks = options.mirror ? new Map() : new Map(existingTracks);
     for (const track of newPdbTracks) mergedTracks.set(track.id, track);
 
-    const mergedPlaylists = new Map(existingPlaylists);
+    const mergedPlaylists = options.mirror ? new Map() : new Map(existingPlaylists);
     for (const playlist of newPdbPlaylists) mergedPlaylists.set(playlist.id, playlist);
 
     await backfillPdbSampleInfo([...mergedTracks.values()], { usbRoot });
@@ -393,22 +403,32 @@ export function createPioneerExportRunner(deps) {
     ];
     job.publish(entries);
 
-    try {
-      await recordExportState?.({
-        usbRoot,
-        manifest: savedManifest,
-        tracks: mergedTracks,
-        playlists: mergedPlaylists,
-        revision: startedRevision,
-      });
-    } catch (err) {
-      // The files are published; failing the export over bookkeeping would hide
-      // a good stick. The next sync simply sees no state and rebuilds.
-      console.warn('[sync] could not record the device state:', err.message);
+    const state = {
+      manifest: savedManifest,
+      tracks: mergedTracks,
+      playlists: mergedPlaylists,
+      revision: startedRevision,
+    };
+
+    if (recordState) {
+      try {
+        await recordExportState?.({
+          usbRoot,
+          manifest: savedManifest,
+          tracks: mergedTracks,
+          playlists: mergedPlaylists,
+          revision: startedRevision,
+        });
+      } catch (err) {
+        // The files are published; failing the export over bookkeeping would hide
+        // a good stick. The next sync simply sees no state and rebuilds.
+        console.warn('[sync] could not record the device state:', err.message);
+      }
     }
 
     return {
       fingerprint: fingerprint(snapshot),
+      state,
       summary: {
         trackCount: mergedTracks.size,
         newTrackCount: snapshot.tracks.length,

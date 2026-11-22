@@ -153,6 +153,16 @@ import { createWriteActivity } from '../../sync/writeActivity.js';
 import { hasPendingWork } from '../../sync/pendingWork.js';
 import { recordExportState } from '../../sync/recordExportState.js';
 import { revisionSummary } from '../../db/revision.js';
+import {
+  getLastPlan,
+  getSelection as getSyncSelection,
+  saveLastPlan,
+  saveSelection as saveSyncSelection,
+} from '../../db/selectionRepository.js';
+import { getPlaylistStates, getTrackStates } from '../../db/deviceStateRepository.js';
+import { createSelectiveSyncService } from '../services/selectiveSyncService.js';
+import { readTrackCues } from '../../usb/pioneer/formats/cues.js';
+import { readDeviceIdentity } from '../../usb/generic/identity.js';
 import { registerYtdlpIpc } from './ytdlpIpc.js';
 
 /** Handler modules already own their behaviour; this file only wires them. */
@@ -210,7 +220,28 @@ export function registerAllIpc({
     planFor: (usbRoot) => (hasDjManagerData(usbRoot) ? exportRunner.planFor(usbRoot) : null),
     logger: console,
   });
+  const selectiveSync = createSelectiveSyncService({
+    readIdentity: readDeviceIdentity,
+    getSelection: getSyncSelection,
+    saveSelection: saveSyncSelection,
+    saveLastPlan,
+    getLastPlan,
+    getTrackStates,
+    getPlaylistStates,
+    loadManifest,
+    getPlaylist,
+    getPlaylistTracks,
+    getCuePoints,
+    readTrackCues,
+    exportRunner,
+    syncService,
+    recordExportState,
+    getRetentionMs: () =>
+      Math.max(0, Number(getSetting('sync_trash_retention_days', '7')) || 0) * 86_400_000,
+    log: (...args) => console.log(...args),
+  });
   services.syncService = syncService;
+  services.selectiveSync = selectiveSync;
   services.writeActivity = writeActivity;
 
   registerLibraryIpc({
@@ -512,6 +543,7 @@ export function registerAllIpc({
   registerSyncIpc({
     ipcMain,
     syncService,
+    selectiveSync,
     log: (...args) => console.error(...args),
   });
 }

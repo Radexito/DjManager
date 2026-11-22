@@ -37,7 +37,9 @@ export function collectActions({
     }
     const reasons = [];
     if (Number(state.rev ?? 0) !== Number(track.rev ?? 1)) reasons.push('rev');
-    if ((state.file_path ?? null) !== (track.file_path ?? null)) reasons.push('path');
+    // The state keeps the path on the medium (`/Contents/x.mp3`), while the
+    // library row holds the local file. Comparing the two would mark every
+    // track changed forever; a library path change already bumps rev.
     if ((state.file_fingerprint ?? null) !== (track.file_fingerprint ?? null)) reasons.push('file');
     if (reasons.length > 0) {
       actions.push({

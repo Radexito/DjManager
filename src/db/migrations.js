@@ -242,6 +242,7 @@ export function initDB() {
   ).run();
 
   installRevisionTracking();
+  installSelectiveSync();
 }
 
 /**
@@ -425,6 +426,40 @@ function installRevisionTracking() {
       cue_json    TEXT,
       updated_at  INTEGER,
       PRIMARY KEY (device_key, track_id)
+    )
+  `
+  ).run();
+}
+
+/**
+ * What a device is meant to carry, and what its last apply did (#14).
+ *
+ * The selection is the device side of "keep these playlists in step". It is
+ * stored per device key, so it survives a new drive letter. `device_last_plan`
+ * keeps the action list the last apply executed, which is what lets the next
+ * preview explain itself ("this is what the device was told last time").
+ */
+function installSelectiveSync() {
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS device_selection (
+      device_key TEXT    NOT NULL,
+      kind       TEXT    NOT NULL DEFAULT 'playlist',
+      ref_id     INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER,
+      PRIMARY KEY (device_key, kind, ref_id)
+    )
+  `
+  ).run();
+
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS device_last_plan (
+      device_key TEXT PRIMARY KEY,
+      plan_hash  TEXT,
+      plan_json  TEXT NOT NULL,
+      summary    TEXT,
+      applied_at INTEGER NOT NULL
     )
   `
   ).run();

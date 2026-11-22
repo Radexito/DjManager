@@ -72,7 +72,7 @@ export async function recordExportState({
     playlistRows.map((playlist) => ({
       playlistId: playlist.id,
       rev: playlist.rev ?? null,
-      signature: (playlist.track_ids ?? []).join(','),
+      signature: (playlist.trackIds ?? playlist.track_ids ?? []).join(','),
     })),
     { now: now() }
   );

@@ -38,7 +38,7 @@ describe('change tracker', () => {
     expect(actions).toEqual([{ type: 'copy', trackId: 1, title: 'A' }]);
   });
 
-  it('asks for an update with the reasons when a revision, path or file moved', () => {
+  it('asks for an update when a revision or the file moved', () => {
     expect(
       collectActions({
         tracks: [{ ...track, rev: 3 }],
@@ -48,17 +48,23 @@ describe('change tracker', () => {
 
     expect(
       collectActions({
-        tracks: [{ ...track, file_path: '/lib/moved.mp3' }],
-        trackStates: new Map([[1, trackState]]),
-      })[0]
-    ).toMatchObject({ type: 'update', reasons: ['path'] });
-
-    expect(
-      collectActions({
         tracks: [{ ...track, file_fingerprint: '11:200' }],
         trackStates: new Map([[1, trackState]]),
       })[0]
     ).toMatchObject({ type: 'update', reasons: ['file'] });
+  });
+
+  it('ignores the device path in the state, which is not the library path', () => {
+    // What recordExportState stores is the path on the medium. The library row
+    // holds a local path, so a comparison would report every track as changed
+    // on every preview.
+    const onDevice = {
+      track_id: 1,
+      rev: 2,
+      file_path: '/Contents/A.mp3',
+      file_fingerprint: '10:100',
+    };
+    expect(collectActions({ tracks: [track], trackStates: new Map([[1, onDevice]]) })).toEqual([]);
   });
 
   it('detects playlists that are new or whose order changed', () => {
