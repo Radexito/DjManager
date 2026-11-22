@@ -229,6 +229,19 @@ describe('export runner', () => {
     expect([...call.tracks.keys()].sort()).toEqual([1, 2]);
   });
 
+  it('replaces the device rows instead of merging when mirror is on', async () => {
+    const root = stick();
+    const { runner } = buildRunner({ getPlaylistTracks: () => [tracks[0]] });
+    const snapshot = runner.plan({ playlistIds: [7], mirror: true });
+
+    await runOn(root, runner, snapshot);
+
+    const manifest = loadManifest(root);
+    expect(manifest.tracks.size).toBe(1);
+    expect(publishedLibrary(root).tracks).toHaveLength(1);
+    expect(manifest.retired.size).toBe(0);
+  });
+
   it('changes the fingerprint when a field the export writes changes', () => {
     const { runner } = buildRunner();
     const first = runner.plan({ playlistIds: [7] });

@@ -73,6 +73,10 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('export-all-progress', handler);
   },
   syncStatus: () => ipcRenderer.invoke('sync-status'),
+  syncPreview: (opts) => ipcRenderer.invoke('sync-preview', opts),
+  syncApply: (opts) => ipcRenderer.invoke('sync-apply', opts),
+  getSyncSelection: (opts) => ipcRenderer.invoke('sync-selection-get', opts),
+  setSyncSelection: (opts) => ipcRenderer.invoke('sync-selection-set', opts),
   syncCancel: (opts) => ipcRenderer.invoke('sync-cancel', opts),
   onSyncProgress: (cb) => {
     const handler = (_, data) => cb(data);

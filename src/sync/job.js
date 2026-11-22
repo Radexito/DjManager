@@ -187,6 +187,9 @@ export function startJob({
     return entry;
   };
 
+  /** Append a domain event (a removal, a trash move) to this job's journal. */
+  job.note = (event, data = {}) => journal.append(event, data);
+
   /** Move one finished artifact (audio, playlist file) into place. */
   job.commitArtifact = (relPath) =>
     moveStagedArtifact({ usbRoot, staging: job.staging, relPath, journal });

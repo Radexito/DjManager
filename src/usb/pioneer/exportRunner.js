@@ -95,6 +95,7 @@ export function createPioneerExportRunner(deps) {
     targetDevice = null,
     forceMp3 = false,
     applyTrim = true,
+    mirror = false,
   } = {}) {
     const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
     const selected = ids?.length
@@ -126,6 +127,7 @@ export function createPioneerExportRunner(deps) {
         targetDevice,
         forceMp3,
         applyTrim,
+        mirror,
       },
       playlists,
       tracks,
@@ -219,7 +221,7 @@ export function createPioneerExportRunner(deps) {
    * @param {object} args.plan snapshot from `plan()`
    * @returns {Promise<{fingerprint: string, summary: object}>}
    */
-  async function run({ job, plan: snapshot }) {
+  async function run({ job, plan: snapshot, recordState = true }) {
     const usbRoot = job.usbRoot;
     const { options } = snapshot;
     const total = snapshot.tracks.length;
@@ -360,10 +362,13 @@ export function createPioneerExportRunner(deps) {
       track_ids: playlist.tracks.map((track) => track.id).filter((id) => usbPaths.has(id)),
     }));
 
-    const mergedTracks = new Map(existingTracks);
+    // A mirror sync describes the device exactly: the rows it writes replace the
+    // previous set instead of merging into it, so a track outside the selection
+    // disappears from the database the moment the new one is published.
+    const mergedTracks = options.mirror ? new Map() : new Map(existingTracks);
     for (const track of newPdbTracks) mergedTracks.set(track.id, track);
 
-    const mergedPlaylists = new Map(existingPlaylists);
+    const mergedPlaylists = options.mirror ? new Map() : new Map(existingPlaylists);
     for (const playlist of newPdbPlaylists) mergedPlaylists.set(playlist.id, playlist);
 
     await backfillPdbSampleInfo([...mergedTracks.values()], { usbRoot });
@@ -393,22 +398,32 @@ export function createPioneerExportRunner(deps) {
     ];
     job.publish(entries);
 
-    try {
-      await recordExportState?.({
-        usbRoot,
-        manifest: savedManifest,
-        tracks: mergedTracks,
-        playlists: mergedPlaylists,
-        revision: startedRevision,
-      });
-    } catch (err) {
-      // The files are published; failing the export over bookkeeping would hide
-      // a good stick. The next sync simply sees no state and rebuilds.
-      console.warn('[sync] could not record the device state:', err.message);
+    const state = {
+      manifest: savedManifest,
+      tracks: mergedTracks,
+      playlists: mergedPlaylists,
+      revision: startedRevision,
+    };
+
+    if (recordState) {
+      try {
+        await recordExportState?.({
+          usbRoot,
+          manifest: savedManifest,
+          tracks: mergedTracks,
+          playlists: mergedPlaylists,
+          revision: startedRevision,
+        });
+      } catch (err) {
+        // The files are published; failing the export over bookkeeping would hide
+        // a good stick. The next sync simply sees no state and rebuilds.
+        console.warn('[sync] could not record the device state:', err.message);
+      }
     }
 
     return {
       fingerprint: fingerprint(snapshot),
+      state,
       summary: {
         trackCount: mergedTracks.size,
         newTrackCount: snapshot.tracks.length,
