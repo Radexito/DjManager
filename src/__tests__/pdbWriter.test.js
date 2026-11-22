@@ -159,7 +159,9 @@ describe('buildArtistRow', () => {
 
   it('handles unicode artist name', () => {
     const buf = buildArtistRow(1, 'Röyksopp');
-    expect(buf[10]).toBe(0x90);
+    // A long (UTF-16) string moves to the 4-byte boundary — issue #3.
+    expect(buf[9]).toBe(0x0c);
+    expect(buf[0x0c]).toBe(0x90);
   });
 });
 
@@ -1212,5 +1214,88 @@ describe('writePdb key export', () => {
     const keysIndexPage = pdb.subarray(KEYS_INDEX_PAGE * PAGE, (KEYS_INDEX_PAGE + 1) * PAGE);
     const nextPage = keysIndexPage.readUInt32LE(44);
     expect(nextPage).toBe(0x03ffffff);
+  });
+});
+
+// ── Issue #3: long DeviceSQL strings must sit on a 4-byte boundary ────────────
+// A CDJ-2000 / CDJ-2000NXS freezes with "E-8709 Communication Error" on a stick
+// whose long strings (0x40 long ASCII, 0x90 UTF-16) are not 4-byte aligned, and
+// needs a power cycle to recover. rekordbox starts every long string on a
+// multiple of 4 inside its row and pads the gap with zeros: artist name at 0x0c
+// (short stays 0x0a), album name at 0x18 (short stays 0x16), and every long
+// string of a track row aligned. Verified against rbxport's rekordbox captures
+// (346/346 long strings aligned) — that project hit the same E-8709 freeze.
+describe('long DeviceSQL strings are 4-byte aligned (issue #3)', () => {
+  const PAGE = 4096;
+  const CONTENT_LINK = 0x000c0700;
+  const LONG_FORMS = [0x40, 0x90];
+
+  function writtenPdb(input) {
+    fs.writeFileSync.mockClear();
+    writePdb(input, '/usb/PIONEER/rekordbox/export.pdb');
+    return fs.writeFileSync.mock.calls[0][1];
+  }
+
+  it('keeps the historical offsets for short ASCII names', () => {
+    const artist = buildArtistRow(1, 'Deadmau5');
+    const album = buildAlbumRow(1, 1, 'Album');
+    expect(artist[9]).toBe(0x0a);
+    expect(album[21]).toBe(0x16);
+    expect(artist.length).toBe(10 + encodeDeviceSQLString('Deadmau5').length);
+    expect(album.length).toBe(22 + encodeDeviceSQLString('Album').length);
+  });
+
+  it('moves a long artist name to 0x0c', () => {
+    const buf = buildArtistRow(1, 'Röyksopp');
+    expect(buf[9]).toBe(0x0c);
+    expect(buf[0x0c]).toBe(0x90);
+  });
+
+  it('moves a long album name to 0x18', () => {
+    const buf = buildAlbumRow(1, 1, 'Café Del Mar');
+    expect(buf[21]).toBe(0x18);
+    expect(buf[0x18]).toBe(0x90);
+  });
+
+  it('pads a long ASCII name (>=127 chars) the same way', () => {
+    const long = 'A'.repeat(130);
+    const buf = buildArtistRow(1, long);
+    expect(buf[9]).toBe(0x0c);
+    expect(buf[0x0c]).toBe(0x40);
+    expect(buf.length).toBe(0x0c + encodeDeviceSQLString(long).length);
+  });
+
+  it('aligns every long string of a written track row', () => {
+    const data = writtenPdb({
+      usbRoot: '/usb',
+      tracks: [
+        {
+          id: 1,
+          title: 'Café Del Mar (Extended Mix)',
+          artist: 'Benoît',
+          album: 'Ángel',
+          file_path: '/Contents/Benoît - Café Del Mar (Extended Mix).mp3',
+          duration: 283,
+        },
+      ],
+      playlists: [{ name: 'Soirée', track_ids: [1] }],
+    });
+
+    const seen = [];
+    for (let po = 0; po + PAGE <= data.length; po += PAGE) {
+      if (data[po + 27] !== 0x24 && data[po + 27] !== 0x34) continue;
+      for (let row = po + 40; row < po + PAGE - 136; row += 4) {
+        if (data.readUInt16LE(row) !== 0x24) continue;
+        if (data.readUInt32LE(row + 4) !== CONTENT_LINK) continue;
+        for (let i = 0; i < 21; i += 1) {
+          const ofs = data.readUInt16LE(row + 94 + i * 2);
+          if (!ofs || !LONG_FORMS.includes(data[row + ofs])) continue;
+          expect(ofs % 4).toBe(0);
+          seen.push(ofs);
+        }
+      }
+    }
+    // accented title, file name and full path — three long strings at least
+    expect(seen.length).toBeGreaterThanOrEqual(3);
   });
 });
