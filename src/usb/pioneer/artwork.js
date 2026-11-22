@@ -18,8 +18,12 @@ const execFileAsync = promisify(execFile);
  * as a file the player cannot read.
  */
 
-/** Edge of the small copy, in pixels. */
-export const ARTWORK_THUMB_SIZE = 200;
+/**
+ * Edge of the small copy, in pixels. rekordbox keeps 240x240 and 80x80 copies
+ * of every cover in its own share folder (`artwork_m.jpg`, `artwork_s.jpg`);
+ * the medium takes the 240 one, square.
+ */
+export const ARTWORK_THUMB_SIZE = 240;
 
 const JPEG_EXTENSIONS = new Set(['.jpg', '.jpeg']);
 
@@ -85,7 +89,7 @@ export async function writeArtworkFiles(root, plan = [], { ffmpegPath = null } =
           '-i',
           dest,
           '-vf',
-          `scale=${ARTWORK_THUMB_SIZE}:${ARTWORK_THUMB_SIZE}:force_original_aspect_ratio=decrease`,
+          `scale=${ARTWORK_THUMB_SIZE}:${ARTWORK_THUMB_SIZE}:force_original_aspect_ratio=increase,crop=${ARTWORK_THUMB_SIZE}:${ARTWORK_THUMB_SIZE}`,
           '-q:v',
           '4',
           thumb,

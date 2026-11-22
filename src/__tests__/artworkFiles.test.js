@@ -69,7 +69,7 @@ describe('writeArtworkFiles', () => {
     expect(result.skipped).toHaveLength(1);
   });
 
-  it('uses a 200 pixel twin', () => {
-    expect(ARTWORK_THUMB_SIZE).toBe(200);
+  it('uses a 240 pixel square twin, like rekordbox', () => {
+    expect(ARTWORK_THUMB_SIZE).toBe(240);
   });
 });
