@@ -25,10 +25,10 @@ skipped rather than published as a file the player cannot show.
 
 Table 13 (`artwork paths`) holds one row per cover:
 
-| offset | type | field |
-|--------|------|-------|
-| 0x00 | u32 | artwork id |
-| 0x04 | DeviceSQL string | path |
+| offset | type             | field      |
+| ------ | ---------------- | ---------- |
+| 0x00   | u32              | artwork id |
+| 0x04   | DeviceSQL string | path       |
 
 The path is absolute from the medium root and keeps the leading `/.`:
 
@@ -49,7 +49,7 @@ album produce a single row and a single pair of files.
 - `writeArtworkFiles(root, plan)` copies or converts the covers into
   `PIONEER/Artwork/<folder>/` and derives the `_m` twin with ffmpeg
   (`scale=200:200`, aspect preserved). The reference export only proves the
-  `_m` *name*, not its size; 200 px is our choice, to be confirmed on a deck.
+  `_m` _name_, not its size; 200 px is our choice, to be confirmed on a deck.
 - The sync runner writes them into staging and publishes them with the rest of
   the export, so a half-written cover never reaches the medium.
 
