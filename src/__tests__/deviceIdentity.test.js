@@ -125,10 +125,38 @@ describe('device identity', () => {
   });
 
   it('rejects the placeholder serials these tools print', () => {
-    for (const value of ['', 'none', 'N/A', '00000000', '0x00000000', null]) {
+    for (const value of [
+      '',
+      'none',
+      'N/A',
+      '00000000',
+      '0x00000000',
+      '0',
+      '00',
+      '000',
+      ' 0 ',
+      null,
+    ]) {
       expect(cleanSerial(value)).toBeNull();
     }
     expect(cleanSerial(' ab12 ')).toBe('AB12');
+    expect(cleanSerial('0001')).toBe('0001');
+  });
+
+  it('gives a device that reports a zero serial a marker with a random uuid', async () => {
+    const root = stick();
+    const exec = lsblkExec([{ mountpoint: root, serial: '0', label: 'STICK', fstype: 'vfat' }]);
+
+    const first = await readDeviceIdentity(root, { platform: 'linux', exec });
+    expect(first.source).toBe('marker');
+    expect(first.serial).toBeNull();
+    expect(first.key).toMatch(
+      /^marker:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    );
+
+    const second = await readDeviceIdentity(root, { platform: 'linux', exec });
+    expect(second.key).toBe(first.key);
+    expect(readMarker(root)?.id).toBe(first.markerId);
   });
 
   it('does not create a marker when the caller is only reading', async () => {

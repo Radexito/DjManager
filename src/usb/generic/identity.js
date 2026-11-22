@@ -22,7 +22,8 @@ const MARKER_FILE = 'device.json';
 export function cleanSerial(value) {
   const text = String(value ?? '').trim();
   if (!text) return null;
-  if (/^(none|unknown|n\/a|0{4,}|0x0+)$/i.test(text)) return null;
+  // Any run of zeros, not just eight: cheap controllers report 0, 00 or 000.
+  if (/^(none|unknown|n\/a|0+|0x0+)$/i.test(text)) return null;
   return text.toUpperCase();
 }
 
