@@ -63,6 +63,7 @@ import {
   getLibraryFreeSpace,
   getStorageFormat,
   importAudioFile,
+  isAnalysisBusy,
   linkAudioFile,
   moveTrackToLibrary,
   spawnAnalysis,
@@ -122,7 +123,6 @@ import { getLogDir, log } from '../../logger.js';
 import { describeFilesystem, detectFilesystem, formatDrive } from '../../usb/generic/fs.js';
 import { writeAnlz } from '../../usb/pioneer/formats/anlz.js';
 import { writePdb } from '../../usb/pioneer/formats/pdb.js';
-import { resolveExportFormat } from '../../usb/pioneer/formats/profiles.js';
 import { reuseExistingUsbTrack } from '../../usb/pioneer/formats/reuse.js';
 import { writeSettingFiles } from '../../usb/pioneer/formats/settings.js';
 import { detectWindowsDrives } from '../../explorer/drives.js';
@@ -145,6 +145,24 @@ import { registerTidalIpc } from './tidalIpc.js';
 import { registerTrackEditIpc } from './trackEditIpc.js';
 import { registerTrackIpc } from './trackIpc.js';
 import { registerUsbIpc } from './usbIpc.js';
+import { registerSyncIpc } from './syncIpc.js';
+import { candidateRoots } from '../../usb/generic/roots.js';
+import { createPioneerExportRunner } from '../../usb/pioneer/exportRunner.js';
+import { createSyncService, hasDjManagerData } from '../../sync/service.js';
+import { createWriteActivity } from '../../sync/writeActivity.js';
+import { hasPendingWork } from '../../sync/pendingWork.js';
+import { recordExportState } from '../../sync/recordExportState.js';
+import { revisionSummary } from '../../db/revision.js';
+import {
+  getLastPlan,
+  getSelection as getSyncSelection,
+  saveLastPlan,
+  saveSelection as saveSyncSelection,
+} from '../../db/selectionRepository.js';
+import { getPlaylistStates, getTrackStates } from '../../db/deviceStateRepository.js';
+import { createSelectiveSyncService } from '../services/selectiveSyncService.js';
+import { readTrackCues } from '../../usb/pioneer/formats/cues.js';
+import { readDeviceIdentity } from '../../usb/generic/identity.js';
 import { registerYtdlpIpc } from './ytdlpIpc.js';
 
 /** Handler modules already own their behaviour; this file only wires them. */
@@ -161,17 +179,70 @@ export function registerAllIpc({
 }) {
   const { tidalCollectionUrl, runTidalDownload } = services.tidalImport;
   const {
-    trackToFilename,
     copyTrackToUsb,
     resolveExportTrim,
     exportDurationSec,
-    writeExportTags,
     runPdbExporter,
     loadManifest,
     saveManifest,
     scanUsbCues,
     applyUsbCues,
   } = services.pioneerExport;
+
+  const writeActivity = createWriteActivity();
+  const exportRunner = createPioneerExportRunner({
+    getSetting,
+    getPlaylist,
+    getPlaylists,
+    getPlaylistTracks,
+    getCuePoints,
+    loadManifest,
+    saveManifest,
+    reuseExistingUsbTrack,
+    copyTrackToUsb,
+    resolveExportTrim,
+    exportDurationSec,
+    resolveExportSampleInfo,
+    backfillPdbSampleInfo,
+    writeAnlz,
+    writeSettingFiles,
+    runPdbExporter,
+    getFfmpegRuntimePath,
+    send,
+    hasPendingWork: (usbRoot) => hasPendingWork({ usbRoot, getPlaylist, getPlaylistTracks }),
+    recordExportState,
+    revisionSummary,
+  });
+  const syncService = createSyncService({
+    send,
+    findRoots: () => candidateRoots(),
+    isLibraryBusy: () => writeActivity.isBusy() || isAnalysisBusy(),
+    planFor: (usbRoot) => (hasDjManagerData(usbRoot) ? exportRunner.planFor(usbRoot) : null),
+    logger: console,
+  });
+  const selectiveSync = createSelectiveSyncService({
+    readIdentity: readDeviceIdentity,
+    getSelection: getSyncSelection,
+    saveSelection: saveSyncSelection,
+    saveLastPlan,
+    getLastPlan,
+    getTrackStates,
+    getPlaylistStates,
+    loadManifest,
+    getPlaylist,
+    getPlaylistTracks,
+    getCuePoints,
+    readTrackCues,
+    exportRunner,
+    syncService,
+    recordExportState,
+    getRetentionMs: () =>
+      Math.max(0, Number(getSetting('sync_trash_retention_days', '7')) || 0) * 86_400_000,
+    log: (...args) => console.log(...args),
+  });
+  services.syncService = syncService;
+  services.selectiveSync = selectiveSync;
+  services.writeActivity = writeActivity;
 
   registerLibraryIpc({
     ipcMain,
@@ -273,7 +344,14 @@ export function registerAllIpc({
     log: (...args) => console.log(...args),
     error: (...args) => console.error(...args),
     addTrack,
-    importAudioFile,
+    importAudioFile: async (...args) => {
+      const release = writeActivity.begin('import');
+      try {
+        return await importAudioFile(...args);
+      } finally {
+        release();
+      }
+    },
     addTracksToPlaylist,
     getCurrentLibraryId,
     getLibraryBase,
@@ -450,30 +528,22 @@ export function registerAllIpc({
     detectFilesystem,
     describeFilesystem,
     formatDrive,
-    getSetting,
-    copyTrackToUsb,
-    loadManifest,
-    saveManifest,
-    reuseExistingUsbTrack,
-    resolveExportSampleInfo,
     writeAnlz,
     writeSettingFiles,
     writePdb,
     sampleInfoFromProbe,
     scanUsbCues,
     applyUsbCues,
-    getCuePoints,
-    getPlaylist,
-    getPlaylistTracks,
-    getPlaylists,
     getFfmpegRuntimePath,
-    backfillPdbSampleInfo,
-    runPdbExporter,
-    resolveExportFormat,
-    resolveExportTrim,
-    exportDurationSec,
-    writeExportTags,
-    trackToFilename,
+    exportRunner,
+    syncService,
     getTempDir: () => app.getPath('temp'),
+  });
+
+  registerSyncIpc({
+    ipcMain,
+    syncService,
+    selectiveSync,
+    log: (...args) => console.error(...args),
   });
 }

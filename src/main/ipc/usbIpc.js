@@ -1,9 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { usbAudioDir, usbAudioPath } from '../../usb/pioneer/paths.js';
-import { writeM3uPlaylist } from '../../usb/generic/m3u.js';
-import { getAnlzFolder } from '../../usb/pioneer/formats/anlz.js';
-import { convertAudio } from '../../audio/ffmpeg.js';
 import { fail, failFromError, handle, ok } from './response.js';
 
 /**
@@ -31,30 +28,15 @@ export function registerUsbIpc({
   detectFilesystem,
   describeFilesystem,
   formatDrive,
-  getSetting,
-  copyTrackToUsb,
-  loadManifest,
-  saveManifest,
-  reuseExistingUsbTrack,
-  resolveExportSampleInfo,
   writeAnlz,
   writeSettingFiles,
   writePdb,
   sampleInfoFromProbe,
   scanUsbCues,
   applyUsbCues,
-  getCuePoints,
-  getPlaylist,
-  getPlaylistTracks,
-  getPlaylists,
   getFfmpegRuntimePath,
-  backfillPdbSampleInfo,
-  runPdbExporter,
-  resolveExportFormat,
-  resolveExportTrim,
-  exportDurationSec,
-  writeExportTags,
-  trackToFilename,
+  exportRunner,
+  syncService,
   log = (...args) => console.error(...args),
 }) {
   if (!ipcMain) throw new Error('registerUsbIpc: ipcMain is required');
@@ -230,73 +212,10 @@ export function registerUsbIpc({
     }
   });
 
-  async function copyTrackToUsb(track, usbRoot, usedNames, opts = {}) {
-    const {
-      useNormalized = false,
-      targetLufs = null,
-      targetDevice = null,
-      forceMp3 = false,
-      blind = false,
-      applyTrim = true,
-    } = opts;
-
-    const srcPath = track.file_path;
-    const srcExt = path.extname(srcPath || '');
-    const targetFormat = resolveExportFormat({ srcExt, deviceKey: targetDevice, forceMp3 });
-    const outExt = targetFormat ? `.${targetFormat}` : srcExt;
-    const filename = trackToFilename(track, outExt);
-    let finalName = filename;
-    let n = 1;
-    while (usedNames.has(finalName.toLowerCase())) {
-      finalName = filename.replace(outExt, ` (${n++})${outExt}`);
-    }
-    usedNames.set(finalName.toLowerCase(), true);
-
-    const destDir = usbAudioDir(usbRoot);
-    fs.mkdirSync(destDir, { recursive: true });
-    const destPath = path.join(destDir, finalName);
-
-    let meta = null;
-    if (!fs.existsSync(destPath) && fs.existsSync(srcPath)) {
-      const sourceLoudness = track.loudness;
-      const gainDb =
-        useNormalized && targetLufs != null && sourceLoudness != null
-          ? targetLufs - sourceLoudness
-          : 0;
-      const sourceBitrateKbps = track.bitrate ? track.bitrate / 1000 : null;
-      const trim = resolveExportTrim(track, usbRoot, finalName, applyTrim);
-
-      if (targetFormat || gainDb !== 0 || trim) {
-        await convertAudio(srcPath, destPath, {
-          gainDb,
-          sourceBitrateKbps,
-          format: targetFormat,
-          trimStartSec: trim ? trim.startMs / 1000 : null,
-          trimEndSec: trim ? trim.endMs / 1000 : null,
-        });
-        if (targetFormat || trim) {
-          const fileSize = fs.statSync(destPath).size;
-          const durationSec = trim ? (trim.endMs - trim.startMs) / 1000 : track.duration || null;
-          meta = {
-            fileSize,
-            bitrate: durationSec ? Math.round((fileSize * 8) / durationSec) : track.bitrate || 0,
-            reencoded: Boolean(targetFormat || gainDb !== 0),
-            format: (targetFormat || srcExt.replace(/^\./, '')).toLowerCase() || null,
-          };
-        }
-      } else {
-        fs.copyFileSync(srcPath, destPath);
-      }
-      await writeExportTags(destPath, track, blind);
-    }
-
-    return { path: usbAudioPath(finalName), meta };
-  }
-
   register(
     'export-all',
     async (
-      _event,
+      _,
       {
         usbRoot,
         playlistIds,
@@ -307,193 +226,30 @@ export function registerUsbIpc({
         applyTrim = true,
       } = {}
     ) => {
-      try {
-        const targetLufs = useNormalized ? Number(getSetting('normalize_target_lufs', '-9')) : null;
-        const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
-        const allPlaylists = ids?.length
-          ? ids.map((id) => getPlaylist(id)).filter(Boolean)
-          : getPlaylists();
-
-        const trackMap = new Map();
-        for (const pl of allPlaylists) {
-          for (const t of getPlaylistTracks(pl.id)) {
-            if (!trackMap.has(t.id)) trackMap.set(t.id, t);
-          }
-        }
-        const allTracks = [...trackMap.values()];
-        const total = allTracks.length;
-
-        const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
-        const copyTargets = allTracks.filter(
-          (t) =>
-            !reuseExistingUsbTrack(existingTracks, t.id, new Map(), {
-              trimStartMs: applyTrim === false ? null : (t.trim_start_ms ?? null),
-              trimEndMs: applyTrim === false ? null : (t.trim_end_ms ?? null),
-            })
-        );
-        const copyTotal = copyTargets.length;
-
-        send('export-all-progress', {
-          msg: `Exporting ${total} tracks…`,
-          pct: 0,
-        });
-
-        const usedNames = new Map();
-        for (const et of existingTracks.values()) {
-          const name = path.basename(et.file_path || '').toLowerCase();
-          if (name) usedNames.set(name, true);
-        }
-
-        const usbPaths = new Map();
-        const usbMeta = new Map();
-        const reusedIds = new Set();
-        let copiedCount = 0;
-        for (let i = 0; i < allTracks.length; i++) {
-          const t = allTracks[i];
-          const reused = reuseExistingUsbTrack(existingTracks, t.id, usedNames, {
-            trimStartMs: applyTrim === false ? null : (t.trim_start_ms ?? null),
-            trimEndMs: applyTrim === false ? null : (t.trim_end_ms ?? null),
-          });
-          if (reused) {
-            usbPaths.set(t.id, reused.path);
-            reusedIds.add(t.id);
-            if (reused.meta) usbMeta.set(t.id, reused.meta);
-          } else {
-            const { path: usbPath, meta } = await copyTrackToUsb(t, usbRoot, usedNames, {
-              useNormalized,
-              targetLufs,
-              targetDevice,
-              forceMp3,
-              applyTrim,
-            });
-            usbPaths.set(t.id, usbPath);
-            if (meta) usbMeta.set(t.id, meta);
-            copiedCount += 1;
-          }
-          const copyMsg = copyTotal
-            ? `Copying files… ${copiedCount}/${copyTotal}`
-            : 'Copying files… all tracks already on USB';
-          send('export-all-progress', {
-            msg: copyMsg,
-            pct: Math.round(((i + 1) / total) * 35),
-          });
-        }
-
-        const sampleInfo = await resolveExportSampleInfo(allTracks, {
-          reusedIds,
-          manifestTracks: existingTracks,
-          usbMeta,
-        });
-
-        send('export-all-progress', { msg: 'Writing M3U playlists…', pct: 35 });
-        const playlistDir = path.join(usbRoot, 'playlists');
-        for (const pl of allPlaylists) {
-          const tracks = getPlaylistTracks(pl.id);
-          const safeName = pl.name.replace(/[<>:"\/\\|?*\x00-\x1f]/g, '_').trim();
-          const entries = tracks
-            .map((t) => {
-              const usbPath = usbPaths.get(t.id);
-              if (!usbPath) return null;
-              return {
-                path: path.join(usbRoot, usbPath),
-                duration: exportDurationSec(t, applyTrim) ?? -1,
-                label: [t.artist, t.title].filter(Boolean).join(' - ') || path.basename(usbPath),
-              };
-            })
-            .filter(Boolean);
-          writeM3uPlaylist({ dir: playlistDir, name: safeName, entries });
-        }
-
-        send('export-all-progress', { msg: 'Writing beat grids & waveforms…', pct: 50 });
-        for (let i = 0; i < allTracks.length; i++) {
-          const t = allTracks[i];
-          const usbFilePath = usbPaths.get(t.id);
-          if (!usbFilePath) continue;
-          const cues = getCuePoints(t.id).filter((c) => c.enabled !== 0);
-          const trim = resolveExportTrim(t, usbRoot, usbFilePath, cues, applyTrim);
-          try {
-            await writeAnlz({
-              usbFilePath,
-              sourceFilePath: trim ? trim.sourceFilePath : t.file_path || null,
-              beatgrid: trim ? trim.beatgrid : (t.beatgrid ?? null),
-              bpm: t.bpm_override ?? t.bpm ?? 0,
-              beatgridOffset: t.beatgrid_offset ?? 0,
-              usbRoot,
-              ffmpegPath: getFfmpegRuntimePath(),
-              cuePoints: trim ? trim.cuePoints : cues,
-            });
-          } catch (err) {
-            console.warn(`ANLZ write failed for track ${t.id}:`, err.message);
-          }
-          send('export-all-progress', {
-            msg: `Beat grids & waveforms… ${i + 1}/${total}`,
-            pct: 50 + Math.round(((i + 1) / total) * 20),
-          });
-        }
-
-        send('export-all-progress', { msg: 'Writing Rekordbox database…', pct: 70 });
-        const newPdbTracks = allTracks.map((t) => ({
-          id: t.id,
-          title: t.title || '',
-          artist: t.artist || '',
-          album: t.album || '',
-          duration: exportDurationSec(t, applyTrim) ?? 0,
-          trim_start_ms: applyTrim === false ? null : (t.trim_start_ms ?? null),
-          trim_end_ms: applyTrim === false ? null : (t.trim_end_ms ?? null),
-          bpm: t.bpm_override ?? t.bpm ?? 0,
-          key_raw: t.key_raw || '',
-          file_path: usbPaths.get(t.id) || '',
-          track_number: t.track_number || 0,
-          year: t.year || '',
-          label: t.label || '',
-          genres: t.genres ? JSON.parse(t.genres) : [],
-          file_size: usbMeta.get(t.id)?.fileSize ?? t.file_size ?? 0,
-          bitrate: usbMeta.get(t.id)?.bitrate ?? t.bitrate ?? 0,
-          sample_rate: sampleInfo.get(t.id)?.sampleRate ?? null,
-          bit_depth: sampleInfo.get(t.id)?.bitDepth ?? null,
-          comments: t.comments || '',
-          rating: t.rating || 0,
-          replay_gain: t.replay_gain ?? null,
-          analyzePath: (() => {
-            const usbFP = usbPaths.get(t.id);
-            if (!usbFP) return '';
-            const folder = getAnlzFolder(usbFP).replace(/\\/g, '/');
-            return folder ? `/${folder}/ANLZ0000.DAT` : '';
-          })(),
-        }));
-        const newPdbPlaylists = allPlaylists.map((pl) => ({
-          id: pl.id,
-          name: pl.name,
-          track_ids: getPlaylistTracks(pl.id)
-            .map((t) => t.id)
-            .filter((id) => usbPaths.has(id)),
-        }));
-
-        const mergedTracks = new Map(existingTracks);
-        for (const t of newPdbTracks) mergedTracks.set(t.id, t);
-
-        const mergedPlaylists = new Map(existingPlaylists);
-        for (const pl of newPdbPlaylists) mergedPlaylists.set(pl.id, pl);
-
-        await backfillPdbSampleInfo([...mergedTracks.values()], { usbRoot });
-
-        runPdbExporter(
-          { usbRoot, tracks: [...mergedTracks.values()], playlists: [...mergedPlaylists.values()] },
-          usbRoot
-        );
-        writeSettingFiles(usbRoot);
-        saveManifest(usbRoot, mergedTracks, mergedPlaylists);
-
-        send('export-all-progress', { msg: 'Done!', pct: 100 });
+      if (!usbRoot) {
         send('export-all-progress', null);
-        return ok({
-          trackCount: mergedTracks.size,
-          newTrackCount: total,
-          playlistCount: mergedPlaylists.size,
-          usbRoot,
+        return fail('missing-usb-root', 'A mount point is required');
+      }
+      try {
+        const snapshot = exportRunner.plan({
+          playlistIds,
+          playlistId,
+          useNormalized,
+          targetDevice,
+          forceMp3,
+          applyTrim,
         });
+        const finished = await syncService.runJob({
+          usbRoot,
+          trigger: 'manual',
+          fingerprint: exportRunner.fingerprint(snapshot),
+          execute: (job) => exportRunner.run({ job, plan: snapshot }),
+        });
+        send('export-all-progress', null);
+        return ok({ ...(finished.summary ?? {}) });
       } catch (err) {
         send('export-all-progress', null);
+        if (err?.code) return fail(err.code, err.message, err.extra ?? {});
         return failFromError(err);
       }
     }

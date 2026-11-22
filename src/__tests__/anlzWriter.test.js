@@ -261,55 +261,57 @@ describe('writeAnlz', () => {
     expect(lenHdr).toBe(16);
   });
 
-  it('PVBR body is 1604 bytes (4 unknown + 400×u32)', async () => {
+  it('PVBR body is 1608 bytes: 400 zeroed slots + 8-byte trailer', async () => {
     await writeAnlz(baseOpts);
 
     const datBuf = fs.writeFileSync.mock.calls.find((c) => c[0].endsWith('.DAT'))[1];
     const sections = parseSections(datBuf);
     const pvbr = sections.find((s) => s.tag === 'PVBR');
     expect(pvbr).toBeDefined();
-    const bodyLen = pvbr.lenTag - 12;
-    expect(bodyLen).toBe(4 + 400 * 4);
+    expect(pvbr.lenTag - 12).toBe(400 * 4 + 8);
   });
 
-  it('PVBR seek table is monotonically non-decreasing', async () => {
+  it('PVBR carries no seek table: every slot and the first trailer word are zero', async () => {
     await writeAnlz(baseOpts);
 
     const datBuf = fs.writeFileSync.mock.calls.find((c) => c[0].endsWith('.DAT'))[1];
     const pvbrPos = datBuf.indexOf(Buffer.from('PVBR', 'ascii'));
-    const tableStart = pvbrPos + 12 + 4;
-    let prev = 0;
-    for (let i = 0; i < 400; i++) {
-      const val = datBuf.readUInt32BE(tableStart + i * 4);
-      expect(val).toBeGreaterThanOrEqual(prev);
-      prev = val;
+    const bodyStart = pvbrPos + 12;
+    for (let i = 0; i < 401; i++) {
+      expect(datBuf.readUInt32BE(bodyStart + i * 4)).toBe(0);
     }
   });
 
-  it('PVBR seek table entry[0] = 0 and entry[399] < fileSize', async () => {
-    const fileSize = 1234567;
-    fs.statSync.mockReturnValue({ size: fileSize });
+  it('PVBR trailer holds the decoded sample count', async () => {
+    const { generateWaveform } = await import('../audio/waveformGenerator.js');
+    const real = await generateWaveform.getMockImplementation?.();
+    generateWaveform.mockResolvedValueOnce({
+      pwv3: Buffer.alloc(4),
+      pwv5: Buffer.alloc(8),
+      pwv7: Buffer.alloc(12),
+      pwav: Buffer.alloc(400),
+      pwv2: Buffer.alloc(100),
+      pwv4: Buffer.alloc(7200),
+      pwv6: Buffer.alloc(3600),
+      numCols: 4,
+      totalSamples: 19417088,
+    });
 
     await writeAnlz(baseOpts);
 
     const datBuf = fs.writeFileSync.mock.calls.find((c) => c[0].endsWith('.DAT'))[1];
     const pvbrPos = datBuf.indexOf(Buffer.from('PVBR', 'ascii'));
-    const tableStart = pvbrPos + 12 + 4;
-    expect(datBuf.readUInt32BE(tableStart)).toBe(0);
-    const last = datBuf.readUInt32BE(tableStart + 399 * 4);
-    expect(last).toBeLessThan(fileSize);
+    expect(datBuf.readUInt32BE(pvbrPos + 12 + 400 * 4 + 4)).toBe(19417088);
+    if (real) generateWaveform.mockImplementation(real);
   });
 
-  it('PVBR seek table is all zeros when sourceFilePath is null (no size)', async () => {
+  it('PVBR trailer is zero when the waveform pass did not run', async () => {
     await writeAnlz({ ...baseOpts, sourceFilePath: null });
 
     const datBuf = fs.writeFileSync.mock.calls.find((c) => c[0].endsWith('.DAT'))[1];
     const pvbrPos = datBuf.indexOf(Buffer.from('PVBR', 'ascii'));
     expect(pvbrPos).toBeGreaterThan(-1);
-    const tableStart = pvbrPos + 12 + 4;
-    for (let i = 0; i < 400; i++) {
-      expect(datBuf.readUInt32BE(tableStart + i * 4)).toBe(0);
-    }
+    expect(datBuf.readUInt32BE(pvbrPos + 12 + 400 * 4 + 4)).toBe(0);
   });
 
   it('DAT len_file in PMAI header matches actual buffer size', async () => {

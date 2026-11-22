@@ -32,6 +32,23 @@ describe('trackToFilename', () => {
   });
 });
 
+describe('saveManifest', () => {
+  it('keeps the export id when the caller passes the previous manifest', () => {
+    const root = tempDir();
+    const first = service.saveManifest(root, new Map(), new Map());
+    expect(first.exportId).toMatch(/^[0-9a-f-]{36}$/);
+
+    const staged = tempDir();
+    const again = service.saveManifest(staged, new Map(), new Map(), { previous: first });
+    expect(again.exportId).toBe(first.exportId);
+
+    const written = JSON.parse(
+      fs.readFileSync(path.join(staged, 'PIONEER', 'rekordbox', 'export-manifest.json'), 'utf8')
+    );
+    expect(written.exportId).toBe(first.exportId);
+  });
+});
+
 describe('exportDurationSec', () => {
   it('uses the stored duration when the track carries no trim', () => {
     expect(service.exportDurationSec({ duration: 210 })).toBe(210);

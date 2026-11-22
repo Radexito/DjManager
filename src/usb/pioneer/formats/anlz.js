@@ -460,19 +460,25 @@ function generateBeatsFromBpm(bpm, maxSeconds = 600) {
 }
 
 /**
- * Builds a PVBR (Variable Bit Rate seek index) section.
- * Required by Rekordbox in every ANLZ0000.DAT file.
- * Body: 4-byte unknown + 400 × u32BE byte-offsets for equal-time seek positions.
- * @param {number} fileSize  Total byte size of the source audio file (0 = unknown)
+ * Builds a PVBR (VBR seek index) section.
+ *
+ * Measured against rekordbox 7.2.19's own export of the same audio, and against
+ * a player-written stick: rekordbox does NOT fill a seek table. Its payload is
+ * 1608 bytes, 400 zeroed u32 slots followed by an 8-byte trailer whose last u32
+ * carries the decoded sample count (a PC export has 3 non-zero bytes in the
+ * whole payload, a device stick has 0). This writer used to emit a linear
+ * byte-offset table instead, which is not what the section carries; rekordbox
+ * then treated the analysis as unusable and re-analysed the track, so the stick
+ * showed no waveform and no beat grid until it did.
+ *
+ * @param {number} totalSamples  decoded sample count of the audio (0 = unknown,
+ *                               written as an all-zero payload like a device does)
  */
-function buildPvbrSection(fileSize) {
+export function buildPvbrSection(totalSamples = 0) {
   const ENTRIES = 400;
-  const body = Buffer.alloc(4 + ENTRIES * 4);
-  body.writeUInt32BE(0, 0);
-  const size = fileSize > 0 ? fileSize : 0;
-  for (let i = 0; i < ENTRIES; i++) {
-    body.writeUInt32BE(Math.floor((i * size) / ENTRIES), 4 + i * 4);
-  }
+  const body = Buffer.alloc(ENTRIES * 4 + 8);
+  const samples = Math.max(0, Math.round(totalSamples) || 0);
+  body.writeUInt32BE(samples, ENTRIES * 4 + 4);
   return buildSection('PVBR', body, 16);
 }
 
@@ -947,13 +953,11 @@ export async function writeAnlz(opts) {
 
   const beats = computeBeats(beatgrid, bpm, beatgridOffset);
 
-  let audioFileSize = 0;
-  if (sourceFilePath) {
-    try {
-      audioFileSize = fs.statSync(sourceFilePath).size;
-    } catch {}
-  }
-  const pvbrSection = buildPvbrSection(audioFileSize);
+  // PVBR carries the decoded sample count, not a byte seek table (see
+  // buildPvbrSection). The waveform pass has already decoded the audio, so take
+  // the exact count from it; if it did not run, write the all-zero payload a
+  // player writes.
+  const pvbrSection = buildPvbrSection(waveforms?.totalSamples ?? 0);
 
   const [pcob1, pcob2] = buildPcobSections(cuePoints ?? []);
   const [extPcob1, extPcob2] = buildExtPcobSections(cuePoints ?? []);

@@ -126,6 +126,8 @@ const lifecycle = createAppLifecycle({
 
 app.on('ready', lifecycle.initApp);
 
+app.on('ready', () => services.syncService.start());
+
 registerAllIpc({
   ipcMain,
   app,

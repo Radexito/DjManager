@@ -125,7 +125,8 @@ export function createPioneerExportService({ app, send = () => {} } = {}) {
     runPdbExporter: (payload, usbRoot) => device(usbRoot).write.database(payload),
     getManifestPath: (usbRoot) => device(usbRoot).manifest.path(),
     loadManifest: (usbRoot) => device(usbRoot).manifest.load(),
-    saveManifest: (usbRoot, tracks, playlists) => device(usbRoot).manifest.save(tracks, playlists),
+    saveManifest: (usbRoot, tracks, playlists, options) =>
+      device(usbRoot).manifest.save(tracks, playlists, options),
     scanUsbCues,
     applyUsbCues,
     detectCueUsb,

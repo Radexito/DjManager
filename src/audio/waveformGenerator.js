@@ -95,7 +95,9 @@ function computeFixedColumns(samples, numCols, colFn) {
  * and the fixed-size overviews (pwav, pwv2, pwv4, pwv6).
  * @param {Float32Array} samples - mono samples at SAMPLE_RATE
  * @returns {{pwv3: Buffer, pwv5: Buffer, pwv7: Buffer, pwav: Buffer, pwv2: Buffer,
- *            pwv4: Buffer, pwv6: Buffer, numCols: number}} columns at COLS_PER_SEC
+ *            pwv4: Buffer, pwv6: Buffer, numCols: number, totalSamples: number}}
+ *          columns at COLS_PER_SEC; `totalSamples` is the decoded sample count,
+ *          which the ANLZ PVBR trailer carries.
  */
 function computeColumns(samples) {
   const numCols = Math.floor(samples.length / SAMPLES_PER_COL);
@@ -189,7 +191,11 @@ function computeColumns(samples) {
     })
   );
 
-  return { pwv3, pwv5, pwav, pwv2, pwv4, pwv6, pwv7, numCols };
+  // The waveform samples are decoded at SAMPLE_RATE; the PVBR trailer carries the
+  // count at the file's own 44.1 kHz, so scale it back up (rekordbox's own value is
+  // this count plus the encoder padding, within 0.01%).
+  const totalSamples = Math.round((samples.length * 44100) / SAMPLE_RATE);
+  return { pwv3, pwv5, pwav, pwv2, pwv4, pwv6, pwv7, numCols, totalSamples };
 }
 
 /**
