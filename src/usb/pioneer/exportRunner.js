@@ -4,6 +4,13 @@ import path from 'node:path';
 import { toM3uRelativePath } from '../../usb/generic/m3u.js';
 import { getAnlzFolder } from '../../usb/pioneer/formats/anlz.js';
 import { readLibrary } from '../../usb/pioneer/formats/pdbRead.js';
+import {
+  ONELIBRARY_FILE,
+  checkConsistency,
+  readLibrary as readDeviceLibrary,
+  resolveLibraryKey,
+  writeLibrary,
+} from './onelibrary/index.js';
 import { sha256 } from '../../sync/publication.js';
 import { SyncError } from '../../sync/errors.js';
 
@@ -128,6 +135,9 @@ export function createPioneerExportRunner(deps) {
         forceMp3,
         applyTrim,
         mirror,
+        // Opt-in: the device library needs a key, and a wrong database is worse
+        // than none. The key itself is not part of the plan or its fingerprint.
+        onelibrary: String(getSetting('export_onelibrary', '0')) === '1',
       },
       playlists,
       tracks,
@@ -385,6 +395,18 @@ export function createPioneerExportRunner(deps) {
       job.staging
     );
     writeSettingFiles(job.staging);
+
+    // rekordbox reads its own database next to the PDB. Writing it is opt-in:
+    // without a key there is nothing to encrypt it with.
+    const onelibraryKey = options.onelibrary ? resolveLibraryKey({ getSetting }) : null;
+    if (onelibraryKey) {
+      writeLibrary(path.join(job.staging, ONELIBRARY_FILE), {
+        key: onelibraryKey,
+        tracks: [...mergedTracks.values()],
+        playlists: [...mergedPlaylists.values()],
+      });
+    }
+
     const savedManifest = saveManifest(job.staging, mergedTracks, mergedPlaylists, {
       previous: existingManifest,
     });
@@ -401,6 +423,28 @@ export function createPioneerExportRunner(deps) {
         verify: (absPath) => verifyJson(absPath, manifestRel),
       },
     ];
+    if (onelibraryKey) {
+      entries.push({
+        ...job.describeStaged(ONELIBRARY_FILE),
+        // The library must say the same thing as the PDB that is about to be
+        // published; a mismatch is the defect #10 describes.
+        verify: (absPath) => {
+          const deviceLibrary = readDeviceLibrary(absPath, { key: onelibraryKey });
+          const result = checkConsistency({
+            library: deviceLibrary,
+            pdbTrackCount: mergedTracks.size,
+            pdbPlaylistCount: mergedPlaylists.size,
+          });
+          if (!result.ok) {
+            throw new SyncError(
+              'onelibrary-verify-failed',
+              `exportLibrary.db disagrees with export.pdb: ${result.problems.join('; ')}`,
+              { relPath: ONELIBRARY_FILE }
+            );
+          }
+        },
+      });
+    }
     job.publish(entries);
 
     const state = {
