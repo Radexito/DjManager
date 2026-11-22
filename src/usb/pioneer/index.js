@@ -61,7 +61,7 @@ export function createPioneerUsb({ root, deps = {} } = {}) {
     manifest: {
       path: () => getManifestPath(root),
       load: () => loadManifest(root),
-      save: (tracks, playlists) => saveManifest(root, tracks, playlists),
+      save: (tracks, playlists, options) => saveManifest(root, tracks, playlists, options),
     },
     read: {
       /** Cue points the medium carries, paired with what the library already has. */

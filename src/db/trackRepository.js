@@ -1,5 +1,6 @@
 import path from 'path';
 import db from './database.js';
+import { fileFingerprint } from './fileFingerprint.js';
 
 const ALLOWED_TRACK_COLUMNS = new Set([
   'title',
@@ -233,7 +234,7 @@ export function addTrack(track) {
       source_url, source_platform, source_quality, source_link,
       user_tags, has_artwork, artwork_path, is_linked, library_id,
       trim_start_ms, trim_end_ms, sample_rate, bit_depth,
-      created_at
+      file_fingerprint, created_at
     ) VALUES (
       @title, @artist, @album, @duration,
       @file_path, @file_hash, @format, @bitrate,
@@ -241,7 +242,7 @@ export function addTrack(track) {
       @source_url, @source_platform, @source_quality, @source_link,
       @user_tags, @has_artwork, @artwork_path, @is_linked, @library_id,
       @trim_start_ms, @trim_end_ms, @sample_rate, @bit_depth,
-      @created_at
+      @file_fingerprint, @created_at
     )
   `);
 
@@ -271,6 +272,7 @@ export function addTrack(track) {
     trim_end_ms: track.trim_end_ms ?? null,
     sample_rate: track.sample_rate ?? null,
     bit_depth: track.bit_depth ?? null,
+    file_fingerprint: track.file_fingerprint ?? null,
     created_at: Date.now(),
   });
 
@@ -305,6 +307,28 @@ export function updateTrack(id, data) {
     WHERE id = @id
   `
   ).run({ id, ...safeData });
+
+  // A new path means a new file identity. Recording it here covers a move, a
+  // relink and a remap without every caller having to remember.
+  if (Object.prototype.hasOwnProperty.call(safeData, 'file_path')) {
+    setTrackFileFingerprint(id, fileFingerprint(safeData.file_path));
+  }
+}
+
+/**
+ * Record the size and mtime a track's file had when it was written.
+ * Separate from updateTrack() because it is file bookkeeping, not an edit: it
+ * must not flag the track as analysed and it must not move the revision on its
+ * own.
+ * @param {number} id
+ * @param {string|null} fingerprint
+ * @returns {boolean} true when the value changed
+ */
+export function setTrackFileFingerprint(id, fingerprint) {
+  const info = db
+    .prepare('UPDATE tracks SET file_fingerprint = ? WHERE id = ? AND (file_fingerprint IS NOT ?)')
+    .run(fingerprint ?? null, id, fingerprint ?? null);
+  return (info.changes ?? 0) > 0;
 }
 
 /**
@@ -792,6 +816,7 @@ export function remapTracksByPrefix(oldPrefix, newPrefix) {
   for (const row of rows) {
     const newPath = newPrefix + row.file_path.slice(oldPrefix.length);
     db.prepare(`UPDATE tracks SET file_path = ? WHERE id = ?`).run(newPath, row.id);
+    setTrackFileFingerprint(row.id, fileFingerprint(newPath));
     count++;
   }
   return count;

@@ -78,6 +78,9 @@ export function createPioneerExportRunner(deps) {
     runPdbExporter,
     getFfmpegRuntimePath,
     send,
+    hasPendingWork,
+    recordExportState,
+    revisionSummary,
   } = deps;
 
   /**
@@ -220,10 +223,12 @@ export function createPioneerExportRunner(deps) {
     const usbRoot = job.usbRoot;
     const { options } = snapshot;
     const total = snapshot.tracks.length;
+    const startedRevision = revisionSummary?.() ?? null;
 
     job.enter('copy', { pct: 0, msg: `Exporting ${total} tracks…` });
 
-    const { tracks: existingTracks, playlists: existingPlaylists } = loadManifest(usbRoot);
+    const existingManifest = loadManifest(usbRoot);
+    const { tracks: existingTracks, playlists: existingPlaylists } = existingManifest;
     const trimOf = (track) => ({
       trimStartMs: options.applyTrim === false ? null : (track.trim_start_ms ?? null),
       trimEndMs: options.applyTrim === false ? null : (track.trim_end_ms ?? null),
@@ -338,6 +343,9 @@ export function createPioneerExportRunner(deps) {
       comments: track.comments || '',
       rating: track.rating || 0,
       replay_gain: track.replay_gain ?? null,
+      rev: track.rev ?? 1,
+      hash: track.file_hash ?? null,
+      file_fingerprint: track.file_fingerprint ?? null,
       analyzePath: (() => {
         const usbPath = usbPaths.get(track.id);
         if (!usbPath) return '';
@@ -367,7 +375,9 @@ export function createPioneerExportRunner(deps) {
       job.staging
     );
     writeSettingFiles(job.staging);
-    saveManifest(job.staging, mergedTracks, mergedPlaylists);
+    const savedManifest = saveManifest(job.staging, mergedTracks, mergedPlaylists, {
+      previous: existingManifest,
+    });
 
     const pdbRel = 'PIONEER/rekordbox/export.pdb';
     const manifestRel = 'PIONEER/rekordbox/export-manifest.json';
@@ -382,6 +392,20 @@ export function createPioneerExportRunner(deps) {
       },
     ];
     job.publish(entries);
+
+    try {
+      await recordExportState?.({
+        usbRoot,
+        manifest: savedManifest,
+        tracks: mergedTracks,
+        playlists: mergedPlaylists,
+        revision: startedRevision,
+      });
+    } catch (err) {
+      // The files are published; failing the export over bookkeeping would hide
+      // a good stick. The next sync simply sees no state and rebuilds.
+      console.warn('[sync] could not record the device state:', err.message);
+    }
 
     return {
       fingerprint: fingerprint(snapshot),
@@ -404,7 +428,8 @@ export function createPioneerExportRunner(deps) {
    * @param {string} usbRoot
    * @returns {{fingerprint: string, execute: function}|null}
    */
-  function planFor(usbRoot) {
+  async function planFor(usbRoot) {
+    if (hasPendingWork && !(await hasPendingWork(usbRoot))) return null;
     const { playlists } = loadManifest(usbRoot);
     const ids = [...playlists.keys()].filter((id) => getPlaylist(id));
     if (ids.length === 0) return null;

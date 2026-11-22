@@ -184,6 +184,51 @@ describe('export runner', () => {
     expect(readLibrary(fs.readFileSync(previous)).tracks).toHaveLength(2);
   });
 
+  it('writes a version 2 manifest with a stable export id and the row revisions', async () => {
+    const root = stick();
+    const { runner } = buildRunner();
+    const snapshot = runner.plan({ playlistIds: [7] });
+
+    await runOn(root, runner, snapshot);
+    const first = loadManifest(root);
+    expect(first.version).toBe(2);
+    expect(first.exportId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(first.tracks.get(1)).toMatchObject({ rev: 1, file_path: '/Contents/1 - Opening.mp3' });
+
+    await runOn(root, runner, snapshot);
+    const second = loadManifest(root);
+    expect(second.exportId).toBe(first.exportId);
+  });
+
+  it('asks the change tracker before building an export', async () => {
+    const root = stick();
+    saveManifest(root, new Map(), new Map([[7, { id: 7, name: 'Set' }]]));
+
+    const idle = buildRunner({ hasPendingWork: async () => false });
+    await expect(idle.runner.planFor(root)).resolves.toBeNull();
+
+    const busy = buildRunner({ hasPendingWork: async () => true });
+    const plan = await busy.runner.planFor(root);
+    expect(plan.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('records the device state after publishing', async () => {
+    const root = stick();
+    const recordExportState = vi.fn(async () => 'serial:TEST');
+    const { runner } = buildRunner({
+      recordExportState,
+      revisionSummary: () => ({ key: '9:2:1:2:0' }),
+    });
+
+    await runOn(root, runner, runner.plan({ playlistIds: [7] }));
+
+    expect(recordExportState).toHaveBeenCalledTimes(1);
+    const call = recordExportState.mock.calls[0][0];
+    expect(call.manifest.version).toBe(2);
+    expect(call.revision).toEqual({ key: '9:2:1:2:0' });
+    expect([...call.tracks.keys()].sort()).toEqual([1, 2]);
+  });
+
   it('changes the fingerprint when a field the export writes changes', () => {
     const { runner } = buildRunner();
     const first = runner.plan({ playlistIds: [7] });
@@ -197,22 +242,22 @@ describe('export runner', () => {
     expect(runner.fingerprint(changed)).not.toBe(runner.fingerprint(first));
   });
 
-  it('plans an automatic sync from the playlists the manifest carries', () => {
+  it('plans an automatic sync from the playlists the manifest carries', async () => {
     const root = stick();
     const { runner } = buildRunner();
-    expect(runner.planFor(root)).toBeNull();
+    await expect(runner.planFor(root)).resolves.toBeNull();
 
     const maps = { tracks: new Map(), playlists: new Map([[7, { id: 7, name: 'Set' }]]) };
     saveManifest(root, maps.tracks, maps.playlists);
-    const auto = runner.planFor(root);
+    const auto = await runner.planFor(root);
     expect(auto.fingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(typeof auto.execute).toBe('function');
   });
 
-  it('leaves a medium alone when the manifest names only deleted playlists', () => {
+  it('leaves a medium alone when the manifest names only deleted playlists', async () => {
     const root = stick();
     const { runner } = buildRunner({ getPlaylist: () => null });
     saveManifest(root, new Map(), new Map([[99, { id: 99, name: 'Gone' }]]));
-    expect(runner.planFor(root)).toBeNull();
+    await expect(runner.planFor(root)).resolves.toBeNull();
   });
 });
