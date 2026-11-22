@@ -91,7 +91,7 @@ function buildRunner(overrides = {}) {
 
   const deps = {
     getSetting: () => '-9',
-    getPlaylist: (id) => ({ id, name: 'Set' }),
+    getPlaylist: (id) => ({ id, name: 'Set', rev: 3 }),
     getPlaylists: () => [{ id: 7, name: 'Set' }],
     getPlaylistTracks: (id) => (String(id) === '7' ? tracks : []),
     getCuePoints: () => [],
@@ -158,6 +158,14 @@ describe('export runner', () => {
     const library = publishedLibrary(root);
     expect(library.tracks).toHaveLength(2);
     expect(library.playlists).toHaveLength(1);
+
+    // The state a sync records has to survive the manifest round trip: the
+    // playlist revision drives change detection, and trackIds is the library
+    // membership, while track_ids is the subset the player carries.
+    const statePlaylist = result.state.playlists.get(7);
+    expect(statePlaylist).toMatchObject({ rev: 3, trackIds: [1, 2], track_ids: [1, 2] });
+    const reloaded = loadManifest(root).playlists.get(7);
+    expect(reloaded).toMatchObject({ rev: 3, trackIds: [1, 2] });
     expect(fs.existsSync(path.join(root, '.djmanager', 'staging'))).toBe(true);
   });
 

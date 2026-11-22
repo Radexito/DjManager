@@ -108,7 +108,7 @@ export function createPioneerExportRunner(deps) {
       for (const track of tracks) {
         if (!trackMap.has(track.id)) trackMap.set(track.id, track);
       }
-      return { id: playlist.id, name: playlist.name, tracks };
+      return { id: playlist.id, name: playlist.name, rev: playlist.rev ?? null, tracks };
     });
 
     const tracks = [...trackMap.values()];
@@ -359,7 +359,12 @@ export function createPioneerExportRunner(deps) {
     const newPdbPlaylists = snapshot.playlists.map((playlist) => ({
       id: playlist.id,
       name: playlist.name,
+      rev: playlist.rev ?? null,
+      // What the player carries: only tracks with a file on the medium.
       track_ids: playlist.tracks.map((track) => track.id).filter((id) => usbPaths.has(id)),
+      // What the library playlist is: the change tracker compares this, and a
+      // track that could not be copied must not look like a membership edit.
+      trackIds: playlist.tracks.map((track) => track.id),
     }));
 
     // A mirror sync describes the device exactly: the rows it writes replace the

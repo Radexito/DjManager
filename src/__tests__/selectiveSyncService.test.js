@@ -94,6 +94,34 @@ describe('selective sync service', () => {
     expect(mirror.actions).toEqual([{ type: 'remove', trackId: 2, filePath: '/Contents/b.mp3' }]);
   });
 
+  it('removes a track whose device cues the library already knows', async () => {
+    const { root, service } = setup({
+      readTrackCues: () => [
+        { hotCueIndex: 0, positionMs: 1000 },
+        { hotCueIndex: -1, positionMs: 5000 },
+      ],
+      getCuePoints: () => [
+        { id: 1, track_id: 2, position_ms: 1040, hot_cue_index: 0 },
+        { id: 2, track_id: 2, position_ms: 5100, hot_cue_index: -1 },
+      ],
+    });
+
+    const mirror = await service.preview({ usbRoot: root, mirror: true });
+    expect(mirror.actions).toEqual([{ type: 'remove', trackId: 2, filePath: '/Contents/b.mp3' }]);
+  });
+
+  it('keeps a track that carries a device cue the library does not have', async () => {
+    const { root, service } = setup({
+      readTrackCues: () => [{ hotCueIndex: 3, positionMs: 1000 }],
+      getCuePoints: () => [{ id: 1, track_id: 2, position_ms: 1000, hot_cue_index: 0 }],
+    });
+
+    const mirror = await service.preview({ usbRoot: root, mirror: true });
+    expect(mirror.actions).toEqual([
+      { type: 'keep', trackId: 2, filePath: '/Contents/b.mp3', reason: 'device-cues' },
+    ]);
+  });
+
   it('refuses to apply a plan the caller did not see', async () => {
     const { root, deps, service } = setup();
 

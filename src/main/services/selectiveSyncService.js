@@ -1,3 +1,4 @@
+import { buildCueImportPlan } from '../../usb/pioneer/formats/cues.js';
 import { SyncError } from '../../sync/errors.js';
 import { buildPreview } from '../../sync/preview.js';
 import { moveToTrash, pruneTrash } from '../../sync/trash.js';
@@ -57,9 +58,11 @@ export function createSelectiveSyncService({
   /**
    * Why a track that mirror mode would remove must be kept.
    * Cues a player wrote and the library never imported are the device's own
-   * data: the file comes back only after those were imported. History lives in
-   * the encrypted library (#10) and is not read here yet, which is stated in the
-   * plan as a reason the removal is unverified.
+   * data: the file comes back only after those were imported. The comparison is
+   * the cue import plan, which already knows that a hot cue belongs to a slot
+   * and that a memory cue matches within a tolerance, instead of comparing raw
+   * field names. History lives in the encrypted library (#10) and is not read
+   * here yet, which is stated in the plan as a reason the removal is unverified.
    */
   function protectionFor(usbRoot) {
     return (trackId, state) => {
@@ -68,10 +71,8 @@ export function createSelectiveSyncService({
         const deviceCues = readTrackCues(usbRoot, state.file_path) ?? [];
         if (deviceCues.length === 0) return null;
         const libraryCues = getCuePoints(trackId) ?? [];
-        const key = (cue) => `${Math.round(cue.positionMs ?? 0)}:${cue.hotCueIndex ?? -1}`;
-        const known = new Set(libraryCues.map(key));
-        const missing = deviceCues.filter((cue) => !known.has(key(cue)));
-        return missing.length > 0 ? 'device-cues' : null;
+        const plan = buildCueImportPlan({ usbCues: deviceCues, existingCues: libraryCues });
+        return plan.add.length > 0 ? 'device-cues' : null;
       } catch (err) {
         log(`[sync] could not read cues for track ${trackId}: ${err.message}`);
         return 'cues-unreadable';
