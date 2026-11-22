@@ -103,6 +103,24 @@ function backupTarget(usbRoot, jobId, relPath, journal) {
 }
 
 /**
+ * Turn a filesystem refusal into something a person can act on.
+ * A player or the operating system holding the file open makes the rename fail
+ * with a sharing violation (EPERM/EACCES/EBUSY on Windows); the target is still
+ * the old file, so the message says that and names what to close.
+ */
+export function describePublishFailure(err, relPath) {
+  if (['EPERM', 'EACCES', 'EBUSY', 'ETXTBSY'].includes(err?.code)) {
+    return new SyncError(
+      'file-locked',
+      `Cannot replace ${relPath}: another program (a player or rekordbox) still holds it. ` +
+        'Close it or eject the device, then sync again.',
+      { relPath, cause: err.code }
+    );
+  }
+  return err;
+}
+
+/**
  * Publish staged files, one atomic rename each.
  *
  * @param {object} options
@@ -154,7 +172,11 @@ export function publishStaged({ usbRoot, jobId, staging, entries, journal, onFil
       target: entry.relPath,
     });
     backupTarget(usbRoot, jobId, entry.relPath, journal);
-    moveIntoPlace(stagedAbs, targetAbs);
+    try {
+      moveIntoPlace(stagedAbs, targetAbs);
+    } catch (err) {
+      throw describePublishFailure(err, entry.relPath);
+    }
     const done = {
       relPath: entry.relPath,
       sha256: verificationDigest,

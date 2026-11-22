@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { SyncJournal, lastCommit, readJournal, unfinishedJobs } from '../sync/journal.js';
 import { generationDir, journalPath, stagingRoot } from '../sync/paths.js';
 import {
+  describePublishFailure,
   describeStaged,
   moveStagedArtifact,
   pruneGenerations,
@@ -243,6 +244,17 @@ describe('staged publication', () => {
 
     expect(read(root, 'Contents/Artist - Title.mp3')).toBe('audio');
     expect(readJournal(root, 'job-1').map((event) => event.event)).toEqual(['artifact']);
+  });
+
+  it('turns a file held open into a message that names what to close', () => {
+    const locked = Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+    const described = describePublishFailure(locked, 'PIONEER/rekordbox/export.pdb');
+    expect(described).toMatchObject({ code: 'file-locked', extra: { cause: 'EPERM' } });
+    expect(described.message).toContain('rekordbox');
+    expect(described.message).toContain('PIONEER/rekordbox/export.pdb');
+
+    const other = Object.assign(new Error('no space left'), { code: 'ENOSPC' });
+    expect(describePublishFailure(other, 'x')).toBe(other);
   });
 
   it('describes a file a writer produced itself', () => {
