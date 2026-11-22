@@ -181,6 +181,36 @@ describe('readLibrary', () => {
     expect(lib.tracks[0].artistId).toBeGreaterThan(0);
   });
 
+  it('reads artist and album names that take the long UTF-16 form', () => {
+    const file = path.join(tempDir(), 'export.pdb');
+    const base = payload().tracks[0];
+    writePdb(
+      {
+        tracks: [
+          {
+            ...base,
+            id: 3,
+            title: 'Café Del Mar',
+            artist: 'Benoît',
+            album: 'Ángel',
+            file_path: '/Contents/Benoît - Café Del Mar.mp3',
+            filename: 'Benoît - Café Del Mar.mp3',
+          },
+        ],
+        playlists: [{ id: 20, name: 'Café', track_ids: [3] }],
+      },
+      file
+    );
+
+    const lib = readLibrary(fs.readFileSync(file));
+    const artist = lib.artists.map((a) => a.name).find((name) => name === 'Benoît');
+    expect(artist).toBe('Benoît');
+    expect(lib.albums.map((a) => a.name)).toContain('Ángel');
+    expect(lib.playlists.map((p) => p.name)).toContain('Café');
+    // The long form moves the name two bytes later; the track rows must still read.
+    expect(lib.tracks.map((t) => t.filePath)).toContain('/Contents/Benoît - Café Del Mar.mp3');
+  });
+
   it('returns playlists with their tracks in order', () => {
     const lib = roundTrip();
     const playlist = lib.playlists.find((p) => p.name === 'Warm Up');

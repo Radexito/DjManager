@@ -282,7 +282,11 @@ export function decodeTrackRow(row) {
  * @returns {{id: number, name: string}}
  */
 export function decodeArtistRow(row) {
-  return { id: row.readUInt32LE(4), name: decodeDeviceSQLString(row, 10).value };
+  // The name offset is stored in the row: 0x0a normally, 0x0c when the name is
+  // a long UTF-16 string, which the writer aligns to four bytes (issue #3).
+  // Reading the stored byte keeps this in step with buildArtistRow.
+  const nameAt = row[9] || 10;
+  return { id: row.readUInt32LE(4), name: decodeDeviceSQLString(row, nameAt).value };
 }
 
 /**
@@ -291,10 +295,12 @@ export function decodeArtistRow(row) {
  * @returns {{id: number, artistId: number, name: string}}
  */
 export function decodeAlbumRow(row) {
+  // Stored offset, same rule as the artist row: 0x16, or 0x18 for a long string.
+  const nameAt = row[21] || 22;
   return {
     id: row.readUInt32LE(12),
     artistId: row.readUInt32LE(8),
-    name: decodeDeviceSQLString(row, 22).value,
+    name: decodeDeviceSQLString(row, nameAt).value,
   };
 }
 
@@ -312,6 +318,15 @@ export function decodeKeyRow(row) {
  * @param {Buffer} row
  * @returns {{id: number, name: string}}
  */
+/**
+ * Artwork row: `u32 id` at 0, device path string at 4.
+ * @param {Buffer} row
+ * @returns {{id: number, path: string}}
+ */
+export function decodeArtworkRow(row) {
+  return { id: row.readUInt32LE(0), path: decodeDeviceSQLString(row, 4).value };
+}
+
 export function decodeColorRow(row) {
   return { id: row.readUInt16LE(5), name: decodeDeviceSQLString(row, 8).value };
 }
@@ -374,6 +389,7 @@ export function readLibrary(buffer) {
     artists: rowsOf(2).map(decodeArtistRow),
     albums: rowsOf(3).map(decodeAlbumRow),
     keys: rowsOf(5).map(decodeKeyRow),
+    artwork: rowsOf(13).map(decodeArtworkRow),
     colors: rowsOf(6).map(decodeColorRow),
     playlists: rowsOf(7).map(decodePlaylistTreeRow),
     entries,
