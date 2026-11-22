@@ -406,6 +406,9 @@ export function createPioneerExportRunner(deps) {
     for (const skippedCover of artwork.skipped) {
       console.warn(`[sync] cover ${skippedCover.relPath} was skipped: ${skippedCover.reason}`);
     }
+    for (const note of artwork.notes) {
+      console.warn(`[sync] cover ${note}`);
+    }
     for (const failure of artwork.failed) {
       console.warn(`[sync] cover ${failure.relPath} was not written: ${failure.reason}`);
     }

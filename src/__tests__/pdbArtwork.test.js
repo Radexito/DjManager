@@ -37,7 +37,7 @@ describe('artwork paths', () => {
 
   it('writes the path rekordbox writes, leading /. included', () => {
     // Verified against a real export.pdb: one song, one cover.
-    expect(artworkPdbPath(1)).toBe('/.PIONEER/Artwork/00001/a1.jpg');
+    expect(artworkPdbPath(1)).toBe('/PIONEER/Artwork/00001/a1.jpg');
     expect(artworkRelPath(1)).toBe('PIONEER/Artwork/00001/a1.jpg');
   });
 });
@@ -55,13 +55,13 @@ describe('planArtwork', () => {
       {
         id: 1,
         sourcePath: '/covers/a.jpg',
-        pdbPath: '/.PIONEER/Artwork/00001/a1.jpg',
+        pdbPath: '/PIONEER/Artwork/00001/a1.jpg',
         relPath: 'PIONEER/Artwork/00001/a1.jpg',
       },
       {
         id: 2,
         sourcePath: '/covers/b.png',
-        pdbPath: '/.PIONEER/Artwork/00001/a2.jpg',
+        pdbPath: '/PIONEER/Artwork/00001/a2.jpg',
         relPath: 'PIONEER/Artwork/00001/a2.jpg',
       },
     ]);
@@ -72,7 +72,7 @@ describe('artwork rows in export.pdb', () => {
   it('encodes id and path, and leaves the string readable', () => {
     const row = buildArtworkRow(7, artworkPdbPath(7));
     expect(row.readUInt32LE(0)).toBe(7);
-    expect(decodeDeviceSQLString(row, 4).value).toBe('/.PIONEER/Artwork/00001/a7.jpg');
+    expect(decodeDeviceSQLString(row, 4).value).toBe('/PIONEER/Artwork/00001/a7.jpg');
     expect(row.length % 4).toBe(0);
   });
 
@@ -88,7 +88,7 @@ describe('artwork rows in export.pdb', () => {
 
     expect(plan).toHaveLength(1);
     const library = readLibrary(fs.readFileSync(out));
-    expect(library.artwork).toEqual([{ id: 1, path: '/.PIONEER/Artwork/00001/a1.jpg' }]);
+    expect(library.artwork).toEqual([{ id: 1, path: '/PIONEER/Artwork/00001/a1.jpg' }]);
     expect(library.tracks.map((t) => t.artworkId)).toEqual([1, 1, 0]);
   });
 
@@ -116,7 +116,7 @@ describe('artwork rows in export.pdb', () => {
     writePdb({ tracks, playlists: [], artwork: written }, out);
 
     const library = readLibrary(fs.readFileSync(out));
-    expect(library.artwork).toEqual([{ id: 1, path: '/.PIONEER/Artwork/00001/a1.jpg' }]);
+    expect(library.artwork).toEqual([{ id: 1, path: '/PIONEER/Artwork/00001/a1.jpg' }]);
     expect(library.tracks.map((t) => t.artworkId)).toEqual([1, 0]);
   });
 });

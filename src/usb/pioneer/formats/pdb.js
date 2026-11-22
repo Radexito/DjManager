@@ -346,13 +346,14 @@ export function artworkFolderFor(id) {
 }
 
 /**
- * Path stored in the artwork table. The leading `/.` is not a typo: it is what
- * rekordbox itself writes, verified against a real export.pdb.
+ * Path stored in the artwork table, exactly as rekordbox 7.2.19 wrote it on a
+ * live export (2026-11-22): `/PIONEER/Artwork/00001/a1.jpg`. The `/.PIONEER/...`
+ * form that an older fixture carries is not what this version writes.
  * @param {number} id artwork id
  * @returns {string}
  */
 export function artworkPdbPath(id) {
-  return `/.PIONEER/Artwork/${artworkFolderFor(id)}/a${id}.jpg`;
+  return `/PIONEER/Artwork/${artworkFolderFor(id)}/a${id}.jpg`;
 }
 
 /**

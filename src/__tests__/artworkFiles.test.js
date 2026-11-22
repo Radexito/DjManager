@@ -4,7 +4,12 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ARTWORK_THUMB_SIZE, looksLikeJpeg, writeArtworkFiles } from '../usb/pioneer/artwork.js';
+import {
+  ARTWORK_SIZE,
+  ARTWORK_THUMB_SIZE,
+  looksLikeJpeg,
+  writeArtworkFiles,
+} from '../usb/pioneer/artwork.js';
 import { planArtwork } from '../usb/pioneer/formats/pdb.js';
 
 const tmpDirs = [];
@@ -36,28 +41,9 @@ afterEach(() => {
 });
 
 describe('writeArtworkFiles', () => {
-  it('copies a JPEG byte for byte and makes the small twin', async () => {
+  it('writes both renditions rekordbox writes: 80 px and 240 px', async () => {
     const dir = tmpDir();
-    const cover = writeCover(dir, 'cover.jpg', JPEG);
-    const root = path.join(dir, 'stick');
-    const plan = planArtwork([{ id: 1, artwork_path: cover }]);
-
-    const result = await writeArtworkFiles(root, plan, { ffmpegPath: null });
-
-    expect(result.files).toEqual([
-      'PIONEER/Artwork/00001/a1.jpg',
-      'PIONEER/Artwork/00001/a1_m.jpg',
-    ]);
-    expect(result.skipped).toEqual([]);
-    expect(result.failed).toEqual([]);
-    for (const rel of result.files) {
-      expect(fs.readFileSync(path.join(root, ...rel.split('/')))).toEqual(JPEG);
-    }
-  });
-
-  it('reads the bytes, not the name: PNG under a .jpg name is converted', async () => {
-    const dir = tmpDir();
-    const cover = writeCover(dir, 'cover.jpg', PNG);
+    const cover = writeCover(dir, 'cover.png', PNG);
     const root = path.join(dir, 'stick');
     const plan = planArtwork([{ id: 1, artwork_path: cover }]);
     const decoder = stubDecoder(dir, 'ffmpeg-ok', 'printf "\\377\\330\\377\\331" > "$last"');
@@ -67,8 +53,30 @@ describe('writeArtworkFiles', () => {
 
     expect(result.skipped).toEqual([]);
     expect(result.failed).toEqual([]);
-    const dest = fs.readFileSync(path.join(root, 'PIONEER', 'Artwork', '00001', 'a1.jpg'));
-    expect(looksLikeJpeg(dest)).toBe(true);
+    expect(result.files).toEqual([
+      'PIONEER/Artwork/00001/a1.jpg',
+      'PIONEER/Artwork/00001/a1_m.jpg',
+    ]);
+    for (const rel of result.files) {
+      const bytes = fs.readFileSync(path.join(root, ...rel.split('/')));
+      expect(looksLikeJpeg(bytes)).toBe(true);
+    }
+  });
+
+  it('reads the bytes, not the name', async () => {
+    const dir = tmpDir();
+    const cover = writeCover(dir, 'cover.jpg', PNG);
+    const root = path.join(dir, 'stick');
+    const plan = planArtwork([{ id: 1, artwork_path: cover }]);
+    const decoder = stubDecoder(dir, 'ffmpeg-ok', 'printf "\\377\\330\\377\\331" > "$last"');
+    if (process.platform === 'win32') return;
+
+    const result = await writeArtworkFiles(root, plan, { ffmpegPath: decoder });
+
+    expect(result.files).toHaveLength(2);
+    expect(
+      looksLikeJpeg(fs.readFileSync(path.join(root, 'PIONEER', 'Artwork', '00001', 'a1.jpg')))
+    ).toBe(true);
   });
 
   it('reports a cover the decoder could not turn into JPEG, and publishes none of it', async () => {
@@ -86,6 +94,25 @@ describe('writeArtworkFiles', () => {
       { relPath: 'PIONEER/Artwork/00001/a1.jpg', reason: 'the decoder produced no JPEG' },
     ]);
     expect(fs.existsSync(path.join(root, 'PIONEER', 'Artwork', '00001', 'a1.jpg'))).toBe(false);
+  });
+
+  it('copies a JPEG at its own size when there is no decoder, and says so', async () => {
+    const dir = tmpDir();
+    const cover = writeCover(dir, 'cover.jpg', JPEG);
+    const root = path.join(dir, 'stick');
+    const plan = planArtwork([{ id: 1, artwork_path: cover }]);
+
+    const result = await writeArtworkFiles(root, plan, { ffmpegPath: null });
+
+    expect(result.files).toEqual([
+      'PIONEER/Artwork/00001/a1.jpg',
+      'PIONEER/Artwork/00001/a1_m.jpg',
+    ]);
+    expect(result.notes).toHaveLength(1);
+    expect(result.notes[0]).toContain('not 80/240');
+    for (const rel of result.files) {
+      expect(fs.readFileSync(path.join(root, ...rel.split('/')))).toEqual(JPEG);
+    }
   });
 
   it('skips a missing cover instead of publishing a broken path', async () => {
@@ -116,7 +143,8 @@ describe('writeArtworkFiles', () => {
     ]);
   });
 
-  it('uses a 240 pixel square twin, like rekordbox', () => {
+  it('uses the sizes rekordbox writes: 80 for the file the PDB names, 240 for _m', () => {
+    expect(ARTWORK_SIZE).toBe(80);
     expect(ARTWORK_THUMB_SIZE).toBe(240);
   });
 });
