@@ -335,6 +335,72 @@ export function buildAlbumRow(id, artistId, name) {
 }
 
 /**
+ * Folder rekordbox puts artwork in, five digits. A thousand covers share
+ * `00001`; the next thousand goes to `00002`. Measured on a real export:
+ * artwork id 1 lives in `00001` (`/.PIONEER/Artwork/00001/a1.jpg`).
+ * @param {number} id artwork id
+ * @returns {string}
+ */
+export function artworkFolderFor(id) {
+  return String(Math.floor((id - 1) / 1000) + 1).padStart(5, '0');
+}
+
+/**
+ * Path stored in the artwork table, exactly as rekordbox 7.2.19 wrote it on a
+ * live export (2026-11-22): `/PIONEER/Artwork/00001/a1.jpg`. The `/.PIONEER/...`
+ * form that an older fixture carries is not what this version writes.
+ * @param {number} id artwork id
+ * @returns {string}
+ */
+export function artworkPdbPath(id) {
+  return `/PIONEER/Artwork/${artworkFolderFor(id)}/a${id}.jpg`;
+}
+
+/**
+ * Where the cover lives on the medium, relative to its root.
+ * @param {number} id artwork id
+ * @returns {string}
+ */
+export function artworkRelPath(id) {
+  return `PIONEER/Artwork/${artworkFolderFor(id)}/a${id}.jpg`;
+}
+
+/**
+ * Give every distinct cover file an artwork id, in first-seen order. Tracks
+ * that share a cover share an id, exactly like rekordbox.
+ * @param {object[]} tracks
+ * @returns {Array<{id: number, sourcePath: string, pdbPath: string, relPath: string}>}
+ */
+export function planArtwork(tracks = []) {
+  const bySource = new Map();
+  const plan = [];
+  for (const track of tracks) {
+    const source = track?.artwork_path;
+    if (!source || bySource.has(source)) continue;
+    const id = plan.length + 1;
+    bySource.set(source, id);
+    plan.push({ id, sourcePath: source, pdbPath: artworkPdbPath(id), relPath: artworkRelPath(id) });
+  }
+  return plan;
+}
+
+/**
+ * Artwork row: `u32 id` followed by the path string (DeviceSQL).
+ * Allocation is `align4(4 + l)`; DataPage pads the row to four bytes.
+ * @param {number} id
+ * @param {string} artworkPath
+ * @returns {Buffer}
+ */
+export function buildArtworkRow(id, artworkPath) {
+  const encoded = encodeDeviceSQLString(artworkPath);
+  // rekordbox allocates align4(4 + l) for this row, not the packed length.
+  const buf = Buffer.alloc(alignTo4(4 + encoded.length));
+  buf.writeUInt32LE(id, 0);
+  encoded.copy(buf, 4);
+  return buf;
+}
+
+/**
  * Track row — the most complex row type.
  *
  * Layout (all LE):
@@ -840,7 +906,9 @@ export function buildFileHeader(tableStates, nextUnusedPage, sequence) {
  * @returns {Buffer}
  */
 function buildPdbBuffer(input) {
-  const { tracks = [], playlists = [] } = input;
+  const { tracks = [], playlists = [], artwork } = input;
+  const artworkPlan = Array.isArray(artwork) ? artwork : planArtwork(tracks);
+  const artworkIdBySource = new Map(artworkPlan.map((a) => [a.sourcePath, a.id]));
 
   const artistMap = new Map();
   const albumMap = new Map();
@@ -882,6 +950,7 @@ function buildPdbBuffer(input) {
         artistId,
         albumId,
         keyId,
+        artworkId: artworkIdBySource.get(t.artwork_path) || 0,
         title: t.title || '',
         filePath: t.file_path || '',
         filename: basename(t.file_path || ''),
@@ -915,6 +984,10 @@ function buildPdbBuffer(input) {
 
   for (const [name, id] of keyMap) {
     rowsByType.get(TABLE_TYPES.Keys).push(buildKeyRow(id, name));
+  }
+
+  for (const cover of artworkPlan) {
+    rowsByType.get(TABLE_TYPES.Artwork).push(buildArtworkRow(cover.id, cover.pdbPath));
   }
 
   for (let i = 0; i < playlists.length; i++) {
@@ -1035,4 +1108,5 @@ export function writePdb(input, outputPath) {
   mkdirSync(dirname(outputPath), { recursive: true });
   const buf = buildPdbBuffer(input);
   writeFileSync(outputPath, buf);
+  return Array.isArray(input.artwork) ? input.artwork : planArtwork(input.tracks ?? []);
 }

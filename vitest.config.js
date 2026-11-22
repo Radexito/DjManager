@@ -79,6 +79,8 @@ export default defineConfig({
             'src/__tests__/settingWriter.test.js',
             'src/__tests__/pdbWriter.test.js',
             'src/__tests__/pdbRead.test.js',
+            'src/__tests__/pdbArtwork.test.js',
+            'src/__tests__/artworkFiles.test.js',
             'src/__tests__/usbRegistry.test.js',
             'src/__tests__/pioneerManager.test.js',
             'src/__tests__/deviceFormats.test.js',
