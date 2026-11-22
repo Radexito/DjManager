@@ -48,6 +48,8 @@ export function getPlaylists() {
       p.name,
       p.color,
       p.created_at,
+      p.rev,
+      p.updated_at,
       p.folder_path,
       p.folder_recursive,
       p.folder_synced_at,
@@ -74,6 +76,7 @@ export function getPlaylist(id) {
       `
     SELECT
       p.id, p.name, p.color, p.created_at,
+      p.rev, p.updated_at,
       p.folder_path, p.folder_recursive, p.folder_synced_at,
       COUNT(pt.track_id)           AS track_count,
       COALESCE(SUM(t.duration), 0) AS total_duration

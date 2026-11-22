@@ -142,5 +142,5 @@ export async function writeExportTags(destPath, track, blind = false) {
 
 export function runPdbExporter(payload, usbRoot) {
   const outputPath = path.join(usbRoot, 'PIONEER', 'rekordbox', 'export.pdb');
-  writePdb(payload, outputPath);
+  return writePdb(payload, outputPath);
 }

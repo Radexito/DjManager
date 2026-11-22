@@ -240,4 +240,304 @@ export function initDB() {
     ON tracks(library_id)
   `
   ).run();
+
+  installRevisionTracking();
+  installSelectiveSync();
+  installMyTags();
+}
+
+/**
+ * Revision tracking, file fingerprints and the per-device merge base (#12).
+ *
+ * Every row that can reach a device carries `rev` and `updated_at`. Triggers
+ * maintain them, so no write path has to remember to bump anything: an import,
+ * a metadata edit, a cue edit, a playlist reorder, a trim change and a
+ * normalisation all move the revision by exactly the trigger rule. A caller
+ * that sets `rev` itself (the sync apply) is left alone, because the update
+ * trigger only fires when the revision is unchanged.
+ *
+ * `updated_at` doubles as the cheap "did anything change" query: the maximum
+ * over the four tables is one indexed read, so an unchanged library can be
+ * recognised without scanning rows or touching audio.
+ */
+function installRevisionTracking() {
+  for (const col of [
+    'ALTER TABLE tracks ADD COLUMN updated_at INTEGER',
+    'ALTER TABLE tracks ADD COLUMN rev INTEGER NOT NULL DEFAULT 1',
+    'ALTER TABLE tracks ADD COLUMN file_fingerprint TEXT',
+    'ALTER TABLE playlists ADD COLUMN updated_at INTEGER',
+    'ALTER TABLE playlists ADD COLUMN rev INTEGER NOT NULL DEFAULT 1',
+    'ALTER TABLE playlist_tracks ADD COLUMN updated_at INTEGER',
+    'ALTER TABLE playlist_tracks ADD COLUMN rev INTEGER NOT NULL DEFAULT 1',
+    'ALTER TABLE cue_points ADD COLUMN updated_at INTEGER',
+    'ALTER TABLE cue_points ADD COLUMN rev INTEGER NOT NULL DEFAULT 1',
+  ]) {
+    try {
+      db.prepare(col).run();
+    } catch {}
+  }
+
+  const nowMs = `CAST(strftime('%s','now') AS INTEGER) * 1000`;
+  db.prepare(
+    `UPDATE tracks SET updated_at = COALESCE(created_at, ${nowMs}) WHERE updated_at IS NULL`
+  ).run();
+  db.prepare('UPDATE tracks SET rev = 1 WHERE rev IS NULL').run();
+  db.prepare(
+    `UPDATE playlists SET updated_at = COALESCE(created_at, ${nowMs}) WHERE updated_at IS NULL`
+  ).run();
+  db.prepare('UPDATE playlists SET rev = 1 WHERE rev IS NULL').run();
+  db.prepare(
+    `UPDATE playlist_tracks SET updated_at = COALESCE(date_added, ${nowMs}) WHERE updated_at IS NULL`
+  ).run();
+  db.prepare('UPDATE playlist_tracks SET rev = 1 WHERE rev IS NULL').run();
+  db.prepare(
+    `UPDATE cue_points SET updated_at = COALESCE(created_at, ${nowMs}) WHERE updated_at IS NULL`
+  ).run();
+  db.prepare('UPDATE cue_points SET rev = 1 WHERE rev IS NULL').run();
+
+  const triggers = [
+    // A new row gets its timestamp once; the revision keeps its default.
+    `CREATE TRIGGER IF NOT EXISTS tracks_revision_insert AFTER INSERT ON tracks
+     WHEN NEW.updated_at IS NULL
+     BEGIN
+       UPDATE tracks SET updated_at = ${nowMs} WHERE id = NEW.id;
+     END`,
+    // Any edit that does not bring its own revision bumps it. The guard on
+    // updated_at is what stops the insert trigger's own timestamp write from
+    // counting as an edit.
+    `CREATE TRIGGER IF NOT EXISTS tracks_revision_update AFTER UPDATE ON tracks
+     WHEN NEW.rev = OLD.rev AND NEW.updated_at IS OLD.updated_at
+     BEGIN
+       UPDATE tracks SET rev = OLD.rev + 1, updated_at = ${nowMs} WHERE id = NEW.id;
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS playlists_revision_insert AFTER INSERT ON playlists
+     WHEN NEW.updated_at IS NULL
+     BEGIN
+       UPDATE playlists SET updated_at = ${nowMs} WHERE id = NEW.id;
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS playlists_revision_update AFTER UPDATE ON playlists
+     WHEN NEW.rev = OLD.rev AND NEW.updated_at IS OLD.updated_at
+     BEGIN
+       UPDATE playlists SET rev = OLD.rev + 1, updated_at = ${nowMs} WHERE id = NEW.id;
+     END`,
+    // Membership and order live in playlist_tracks, so any change there moves
+    // the playlist revision as well as the row's own.
+    `CREATE TRIGGER IF NOT EXISTS playlist_tracks_revision_insert AFTER INSERT ON playlist_tracks
+     BEGIN
+       UPDATE playlist_tracks SET updated_at = ${nowMs}
+        WHERE playlist_id = NEW.playlist_id AND track_id = NEW.track_id
+          AND updated_at IS NULL;
+       UPDATE playlists SET rev = rev + 1, updated_at = ${nowMs} WHERE id = NEW.playlist_id;
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS playlist_tracks_revision_update AFTER UPDATE ON playlist_tracks
+     WHEN NEW.rev = OLD.rev AND NEW.updated_at IS OLD.updated_at
+     BEGIN
+       UPDATE playlist_tracks SET rev = OLD.rev + 1, updated_at = ${nowMs}
+        WHERE playlist_id = NEW.playlist_id AND track_id = NEW.track_id;
+       UPDATE playlists SET rev = rev + 1, updated_at = ${nowMs} WHERE id = NEW.playlist_id;
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS playlist_tracks_revision_delete AFTER DELETE ON playlist_tracks
+     BEGIN
+       UPDATE playlists SET rev = rev + 1, updated_at = ${nowMs} WHERE id = OLD.playlist_id;
+     END`,
+    // Cues are exported inside the analysis bundle, so a cue edit moves the
+    // track revision too.
+    `CREATE TRIGGER IF NOT EXISTS cue_points_revision_insert AFTER INSERT ON cue_points
+     WHEN NEW.updated_at IS NULL
+     BEGIN
+       UPDATE cue_points SET updated_at = ${nowMs} WHERE id = NEW.id;
+       UPDATE tracks SET rev = rev + 1, updated_at = ${nowMs} WHERE id = NEW.track_id;
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS cue_points_revision_update AFTER UPDATE ON cue_points
+     WHEN NEW.rev = OLD.rev AND NEW.updated_at IS OLD.updated_at
+     BEGIN
+       UPDATE cue_points SET rev = OLD.rev + 1, updated_at = ${nowMs} WHERE id = NEW.id;
+       UPDATE tracks SET rev = rev + 1, updated_at = ${nowMs} WHERE id = NEW.track_id;
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS cue_points_revision_delete AFTER DELETE ON cue_points
+     BEGIN
+       UPDATE tracks SET rev = rev + 1, updated_at = ${nowMs} WHERE id = OLD.track_id;
+     END`,
+  ];
+  for (const sql of triggers) db.prepare(sql).run();
+
+  for (const sql of [
+    'CREATE INDEX IF NOT EXISTS idx_tracks_updated_at ON tracks(updated_at)',
+    'CREATE INDEX IF NOT EXISTS idx_playlists_updated_at ON playlists(updated_at)',
+  ]) {
+    db.prepare(sql).run();
+  }
+
+  // The merge base is per device and per track. The library keeps the revisions
+  // it exported and the cue set that was the base for a merge; the device only
+  // carries hashes. `manifest_json` keeps the last manifest, so a database that
+  // never saw a device can rebuild the base from the stick (criterion 6).
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS device_sync_state (
+      device_key       TEXT PRIMARY KEY,
+      export_id        TEXT,
+      label            TEXT,
+      serial           TEXT,
+      filesystem       TEXT,
+      last_mount_path  TEXT,
+      last_sync        INTEGER,
+      library_revision TEXT,
+      manifest_json    TEXT,
+      updated_at       INTEGER
+    )
+  `
+  ).run();
+
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS device_track_state (
+      device_key         TEXT    NOT NULL,
+      track_id           INTEGER NOT NULL,
+      device_track_id    INTEGER,
+      file_path          TEXT,
+      rev                INTEGER,
+      hash               TEXT,
+      file_fingerprint   TEXT,
+      exported_at        INTEGER,
+      PRIMARY KEY (device_key, track_id)
+    )
+  `
+  ).run();
+
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS device_playlist_state (
+      device_key     TEXT    NOT NULL,
+      playlist_id    INTEGER NOT NULL,
+      rev            INTEGER,
+      signature      TEXT,
+      exported_at    INTEGER,
+      PRIMARY KEY (device_key, playlist_id)
+    )
+  `
+  ).run();
+
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS device_cue_base (
+      device_key  TEXT    NOT NULL,
+      track_id    INTEGER NOT NULL,
+      hash        TEXT,
+      cue_json    TEXT,
+      updated_at  INTEGER,
+      PRIMARY KEY (device_key, track_id)
+    )
+  `
+  ).run();
+}
+
+/**
+ * What a device is meant to carry, and what its last apply did (#14).
+ *
+ * The selection is the device side of "keep these playlists in step". It is
+ * stored per device key, so it survives a new drive letter. `device_last_plan`
+ * keeps the action list the last apply executed, which is what lets the next
+ * preview explain itself ("this is what the device was told last time").
+ */
+function installSelectiveSync() {
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS device_selection (
+      device_key TEXT    NOT NULL,
+      kind       TEXT    NOT NULL DEFAULT 'playlist',
+      ref_id     INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER,
+      PRIMARY KEY (device_key, kind, ref_id)
+    )
+  `
+  ).run();
+
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS device_last_plan (
+      device_key TEXT PRIMARY KEY,
+      plan_hash  TEXT,
+      plan_json  TEXT NOT NULL,
+      summary    TEXT,
+      applied_at INTEGER NOT NULL
+    )
+  `
+  ).run();
+}
+
+/**
+ * My Tags (#10).
+ *
+ * The tree rekordbox shows as My Tags is user data, so it lives in the library
+ * rather than in the export: a tag, its parent and its order, plus the
+ * assignment of a tag to a track. Assignments are part of what reaches a device,
+ * so any change bumps the affected track's revision. That is what makes a
+ * selective sync notice that a tag was added, removed or renamed.
+ */
+function installMyTags() {
+  const nowMs = "CAST(strftime('%s','now') AS INTEGER) * 1000";
+
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS my_tags (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT    NOT NULL,
+      parent_id   INTEGER REFERENCES my_tags(id) ON DELETE CASCADE,
+      sequence_no INTEGER NOT NULL DEFAULT 0,
+      attribute   INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL,
+      rev         INTEGER NOT NULL DEFAULT 1
+    )
+  `
+  ).run();
+
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS track_my_tags (
+      track_id    INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+      tag_id      INTEGER NOT NULL REFERENCES my_tags(id) ON DELETE CASCADE,
+      assigned_at INTEGER NOT NULL,
+      PRIMARY KEY (track_id, tag_id)
+    )
+  `
+  ).run();
+
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_track_my_tags_tag ON track_my_tags(tag_id)').run();
+  db.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_my_tags_parent ON my_tags(parent_id, sequence_no)'
+  ).run();
+
+  // A stable id that ties exportExt.pdb to the library's property row. Generated
+  // once per library and reused, the way rekordbox keeps one per installation.
+  db.prepare(
+    `INSERT OR IGNORE INTO settings (key, value)
+     VALUES ('my_tag_master_id', CAST(abs(random()) % 4294967295 AS TEXT))`
+  ).run();
+
+  for (const sql of [
+    `CREATE TRIGGER IF NOT EXISTS my_tags_revision_insert AFTER INSERT ON my_tags
+     WHEN NEW.updated_at IS NULL
+     BEGIN
+       UPDATE my_tags SET updated_at = ${nowMs} WHERE id = NEW.id;
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS my_tags_revision_update AFTER UPDATE ON my_tags
+     WHEN NEW.rev = OLD.rev AND NEW.updated_at IS OLD.updated_at
+     BEGIN
+       UPDATE my_tags SET rev = OLD.rev + 1, updated_at = ${nowMs} WHERE id = NEW.id;
+       UPDATE tracks SET rev = rev + 1, updated_at = ${nowMs}
+        WHERE id IN (SELECT track_id FROM track_my_tags WHERE tag_id = NEW.id);
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS track_my_tags_revision_insert AFTER INSERT ON track_my_tags
+     BEGIN
+       UPDATE tracks SET rev = rev + 1, updated_at = ${nowMs} WHERE id = NEW.track_id;
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS track_my_tags_revision_delete AFTER DELETE ON track_my_tags
+     BEGIN
+       UPDATE tracks SET rev = rev + 1, updated_at = ${nowMs} WHERE id = OLD.track_id;
+     END`,
+  ]) {
+    db.prepare(sql).run();
+  }
 }

@@ -19,6 +19,7 @@ import {
 } from '../db/trackRepository.js';
 import { getAnalyzerRuntimePath } from '../deps.js';
 import { getSetting } from '../db/settingsRepository.js';
+import { fileFingerprint } from '../db/fileFingerprint.js';
 import { moveFileSafe } from '../utils/fsMove.js';
 import {
   getLibrary,
@@ -67,6 +68,14 @@ function sendAnalysisProgress() {
 
 const activeAnalysisWorkers = new Map();
 let analysisQueue = [];
+
+/**
+ * True while an analysis worker is running or waiting for one.
+ * The sync engine reads this to stay out of the library while it is written.
+ */
+export function isAnalysisBusy() {
+  return analysisActive > 0 || analysisQueue.length > 0;
+}
 
 /**
  * Close out a job exactly once. A cancelled worker is dropped from the batch
@@ -729,6 +738,7 @@ export async function importAudioFile(filePath, sourceMeta = {}, libraryId = nul
     artwork_path: artworkPath ?? null,
     sample_rate: sampleRate,
     bit_depth: bitDepth,
+    file_fingerprint: fileFingerprint(dest),
   });
 
   console.log(`Added track ID ${trackId}: ${resolvedTitle || basename}`);
@@ -847,6 +857,7 @@ export async function linkAudioFile(filePath, libraryId = null) {
     library_id: targetLibraryId,
     sample_rate: sampleRate,
     bit_depth: bitDepth,
+    file_fingerprint: fileFingerprint(filePath),
   });
 
   spawnAnalysis(trackId, filePath);
