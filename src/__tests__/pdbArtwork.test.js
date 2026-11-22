@@ -102,4 +102,21 @@ describe('artwork rows in export.pdb', () => {
     expect(plan).toEqual([]);
     expect(readLibrary(fs.readFileSync(out)).artwork).toEqual([]);
   });
+
+  it('drops the reference of a cover that was not written', () => {
+    const dir = tmpDir();
+    const out = path.join(dir, 'export.pdb');
+    const tracks = [
+      { id: 1, title: 'One', file_path: '/Contents/one.mp3', artwork_path: '/covers/a.jpg' },
+      { id: 2, title: 'Two', file_path: '/Contents/two.mp3', artwork_path: '/covers/b.png' },
+    ];
+    // b.png could not be decoded: the caller writes only the covers it managed,
+    // so the second track keeps artwork_id 0 instead of pointing at nothing.
+    const written = planArtwork(tracks).filter((cover) => cover.sourcePath === '/covers/a.jpg');
+    writePdb({ tracks, playlists: [], artwork: written }, out);
+
+    const library = readLibrary(fs.readFileSync(out));
+    expect(library.artwork).toEqual([{ id: 1, path: '/.PIONEER/Artwork/00001/a1.jpg' }]);
+    expect(library.tracks.map((t) => t.artworkId)).toEqual([1, 0]);
+  });
 });

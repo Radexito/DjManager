@@ -13,9 +13,12 @@ const execFileAsync = promisify(execFile);
  * at the large one (`/.PIONEER/Artwork/00001/a1.jpg`), the `_m` name is a
  * convention the player follows on its own, so both have to exist.
  *
- * Only JPEG is written: a PNG cover is converted first, because a deck does not
- * decode PNG. When ffmpeg is missing the cover is skipped rather than published
- * as a file the player cannot read.
+ * A deck decodes JPEG and nothing else, and the extension lies: a cover fetched
+ * from the web can be PNG bytes under a `.jpg` name, and a FLAC picture is often
+ * PNG. Detection therefore reads the first bytes, every non-JPEG goes through
+ * ffmpeg, and the result is checked for the JPEG signature before it counts as
+ * written. A cover that cannot be turned into JPEG is reported, not published
+ * as a file the player would show as a black box.
  */
 
 /**
@@ -25,10 +28,29 @@ const execFileAsync = promisify(execFile);
  */
 export const ARTWORK_THUMB_SIZE = 240;
 
-const JPEG_EXTENSIONS = new Set(['.jpg', '.jpeg']);
+/** @param {Buffer} head first bytes of a file */
+export function looksLikeJpeg(head) {
+  return head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
+}
 
-function isJpeg(filePath) {
-  return JPEG_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+function readHead(filePath, bytes = 16) {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(bytes);
+    const read = fs.readSync(fd, buf, 0, bytes, 0);
+    return buf.subarray(0, read);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function readJpegOrNull(filePath) {
+  try {
+    if (!fs.statSync(filePath).isFile() || fs.statSync(filePath).size === 0) return null;
+    return looksLikeJpeg(readHead(filePath)) ? filePath : null;
+  } catch {
+    return null;
+  }
 }
 
 async function ffmpeg(ffmpegPath, args) {
@@ -41,7 +63,7 @@ async function ffmpeg(ffmpegPath, args) {
  * @param {string} root folder the relative paths are resolved against
  * @param {Array<{id: number, sourcePath: string, relPath: string}>} plan from `planArtwork`
  * @param {{ffmpegPath?: string|null}} options
- * @returns {Promise<{files: string[], skipped: string[], failed: Array<{relPath: string, reason: string}>}>}
+ * @returns {Promise<{files: string[], skipped: Array<{relPath: string, reason: string}>, failed: Array<{relPath: string, reason: string}>}>}
  *   `files` are the relative paths that now exist under `root`, large and small
  */
 export async function writeArtworkFiles(root, plan = [], { ffmpegPath = null } = {}) {
@@ -56,45 +78,54 @@ export async function writeArtworkFiles(root, plan = [], { ffmpegPath = null } =
     const thumbRel = relPath.replace(/\.jpg$/, '_m.jpg');
     const thumb = path.join(root, ...thumbRel.split('/'));
 
-    let source = null;
-    try {
-      source = cover.sourcePath && fs.statSync(cover.sourcePath).isFile() ? cover.sourcePath : null;
-    } catch {
-      source = null;
-    }
+    const source = cover.sourcePath && fs.existsSync(cover.sourcePath) ? cover.sourcePath : null;
     if (!source) {
-      skipped.push(relPath);
+      skipped.push({ relPath, reason: 'the cover file is gone' });
       continue;
     }
 
     try {
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      if (isJpeg(source)) {
-        fs.copyFileSync(source, dest);
-      } else if (ffmpegPath) {
-        await ffmpeg(ffmpegPath, ['-y', '-loglevel', 'error', '-i', source, '-q:v', '2', dest]);
-      } else {
-        // No decoder for PNG/TIFF covers: better no image than one the deck
-        // shows as a black box.
-        skipped.push(relPath);
+      const isJpegSource = looksLikeJpeg(readHead(source));
+      if (!isJpegSource && !ffmpegPath) {
+        skipped.push({ relPath, reason: 'not a JPEG and no decoder is installed' });
         continue;
+      }
+
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      if (isJpegSource) {
+        fs.copyFileSync(source, dest);
+      } else {
+        await ffmpeg(ffmpegPath, ['-y', '-loglevel', 'error', '-i', source, '-q:v', '2', dest]);
+        if (!readJpegOrNull(dest)) {
+          fs.rmSync(dest, { force: true });
+          failed.push({ relPath, reason: 'the decoder produced no JPEG' });
+          continue;
+        }
       }
       files.push(relPath);
 
+      let thumbOk = false;
       if (ffmpegPath) {
-        await ffmpeg(ffmpegPath, [
-          '-y',
-          '-loglevel',
-          'error',
-          '-i',
-          dest,
-          '-vf',
-          `scale=${ARTWORK_THUMB_SIZE}:${ARTWORK_THUMB_SIZE}:force_original_aspect_ratio=increase,crop=${ARTWORK_THUMB_SIZE}:${ARTWORK_THUMB_SIZE}`,
-          '-q:v',
-          '4',
-          thumb,
-        ]);
-      } else {
+        try {
+          await ffmpeg(ffmpegPath, [
+            '-y',
+            '-loglevel',
+            'error',
+            '-i',
+            dest,
+            '-vf',
+            `scale=${ARTWORK_THUMB_SIZE}:${ARTWORK_THUMB_SIZE}:force_original_aspect_ratio=increase,crop=${ARTWORK_THUMB_SIZE}:${ARTWORK_THUMB_SIZE}`,
+            '-q:v',
+            '4',
+            thumb,
+          ]);
+          thumbOk = Boolean(readJpegOrNull(thumb));
+        } catch {
+          thumbOk = false;
+        }
+      }
+      if (!thumbOk) {
+        // A full-size twin still loads; a missing `_m` leaves the list blank.
         fs.copyFileSync(dest, thumb);
       }
       files.push(thumbRel);

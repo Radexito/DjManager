@@ -5,6 +5,7 @@ import path from 'node:path';
 import { toM3uRelativePath } from '../../usb/generic/m3u.js';
 import { getAnlzFolder } from '../../usb/pioneer/formats/anlz.js';
 import { readLibrary } from '../../usb/pioneer/formats/pdbRead.js';
+import { planArtwork } from '../../usb/pioneer/formats/pdb.js';
 import {
   ONELIBRARY_FILE,
   checkConsistency,
@@ -395,21 +396,32 @@ export function createPioneerExportRunner(deps) {
 
     // Every metadata file is written into staging first. Publishing verifies the
     // PDB by reading it back, then renames each file over the live one.
-    const artworkPlan = runPdbExporter(
-      { usbRoot, tracks: [...mergedTracks.values()], playlists: [...mergedPlaylists.values()] },
-      job.staging
-    );
-    writeSettingFiles(job.staging);
-
-    // Covers are part of what a deck shows, and a missing one is invisible in
-    // the PDB: the file simply does not load. Written into staging like every
-    // other file, and published with them.
-    const artwork = await writeArtworkFiles(job.staging, artworkPlan, {
+    // Covers are written before the PDB, so the database can reference only the
+    // ones that really exist: a row pointing at a file nobody wrote is a blank
+    // cover on the deck with no way to tell why.
+    const coverPlan = planArtwork([...mergedTracks.values()]);
+    const artwork = await writeArtworkFiles(job.staging, coverPlan, {
       ffmpegPath: getFfmpegRuntimePath(),
     });
+    for (const skippedCover of artwork.skipped) {
+      console.warn(`[sync] cover ${skippedCover.relPath} was skipped: ${skippedCover.reason}`);
+    }
     for (const failure of artwork.failed) {
       console.warn(`[sync] cover ${failure.relPath} was not written: ${failure.reason}`);
     }
+    const writtenCovers = new Set(artwork.files);
+    const publishableCovers = coverPlan.filter((cover) => writtenCovers.has(cover.relPath));
+
+    runPdbExporter(
+      {
+        usbRoot,
+        tracks: [...mergedTracks.values()],
+        playlists: [...mergedPlaylists.values()],
+        artwork: publishableCovers,
+      },
+      job.staging
+    );
+    writeSettingFiles(job.staging);
 
     // rekordbox reads its own database next to the PDB. Writing it is opt-in:
     // without a key there is nothing to encrypt it with.
