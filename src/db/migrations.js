@@ -243,6 +243,7 @@ export function initDB() {
 
   installRevisionTracking();
   installSelectiveSync();
+  installMyTags();
 }
 
 /**
@@ -463,4 +464,80 @@ function installSelectiveSync() {
     )
   `
   ).run();
+}
+
+/**
+ * My Tags (#10).
+ *
+ * The tree rekordbox shows as My Tags is user data, so it lives in the library
+ * rather than in the export: a tag, its parent and its order, plus the
+ * assignment of a tag to a track. Assignments are part of what reaches a device,
+ * so any change bumps the affected track's revision. That is what makes a
+ * selective sync notice that a tag was added, removed or renamed.
+ */
+function installMyTags() {
+  const nowMs = "CAST(strftime('%s','now') AS INTEGER) * 1000";
+
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS my_tags (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT    NOT NULL,
+      parent_id   INTEGER REFERENCES my_tags(id) ON DELETE CASCADE,
+      sequence_no INTEGER NOT NULL DEFAULT 0,
+      attribute   INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL,
+      rev         INTEGER NOT NULL DEFAULT 1
+    )
+  `
+  ).run();
+
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS track_my_tags (
+      track_id    INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+      tag_id      INTEGER NOT NULL REFERENCES my_tags(id) ON DELETE CASCADE,
+      assigned_at INTEGER NOT NULL,
+      PRIMARY KEY (track_id, tag_id)
+    )
+  `
+  ).run();
+
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_track_my_tags_tag ON track_my_tags(tag_id)').run();
+  db.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_my_tags_parent ON my_tags(parent_id, sequence_no)'
+  ).run();
+
+  // A stable id that ties exportExt.pdb to the library's property row. Generated
+  // once per library and reused, the way rekordbox keeps one per installation.
+  db.prepare(
+    `INSERT OR IGNORE INTO settings (key, value)
+     VALUES ('my_tag_master_id', CAST(abs(random()) % 4294967295 AS TEXT))`
+  ).run();
+
+  for (const sql of [
+    `CREATE TRIGGER IF NOT EXISTS my_tags_revision_insert AFTER INSERT ON my_tags
+     WHEN NEW.updated_at IS NULL
+     BEGIN
+       UPDATE my_tags SET updated_at = ${nowMs} WHERE id = NEW.id;
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS my_tags_revision_update AFTER UPDATE ON my_tags
+     WHEN NEW.rev = OLD.rev AND NEW.updated_at IS OLD.updated_at
+     BEGIN
+       UPDATE my_tags SET rev = OLD.rev + 1, updated_at = ${nowMs} WHERE id = NEW.id;
+       UPDATE tracks SET rev = rev + 1, updated_at = ${nowMs}
+        WHERE id IN (SELECT track_id FROM track_my_tags WHERE tag_id = NEW.id);
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS track_my_tags_revision_insert AFTER INSERT ON track_my_tags
+     BEGIN
+       UPDATE tracks SET rev = rev + 1, updated_at = ${nowMs} WHERE id = NEW.track_id;
+     END`,
+    `CREATE TRIGGER IF NOT EXISTS track_my_tags_revision_delete AFTER DELETE ON track_my_tags
+     BEGIN
+       UPDATE tracks SET rev = rev + 1, updated_at = ${nowMs} WHERE id = OLD.track_id;
+     END`,
+  ]) {
+    db.prepare(sql).run();
+  }
 }

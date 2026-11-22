@@ -281,6 +281,9 @@ describe('export runner', () => {
           : name === 'rekordbox_library_key'
             ? 'test-library-key'
             : fallback,
+      getMyTags: () => [{ id: 5, name: 'Peak Time', parentId: 0, sequenceNo: 0, attribute: 0 }],
+      getTagAssignmentsForTracks: () => [{ track_id: 1, tag_id: 5 }],
+      getMyTagMasterId: () => 4242,
     });
     await runOn(root, runner, runner.plan({ playlistIds: [7] }));
 
@@ -297,6 +300,8 @@ describe('export runner', () => {
       path: '/Contents/1 - Opening.mp3',
       fileType: 1,
     });
+    expect(library.myTags).toEqual([expect.objectContaining({ myTag_id: 5, name: 'Peak Time' })]);
+    expect(library.property[0]).toMatchObject({ myTagMasterDBID: 4242 });
   });
 
   it('plans an automatic sync from the playlists the manifest carries', async () => {

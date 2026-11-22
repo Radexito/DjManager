@@ -88,6 +88,9 @@ export function createPioneerExportRunner(deps) {
     hasPendingWork,
     recordExportState,
     revisionSummary,
+    getMyTags = () => [],
+    getTagAssignmentsForTracks = () => [],
+    getMyTagMasterId = () => null,
   } = deps;
 
   /**
@@ -404,6 +407,9 @@ export function createPioneerExportRunner(deps) {
         key: onelibraryKey,
         tracks: [...mergedTracks.values()],
         playlists: [...mergedPlaylists.values()],
+        myTags: getMyTags() ?? [],
+        tagAssignments: getTagAssignmentsForTracks([...mergedTracks.keys()]) ?? [],
+        masterTagId: getMyTagMasterId(),
       });
     }
 
@@ -434,6 +440,7 @@ export function createPioneerExportRunner(deps) {
             library: deviceLibrary,
             pdbTrackCount: mergedTracks.size,
             pdbPlaylistCount: mergedPlaylists.size,
+            masterTagId: getMyTagMasterId(),
           });
           if (!result.ok) {
             throw new SyncError(

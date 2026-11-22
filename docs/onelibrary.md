@@ -69,3 +69,31 @@ about the medium, which is the failure #10 describes.
 - rekordbox has not been asked to open a generated library yet; the file was
   verified with rekordbox's own `sqlite3.dll`, which reads 22 tables and the
   expected rows.
+
+## `exportExt.pdb` layout, measured from a native file
+
+Not written yet. A native file from the same library has 9 tables (types 0 to 8),
+page size 4096, and rows only in two of them:
+
+- **type 3, the tag rows**: one row per tag, 48, 52 or 56 bytes depending on the
+  name length. Reading a row as bytes:
+  - `0..1` constant `0x0680`
+  - `2..3` index shift written by the page (`rowIndex * 0x20`), the same field the
+    track rows use
+  - `4..11` zero
+  - `12..15` parent tag id (little endian, `0` for a root)
+  - `16..19` sequence number among siblings
+  - `20..23` tag id
+  - `24..26` zero, `27` attribute (0 or 1)
+  - `28` constant `0x03`, `29` offset where the name string starts (31),
+    `30` offset just past it
+  - `31..` the DeviceSQL string (short form for these names), then `0x03` and
+    zero padding to the row size
+- **type 7, one row of 60 bytes**: constant `0x0700` at `0..1`, the index shift at
+  `2..3`, and the rest zero apart from a 32-bit value around offset 32. It is
+  probably the tag master id the library's `property` row carries, but that
+  library's `property` table was empty, so the link is not confirmed yet.
+
+The row size grows in steps of 4 bytes with the name length, so the trailer after
+the string is padding rather than a fixed field. The ids and the name in this
+sample belong to a user library and are not part of this repository.

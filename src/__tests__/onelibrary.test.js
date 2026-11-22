@@ -124,6 +124,51 @@ describe('device library (exportLibrary.db)', () => {
     }
   });
 
+  it('writes the My Tags tree, its assignments and the property row', () => {
+    const file = path.join(dir(), ONELIBRARY_FILE);
+    const myTags = [
+      { id: 11, name: 'Genre', parentId: 0, sequenceNo: 0, attribute: 1 },
+      { id: 12, name: 'House', parentId: 11, sequenceNo: 0, attribute: 0 },
+    ];
+    const masterTagId = 123456;
+
+    writeLibrary(file, {
+      key: KEY,
+      tracks,
+      playlists,
+      myTags,
+      tagAssignments: [{ trackId: 1, tagId: 12 }],
+      masterTagId,
+    });
+
+    const library = readLibrary(file, { key: KEY });
+    expect(library.myTags.map((tag) => [tag.myTag_id, tag.name, tag.myTag_id_parent])).toEqual([
+      [11, 'Genre', 0],
+      [12, 'House', 11],
+    ]);
+    expect(library.property).toEqual([
+      expect.objectContaining({
+        dbVersion: '10000',
+        numberOfContents: 2,
+        myTagMasterDBID: masterTagId,
+      }),
+    ]);
+
+    const db = openLibrary(file, { key: KEY, readonly: true });
+    try {
+      expect(db.prepare('select count(*) as n from myTag_content').get().n).toBe(1);
+    } finally {
+      db.close();
+    }
+
+    expect(
+      checkConsistency({ library, pdbTrackCount: 2, pdbPlaylistCount: 1, masterTagId })
+    ).toEqual({ ok: true, problems: [] });
+    expect(
+      checkConsistency({ library, pdbTrackCount: 2, pdbPlaylistCount: 1, masterTagId: 99 }).problems
+    ).toEqual(['tag master id is 123456, expected 99']);
+  });
+
   it('refuses a wrong key', () => {
     const file = path.join(dir(), ONELIBRARY_FILE);
     writeLibrary(file, { key: KEY, tracks, playlists });

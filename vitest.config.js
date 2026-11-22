@@ -30,6 +30,7 @@ export default defineConfig({
             'src/__tests__/deviceState.test.js',
             'src/__tests__/pendingWork.test.js',
             'src/__tests__/selectionRepository.test.js',
+            'src/__tests__/myTagRepository.test.js',
           ],
           setupFiles: ['./src/__tests__/setup.js'],
         },

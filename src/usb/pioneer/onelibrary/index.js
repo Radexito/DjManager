@@ -60,6 +60,7 @@ export function readLibrary(file, { key } = {}) {
         )
         .all(),
       myTags: db.prepare('select * from myTag order by sequenceNo, myTag_id').all(),
+      property: db.prepare('select * from property').all(),
     };
   } finally {
     db.close();
@@ -95,7 +96,18 @@ function putUnique(map, key, name) {
  * master library (`masterDbId`, `masterContentId`, `contentLink`) are written as
  * zero: this is a device library, not a copy of the source library.
  */
-export function writeLibrary(file, { key, tracks, playlists, myTags = [], now = new Date() } = {}) {
+export function writeLibrary(
+  file,
+  {
+    key,
+    tracks,
+    playlists,
+    myTags = [],
+    tagAssignments = [],
+    masterTagId = null,
+    now = new Date(),
+  } = {}
+) {
   if (!key) throw new Error('onelibrary: a library key is required');
   for (const suffix of ['', '-wal', '-shm']) fs.rmSync(`${file}${suffix}`, { force: true });
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -126,9 +138,17 @@ export function writeLibrary(file, { key, tracks, playlists, myTags = [], now = 
 
     if (myTags.length > 0) {
       const insertMyTag = db.prepare(
-        'insert into myTag (myTag_id, sequenceNo, name, attribute, myTag_id_parent) values (@myTag_id, @sequenceNo, @name, @attribute, @myTag_id_parent)'
+        'insert into myTag (myTag_id, sequenceNo, name, attribute, myTag_id_parent) values (?, ?, ?, ?, ?)'
       );
-      for (const row of myTags) insertMyTag.run(row);
+      for (const tag of myTags) {
+        insertMyTag.run(
+          tag.id ?? tag.myTag_id,
+          tag.sequenceNo ?? tag.sequence_no ?? 0,
+          tag.name ?? '',
+          Number(tag.attribute) ? 1 : 0,
+          tag.parentId ?? tag.parent_id ?? 0
+        );
+      }
     }
 
     const artists = new Map();
@@ -190,6 +210,25 @@ export function writeLibrary(file, { key, tracks, playlists, myTags = [], now = 
       });
     });
 
+    if (tagAssignments.length > 0) {
+      const insertTagContent = db.prepare(
+        'insert or ignore into myTag_content (myTag_id, content_id) values (?, ?)'
+      );
+      for (const assignment of tagAssignments) {
+        const contentId = contentIdByTrack.get(assignment.trackId ?? assignment.track_id) ?? null;
+        const tagId = assignment.tagId ?? assignment.tag_id ?? null;
+        if (contentId && tagId) insertTagContent.run(tagId, contentId);
+      }
+    }
+
+    // One row ties the database to the tag dictionary in exportExt.pdb.
+    if (masterTagId != null) {
+      db.prepare(
+        `insert into property (deviceName, dbVersion, numberOfContents, createdDate, backGroundColorType, myTagMasterDBID)
+         values (null, '10000', ?, ?, null, ?)`
+      ).run(trackRows.length, date, Number(masterTagId) >>> 0);
+    }
+
     const insertPlaylist = db.prepare(
       'insert into playlist (playlist_id, sequenceNo, name, image_id, attribute, playlist_id_parent) values (?, ?, ?, null, 0, 0)'
     );
@@ -216,6 +255,8 @@ export function writeLibrary(file, { key, tracks, playlists, myTags = [], now = 
       playlistCount: playlistRows.length,
       artistCount: artists.size,
       keyCount: keys.size,
+      tagCount: myTags.length,
+      tagAssignmentCount: tagAssignments.length,
     };
   } catch (err) {
     try {
@@ -236,7 +277,7 @@ export function writeLibrary(file, { key, tracks, playlists, myTags = [], now = 
  * Counts come from the PDB the export published, so a mismatch is a real defect
  * rather than a formatting difference.
  */
-export function checkConsistency({ library, pdbTrackCount, pdbPlaylistCount }) {
+export function checkConsistency({ library, pdbTrackCount, pdbPlaylistCount, masterTagId = null }) {
   const problems = [];
   if (!library) return { ok: false, problems: ['no library was written'] };
   if (library.content.length !== pdbTrackCount) {
@@ -244,6 +285,12 @@ export function checkConsistency({ library, pdbTrackCount, pdbPlaylistCount }) {
   }
   if (library.playlists.length !== pdbPlaylistCount) {
     problems.push(`library has ${library.playlists.length} playlists, pdb has ${pdbPlaylistCount}`);
+  }
+  if (masterTagId != null) {
+    const stored = Number(library.property?.[0]?.myTagMasterDBID ?? 0);
+    if (stored !== Number(masterTagId) >>> 0) {
+      problems.push(`tag master id is ${stored}, expected ${Number(masterTagId) >>> 0}`);
+    }
   }
   return { ok: problems.length === 0, problems };
 }
