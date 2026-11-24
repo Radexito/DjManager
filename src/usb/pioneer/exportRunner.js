@@ -6,6 +6,7 @@ import { toM3uRelativePath } from '../../usb/generic/m3u.js';
 import { getAnlzFolder } from '../../usb/pioneer/formats/anlz.js';
 import { readLibrary } from '../../usb/pioneer/formats/pdbRead.js';
 import { planArtwork } from '../../usb/pioneer/formats/pdb.js';
+import { buildExtPdbBuffer } from '../../usb/pioneer/formats/extPdb.js';
 import {
   ONELIBRARY_FILE,
   checkConsistency,
@@ -24,6 +25,9 @@ import { SyncError } from '../../sync/errors.js';
  * given, so audio and playlist files land as artifacts and the database files
  * are staged and published atomically.
  */
+
+/** Where the My Tags database lives on a medium. */
+const EXT_PDB_REL = 'PIONEER/rekordbox/exportExt.pdb';
 
 /** Fields of a track row that change the bytes this pipeline writes. */
 const FINGERPRINT_TRACK_FIELDS = [
@@ -428,6 +432,37 @@ export function createPioneerExportRunner(deps) {
     );
     writeSettingFiles(job.staging);
 
+    // `exportExt.pdb` is the My Tags database the player browses. It is written
+    // only when there is a tree to write: an empty one would replace the tags a
+    // player may have stored on the medium, which is worse than leaving the file
+    // as it is. `attribute` marks a folder in the application's own store, which
+    // is the same flag the file carries on a category row.
+    const myTags = getMyTags() ?? [];
+    const extPath = path.join(job.staging, EXT_PDB_REL);
+    const extWritten = myTags.length > 0;
+    if (extWritten) {
+      fs.mkdirSync(path.dirname(extPath), { recursive: true });
+      fs.writeFileSync(
+        extPath,
+        buildExtPdbBuffer({
+          tags: myTags.map((tag) => ({
+            id: Number(tag.id),
+            name: tag.name ?? '',
+            parentId: Number(tag.parentId ?? 0),
+            position: Number(tag.sequenceNo ?? 0),
+            isCategory: Number(tag.attribute) === 1,
+          })),
+          masterTagId: getMyTagMasterId() ?? 0,
+        })
+      );
+    } else if (fs.existsSync(path.join(usbRoot, EXT_PDB_REL))) {
+      warnings.push({
+        code: 'device-tags-not-updated',
+        message:
+          'the medium carries exportExt.pdb and this export has no My Tags tree to write, so the tag database on the medium was left untouched',
+      });
+    }
+
     // rekordbox reads its own database next to the PDB. Writing it is opt-in:
     // without a key there is nothing to encrypt it with. A medium that already
     // carries a library must not be left describing the previous export in
@@ -494,6 +529,9 @@ export function createPioneerExportRunner(deps) {
     ];
     for (const relPath of artwork.files) {
       entries.push(job.describeStaged(relPath));
+    }
+    if (extWritten) {
+      entries.push(job.describeStaged(EXT_PDB_REL));
     }
     if (onelibraryKey) {
       entries.push({

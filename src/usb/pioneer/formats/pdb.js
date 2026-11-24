@@ -11,7 +11,7 @@ import { writeFileSync, mkdirSync } from 'fs';
 import { dirname, basename, extname } from 'path';
 
 /** DeviceSQL page size: 4096 bytes, fixed by the format. */
-const PAGE_SIZE = 4096;
+export const PAGE_SIZE = 4096;
 /** Bytes of the page header every DeviceSQL page starts with. */
 const PAGE_HEADER_SIZE = 32;
 /** Extra bytes a data page carries after the common page header; the page's heap starts after them. */
@@ -871,20 +871,25 @@ export function buildIndexPage(pageType, pageIndex, firstDataPage, transaction) 
  * @param {number} nextUnusedPage
  * @param {number} sequence
  */
-export function buildFileHeader(tableStates, nextUnusedPage, sequence) {
-  const numTables = TABLE_ORDER.length;
+export function buildFileHeader(
+  tableStates,
+  nextUnusedPage,
+  sequence,
+  { tableOrder = TABLE_ORDER, word16 = 0x05 } = {}
+) {
+  const numTables = tableOrder.length;
   const buf = Buffer.alloc(PAGE_SIZE);
 
   buf.writeUInt32LE(0, 0);
   buf.writeUInt32LE(PAGE_SIZE, 4);
   buf.writeUInt32LE(numTables, 8);
   buf.writeUInt32LE(nextUnusedPage, 12);
-  buf.writeUInt32LE(0x05, 16);
+  buf.writeUInt32LE(word16, 16);
   buf.writeUInt32LE(sequence, 20);
   buf.writeUInt32LE(0, 24);
 
   let offset = 28;
-  for (const type of TABLE_ORDER) {
+  for (const type of tableOrder) {
     const st = tableStates.get(type);
     buf.writeUInt32LE(type, offset);
     buf.writeUInt32LE(st.emptyCandidate, offset + 4);
