@@ -285,7 +285,8 @@ describe('export runner', () => {
       getTagAssignmentsForTracks: () => [{ track_id: 1, tag_id: 5 }],
       getMyTagMasterId: () => 4242,
     });
-    await runOn(root, runner, runner.plan({ playlistIds: [7] }));
+    const result = await runOn(root, runner, runner.plan({ playlistIds: [7] }));
+    expect(result.warnings).toEqual([]);
 
     const file = path.join(root, 'PIONEER', 'rekordbox', 'exportLibrary.db');
     expect(fs.existsSync(file)).toBe(true);
@@ -302,6 +303,36 @@ describe('export runner', () => {
     });
     expect(library.myTags).toEqual([expect.objectContaining({ myTag_id: 5, name: 'Peak Time' })]);
     expect(library.property[0]).toMatchObject({ myTagMasterDBID: 4242 });
+  });
+
+  it('says so when the library cannot be written because no key is configured', async () => {
+    const root = stick();
+    const { runner } = buildRunner({
+      getSetting: (name, fallback) => (name === 'export_onelibrary' ? '1' : fallback),
+    });
+
+    const result = await runOn(root, runner, runner.plan({ playlistIds: [7] }));
+
+    expect(fs.existsSync(path.join(root, 'PIONEER', 'rekordbox', 'exportLibrary.db'))).toBe(false);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0].code).toBe('device-library-key-missing');
+    expect(result.warnings[0].message).toMatch(/no library key is configured/);
+  });
+
+  it('says so when the medium already carries a library it did not update', async () => {
+    const root = stick();
+    const { runner } = buildRunner();
+    const library = path.join(root, 'PIONEER', 'rekordbox', 'exportLibrary.db');
+    fs.mkdirSync(path.dirname(library), { recursive: true });
+    fs.writeFileSync(library, 'written by rekordbox');
+
+    const result = await runOn(root, runner, runner.plan({ playlistIds: [7] }));
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0].code).toBe('device-library-not-updated');
+    expect(result.warnings[0].message).toMatch(/because export_onelibrary is off/);
+    // Untouched: the export may not overwrite what it cannot re-encrypt.
+    expect(fs.readFileSync(library, 'utf8')).toBe('written by rekordbox');
   });
 
   it('plans an automatic sync from the playlists the manifest carries', async () => {
