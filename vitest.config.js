@@ -130,6 +130,7 @@ export default defineConfig({
             'src/__tests__/syncCrash.test.js',
             'src/__tests__/syncIpc.test.js',
             'src/__tests__/onelibrary.test.js',
+            'src/__tests__/extPdb.test.js',
             'src/__tests__/manifestV2.test.js',
             'src/__tests__/deviceIdentity.test.js',
             'src/__tests__/changeTracker.test.js',
