@@ -272,12 +272,33 @@ export function writeLibrary(
   }
 }
 
+/** A device path as the PDB and the library both spell it: forward slashes. */
+function normalizeTrackPath(value) {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim().replace(/\\/g, '/');
+  if (!trimmed) return '';
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+}
+
+/** A few example paths for a problem line, with the rest counted. */
+function samplePaths(paths, limit = 3) {
+  const head = paths.slice(0, limit).join(', ');
+  return paths.length > limit ? `${head} (and ${paths.length - limit} more)` : head;
+}
+
 /**
  * The check #10 asks for: the two databases say the same thing about the medium.
  * Counts come from the PDB the export published, so a mismatch is a real defect
  * rather than a formatting difference.
  */
-export function checkConsistency({ library, pdbTrackCount, pdbPlaylistCount, masterTagId = null }) {
+
+export function checkConsistency({
+  library,
+  pdbTrackCount,
+  pdbPlaylistCount,
+  masterTagId = null,
+  pdbPaths = null,
+}) {
   const problems = [];
   if (!library) return { ok: false, problems: ['no library was written'] };
   if (library.content.length !== pdbTrackCount) {
@@ -285,6 +306,30 @@ export function checkConsistency({ library, pdbTrackCount, pdbPlaylistCount, mas
   }
   if (library.playlists.length !== pdbPlaylistCount) {
     problems.push(`library has ${library.playlists.length} playlists, pdb has ${pdbPlaylistCount}`);
+  }
+  if (Array.isArray(pdbPaths)) {
+    // Same track count is not the same library: the rows have to point at the
+    // same files, which is what a player resolves before it plays anything.
+    const expected = new Map();
+    for (const pdbPath of pdbPaths) {
+      const normalized = normalizeTrackPath(pdbPath);
+      if (normalized) expected.set(normalized, pdbPath);
+    }
+    const actual = new Set(
+      library.content.map((row) => normalizeTrackPath(row.path)).filter(Boolean)
+    );
+    const missing = [...expected.keys()].filter((pdbPath) => !actual.has(pdbPath));
+    const extra = [...actual].filter((pdbPath) => !expected.has(pdbPath));
+    if (missing.length > 0) {
+      problems.push(
+        `library is missing ${missing.length} of the pdb's track paths: ${samplePaths(missing)}`
+      );
+    }
+    if (extra.length > 0) {
+      problems.push(
+        `library carries ${extra.length} track paths the pdb does not: ${samplePaths(extra)}`
+      );
+    }
   }
   if (masterTagId != null) {
     const stored = Number(library.property?.[0]?.myTagMasterDBID ?? 0);
