@@ -335,6 +335,23 @@ describe('export runner', () => {
     expect(fs.readFileSync(library, 'utf8')).toBe('written by rekordbox');
   });
 
+  it("warns when the medium is in rekordbox's sync set", async () => {
+    const root = stick();
+    const { runner } = buildRunner();
+    const record = path.join(root, 'PIONEER', 'rekordbox', 'playlists3.sync');
+    fs.mkdirSync(path.dirname(record), { recursive: true });
+    fs.writeFileSync(record, 'DBID=0');
+
+    const result = await runOn(root, runner, runner.plan({ playlistIds: [7] }));
+
+    const syncWarning = result.warnings.find((w) => w.code === 'rekordbox-sync-record');
+    expect(syncWarning).toBeDefined();
+    expect(syncWarning.message).toContain('PIONEER/rekordbox/playlists3.sync');
+    expect(syncWarning.message).toMatch(/rewrite or clear this export/);
+    // The file is not ours to touch.
+    expect(fs.readFileSync(record, 'utf8')).toBe('DBID=0');
+  });
+
   it('plans an automatic sync from the playlists the manifest carries', async () => {
     const root = stick();
     const { runner } = buildRunner();

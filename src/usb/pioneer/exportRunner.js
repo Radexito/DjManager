@@ -448,6 +448,20 @@ export function createPioneerExportRunner(deps) {
           'the medium carries exportLibrary.db and this export left it untouched because export_onelibrary is off',
       });
     }
+    // rekordbox treats a medium as part of its sync set when it finds this
+    // record, and with a different collection open it can rewrite or clear such
+    // a stick. Our export never writes the record, so one that is present came
+    // from rekordbox and the user should know before trusting the stick.
+    const rekordboxSyncRecord = [
+      'PIONEER/rekordbox/playlists3.sync',
+      'PIONEER/playlists3.sync',
+    ].find((relPath) => fs.existsSync(path.join(usbRoot, ...relPath.split('/'))));
+    if (rekordboxSyncRecord) {
+      warnings.push({
+        code: 'rekordbox-sync-record',
+        message: `${rekordboxSyncRecord} makes rekordbox treat this medium as part of its sync set, so opening the stick there can rewrite or clear this export`,
+      });
+    }
     for (const warning of warnings) {
       console.warn(`[sync] ${warning.code}: ${warning.message}`);
     }
