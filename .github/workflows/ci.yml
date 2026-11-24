@@ -54,6 +54,27 @@ jobs:
       - name: Test (renderer)
         run: cd renderer && npm run test:coverage
 
+  device-library-macos:
+    # Criterion 6 of #10 asks for the encrypted device library on Windows, macOS
+    # and Linux. A Linux runner cannot answer the macOS part, and the native
+    # module ships a prebuilt binary per platform, so the same tests run here.
+    if: github.event_name != 'pull_request' || github.base_ref != 'main' || github.head_ref == 'dev'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts --legacy-peer-deps
+
+      - name: Test the encrypted device library
+        run: npx vitest run --project unit src/__tests__/onelibrary.test.js
+
   e2e:
     if: github.event_name != 'pull_request' || github.base_ref != 'main' || github.head_ref == 'dev'
     runs-on: ubuntu-22.04
