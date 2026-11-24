@@ -18,7 +18,7 @@
 
 **Levels the music.** Normalise a whole library or a selection to a target loudness, keeping the original file untouched so you can export either version.
 
-**Gets you to the booth.** Export a playlist or the whole library to a USB stick with the full Pioneer layout: waveforms, beat grids, cues, playlists and hardware settings. Plug it into a CDJ and it is just there.
+**Gets you to the booth.** Export a playlist or the whole library to a USB stick with the full Pioneer layout: waveforms, beat grids, cues, playlists, artwork and hardware settings. Plug it into a CDJ and it is just there.
 
 ---
 
@@ -94,6 +94,8 @@ The first launch downloads FFmpeg and the analysis engine by itself. No account,
 ## Under the hood
 
 Electron, React and SQLite, with FFmpeg for decoding and waveforms. The interesting part is the Pioneer export: ANLZ sections and the DeviceSQL database are written byte for byte, which is what makes CDJs read the stick without a laptop.
+
+Covers are cut from the image the library holds, at both sizes a deck asks for: 80 px for the file the database names and 240 px for the larger rendition, each centre-cropped and written as a high quality JPEG. Nothing is enlarged from a cached thumbnail, so the thumbnail a player shows is as good as the cover you imported. On a CDJ-2000 the result was reported sharper than the same tracks on a stick prepared by rekordbox.
 
 Architecture notes live in [CLAUDE.md](CLAUDE.md), and the test setup in [AGENTS.md](AGENTS.md).
 
