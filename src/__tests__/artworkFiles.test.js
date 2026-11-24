@@ -36,6 +36,32 @@ function stubDecoder(dir, name, body) {
   return file;
 }
 
+/**
+ * A stand-in for ffmpeg that records the input and the filter of every call
+ * before writing a JPEG, so a test can tell which file each rendition was cut
+ * from. One `in|<path>` / `vf|<filter>` line per recorded argument.
+ */
+function recordingDecoder(dir, logFile) {
+  const file = path.join(dir, 'ffmpeg-record');
+  fs.writeFileSync(
+    file,
+    `#!/bin/sh
+log="${logFile}"
+prev=""
+last=""
+for a in "$@"; do
+  if [ "$prev" = "-i" ]; then printf 'in|%s\\n' "$a" >> "$log"; fi
+  if [ "$prev" = "-vf" ]; then printf 'vf|%s\\n' "$a" >> "$log"; fi
+  prev="$a"
+  last="$a"
+done
+printf '\\377\\330\\377\\331' > "$last"
+`,
+    { mode: 0o755 }
+  );
+  return file;
+}
+
 afterEach(() => {
   while (tmpDirs.length) fs.rmSync(tmpDirs.pop(), { recursive: true, force: true });
 });
@@ -61,6 +87,29 @@ describe('writeArtworkFiles', () => {
       const bytes = fs.readFileSync(path.join(root, ...rel.split('/')));
       expect(looksLikeJpeg(bytes)).toBe(true);
     }
+  });
+
+  it('cuts the 240 px copy from the cover itself, not from the 80 px file', async () => {
+    if (process.platform === 'win32') return;
+    const dir = tmpDir();
+    const cover = writeCover(dir, 'cover.jpg', JPEG);
+    const root = path.join(dir, 'stick');
+    const log = path.join(dir, 'calls.log');
+    const plan = planArtwork([{ id: 1, artwork_path: cover }]);
+    const decoder = recordingDecoder(dir, log);
+
+    const result = await writeArtworkFiles(root, plan, { ffmpegPath: decoder });
+
+    expect(result.files).toHaveLength(2);
+    const lines = fs.readFileSync(log, 'utf8').trim().split('\n');
+    const inputs = lines.filter((l) => l.startsWith('in|')).map((l) => l.slice(3));
+    const filters = lines.filter((l) => l.startsWith('vf|')).map((l) => l.slice(3));
+
+    // Both renditions read the library cover: an enlargement of the 80 px file
+    // would carry no detail beyond 80 px.
+    expect(inputs).toEqual([cover, cover]);
+    expect(filters[0]).toContain(`scale=${ARTWORK_SIZE}:${ARTWORK_SIZE}`);
+    expect(filters[1]).toContain(`scale=${ARTWORK_THUMB_SIZE}:${ARTWORK_THUMB_SIZE}`);
   });
 
   it('reads the bytes, not the name', async () => {

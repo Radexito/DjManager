@@ -23,6 +23,11 @@ const execFileAsync = promisify(execFile);
  * ffmpeg to the two sizes, and the result is checked for the JPEG signature
  * before it counts as written. A cover that cannot be turned into JPEG is
  * reported, not published as a file the player would show as a black box.
+ *
+ * Both renditions are cut from the source cover, each in a single step. The
+ * 240 px copy must not be an enlargement of the 80 px one: that produces a file
+ * with the right dimensions and no detail beyond 80 px (measured on one cover,
+ * edge energy 0.017 against 0.062 for the same 240 px cut from the source).
  */
 
 /** Edge of `a<id>.jpg`, the copy rekordbox calls `artwork_s`. */
@@ -133,7 +138,7 @@ export async function writeArtworkFiles(root, plan = [], { ffmpegPath = null } =
       files.push(smallRel);
 
       try {
-        await ffmpeg(ffmpegPath, squareArgs(small, ARTWORK_THUMB_SIZE, thumb));
+        await ffmpeg(ffmpegPath, squareArgs(source, ARTWORK_THUMB_SIZE, thumb));
       } catch {
         // handled by the check below
       }
