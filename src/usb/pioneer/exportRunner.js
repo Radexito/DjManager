@@ -492,6 +492,9 @@ export function createPioneerExportRunner(deps) {
             library: deviceLibrary,
             pdbTrackCount: mergedTracks.size,
             pdbPlaylistCount: mergedPlaylists.size,
+            // Counts alone do not describe a library; the rows have to name the
+            // same files the PDB names.
+            pdbPaths: [...mergedTracks.values()].map((track) => track.file_path),
             masterTagId: getMyTagMasterId(),
           });
           if (!result.ok) {
