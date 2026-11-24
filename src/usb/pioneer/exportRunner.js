@@ -239,6 +239,8 @@ export function createPioneerExportRunner(deps) {
   async function run({ job, plan: snapshot, recordState = true }) {
     const usbRoot = job.usbRoot;
     const { options } = snapshot;
+    /** Things the export could not do, reported instead of swallowed. */
+    const warnings = [];
     const total = snapshot.tracks.length;
     const startedRevision = revisionSummary?.() ?? null;
 
@@ -427,8 +429,28 @@ export function createPioneerExportRunner(deps) {
     writeSettingFiles(job.staging);
 
     // rekordbox reads its own database next to the PDB. Writing it is opt-in:
-    // without a key there is nothing to encrypt it with.
-    const onelibraryKey = options.onelibrary ? resolveLibraryKey({ getSetting }) : null;
+    // without a key there is nothing to encrypt it with. A medium that already
+    // carries a library must not be left describing the previous export in
+    // silence, so both ways of not updating it end up in the result.
+    const onelibraryWanted = Boolean(options.onelibrary);
+    const onelibraryKey = onelibraryWanted ? resolveLibraryKey({ getSetting }) : null;
+    const mediumLibraryExists = fs.existsSync(path.join(usbRoot, ONELIBRARY_FILE));
+    if (onelibraryWanted && !onelibraryKey) {
+      warnings.push({
+        code: 'device-library-key-missing',
+        message:
+          'export_onelibrary is on but no library key is configured, so exportLibrary.db on the medium was not updated',
+      });
+    } else if (!onelibraryWanted && mediumLibraryExists) {
+      warnings.push({
+        code: 'device-library-not-updated',
+        message:
+          'the medium carries exportLibrary.db and this export left it untouched because export_onelibrary is off',
+      });
+    }
+    for (const warning of warnings) {
+      console.warn(`[sync] ${warning.code}: ${warning.message}`);
+    }
     if (onelibraryKey) {
       writeLibrary(path.join(job.staging, ONELIBRARY_FILE), {
         key: onelibraryKey,
@@ -516,6 +538,7 @@ export function createPioneerExportRunner(deps) {
         playlistCount: mergedPlaylists.size,
         usbRoot,
       },
+      warnings,
     };
   }
 
