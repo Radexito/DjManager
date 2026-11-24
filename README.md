@@ -95,7 +95,7 @@ The first launch downloads FFmpeg and the analysis engine by itself. No account,
 
 Electron, React and SQLite, with FFmpeg for decoding and waveforms. The interesting part is the Pioneer export: ANLZ sections and the DeviceSQL database are written byte for byte, which is what makes CDJs read the stick without a laptop.
 
-Covers are cut from the image the library holds, at both sizes a deck asks for: 80 px for the file the database names and 240 px for the larger rendition, each centre-cropped and written as a high quality JPEG. Nothing is enlarged from a cached thumbnail, so the thumbnail a player shows is as good as the cover you imported. On a CDJ-2000 the result was reported sharper than the same tracks on a stick prepared by rekordbox.
+Covers are cut from the image the library holds, at both sizes a deck asks for: 80 px for the file the database names and 240 px for the larger rendition, each centre-cropped and written as a high quality JPEG. On a CDJ-2000 the result was [reported sharper](https://github.com/Radexito/DjManager/issues/24#issuecomment-7088680890) than the same tracks on a stick prepared by rekordbox.
 
 Architecture notes live in [CLAUDE.md](CLAUDE.md), and the test setup in [AGENTS.md](AGENTS.md).
 
