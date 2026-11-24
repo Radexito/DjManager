@@ -128,6 +128,12 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.setup.outputs.tag }}
+          # Without this the action creates the tag on the repository default
+          # branch, so a pre-release built from `staging` pointed at `main`:
+          # v1.3.1-68d7ca1 and v1.3.2-579055b both resolved to 1c67e23 while the
+          # assets came from the commit in the release body. v3 renamed the v2
+          # input `commitish` to `target_commitish`.
+          target_commitish: ${{ github.sha }}
           name: 'DJ Manager ${{ needs.setup.outputs.version }}'
           prerelease: ${{ needs.setup.outputs.prerelease == 'true' }}
           make_latest: ${{ needs.setup.outputs.prerelease != 'true' }}
