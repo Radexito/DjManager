@@ -25,6 +25,13 @@ export default defineConfig([
     rules: {
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
       'no-empty': ['error', { allowEmptyCatch: true }],
+      // eslint-plugin-react-hooks 7.1 turned two rules on in `recommended`:
+      // set-state-in-effect (14 sites) and refs (3 sites). The renderer has
+      // existing violations of both, so they stay warnings until the cleanup
+      // lands as its own change instead of a dependency bump turning into a
+      // refactor.
+      'react-hooks/set-state-in-effect': 'warn',
+      'react-hooks/refs': 'warn',
     },
   },
   {
