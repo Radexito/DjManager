@@ -188,6 +188,29 @@ describe('device library (exportLibrary.db)', () => {
       'library has 2 tracks, pdb has 3',
     ]);
   });
+
+  it('checks that the library and the pdb carry the same track paths', () => {
+    const file = path.join(dir(), ONELIBRARY_FILE);
+    writeLibrary(file, { key: KEY, tracks, playlists });
+    const library = readLibrary(file, { key: KEY });
+    const paths = tracks.map((track) => track.file_path);
+
+    expect(
+      checkConsistency({ library, pdbTrackCount: 2, pdbPlaylistCount: 1, pdbPaths: paths })
+    ).toEqual({ ok: true, problems: [] });
+
+    const result = checkConsistency({
+      library,
+      pdbTrackCount: 2,
+      pdbPlaylistCount: 1,
+      pdbPaths: [paths[0], '/music/somewhere-else.mp3'],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.problems).toHaveLength(2);
+    expect(result.problems[0]).toContain("missing 1 of the pdb's track paths");
+    expect(result.problems[1]).toContain('carries 1 track paths the pdb does not');
+  });
 });
 
 describe('library key resolution', () => {
