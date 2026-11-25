@@ -442,6 +442,28 @@ export function getTracks({
 }
 
 /**
+ * Every track in the collection, for a library export (#13).
+ *
+ * No window and no filters: the export needs the whole set, and the caller owns
+ * paging. Ordered by id so two plans of an unchanged library describe the same
+ * rows in the same order.
+ * @returns {object[]}
+ */
+export function getAllTracks() {
+  return db
+    .prepare(
+      `
+      SELECT t.*, COALESCE(cp.cnt, 0) AS cue_count
+      FROM tracks t
+      LEFT JOIN (SELECT track_id, COUNT(*) AS cnt FROM cue_points GROUP BY track_id) cp
+        ON cp.track_id = t.id
+      ORDER BY t.id ASC
+    `
+    )
+    .all();
+}
+
+/**
  * How many rows the current view (search / filters / playlist) matches —
  * identical row set to getTracks. Feeds the windowed list's spacer height so
  * the scroller spans the FULL result set even while only a window is loaded.

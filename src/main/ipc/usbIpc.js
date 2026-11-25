@@ -224,6 +224,7 @@ export function registerUsbIpc({
         targetDevice = null,
         forceMp3 = false,
         applyTrim = true,
+        scope = 'playlists',
       } = {}
     ) => {
       if (!usbRoot) {
@@ -238,6 +239,7 @@ export function registerUsbIpc({
           targetDevice,
           forceMp3,
           applyTrim,
+          scope,
         });
         const finished = await syncService.runJob({
           usbRoot,

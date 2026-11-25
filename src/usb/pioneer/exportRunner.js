@@ -136,6 +136,7 @@ export function createPioneerExportRunner(deps) {
     getPlaylist,
     getPlaylists,
     getPlaylistTracks,
+    getLibraryTracks = () => [],
     getCuePoints,
     loadManifest,
     saveManifest,
@@ -171,7 +172,13 @@ export function createPioneerExportRunner(deps) {
     forceMp3 = false,
     applyTrim = true,
     mirror = false,
+    scope = 'playlists',
   } = {}) {
+    // `collection` is the other entry point: the library is the track source and
+    // playlists are one view of it, so a track in no playlist still reaches the
+    // medium (#13). Playlist rows are written either way, which is what makes a
+    // track that sits in three playlists appear in all three.
+    const fromLibrary = scope === 'collection';
     const ids = playlistIds?.length ? playlistIds : playlistId ? [playlistId] : null;
     const selected = ids?.length
       ? ids.map((id) => getPlaylist(id)).filter(Boolean)
@@ -186,7 +193,7 @@ export function createPioneerExportRunner(deps) {
       return { id: playlist.id, name: playlist.name, rev: playlist.rev ?? null, tracks };
     });
 
-    const tracks = [...trackMap.values()];
+    const tracks = fromLibrary ? getLibraryTracks() : [...trackMap.values()];
     const cues = new Map();
     for (const track of tracks) {
       cues.set(
@@ -203,6 +210,7 @@ export function createPioneerExportRunner(deps) {
         forceMp3,
         applyTrim,
         mirror,
+        scope: fromLibrary ? 'collection' : 'playlists',
         // Opt-in: the device library needs a key, and a wrong database is worse
         // than none. The key itself is not part of the plan or its fingerprint.
         onelibrary: String(getSetting('export_onelibrary', '0')) === '1',
@@ -304,6 +312,8 @@ export function createPioneerExportRunner(deps) {
     const { options } = snapshot;
     /** Things the export could not do, reported instead of swallowed. */
     const warnings = [];
+    /** Tracks that reached the database but not the medium, with the reason. */
+    const skippedTracks = [];
     const total = snapshot.tracks.length;
     const startedRevision = revisionSummary?.() ?? null;
 
@@ -353,6 +363,11 @@ export function createPioneerExportRunner(deps) {
           // the audio is simply not there. Failing the whole export over one
           // unreadable track would be worse than the report the library shows.
           console.warn(`Export skipped a missing source file: ${track.file_path}`);
+          skippedTracks.push({
+            trackId: track.id,
+            title: track.title || null,
+            reason: 'source-file-missing',
+          });
         }
         copiedCount += 1;
       }
@@ -722,8 +737,12 @@ export function createPioneerExportRunner(deps) {
       fingerprint: fingerprint(snapshot),
       state,
       summary: {
+        scope: options.scope ?? 'playlists',
         trackCount: mergedTracks.size,
+        // What the scope asked for, against what the medium ends up carrying.
+        libraryTrackCount: snapshot.tracks.length,
         newTrackCount: snapshot.tracks.length,
+        skippedTracks,
         playlistCount: mergedPlaylists.size,
         anlzWrittenCount: anlzWritten,
         anlzSkippedCount: anlzSkipped,

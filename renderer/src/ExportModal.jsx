@@ -88,6 +88,7 @@ function ExportModal({ onClose, playlistId, initialMode }) {
   const [applyTrim, setApplyTrim] = useState(true);
   const [targetDevice, setTargetDevice] = useState('');
   const [forceMp3, setForceMp3] = useState(false);
+  const [wholeLibrary, setWholeLibrary] = useState(false);
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -150,6 +151,8 @@ function ExportModal({ onClose, playlistId, initialMode }) {
       applyTrim,
       targetDevice: targetDevice || null,
       forceMp3,
+      // The library as the track source, with the playlists as a view of it.
+      scope: wholeLibrary ? 'collection' : 'playlists',
     });
     if (res.ok) {
       setResult(res);
@@ -197,6 +200,14 @@ function ExportModal({ onClose, playlistId, initialMode }) {
                 onChange={(e) => setApplyTrim(e.target.checked)}
               />
               <span>Apply trim ranges (IN/OUT) to exported files (off exports the whole file)</span>
+            </label>
+            <label className="export-normalized-option">
+              <input
+                type="checkbox"
+                checked={wholeLibrary}
+                onChange={(e) => setWholeLibrary(e.target.checked)}
+              />
+              <span>Export the whole library, including tracks that are in no playlist</span>
             </label>
             <ExportFormatOptions
               targetDevice={targetDevice}

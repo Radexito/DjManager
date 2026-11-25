@@ -367,6 +367,145 @@ describe('export runner', () => {
     expect(second.summary).toMatchObject({ anlzWrittenCount: 1, anlzSkippedCount: 100 });
   });
 
+  it('takes the track set from the library when the scope is the collection', async () => {
+    const root = stick();
+    const loose = { ...tracks[1], id: 3, title: 'No playlist', file_path: '/library/loose.mp3' };
+    const { runner, copyTrackToUsb } = buildRunner({
+      getPlaylistTracks: () => [tracks[0]],
+      getLibraryTracks: () => [tracks[0], tracks[1], loose],
+    });
+
+    const snapshot = runner.plan({ playlistIds: [7], scope: 'collection' });
+    expect(snapshot.options.scope).toBe('collection');
+    expect(snapshot.tracks.map((track) => track.id)).toEqual([1, 2, 3]);
+
+    const result = await runOn(root, runner, snapshot);
+
+    const library = publishedLibrary(root);
+    // The track in no playlist is on the medium and in the database.
+    expect(library.tracks.map((track) => track.id).sort()).toEqual([1, 2, 3]);
+    // The playlist still carries only its own track. The database renumbers
+    // playlists from 1 in the order they are written, so this is id 1 here.
+    expect(library.playlists.map((playlist) => playlist.name)).toEqual(['Set']);
+    expect(library.tracksByPlaylist.get(1)).toEqual([1]);
+    expect(copyTrackToUsb).toHaveBeenCalledTimes(3);
+    expect(result.summary).toMatchObject({ scope: 'collection', libraryTrackCount: 3 });
+  });
+
+  it('copies a track once when it sits in three playlists, and lists it in all three', async () => {
+    const root = stick();
+    const playlists = [
+      { id: 7, name: 'Set' },
+      { id: 8, name: 'Warm up' },
+      { id: 9, name: 'Closing' },
+    ];
+    const { runner, copyTrackToUsb } = buildRunner({
+      getPlaylists: () => playlists,
+      getPlaylist: (id) => playlists.find((playlist) => playlist.id === Number(id)) ?? null,
+      getPlaylistTracks: () => [tracks[0]],
+    });
+
+    const snapshot = runner.plan({ playlistIds: [7, 8, 9] });
+    expect(snapshot.tracks).toHaveLength(1);
+
+    await runOn(root, runner, snapshot);
+
+    expect(copyTrackToUsb).toHaveBeenCalledTimes(1);
+    const library = publishedLibrary(root);
+    expect(library.tracks).toHaveLength(1);
+    expect(library.playlists.map((playlist) => playlist.name)).toEqual([
+      'Set',
+      'Warm up',
+      'Closing',
+    ]);
+    expect([...library.tracksByPlaylist.keys()].sort()).toEqual([1, 2, 3]);
+    for (const trackIds of library.tracksByPlaylist.values()) expect(trackIds).toEqual([1]);
+  });
+
+  it('copies no audio and writes the database once on a second export of the same library', async () => {
+    const root = stick();
+    const loose = { ...tracks[1], id: 3, title: 'No playlist', file_path: '/library/loose.mp3' };
+    let pdbWrites = 0;
+    const { runner, copyTrackToUsb } = buildRunner({
+      getPlaylistTracks: () => [tracks[0]],
+      getLibraryTracks: () => [tracks[0], tracks[1], loose],
+      runPdbExporter: (payload, target) => {
+        pdbWrites += 1;
+        return writePdb(payload, path.join(target, 'PIONEER', 'rekordbox', 'export.pdb'));
+      },
+    });
+    const exportLibrary = () =>
+      runOn(root, runner, runner.plan({ playlistIds: [7], scope: 'collection' }));
+
+    await exportLibrary();
+    expect(copyTrackToUsb).toHaveBeenCalledTimes(3);
+    expect(pdbWrites).toBe(1);
+
+    await exportLibrary();
+    expect(copyTrackToUsb).toHaveBeenCalledTimes(3);
+    expect(pdbWrites).toBe(2);
+  });
+
+  it('keeps a track exported from the collection after it leaves every playlist', async () => {
+    const root = stick();
+    let playlistTracks = [tracks[0]];
+    const { runner } = buildRunner({
+      getPlaylistTracks: () => playlistTracks,
+      getLibraryTracks: () => [tracks[0], tracks[1]],
+    });
+    const exportLibrary = () =>
+      runOn(root, runner, runner.plan({ playlistIds: [7], scope: 'collection' }));
+
+    await exportLibrary();
+    expect(publishedLibrary(root).tracks).toHaveLength(2);
+
+    playlistTracks = [];
+    await exportLibrary();
+    const library = publishedLibrary(root);
+    expect(library.tracks).toHaveLength(2);
+    expect([...library.tracksByPlaylist.values()].flat()).toEqual([]);
+  });
+
+  it('reports a track whose source file never reached the medium', async () => {
+    const root = stick();
+    const { runner } = buildRunner({
+      getPlaylistTracks: () => [tracks[0], tracks[1]],
+      copyTrackToUsb: async (track, target) => {
+        const name = `${track.id} - ${track.title}.mp3`;
+        if (track.id === 2) return { path: `/Contents/${name}`, meta: null };
+        fs.mkdirSync(path.join(target, 'Contents'), { recursive: true });
+        fs.writeFileSync(path.join(target, 'Contents', name), `audio-${track.id}`);
+        return { path: `/Contents/${name}`, meta: { fileSize: 8, bitrate: 320000 } };
+      },
+    });
+
+    const result = await runOn(root, runner, runner.plan({ playlistIds: [7] }));
+
+    expect(result.summary.skippedTracks).toEqual([
+      { trackId: 2, title: 'Closer', reason: 'source-file-missing' },
+    ]);
+    expect(publishedLibrary(root).tracks).toHaveLength(2);
+  });
+
+  it('plans ten thousand library tracks in one pass', () => {
+    const many = Array.from({ length: 10000 }, (_, index) => ({
+      ...tracks[0],
+      id: 100 + index,
+      title: `Track ${index}`,
+      file_path: `/library/t${index}.mp3`,
+    }));
+    const { runner } = buildRunner({ getLibraryTracks: () => many });
+
+    const started = Date.now();
+    const snapshot = runner.plan({ playlistIds: [7], scope: 'collection' });
+
+    expect(snapshot.tracks).toHaveLength(10000);
+    expect(new Set(snapshot.tracks.map((track) => track.id)).size).toBe(10000);
+    // The plan is linear work: no per-track scan of the whole set.
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(runner.fingerprint(snapshot)).toMatch(/^[0-9a-f]{64}$/);
+  });
+
   it('changes the fingerprint when a field the export writes changes', () => {
     const { runner } = buildRunner();
     const first = runner.plan({ playlistIds: [7] });
