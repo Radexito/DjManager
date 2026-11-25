@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { readLibrary } from '../usb/pioneer/formats/pdbRead.js';
+import { getAnlzFolder } from '../usb/pioneer/formats/anlz.js';
 import { writePdb } from '../usb/pioneer/formats/pdb.js';
 import { writeSettingFiles } from '../usb/pioneer/formats/settings.js';
 import { loadManifest, saveManifest } from '../usb/pioneer/manifest.js';
@@ -279,6 +280,91 @@ describe('export runner', () => {
     expect(manifest.tracks.size).toBe(1);
     expect(publishedLibrary(root).tracks).toHaveLength(1);
     expect(manifest.retired.size).toBe(0);
+  });
+
+  it('writes ANLZ only for a track whose analysis or files changed', async () => {
+    const root = stick();
+    const calls = [];
+    const writeAnlzStub = async ({ usbRoot, usbFilePath }) => {
+      const dir = path.join(usbRoot, ...getAnlzFolder(usbFilePath).split('/'));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'ANLZ0000.DAT'), `dat-${calls.length}`);
+      fs.writeFileSync(path.join(dir, 'ANLZ0000.EXT'), `ext-${calls.length}`);
+      calls.push(usbFilePath);
+    };
+    const anlzPaths = (usbFilePath) => {
+      const dir = path.join(root, ...getAnlzFolder(usbFilePath).split('/'));
+      return ['ANLZ0000.DAT', 'ANLZ0000.EXT'].map((name) => path.join(dir, name));
+    };
+    const runWith = async (list) => {
+      const { runner } = buildRunner({ getPlaylistTracks: () => list, writeAnlz: writeAnlzStub });
+      return runOn(root, runner, runner.plan({ playlistIds: [7] }));
+    };
+
+    const first = await runWith(tracks);
+    expect(calls).toHaveLength(2);
+    expect(first.summary).toMatchObject({ anlzWrittenCount: 2, anlzSkippedCount: 0 });
+    expect(loadManifest(root).tracks.get(1).anlz_digest).toMatch(/^[0-9a-f]{64}$/);
+
+    const files = anlzPaths('/Contents/1 - Opening.mp3');
+    const mtimes = () => files.map((file) => fs.statSync(file).mtimeMs);
+    const written = mtimes();
+
+    // Nothing about the analysis changed: no ffmpeg pass, no write, same files.
+    const second = await runWith(tracks);
+    expect(calls).toHaveLength(2);
+    expect(second.summary).toMatchObject({ anlzWrittenCount: 0, anlzSkippedCount: 2 });
+    expect(mtimes()).toEqual(written);
+
+    // A different beat grid for one track rewrites that track only.
+    const changed = [{ ...tracks[0], beatgrid: '{"v":1,"bpm":124}' }, tracks[1]];
+    const third = await runWith(changed);
+    expect(calls).toHaveLength(3);
+    expect(third.summary).toMatchObject({ anlzWrittenCount: 1, anlzSkippedCount: 1 });
+
+    // A file removed from the medium is written again even with the same digest.
+    fs.rmSync(files[1]);
+    const fourth = await runWith(changed);
+    expect(calls).toHaveLength(4);
+    expect(fourth.summary).toMatchObject({ anlzWrittenCount: 1, anlzSkippedCount: 1 });
+    expect(fs.existsSync(files[1])).toBe(true);
+  });
+
+  it('writes one audio file and one ANLZ pair when one track joins a full playlist', async () => {
+    const root = stick();
+    const anlzCalls = [];
+    const writeAnlzStub = async ({ usbRoot, usbFilePath }) => {
+      const dir = path.join(usbRoot, ...getAnlzFolder(usbFilePath).split('/'));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'ANLZ0000.DAT'), 'dat');
+      fs.writeFileSync(path.join(dir, 'ANLZ0000.EXT'), 'ext');
+      anlzCalls.push(usbFilePath);
+    };
+    const many = Array.from({ length: 100 }, (_, index) => ({
+      ...tracks[0],
+      id: 1000 + index,
+      title: `Track ${index}`,
+      file_path: `/library/track-${index}.mp3`,
+    }));
+    let list = many;
+    const { runner, copyTrackToUsb } = buildRunner({
+      getPlaylistTracks: () => list,
+      writeAnlz: writeAnlzStub,
+    });
+
+    await runOn(root, runner, runner.plan({ playlistIds: [7] }));
+    expect(copyTrackToUsb).toHaveBeenCalledTimes(100);
+    expect(anlzCalls).toHaveLength(100);
+
+    const copiedBefore = copyTrackToUsb.mock.calls.length;
+    const anlzBefore = anlzCalls.length;
+    list = [...many, { ...tracks[0], id: 2000, title: 'New one', file_path: '/library/new.mp3' }];
+
+    const second = await runOn(root, runner, runner.plan({ playlistIds: [7] }));
+
+    expect(copyTrackToUsb.mock.calls.length - copiedBefore).toBe(1);
+    expect(anlzCalls.length - anlzBefore).toBe(1);
+    expect(second.summary).toMatchObject({ anlzWrittenCount: 1, anlzSkippedCount: 100 });
   });
 
   it('changes the fingerprint when a field the export writes changes', () => {

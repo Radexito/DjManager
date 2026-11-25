@@ -60,6 +60,33 @@ const FINGERPRINT_TRACK_FIELDS = [
   'loudness',
 ];
 
+/** Bump when the ANLZ writer changes what it emits for the same input. */
+const ANLZ_DIGEST_VERSION = 1;
+
+/**
+ * Digest of everything the ANLZ writer reads, so an export can tell whether the
+ * two files it would write are the ones already on the medium (#44). The paths
+ * are in it because the waveform is cut from the audio file those paths point at.
+ */
+function anlzInputDigest(input) {
+  return sha256(Buffer.from(JSON.stringify({ version: ANLZ_DIGEST_VERSION, ...input }), 'utf8'));
+}
+
+/** True when both ANLZ files this track needs are already on the medium. */
+function anlzFilesPresent(usbRoot, usbFilePath) {
+  const folder = getAnlzFolder(usbFilePath);
+  if (!folder) return false;
+  for (const name of ['ANLZ0000.DAT', 'ANLZ0000.EXT']) {
+    try {
+      const stat = fs.statSync(path.join(usbRoot, ...folder.split('/'), name));
+      if (!stat.isFile() || stat.size === 0) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
 /** Cue fields that reach the player, without the library ids. */
 function cueSignature(cues) {
   return cues.map((cue) => ({
@@ -346,6 +373,13 @@ export function createPioneerExportRunner(deps) {
     job.commitArtifactTree('playlists');
 
     job.enter('analysis', { pct: 50, msg: 'Writing beat grids & waveforms…' });
+    // A track whose beat grid, cues, tempo and source file are the same as on the
+    // last export, and whose two ANLZ files are still on the medium, needs no
+    // work: writing them again means an ffmpeg pass for the waveform plus two
+    // writes, on every export, for every track (#44).
+    const anlzDigests = new Map();
+    let anlzWritten = 0;
+    let anlzSkipped = 0;
     for (let i = 0; i < snapshot.tracks.length; i++) {
       job.checkpoint();
       const track = snapshot.tracks[i];
@@ -353,19 +387,40 @@ export function createPioneerExportRunner(deps) {
       if (!usbFilePath) continue;
       const cues = snapshot.cues.get(track.id) ?? [];
       const trim = resolveExportTrim(track, usbRoot, usbFilePath, cues, options.applyTrim);
-      try {
-        await writeAnlz({
-          usbFilePath,
-          sourceFilePath: trim ? trim.sourceFilePath : track.file_path || null,
-          beatgrid: trim ? trim.beatgrid : (track.beatgrid ?? null),
-          bpm: track.bpm_override ?? track.bpm ?? 0,
-          beatgridOffset: track.beatgrid_offset ?? 0,
-          usbRoot,
-          ffmpegPath: getFfmpegRuntimePath(),
-          cuePoints: trim ? trim.cuePoints : cues,
-        });
-      } catch (err) {
-        console.warn(`ANLZ write failed for track ${track.id}:`, err.message);
+      const anlzInput = {
+        usbFilePath,
+        sourceFilePath: trim ? trim.sourceFilePath : track.file_path || null,
+        beatgrid: trim ? trim.beatgrid : (track.beatgrid ?? null),
+        bpm: track.bpm_override ?? track.bpm ?? 0,
+        beatgridOffset: track.beatgrid_offset ?? 0,
+        cues: cueSignature(trim ? trim.cuePoints : cues),
+      };
+      const digest = anlzInputDigest(anlzInput);
+      if (
+        existingTracks.get(track.id)?.anlz_digest === digest &&
+        anlzFilesPresent(usbRoot, usbFilePath)
+      ) {
+        anlzDigests.set(track.id, digest);
+        anlzSkipped += 1;
+      } else {
+        try {
+          await writeAnlz({
+            usbFilePath: anlzInput.usbFilePath,
+            sourceFilePath: anlzInput.sourceFilePath,
+            beatgrid: anlzInput.beatgrid,
+            bpm: anlzInput.bpm,
+            beatgridOffset: anlzInput.beatgridOffset,
+            usbRoot,
+            ffmpegPath: getFfmpegRuntimePath(),
+            cuePoints: trim ? trim.cuePoints : cues,
+          });
+          anlzDigests.set(track.id, digest);
+          anlzWritten += 1;
+        } catch (err) {
+          // Not recorded, so the next export tries again.
+          anlzDigests.set(track.id, null);
+          console.warn(`ANLZ write failed for track ${track.id}:`, err.message);
+        }
       }
       progress(
         job,
@@ -400,6 +455,9 @@ export function createPioneerExportRunner(deps) {
       rating: track.rating || 0,
       replay_gain: track.replay_gain ?? null,
       rev: track.rev ?? 1,
+      anlz_digest: anlzDigests.has(track.id)
+        ? anlzDigests.get(track.id)
+        : (existingTracks.get(track.id)?.anlz_digest ?? null),
       hash: track.file_hash ?? null,
       file_fingerprint: track.file_fingerprint ?? null,
       analyzePath: (() => {
@@ -667,6 +725,8 @@ export function createPioneerExportRunner(deps) {
         trackCount: mergedTracks.size,
         newTrackCount: snapshot.tracks.length,
         playlistCount: mergedPlaylists.size,
+        anlzWrittenCount: anlzWritten,
+        anlzSkippedCount: anlzSkipped,
         coverCount: coverPlan.length,
         coverWrittenCount: coversToWrite.length,
         usbRoot,

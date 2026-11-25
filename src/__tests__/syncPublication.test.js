@@ -12,6 +12,7 @@ import {
   pruneGenerations,
   publishStaged,
   recoverJob,
+  sha256,
   writeStagedBuffer,
 } from '../sync/publication.js';
 
@@ -162,6 +163,42 @@ describe('staged publication', () => {
       })
     ).toThrowError(/not a database/);
     expect(read(root, 'PIONEER/rekordbox/export.pdb')).toBe('OLD');
+  });
+
+  it('verifies the bytes it writes and leaves the target alone when they do not match', () => {
+    const root = stick();
+    seedTarget(root, 'PIONEER/rekordbox/export.pdb', 'OLD');
+    const staging = stagingRoot(root, 'job-1');
+    const entry = writeStagedBuffer(staging, 'PIONEER/rekordbox/export.pdb', Buffer.from('NEW'));
+    // The writer's promise no longer describes the file: the copy is where a
+    // digest can be checked against the bytes that are actually written, and it
+    // has to stop before the target is replaced.
+    const tampered = { ...entry, sha256: sha256(Buffer.from('OTHER')) };
+
+    expect(() =>
+      publishStaged({ usbRoot: root, jobId: 'job-1', staging, entries: [tampered] })
+    ).toThrowError(/changed/);
+
+    expect(read(root, 'PIONEER/rekordbox/export.pdb')).toBe('OLD');
+    expect(fs.existsSync(path.join(staging, 'PIONEER/rekordbox/export.pdb'))).toBe(true);
+    const leftovers = fs
+      .readdirSync(path.join(root, 'PIONEER', 'rekordbox'))
+      .filter((name) => name.includes('.tmp-'));
+    expect(leftovers).toEqual([]);
+  });
+
+  it('journals the digest of the bytes that landed', () => {
+    const root = stick();
+    const staging = stagingRoot(root, 'job-1');
+    const entry = writeStagedBuffer(staging, 'PIONEER/rekordbox/export.pdb', Buffer.from('NEW'));
+    const journal = new SyncJournal({ usbRoot: root, jobId: 'job-1' });
+
+    publishStaged({ usbRoot: root, jobId: 'job-1', staging, entries: [entry], journal });
+
+    const published = readJournal(root, 'job-1').find((event) => event.event === 'published');
+    expect(published.sha256).toBe(sha256(Buffer.from('NEW')));
+    expect(published.size).toBe(3);
+    expect(read(root, 'PIONEER/rekordbox/export.pdb')).toBe('NEW');
   });
 
   it('restores the previous generation when a target is missing after a crash', () => {
