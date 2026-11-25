@@ -33,6 +33,10 @@ const EXT_PDB_REL = 'PIONEER/rekordbox/exportExt.pdb';
 const FINGERPRINT_TRACK_FIELDS = [
   'id',
   'file_path',
+  // A cover change rewrites the artwork table, the cover files and the track
+  // row's artwork id, so a sync that ignores it starts no job and the new cover
+  // never reaches the medium (#45).
+  'artwork_path',
   'title',
   'artist',
   'album',
@@ -405,10 +409,21 @@ export function createPioneerExportRunner(deps) {
     // Covers are written before the PDB, so the database can reference only the
     // ones that really exist: a row pointing at a file nobody wrote is a blank
     // cover on the deck with no way to tell why.
-    const coverPlan = planArtwork([...mergedTracks.values()]);
+    // Cover ids are numbered from what the manifest already recorded, so a cover
+    // the player has cached keeps its id when the set of rows in play changes
+    // (#45). A track whose cover could not be written keeps its planned id as
+    // well: the PDB row points at nothing, and when the file comes back it
+    // returns under the same number instead of a new one.
+    const coverPlan = planArtwork([...mergedTracks.values()], {
+      previous: [...existingTracks.values()],
+    });
     const artwork = await writeArtworkFiles(job.staging, coverPlan, {
       ffmpegPath: getFfmpegRuntimePath(),
     });
+    const artworkIdBySource = new Map(coverPlan.map((cover) => [cover.sourcePath, cover.id]));
+    for (const track of mergedTracks.values()) {
+      track.artwork_id = artworkIdBySource.get(track.artwork_path ?? null) ?? 0;
+    }
     for (const skippedCover of artwork.skipped) {
       console.warn(`[sync] cover ${skippedCover.relPath} was skipped: ${skippedCover.reason}`);
     }

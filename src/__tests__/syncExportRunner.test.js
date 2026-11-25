@@ -26,6 +26,20 @@ afterEach(() => {
   roots = [];
 });
 
+/** A stand-in for ffmpeg: writes the smallest valid JPEG to its last argument. */
+function stubFfmpeg(dir) {
+  const file = path.join(dir, 'ffmpeg-stub');
+  fs.writeFileSync(
+    file,
+    `#!/bin/sh
+for last; do :; done
+printf '\\377\\330\\377\\331' > "$last"
+`,
+    { mode: 0o755 }
+  );
+  return file;
+}
+
 const tracks = [
   {
     id: 1,
@@ -262,6 +276,74 @@ describe('export runner', () => {
       getPlaylistTracks: () => changedTracks,
     }).runner.plan({ playlistIds: [7] });
     expect(runner.fingerprint(changed)).not.toBe(runner.fingerprint(first));
+  });
+
+  it('changes the fingerprint when a cover is added to a track already on the stick', () => {
+    // Without artwork_path in the fingerprint an automatic sync computes the same
+    // digest, starts no job, and the new cover never reaches the medium (#45).
+    const { runner } = buildRunner();
+    const before = runner.plan({ playlistIds: [7] });
+
+    const withCover = [{ ...tracks[0], artwork_path: '/covers/opening.jpg' }, tracks[1]];
+    const after = buildRunner({ getPlaylistTracks: () => withCover }).runner.plan({
+      playlistIds: [7],
+    });
+
+    expect(runner.fingerprint(after)).not.toBe(runner.fingerprint(before));
+    expect(runner.fingerprint(after)).not.toBe(
+      runner.fingerprint(runner.plan({ playlistIds: [7] }))
+    );
+  });
+
+  it('records the artwork id per track and keeps it when the covers in play change', async () => {
+    if (process.platform === 'win32') return;
+    const root = stick();
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'djman-covers-'));
+    roots.push(scratch);
+    const jpeg = Buffer.from([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0xff, 0xd9,
+    ]);
+    const coverA = path.join(scratch, 'a.jpg');
+    const coverB = path.join(scratch, 'b.jpg');
+    fs.writeFileSync(coverA, jpeg);
+    fs.writeFileSync(coverB, jpeg);
+    const decoder = stubFfmpeg(scratch);
+
+    const runWith = async (list) => {
+      const { runner } = buildRunner({
+        getPlaylistTracks: () => list,
+        getFfmpegRuntimePath: () => decoder,
+      });
+      return runOn(root, runner, runner.plan({ playlistIds: [7] }));
+    };
+    const trackRows = (root_) =>
+      Object.fromEntries([...loadManifest(root_).tracks].map(([id, row]) => [id, row.artwork_id]));
+
+    // First export: only the first track carries a cover.
+    await runWith([{ ...tracks[0], artwork_path: coverA }, tracks[1]]);
+    expect(trackRows(root)).toEqual({ 1: 1, 2: 0 });
+    expect(fs.existsSync(path.join(root, 'PIONEER', 'Artwork', '00001', 'a1.jpg'))).toBe(true);
+    let library = publishedLibrary(root);
+    expect(library.tracks.find((track) => track.id === 1).artworkId).toBe(1);
+    expect(library.artwork.map((row) => row.id)).toEqual([1]);
+
+    // Second export, no manual export in between: the second track gains a cover.
+    await runWith([
+      { ...tracks[0], artwork_path: coverA },
+      { ...tracks[1], artwork_path: coverB },
+    ]);
+    expect(trackRows(root)).toEqual({ 1: 1, 2: 2 });
+    expect(fs.existsSync(path.join(root, 'PIONEER', 'Artwork', '00001', 'a2.jpg'))).toBe(true);
+    library = publishedLibrary(root);
+    expect(library.tracks.find((track) => track.id === 2).artworkId).toBe(2);
+
+    // Third export: the first cover is gone. The second keeps id 2; numbering by
+    // position would hand id 1 to a cover the device has cached under 2.
+    await runWith([tracks[0], { ...tracks[1], artwork_path: coverB }]);
+    expect(trackRows(root)).toEqual({ 1: 0, 2: 2 });
+    library = publishedLibrary(root);
+    expect(library.tracks.find((track) => track.id === 2).artworkId).toBe(2);
+    expect(library.artwork.map((row) => row.id)).toEqual([2]);
   });
 
   it('writes no device library unless it is turned on and has a key', async () => {

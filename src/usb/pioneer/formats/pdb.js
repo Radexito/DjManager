@@ -368,18 +368,41 @@ export function artworkRelPath(id) {
 }
 
 /**
- * Give every distinct cover file an artwork id, in first-seen order. Tracks
- * that share a cover share an id, exactly like rekordbox.
+ * Give every distinct cover file an artwork id. Tracks that share a cover share
+ * an id, exactly like rekordbox.
+ *
+ * A player caches a cover by this number, so the number has to keep pointing at
+ * the same file across exports even when the set of rows in play changes. The
+ * manifest records `artwork_id` on every track row; passing those rows as
+ * `previous` reuses the recorded number for the same source instead of
+ * renumbering by position. A cover that is genuinely new gets a number above
+ * every recorded one, which leaves a retired cover's number unused rather than
+ * handing it to a different file.
+ *
  * @param {object[]} tracks
+ * @param {{previous?: object[]}} [options] manifest track rows from the last export
  * @returns {Array<{id: number, sourcePath: string, pdbPath: string, relPath: string}>}
  */
-export function planArtwork(tracks = []) {
+export function planArtwork(tracks = [], { previous = [] } = {}) {
+  const recorded = new Map();
+  const usedIds = new Set();
+  for (const row of previous) {
+    const source = row?.artwork_path;
+    const id = Number(row?.artwork_id ?? 0);
+    if (!source || !Number.isInteger(id) || id <= 0) continue;
+    if (recorded.has(source) || usedIds.has(id)) continue;
+    recorded.set(source, id);
+    usedIds.add(id);
+  }
+
+  let nextId = usedIds.size > 0 ? Math.max(...usedIds) + 1 : 1;
+
   const bySource = new Map();
   const plan = [];
   for (const track of tracks) {
     const source = track?.artwork_path;
     if (!source || bySource.has(source)) continue;
-    const id = plan.length + 1;
+    const id = recorded.get(source) ?? nextId++;
     bySource.set(source, id);
     plan.push({ id, sourcePath: source, pdbPath: artworkPdbPath(id), relPath: artworkRelPath(id) });
   }
