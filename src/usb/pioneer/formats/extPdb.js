@@ -34,9 +34,6 @@ const EMPTY_TABLE_SENTINEL = 0x03ffffff;
 /** Table types a `exportExt.pdb` file carries, in header order. */
 const EXT_TABLE_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 
-/** Data page write order, measured on the native files. */
-const EXT_WRITE_ORDER = [7, 3, 4];
-
 /** Header word at offset 16, which is 1 in both native files. */
 const EXT_HEADER_WORD16 = 1;
 
