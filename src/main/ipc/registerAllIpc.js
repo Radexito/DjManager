@@ -53,6 +53,7 @@ import {
   resetNormalization,
   updateTrack,
   updateTrackWaveform,
+  getAllTracks,
 } from '../../db/trackRepository.js';
 import {
   cancelAnalysis,
@@ -207,6 +208,7 @@ export function registerAllIpc({
     getPlaylist,
     getPlaylists,
     getPlaylistTracks,
+    getLibraryTracks: getAllTracks,
     getCuePoints,
     loadManifest,
     saveManifest,
