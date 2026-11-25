@@ -90,6 +90,75 @@ function moveIntoPlace(source, target) {
   fsyncDir(path.dirname(target));
 }
 
+/**
+ * Copy a staged file to its target, hashing the bytes as they are written.
+ *
+ * The digest is what is checked against the entry, so what lands on the medium is
+ * verified from the bytes that produced it rather than from a second read of the
+ * staged file (#44). The target never shows a partial file: the copy goes to a
+ * temporary name beside it and is renamed only after the digest matches.
+ */
+function copyVerified({ source, target, relPath, expectedDigest }) {
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const tmp = `${target}.tmp-${process.pid}`;
+  const hash = crypto.createHash('sha256');
+  let inFd = null;
+  let outFd = null;
+  try {
+    inFd = fs.openSync(source, 'r');
+    outFd = fs.openSync(tmp, 'w');
+    const buffer = Buffer.alloc(1 << 20);
+    let read = 0;
+    while ((read = fs.readSync(inFd, buffer, 0, buffer.length, null)) > 0) {
+      hash.update(buffer.subarray(0, read));
+      const written = fs.writeSync(outFd, buffer, 0, read);
+      if (written !== read) {
+        throw new SyncError('short-write', `wrote ${written} of ${read} bytes: ${relPath}`, {
+          relPath,
+        });
+      }
+    }
+    fs.fsyncSync(outFd);
+    fs.closeSync(outFd);
+    outFd = null;
+    fs.closeSync(inFd);
+    inFd = null;
+
+    const digest = hash.digest('hex');
+    if (expectedDigest && digest !== expectedDigest) {
+      throw new SyncError(
+        'staging-changed',
+        `staged file changed while it was copied: ${relPath}`,
+        { relPath }
+      );
+    }
+    try {
+      fs.renameSync(tmp, target);
+    } catch (err) {
+      throw describePublishFailure(err, relPath);
+    }
+    fsyncDir(path.dirname(target));
+    return { digest, size: fs.statSync(target).size };
+  } catch (err) {
+    if (inFd !== null) {
+      try {
+        fs.closeSync(inFd);
+      } catch {
+        /* already closed */
+      }
+    }
+    if (outFd !== null) {
+      try {
+        fs.closeSync(outFd);
+      } catch {
+        /* already closed */
+      }
+    }
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
 /** Keep the files that are about to be replaced, one generation deep. */
 function backupTarget(usbRoot, jobId, relPath, journal) {
   const target = fromRelative(usbRoot, relPath);
@@ -135,30 +204,29 @@ export function describePublishFailure(err, relPath) {
 export function publishStaged({ usbRoot, jobId, staging, entries, journal, onFilePublished }) {
   for (const entry of entries) {
     const abs = stagedPath(staging, entry.relPath);
-    if (!fs.existsSync(abs)) {
+    let size;
+    try {
+      size = fs.statSync(abs).size;
+    } catch {
       throw new SyncError('staging-missing', `staged file is gone: ${entry.relPath}`, {
         relPath: entry.relPath,
       });
     }
-    const buffer = fs.readFileSync(abs);
-    if (buffer.length === 0) {
+    if (size === 0) {
       throw new SyncError('staging-empty', `staged file is empty: ${entry.relPath}`, {
         relPath: entry.relPath,
       });
     }
-    if (entry.size != null && buffer.length !== entry.size) {
+    if (entry.size != null && size !== entry.size) {
       throw new SyncError('staging-changed', `staged file changed size: ${entry.relPath}`, {
         relPath: entry.relPath,
       });
     }
-    const digest = sha256(buffer);
-    if (entry.sha256 && digest !== entry.sha256) {
-      throw new SyncError('staging-changed', `staged file changed: ${entry.relPath}`, {
-        relPath: entry.relPath,
-      });
-    }
+    // Writers that described their file pass the digest; one that did not gets
+    // read here, and the copy below verifies whatever it wrote either way.
+    const digest = entry.sha256 ?? sha256(fs.readFileSync(abs));
     if (typeof entry.verify === 'function') entry.verify(abs);
-    journal?.append('verified', { relPath: entry.relPath, sha256: digest, size: buffer.length });
+    journal?.append('verified', { relPath: entry.relPath, sha256: digest, size });
   }
 
   const published = [];
@@ -172,15 +240,17 @@ export function publishStaged({ usbRoot, jobId, staging, entries, journal, onFil
       target: entry.relPath,
     });
     backupTarget(usbRoot, jobId, entry.relPath, journal);
-    try {
-      moveIntoPlace(stagedAbs, targetAbs);
-    } catch (err) {
-      throw describePublishFailure(err, entry.relPath);
-    }
+    const copied = copyVerified({
+      source: stagedAbs,
+      target: targetAbs,
+      relPath: entry.relPath,
+      expectedDigest: verificationDigest,
+    });
+    fs.rmSync(stagedAbs, { force: true });
     const done = {
       relPath: entry.relPath,
-      sha256: verificationDigest,
-      size: fs.statSync(targetAbs).size,
+      sha256: copied.digest,
+      size: copied.size,
     };
     journal?.append('published', done);
     published.push(done);
