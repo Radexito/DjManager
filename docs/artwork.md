@@ -42,8 +42,17 @@ that dot, so neither do we.
 
 ## What the writer does
 
-- `planArtwork(tracks)` numbers the distinct `artwork_path` values in first-seen
-  order; tracks that share a cover share an id.
+- `planArtwork(tracks, { previous })` gives every distinct `artwork_path` one id;
+  tracks that share a cover share an id. `previous` is the set of track rows the
+  manifest carried, and their `artwork_id` is the record of what was already
+  handed out: the same source keeps its number, a source seen for the first time
+  gets a number above every recorded one, and a retired cover's number stays
+  unused instead of being reused by a different file. A deck caches a cover by
+  this number, so renumbering by position is what makes a cover show up wrong or
+  blank after an unrelated track leaves the set.
+- `artwork_id` is written on the track row in the manifest at every export, and
+  `artwork_path` is part of the export fingerprint, so adding or changing a cover
+  makes an automatic sync start a job instead of deciding there is nothing to do.
 - The cover is detected by its first bytes, not its extension: a PNG saved as
   `.jpg` is common (artwork fetched from the web keeps its content type) and a
   FLAC picture is often PNG too.

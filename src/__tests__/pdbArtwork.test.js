@@ -71,6 +71,47 @@ describe('planArtwork', () => {
       },
     ]);
   });
+
+  it('reuses the id the manifest recorded instead of numbering by position', () => {
+    // A cover the player has cached under an id must keep that id when another
+    // cover appears in front of it in the merged set.
+    const plan = planArtwork(
+      [
+        { id: 1, artwork_path: '/covers/new.jpg' },
+        { id: 2, artwork_path: '/covers/b.jpg' },
+      ],
+      { previous: [{ id: 2, artwork_path: '/covers/b.jpg', artwork_id: 2 }] }
+    );
+    expect(plan.map((cover) => [cover.sourcePath, cover.id])).toEqual([
+      ['/covers/new.jpg', 3],
+      ['/covers/b.jpg', 2],
+    ]);
+  });
+
+  it('leaves a retired cover number unused instead of handing it to a new file', () => {
+    const plan = planArtwork([{ id: 3, artwork_path: '/covers/c.jpg' }], {
+      previous: [
+        { id: 1, artwork_path: '/covers/a.jpg', artwork_id: 1 },
+        { id: 2, artwork_path: '/covers/b.jpg', artwork_id: 2 },
+      ],
+    });
+    expect(plan).toHaveLength(1);
+    expect(plan[0]).toMatchObject({ id: 3, sourcePath: '/covers/c.jpg' });
+  });
+
+  it('keeps a recorded cover on its id when the tracks arrive in another order', () => {
+    const plan = planArtwork(
+      [
+        { id: 9, artwork_path: '/covers/b.jpg' },
+        { id: 8, artwork_path: '/covers/a.jpg' },
+      ],
+      { previous: [{ id: 8, artwork_path: '/covers/a.jpg', artwork_id: 1 }] }
+    );
+    expect(plan.map((cover) => [cover.sourcePath, cover.id])).toEqual([
+      ['/covers/b.jpg', 2],
+      ['/covers/a.jpg', 1],
+    ]);
+  });
 });
 
 describe('artwork rows in export.pdb', () => {
