@@ -53,6 +53,12 @@ that dot, so neither do we.
 - `artwork_id` is written on the track row in the manifest at every export, and
   `artwork_path` is part of the export fingerprint, so adding or changing a cover
   makes an automatic sync start a job instead of deciding there is nothing to do.
+- The manifest also records `artwork_source_hash`, the digest of the cover file
+  that produced the pair. On the next export a cover whose source still has that
+  digest, and whose `a<id>.jpg` and `a<id>_m.jpg` are already on the medium as
+  JPEG, is not encoded again and not written over. Encoding costs two ffmpeg runs
+  per cover, which is most of what a second export of the same library spends its
+  time on; a cover that changed content under the same path is encoded again.
 - The cover is detected by its first bytes, not its extension: a PNG saved as
   `.jpg` is common (artwork fetched from the web keeps its content type) and a
   FLAC picture is often PNG too.
