@@ -131,12 +131,12 @@ describe('buildExtPdbBuffer', () => {
     }
   });
 
-  it('puts the track/tag junctions on their own page, tag id before content id', () => {
+  it('puts the track/tag junctions on their own page, track id before tag id', () => {
     const buffer = buildExtPdbBuffer({
       tags: [tag(1, 'Genre', 0, 0, true), tag(10, 'House', 1, 0)],
       trackTags: [
-        { tagId: 10, contentId: 4259593698 },
-        { tagId: 10, contentId: 2862462335 },
+        { trackId: 10, tagId: 4259593698 },
+        { trackId: 11, tagId: 4259593698 },
       ],
       masterTagId: 7,
     });
@@ -153,14 +153,14 @@ describe('buildExtPdbBuffer', () => {
       const at = 10 * PAGE + 40 + i * 16;
       rows.push({
         magic: buffer.readUInt32LE(at),
-        tagId: buffer.readUInt32LE(at + 4),
-        contentId: buffer.readUInt32LE(at + 8),
+        trackId: buffer.readUInt32LE(at + 4),
+        tagId: buffer.readUInt32LE(at + 8),
         tail: buffer.readUInt32LE(at + 12),
       });
     }
     expect(rows).toEqual([
-      { magic: 0, tagId: 10, contentId: 4259593698, tail: 3 },
-      { magic: 0, tagId: 10, contentId: 2862462335, tail: 3 },
+      { magic: 0, trackId: 10, tagId: 4259593698, tail: 3 },
+      { magic: 0, trackId: 11, tagId: 4259593698, tail: 3 },
     ]);
   });
 

@@ -151,7 +151,7 @@ export function buildExtPdbBuffer({
   for (const link of trackTags) {
     rowsByType
       .get(linkTable)
-      .push(encodeExtTrackTagRow({ tagId: link.tagId, contentId: link.contentId ?? link.trackId }));
+      .push(encodeExtTrackTagRow({ trackId: link.trackId, tagId: link.tagId }));
   }
 
   const writtenPages = new Map();

@@ -97,22 +97,22 @@ export function encodeExtTagRow({
 }
 
 /**
- * A track/tag junction row: `0, tagId, contentId, 3`.
+ * A track/tag junction row: `0, trackId, tagId, 3`.
  *
- * The order was settled on a stick where rekordbox itself had tagged tracks: the
- * tag id comes second, and the third word is the content id the device library
- * uses for that track, not the row number in `export.pdb`. A deck asked to show
- * a tag with those two swapped shows an empty list, which is how the order was
- * found. The leading zero and the trailing three are constant.
+ * Measured on a stick where rekordbox itself had tagged tracks: the second word
+ * is the track's row number in `export.pdb` (10 to 16 on that stick, and the
+ * export holds tracks with those ids), and the third word is the tag id, which
+ * appears in the tag rows of the same file (Trap, Beat, Piano, Sub Bass, Peak
+ * Time, Vocal). The leading zero and the trailing three are constant.
  *
- * @param {{tagId: number, contentId: number}} row
+ * @param {{trackId: number, tagId: number}} row
  * @returns {Buffer}
  */
-export function encodeExtTrackTagRow({ tagId, contentId }) {
+export function encodeExtTrackTagRow({ trackId, tagId }) {
   const buf = Buffer.alloc(16);
   buf.writeUInt32LE(0, 0);
-  buf.writeUInt32LE(Number(tagId) >>> 0, 4);
-  buf.writeUInt32LE(Number(contentId) >>> 0, 8);
+  buf.writeUInt32LE(Number(trackId) >>> 0, 4);
+  buf.writeUInt32LE(Number(tagId) >>> 0, 8);
   buf.writeUInt32LE(3, 12);
   return buf;
 }

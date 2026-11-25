@@ -71,12 +71,11 @@ describe('exportExt tag rows', () => {
 });
 
 describe('exportExt track/tag rows', () => {
-  it('writes the magic zero, the tag id, the content id and the constant three', () => {
+  it('writes the magic zero, the track id, the tag id and the constant three', () => {
     // The expected bytes are the first row of a stick on which rekordbox itself
-    // tagged two tracks with the tag whose id is 10. The order is not the one the
-    // format description suggests, and swapping the two ids is what made a player
-    // show an empty tag list until it was measured.
-    const row = encodeExtTrackTagRow({ tagId: 10, contentId: 4259593698 });
+    // tagged tracks: track 10 of that export carries the tag whose id is
+    // 4259593698, which is the "Vocal" tag in the tree of the same file.
+    const row = encodeExtTrackTagRow({ trackId: 10, tagId: 4259593698 });
 
     expect([...row]).toEqual([
       0x00, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0xe2, 0x3d, 0xe4, 0xfd, 0x03, 0x00, 0x00,
