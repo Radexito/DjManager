@@ -71,14 +71,16 @@ describe('exportExt tag rows', () => {
 });
 
 describe('exportExt track/tag rows', () => {
-  it('writes the magic zero, the two ids and the constant three', () => {
-    const row = encodeExtTrackTagRow({ trackId: 7, tagId: 1816740240 });
+  it('writes the magic zero, the track id, the tag id and the constant three', () => {
+    // The expected bytes are the first row of a stick on which rekordbox itself
+    // tagged tracks: track 10 of that export carries the tag whose id is
+    // 4259593698, which is the "Vocal" tag in the tree of the same file.
+    const row = encodeExtTrackTagRow({ trackId: 10, tagId: 4259593698 });
 
-    expect(row.length).toBe(16);
-    expect(row.readUInt32LE(0)).toBe(0);
-    expect(row.readUInt32LE(4)).toBe(7);
-    expect(row.readUInt32LE(8)).toBe(1816740240);
-    expect(row.readUInt32LE(12)).toBe(3);
+    expect([...row]).toEqual([
+      0x00, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0xe2, 0x3d, 0xe4, 0xfd, 0x03, 0x00, 0x00,
+      0x00,
+    ]);
   });
 });
 

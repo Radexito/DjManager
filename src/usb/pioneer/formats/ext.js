@@ -99,8 +99,11 @@ export function encodeExtTagRow({
 /**
  * A track/tag junction row: `0, trackId, tagId, 3`.
  *
- * The leading zero is the row's magic in the format description, the trailing
- * three is constant on every row of both files.
+ * Measured on a stick where rekordbox itself had tagged tracks: the second word
+ * is the track's row number in `export.pdb` (10 to 16 on that stick, and the
+ * export holds tracks with those ids), and the third word is the tag id, which
+ * appears in the tag rows of the same file (Trap, Beat, Piano, Sub Bass, Peak
+ * Time, Vocal). The leading zero and the trailing three are constant.
  *
  * @param {{trackId: number, tagId: number}} row
  * @returns {Buffer}
@@ -108,8 +111,8 @@ export function encodeExtTagRow({
 export function encodeExtTrackTagRow({ trackId, tagId }) {
   const buf = Buffer.alloc(16);
   buf.writeUInt32LE(0, 0);
-  buf.writeUInt32LE(trackId, 4);
-  buf.writeUInt32LE(tagId, 8);
+  buf.writeUInt32LE(Number(trackId) >>> 0, 4);
+  buf.writeUInt32LE(Number(tagId) >>> 0, 8);
   buf.writeUInt32LE(3, 12);
   return buf;
 }
