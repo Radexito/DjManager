@@ -1,4 +1,4 @@
-import { writeArtworkFiles } from './artwork.js';
+import { looksLikeJpeg, writeArtworkFiles } from './artwork.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -69,6 +69,34 @@ function cueSignature(cues) {
     hotCueIndex: cue.hotCueIndex ?? -1,
     enabled: cue.enabled === 0 ? 0 : 1,
   }));
+}
+
+/** Digest of a cover source file, or null when it cannot be read. */
+function coverSourceDigest(sourcePath) {
+  try {
+    return sha256(fs.readFileSync(sourcePath));
+  } catch {
+    return null;
+  }
+}
+
+/** True when both renditions of a cover are already on the medium as JPEG. */
+function coverFilesOnMedium(usbRoot, relPath) {
+  const names = [relPath, relPath.replace(/\.jpg$/, '_m.jpg')];
+  for (const name of names) {
+    let fd = null;
+    try {
+      fd = fs.openSync(path.join(usbRoot, ...name.split('/')), 'r');
+      const head = Buffer.alloc(3);
+      const read = fs.readSync(fd, head, 0, 3, 0);
+      if (read < 3 || !looksLikeJpeg(head.subarray(0, read))) return false;
+    } catch {
+      return false;
+    } finally {
+      if (fd !== null) fs.closeSync(fd);
+    }
+  }
+  return true;
 }
 
 /**
@@ -417,12 +445,43 @@ export function createPioneerExportRunner(deps) {
     const coverPlan = planArtwork([...mergedTracks.values()], {
       previous: [...existingTracks.values()],
     });
-    const artwork = await writeArtworkFiles(job.staging, coverPlan, {
+    // A cover that has not changed since the last export, and whose two
+    // renditions are already on the medium, is left alone: encoding it costs two
+    // ffmpeg runs and two writes on every export, which is what makes a second
+    // export of the same library slow (#44). The manifest records the digest of
+    // the source file that produced the pair, so "unchanged" is a comparison of
+    // content, not of timestamps.
+    const recordedCoverDigest = new Map();
+    for (const row of existingTracks.values()) {
+      const source = row?.artwork_path;
+      const digest = row?.artwork_source_hash;
+      if (source && digest && !recordedCoverDigest.has(source)) {
+        recordedCoverDigest.set(source, digest);
+      }
+    }
+    const coverDigests = new Map();
+    const unchangedCovers = new Set();
+    for (const cover of coverPlan) {
+      const digest = coverSourceDigest(cover.sourcePath);
+      coverDigests.set(cover.sourcePath, digest);
+      if (
+        digest &&
+        recordedCoverDigest.get(cover.sourcePath) === digest &&
+        coverFilesOnMedium(usbRoot, cover.relPath)
+      ) {
+        unchangedCovers.add(cover.sourcePath);
+      }
+    }
+    const coversToWrite = coverPlan.filter((cover) => !unchangedCovers.has(cover.sourcePath));
+    const artwork = await writeArtworkFiles(job.staging, coversToWrite, {
       ffmpegPath: getFfmpegRuntimePath(),
     });
     const artworkIdBySource = new Map(coverPlan.map((cover) => [cover.sourcePath, cover.id]));
     for (const track of mergedTracks.values()) {
-      track.artwork_id = artworkIdBySource.get(track.artwork_path ?? null) ?? 0;
+      const source = track.artwork_path ?? null;
+      track.artwork_id = artworkIdBySource.get(source) ?? 0;
+      // Recorded for the next export: a row without it cannot be reused.
+      track.artwork_source_hash = source ? (coverDigests.get(source) ?? null) : null;
     }
     for (const skippedCover of artwork.skipped) {
       console.warn(`[sync] cover ${skippedCover.relPath} was skipped: ${skippedCover.reason}`);
@@ -434,7 +493,9 @@ export function createPioneerExportRunner(deps) {
       console.warn(`[sync] cover ${failure.relPath} was not written: ${failure.reason}`);
     }
     const writtenCovers = new Set(artwork.files);
-    const publishableCovers = coverPlan.filter((cover) => writtenCovers.has(cover.relPath));
+    const publishableCovers = coverPlan.filter(
+      (cover) => writtenCovers.has(cover.relPath) || unchangedCovers.has(cover.sourcePath)
+    );
 
     runPdbExporter(
       {
@@ -606,6 +667,8 @@ export function createPioneerExportRunner(deps) {
         trackCount: mergedTracks.size,
         newTrackCount: snapshot.tracks.length,
         playlistCount: mergedPlaylists.size,
+        coverCount: coverPlan.length,
+        coverWrittenCount: coversToWrite.length,
         usbRoot,
       },
       warnings,

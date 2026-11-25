@@ -26,6 +26,22 @@ afterEach(() => {
   roots = [];
 });
 
+/** A stand-in for ffmpeg that appends one line per call, so a test can count them. */
+function recordingFfmpeg(dir, logFile) {
+  const file = path.join(dir, 'ffmpeg-record');
+  fs.writeFileSync(
+    file,
+    `#!/bin/sh
+log="${logFile}"
+for last; do :; done
+printf 'call\\n' >> "$log"
+printf '\\377\\330\\377\\331' > "$last"
+`,
+    { mode: 0o755 }
+  );
+  return file;
+}
+
 /** A stand-in for ffmpeg: writes the smallest valid JPEG to its last argument. */
 function stubFfmpeg(dir) {
   const file = path.join(dir, 'ffmpeg-stub');
@@ -344,6 +360,58 @@ describe('export runner', () => {
     library = publishedLibrary(root);
     expect(library.tracks.find((track) => track.id === 2).artworkId).toBe(2);
     expect(library.artwork.map((row) => row.id)).toEqual([2]);
+  });
+
+  it('does not encode a cover whose source has not changed', async () => {
+    if (process.platform === 'win32') return;
+    const root = stick();
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'djman-covers-'));
+    roots.push(scratch);
+    const jpeg = Buffer.from([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0xff, 0xd9,
+    ]);
+    const cover = path.join(scratch, 'a.jpg');
+    fs.writeFileSync(cover, jpeg);
+    const logFile = path.join(scratch, 'ffmpeg.log');
+    const decoder = recordingFfmpeg(scratch, logFile);
+    const calls = () =>
+      fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8').trim().split('\n').length : 0;
+
+    const list = [{ ...tracks[0], artwork_path: cover }, tracks[1]];
+    const runAgain = async () => {
+      const { runner } = buildRunner({
+        getPlaylistTracks: () => list,
+        getFfmpegRuntimePath: () => decoder,
+      });
+      return runOn(root, runner, runner.plan({ playlistIds: [7] }));
+    };
+
+    const small = path.join(root, 'PIONEER', 'Artwork', '00001', 'a1.jpg');
+    const thumb = path.join(root, 'PIONEER', 'Artwork', '00001', 'a1_m.jpg');
+
+    const first = await runAgain();
+    expect(calls()).toBe(2);
+    expect(first.summary).toMatchObject({ coverCount: 1, coverWrittenCount: 1 });
+    const mtimes = () => [fs.statSync(small).mtimeMs, fs.statSync(thumb).mtimeMs];
+    const written = mtimes();
+    const bytes = fs.readFileSync(small);
+
+    // Same source: nothing is encoded, nothing is written over, and the manifest
+    // keeps the digest that allowed the skip.
+    const second = await runAgain();
+    expect(calls()).toBe(2);
+    expect(second.summary).toMatchObject({ coverCount: 1, coverWrittenCount: 0 });
+    expect(mtimes()).toEqual(written);
+    expect(fs.readFileSync(small)).toEqual(bytes);
+    expect(loadManifest(root).tracks.get(1).artwork_source_hash).toMatch(/^[0-9a-f]{64}$/);
+    // The database still points at the cover that is already there.
+    expect(publishedLibrary(root).tracks.find((track) => track.id === 1).artworkId).toBe(1);
+
+    // A different source with the same path is a different cover: encode again.
+    fs.writeFileSync(cover, Buffer.concat([jpeg, Buffer.from([0x01])]));
+    const third = await runAgain();
+    expect(calls()).toBe(4);
+    expect(third.summary).toMatchObject({ coverCount: 1, coverWrittenCount: 1 });
   });
 
   it('writes no device library unless it is turned on and has a key', async () => {
