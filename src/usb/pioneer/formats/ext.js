@@ -97,19 +97,22 @@ export function encodeExtTagRow({
 }
 
 /**
- * A track/tag junction row: `0, trackId, tagId, 3`.
+ * A track/tag junction row: `0, tagId, contentId, 3`.
  *
- * The leading zero is the row's magic in the format description, the trailing
- * three is constant on every row of both files.
+ * The order was settled on a stick where rekordbox itself had tagged tracks: the
+ * tag id comes second, and the third word is the content id the device library
+ * uses for that track, not the row number in `export.pdb`. A deck asked to show
+ * a tag with those two swapped shows an empty list, which is how the order was
+ * found. The leading zero and the trailing three are constant.
  *
- * @param {{trackId: number, tagId: number}} row
+ * @param {{tagId: number, contentId: number}} row
  * @returns {Buffer}
  */
-export function encodeExtTrackTagRow({ trackId, tagId }) {
+export function encodeExtTrackTagRow({ tagId, contentId }) {
   const buf = Buffer.alloc(16);
   buf.writeUInt32LE(0, 0);
-  buf.writeUInt32LE(trackId, 4);
-  buf.writeUInt32LE(tagId, 8);
+  buf.writeUInt32LE(Number(tagId) >>> 0, 4);
+  buf.writeUInt32LE(Number(contentId) >>> 0, 8);
   buf.writeUInt32LE(3, 12);
   return buf;
 }

@@ -116,7 +116,12 @@ export function orderExtTags(tags = []) {
  * }} input
  * @returns {Buffer}
  */
-export function buildExtPdbBuffer({ tags = [], trackTags = [], masterTagId = 0 } = {}) {
+export function buildExtPdbBuffer({
+  tags = [],
+  trackTags = [],
+  masterTagId = 0,
+  linkType = 4,
+} = {}) {
   // The order is the caller's: rekordbox stores the tree in `Seq` order, which is
   // what `myTag.sequenceNo` gives us. Rows are written exactly as they arrive.
   const rows = tags.map((tag) => ({
@@ -128,6 +133,10 @@ export function buildExtPdbBuffer({ tags = [], trackTags = [], masterTagId = 0 }
   }));
   const tagsInOrder = rows;
   const rowsByType = new Map(EXT_TABLE_ORDER.map((type) => [type, []]));
+  // Which table carries the track/tag junctions is still open (see #57): the two
+  // published descriptions disagree between type 4 and type 5, so the caller
+  // decides and the deck settles it.
+  const linkTable = linkType === 5 ? 5 : 4;
 
   rowsByType.get(7).push(encodeExtMetaRow({ masterTagId: Number(masterTagId) >>> 0 }));
   for (const tag of tagsInOrder) {
@@ -143,7 +152,9 @@ export function buildExtPdbBuffer({ tags = [], trackTags = [], masterTagId = 0 }
     );
   }
   for (const link of trackTags) {
-    rowsByType.get(4).push(encodeExtTrackTagRow({ trackId: link.trackId, tagId: link.tagId }));
+    rowsByType
+      .get(linkTable)
+      .push(encodeExtTrackTagRow({ tagId: link.tagId, contentId: link.contentId ?? link.trackId }));
   }
 
   const writtenPages = new Map();
@@ -163,7 +174,8 @@ export function buildExtPdbBuffer({ tags = [], trackTags = [], masterTagId = 0 }
   }
 
   let sequence = 2;
-  for (const type of EXT_WRITE_ORDER) {
+  const writeOrder = [7, 3].concat(linkTable === 4 ? [4] : [5]);
+  for (const type of writeOrder) {
     const rows = rowsByType.get(type);
     if (!rows || rows.length === 0) continue;
 
