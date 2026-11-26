@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import Sidebar from './Sidebar.jsx';
 import MusicLibrary from './MusicLibrary.jsx';
+import UsbMediumView from './UsbMediumView.jsx';
 import { buildArtistQuery } from './searchParser.js';
 import DownloadView from './DownloadView.jsx';
 import TidalDownloadView from './TidalDownloadView.jsx';
@@ -27,6 +28,8 @@ import './App.css';
  */
 function App() {
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('music');
+  // What the USB section is showing: { mount, playlistId, name } or null.
+  const [usbSelection, setUsbSelection] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [exportState, setExportState] = useState(null);
   const [depsProgress, setDepsProgress] = useState(null);
@@ -73,6 +76,7 @@ function App() {
 
   const handleMenuSelect = (id) => {
     if (id === selectedPlaylistId) setSearch('');
+    setUsbSelection(null);
     setSelectedPlaylistId(id);
   };
 
@@ -195,6 +199,8 @@ function App() {
               <Sidebar
                 selectedMenuItemId={selectedPlaylistId}
                 onMenuSelect={handleMenuSelect}
+                usbSelection={usbSelection}
+                onUsbSelect={setUsbSelection}
                 activePlaylistId={selectedPlaylistId}
                 onExportPlaylistAll={(id) => setExportState({ playlistId: id })}
               />
@@ -223,7 +229,11 @@ function App() {
                 active={selectedPlaylistId === 'help'}
                 onClose={() => setSelectedPlaylistId('music')}
               />
-              {selectedPlaylistId !== 'download' &&
+              {usbSelection && (
+                <UsbMediumView selection={usbSelection} onClose={() => setUsbSelection(null)} />
+              )}
+              {!usbSelection &&
+                selectedPlaylistId !== 'download' &&
                 selectedPlaylistId !== 'tidal' &&
                 selectedPlaylistId !== 'cloud-search' &&
                 selectedPlaylistId !== 'explorer' &&

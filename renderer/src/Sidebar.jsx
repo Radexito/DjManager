@@ -34,14 +34,19 @@ const PRESET_COLORS = [
  * @param {(playlistId: string) => void} onExportPlaylistAll Exports a whole playlist
  *   to a USB drive.
  */
-function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
+function Sidebar({
+  selectedMenuItemId,
+  onMenuSelect,
+  onExportPlaylistAll,
+  usbSelection = null,
+  onUsbSelect = () => {},
+}) {
   const { sidebarProgress: ytDlpSidebarProgress } = useDownload();
   const { sidebarProgress: tidalSidebarProgress } = useTidalDownload();
   const [playlists, setPlaylists] = useState([]);
   const [usbDevices, setUsbDevices] = useState([]);
   const [usbOpen, setUsbOpen] = useState({});
   const [usbContents, setUsbContents] = useState({});
-  const [usbPlaylistsOpen, setUsbPlaylistsOpen] = useState({});
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
   const [normalizeProgress, setNormalizeProgress] = useState(null);
   const [analysisProgress, setAnalysisProgress] = useState(null);
@@ -127,15 +132,17 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
 
   const refreshUsbDevices = async () => {
     setUsbContents({});
-    setUsbPlaylistsOpen({});
     const refresh = window.api?.refreshUsbDevices;
     if (typeof refresh !== 'function') return;
     const list = await refresh().catch(() => null);
     if (Array.isArray(list)) setUsbDevices(list);
   };
 
-  const toggleUsbPlaylist = (key) =>
-    setUsbPlaylistsOpen((current) => ({ ...current, [key]: !current[key] }));
+  /** True when this row is what the main area is showing right now. */
+  const isSelectedUsb = (mount, playlistId = null) =>
+    Boolean(usbSelection) &&
+    usbSelection.mount === mount &&
+    (usbSelection.playlistId ?? null) === (playlistId ?? null);
 
   const runFolderRefresh = useCallback(
     async (result) => {
@@ -585,53 +592,34 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
                     {contents && (
                       <>
                         <div
-                          className="menu-item"
-                          style={{ cursor: 'default' }}
+                          className={`menu-item ${isSelectedUsb(device.mount) ? 'active' : ''}`}
                           title="Every track the medium carries"
+                          onClick={() =>
+                            onUsbSelect({ mount: device.mount, playlistId: null, name: 'Library' })
+                          }
                         >
                           <span className="menu-text">Library</span>
                           <span className="playlist-count">{contents.trackCount}</span>
                         </div>
-                        {contents.playlists.map((playlist) => {
-                          const key = `${device.mount}:${playlist.id}`;
-                          const playlistOpen = Boolean(usbPlaylistsOpen[key]);
-                          return (
-                            <div key={key}>
-                              <div
-                                className="menu-item"
-                                onClick={() => toggleUsbPlaylist(key)}
-                                title={`${playlist.trackCount} track(s) on the medium`}
-                              >
-                                <span className="menu-icon">{playlistOpen ? '▾' : '▸'}</span>
-                                <span className="menu-text">{playlist.name}</span>
-                                <span className="playlist-count">{playlist.trackCount}</span>
-                              </div>
-                              {playlistOpen && (
-                                <div style={{ paddingLeft: '0.9rem' }}>
-                                  {playlist.tracks.length === 0 && (
-                                    <div className="menu-item" style={{ cursor: 'default' }}>
-                                      <span className="menu-text">Empty</span>
-                                    </div>
-                                  )}
-                                  {playlist.tracks.map((track) => (
-                                    <div
-                                      key={`${key}:${track.id}`}
-                                      className="menu-item"
-                                      style={{ cursor: 'default' }}
-                                      title={track.title}
-                                    >
-                                      <span className="menu-text">
-                                        {track.artist
-                                          ? `${track.artist} - ${track.title}`
-                                          : track.title}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
+                        {contents.playlists.map((playlist) => (
+                          <div
+                            key={`${device.mount}:${playlist.id}`}
+                            className={`menu-item ${
+                              isSelectedUsb(device.mount, playlist.id) ? 'active' : ''
+                            }`}
+                            title={`${playlist.trackCount} track(s) on the medium`}
+                            onClick={() =>
+                              onUsbSelect({
+                                mount: device.mount,
+                                playlistId: playlist.id,
+                                name: playlist.name,
+                              })
+                            }
+                          >
+                            <span className="menu-text">{playlist.name}</span>
+                            <span className="playlist-count">{playlist.trackCount}</span>
+                          </div>
+                        ))}
                         {contents.tags.map((category) => (
                           <div
                             className="menu-item"

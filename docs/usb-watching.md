@@ -46,9 +46,12 @@ A detected medium appears as its own collapsible entry below the playlists. Expa
 medium, not our records of it:
 
 - **Library** with the number of tracks the database carries.
-- **Playlists** with their track counts; expanding one lists the tracks it holds, artist and title as
-  the player sees them.
+- **Playlists** with their track counts.
 - **The tag tree** with the number of tags per category; the category line names them on hover.
+
+Clicking Library or a playlist opens it in the main area as a read-only list of that medium's tracks,
+artist and title as the player sees them, with the mount point and a "read only" note in the header.
+The tree itself never lists tracks: it is the structure of the medium, not a second table.
 
 The data comes from `PIONEER/rekordbox/export.pdb` and `exportExt.pdb` (`src/usb/pioneer/contents.js`),
 so a stick rekordbox prepared shows exactly the same way as one this application wrote. The manifest is

@@ -52,7 +52,7 @@ describe('Sidebar', () => {
     });
   });
 
-  it('lists a plugged-in medium and what it carries', async () => {
+  it('lists a plugged-in medium and opens a playlist from the tree', async () => {
     window.api.getUsbDevices.mockResolvedValueOnce([{ mount: '/media/STICK', name: 'STICK' }]);
     window.api.getUsbContents.mockResolvedValueOnce({
       root: '/media/STICK',
@@ -74,11 +74,11 @@ describe('Sidebar', () => {
       ],
       tags: [{ name: 'Genre', tags: ['Trap'] }],
     });
+    const onUsbSelect = vi.fn();
 
-    renderSidebar({ ...defaultProps });
+    renderSidebar({ ...defaultProps, onUsbSelect });
 
-    const device = await screen.findByText('STICK');
-    fireEvent.click(device);
+    fireEvent.click(await screen.findByText('STICK'));
 
     await waitFor(() => {
       expect(window.api.getUsbContents).toHaveBeenCalledWith('/media/STICK');
@@ -88,9 +88,17 @@ describe('Sidebar', () => {
     });
 
     fireEvent.click(screen.getByText('Set'));
-    await waitFor(() => {
-      expect(screen.getByText('Artist - Opening')).toBeInTheDocument();
+    expect(onUsbSelect).toHaveBeenCalledWith({ mount: '/media/STICK', playlistId: 1, name: 'Set' });
+
+    fireEvent.click(screen.getByText('Library'));
+    expect(onUsbSelect).toHaveBeenCalledWith({
+      mount: '/media/STICK',
+      playlistId: null,
+      name: 'Library',
     });
+
+    // The tree is structure only: track names belong to the main view.
+    expect(screen.queryByText('Artist - Opening')).not.toBeInTheDocument();
   });
 
   it('calls onMenuSelect when Music is clicked', () => {
