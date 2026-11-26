@@ -547,99 +547,103 @@ function Sidebar({
             )}
           </div>
         ))}
-      </div>
 
-      {usbDevices.length > 0 && (
-        <div className="menu-section" style={{ marginTop: '0.75rem' }}>
-          <div className="playlists-header">
-            <span className="section-title" style={{ padding: 0 }}>
-              USB
-            </span>
-            <button
-              className="new-playlist-btn"
-              title="Look for media again"
-              onClick={refreshUsbDevices}
-            >
-              ⟳
-            </button>
-          </div>
-          {usbDevices.map((device) => {
-            const contents = usbContents[device.mount];
-            const open = Boolean(usbOpen[device.mount]);
-            return (
-              <div key={device.mount}>
-                <div
-                  className={`menu-item ${open ? 'active' : ''}`}
-                  onClick={() => toggleUsbDevice(device.mount)}
-                  title={device.mount}
-                >
-                  <span className="menu-icon">{open ? '▾' : '▸'}</span>
-                  <span className="menu-text">{device.name}</span>
-                  <span className="playlist-count">{contents ? contents.trackCount : ''}</span>
-                </div>
-                {open && (
-                  <div style={{ paddingLeft: '0.9rem' }}>
-                    {contents === undefined && (
-                      <div className="menu-item" style={{ cursor: 'default' }}>
-                        <span className="menu-text">Reading the medium…</span>
-                      </div>
-                    )}
-                    {contents === null && (
-                      <div className="menu-item" style={{ cursor: 'default' }}>
-                        <span className="menu-text">No playlist database on this medium</span>
-                      </div>
-                    )}
-                    {contents && (
-                      <>
-                        <div
-                          className={`menu-item ${isSelectedUsb(device.mount) ? 'active' : ''}`}
-                          title="Every track the medium carries"
-                          onClick={() =>
-                            onUsbSelect({ mount: device.mount, playlistId: null, name: 'Library' })
-                          }
-                        >
-                          <span className="menu-text">Library</span>
-                          <span className="playlist-count">{contents.trackCount}</span>
+        {usbDevices.length > 0 && (
+          <div className="menu-section" style={{ marginTop: '0.75rem' }}>
+            <div className="playlists-header">
+              <span className="section-title" style={{ padding: 0 }}>
+                USB
+              </span>
+              <button
+                className="new-playlist-btn"
+                title="Look for media again"
+                onClick={refreshUsbDevices}
+              >
+                ⟳
+              </button>
+            </div>
+            {usbDevices.map((device) => {
+              const contents = usbContents[device.mount];
+              const open = Boolean(usbOpen[device.mount]);
+              return (
+                <div key={device.mount}>
+                  <div
+                    className={`menu-item ${open ? 'active' : ''}`}
+                    onClick={() => toggleUsbDevice(device.mount)}
+                    title={device.mount}
+                  >
+                    <span className="menu-icon">{open ? '▾' : '▸'}</span>
+                    <span className="menu-text">{device.name}</span>
+                    <span className="playlist-count">{contents ? contents.trackCount : ''}</span>
+                  </div>
+                  {open && (
+                    <div style={{ paddingLeft: '0.9rem' }}>
+                      {contents === undefined && (
+                        <div className="menu-item" style={{ cursor: 'default' }}>
+                          <span className="menu-text">Reading the medium…</span>
                         </div>
-                        {contents.playlists.map((playlist) => (
+                      )}
+                      {contents === null && (
+                        <div className="menu-item" style={{ cursor: 'default' }}>
+                          <span className="menu-text">No playlist database on this medium</span>
+                        </div>
+                      )}
+                      {contents && (
+                        <>
                           <div
-                            key={`${device.mount}:${playlist.id}`}
-                            className={`menu-item ${
-                              isSelectedUsb(device.mount, playlist.id) ? 'active' : ''
-                            }`}
-                            title={`${playlist.trackCount} track(s) on the medium`}
+                            className={`menu-item ${isSelectedUsb(device.mount) ? 'active' : ''}`}
+                            title="Every track the medium carries"
                             onClick={() =>
                               onUsbSelect({
                                 mount: device.mount,
-                                playlistId: playlist.id,
-                                name: playlist.name,
+                                playlistId: null,
+                                name: 'Library',
                               })
                             }
                           >
-                            <span className="menu-text">{playlist.name}</span>
-                            <span className="playlist-count">{playlist.trackCount}</span>
+                            <span className="menu-text">Library</span>
+                            <span className="playlist-count">{contents.trackCount}</span>
                           </div>
-                        ))}
-                        {contents.tags.map((category) => (
-                          <div
-                            className="menu-item"
-                            key={`${device.mount}:tag:${category.name}`}
-                            style={{ cursor: 'default' }}
-                            title={category.tags.join(', ') || 'No tags'}
-                          >
-                            <span className="menu-text">{category.name}</span>
-                            <span className="playlist-count">{category.tags.length}</span>
-                          </div>
-                        ))}
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+                          {contents.playlists.map((playlist) => (
+                            <div
+                              key={`${device.mount}:${playlist.id}`}
+                              className={`menu-item ${
+                                isSelectedUsb(device.mount, playlist.id) ? 'active' : ''
+                              }`}
+                              title={`${playlist.trackCount} track(s) on the medium`}
+                              onClick={() =>
+                                onUsbSelect({
+                                  mount: device.mount,
+                                  playlistId: playlist.id,
+                                  name: playlist.name,
+                                })
+                              }
+                            >
+                              <span className="menu-text">{playlist.name}</span>
+                              <span className="playlist-count">{playlist.trackCount}</span>
+                            </div>
+                          ))}
+                          {contents.tags.map((category) => (
+                            <div
+                              className="menu-item"
+                              key={`${device.mount}:tag:${category.name}`}
+                              style={{ cursor: 'default' }}
+                              title={category.tags.join(', ') || 'No tags'}
+                            >
+                              <span className="menu-text">{category.name}</span>
+                              <span className="playlist-count">{category.tags.length}</span>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <div className="fixed-bottom-section">
         {folderNotice && (

@@ -49,9 +49,16 @@ medium, not our records of it:
 - **Playlists** with their track counts.
 - **The tag tree** with the number of tags per category; the category line names them on hover.
 
-Clicking Library or a playlist opens it in the main area as a read-only list of that medium's tracks,
-artist and title as the player sees them, with the mount point and a "read only" note in the header.
-The tree itself never lists tracks: it is the structure of the medium, not a second table.
+Clicking Library or a playlist opens it in the main area, drawn with the same table the library and
+playlist tabs use: the same column definitions, the same cell rendering, the same row styles. It is a
+read-only view, since the tracks belong to the medium, so the play button, drag and rating changes are
+not wired; the header carries the mount point and a "read only" note. The table cannot reuse their data
+path either, because that path reads this application's library database while a medium answers from its
+own `export.pdb`; the rows therefore arrive mapped, but they are drawn by the same code.
+
+The tree itself never lists tracks: it is the structure of the medium, not a second table. The section
+lives inside the scrollable playlist area, so every line stays reachable however long the playlist list
+is.
 
 The data comes from `PIONEER/rekordbox/export.pdb` and `exportExt.pdb` (`src/usb/pioneer/contents.js`),
 so a stick rekordbox prepared shows exactly the same way as one this application wrote. The manifest is

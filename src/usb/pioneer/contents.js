@@ -59,6 +59,11 @@ export function readMedium(
     title: track.title,
     artist: artistName.get(track.artistId) ?? '',
     album: albumName.get(track.albumId) ?? '',
+    // The rest of the row the table already knows how to render.
+    bpm: track.bpm,
+    duration: track.duration,
+    rating: track.rating,
+    year: track.year,
   });
 
   const tracksById = new Map(library.tracks.map((track) => [track.id, track]));

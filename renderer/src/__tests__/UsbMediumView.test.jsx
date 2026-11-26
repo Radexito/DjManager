@@ -10,15 +10,41 @@ const contents = {
   playlistCount: 1,
   tagCount: 0,
   tracks: [
-    { id: 1, title: 'Opening', artist: 'Artist', album: 'Album' },
-    { id: 2, title: 'Closer', artist: 'Artist', album: 'Album' },
+    {
+      id: 1,
+      title: 'Opening',
+      artist: 'Artist',
+      album: 'Album',
+      bpm: 128,
+      duration: 245,
+      rating: 3,
+    },
+    {
+      id: 2,
+      title: 'Closer',
+      artist: 'Artist',
+      album: 'Album',
+      bpm: 126,
+      duration: 199,
+      rating: 0,
+    },
   ],
   playlists: [
     {
       id: 1,
       name: 'Set',
       trackCount: 1,
-      tracks: [{ id: 2, title: 'Closer', artist: 'Artist', album: 'Album' }],
+      tracks: [
+        {
+          id: 2,
+          title: 'Closer',
+          artist: 'Artist',
+          album: 'Album',
+          bpm: 126,
+          duration: 199,
+          rating: 0,
+        },
+      ],
     },
   ],
   tags: [],
@@ -39,6 +65,16 @@ describe('UsbMediumView', () => {
     expect(screen.getByText('Library')).toBeInTheDocument();
     expect(screen.getByText(/read only, from the medium/)).toBeInTheDocument();
     expect(window.api.getUsbContents).toHaveBeenCalledWith('/media/STICK');
+
+    // The same columns and cells the library table draws, not a second layout.
+    const header = document.querySelector('.header');
+    expect(header).not.toBeNull();
+    for (const label of ['Title', 'Artist', 'Album', 'BPM']) {
+      expect(header.textContent).toContain(label);
+    }
+    expect(document.querySelector('.row .cell.artist')).not.toBeNull();
+    expect(screen.getByText('128')).toBeInTheDocument();
+    expect(screen.getByText('4:05')).toBeInTheDocument();
   });
 
   it('shows only the chosen playlist', async () => {

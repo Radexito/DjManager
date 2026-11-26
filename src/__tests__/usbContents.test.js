@@ -83,10 +83,18 @@ describe('reading a medium', () => {
       ['Warm up', 1],
       ['Empty', 0],
     ]);
-    expect(contents.playlists[0].tracks).toEqual([
+    expect(contents.playlists[0].tracks).toMatchObject([
       { id: 1, title: 'Opening', artist: 'Artist', album: 'Album' },
       { id: 2, title: 'Closer', artist: 'Artist', album: 'Album' },
     ]);
+
+    // The table draws these columns, so the medium has to answer them.
+    const [first] = contents.playlists[0].tracks;
+    for (const field of ['bpm', 'duration', 'rating', 'year']) {
+      expect(typeof first[field]).toBe('number');
+    }
+    expect(first.bpm).toBe(124);
+    expect(first.duration).toBe(200);
   });
 
   it('reads the tag tree, with categories over their own tags', () => {
