@@ -2300,20 +2300,46 @@ function MusicLibrary({
   const handleMediumSaveTrack = useCallback(
     async (trackId, data, touched = Object.keys(data ?? {})) => {
       const mount = detailsTrack?.__medium?.mount ?? usbSource?.mount;
-      // Only what the user actually edited matters: the panel always sends the
-      // whole form, and a medium row does not carry every one of those fields.
-      const writable = new Set(['title', 'comments']);
-      const unsupported = touched.filter((key) => !writable.has(key));
-      if (unsupported.length > 0) {
-        throw new Error(
-          `On a medium only title and comment are written in place. ${unsupported.join(', ')}: import the track first.`
-        );
-      }
-      const changed = [];
-      if (touched.includes('title')) changed.push(['title', data.title]);
-      if (touched.includes('comments')) changed.push(['comment', data.comments]);
-      for (const [field, value] of changed) {
-        const result = await window.api.updateUsbTrack({ mount, trackId, field, value });
+      const row = tracks.find((entry) => entry.id === trackId) ?? detailsTrack;
+      // A medium row spells some fields differently than the form: an unknown
+      // year is 0 there and empty here, and genres are absent until the row has
+      // them. Compare what the field means, then write only what the medium can
+      // actually hold; the rest is reported instead of blocking the edit.
+      const normal = (key, value) => {
+        if (key === 'year') {
+          const n = Number(value);
+          return Number.isFinite(n) && n > 0 ? String(n) : '';
+        }
+        if (key === 'genres') {
+          if (Array.isArray(value)) return [...value].sort().join('|');
+          const raw = String(value ?? '').trim();
+          if (!raw) return '';
+          try {
+            const list = JSON.parse(raw);
+            return Array.isArray(list) ? [...list].sort().join('|') : raw;
+          } catch {
+            return raw
+              .split(',')
+              .map((entry) => entry.trim())
+              .filter(Boolean)
+              .sort()
+              .join('|');
+          }
+        }
+        return value == null ? '' : String(value).trim();
+      };
+      const edited = touched.filter((key) => normal(key, data[key]) !== normal(key, row?.[key]));
+      const writable = edited.filter((key) => key === 'title' || key === 'comments');
+      const skipped = edited.filter((key) => key !== 'title' && key !== 'comments');
+
+      for (const key of writable) {
+        const field = key === 'comments' ? 'comment' : key;
+        const result = await window.api.updateUsbTrack({
+          mount,
+          trackId,
+          field,
+          value: data[key],
+        });
         if (!result?.ok) {
           throw new Error(
             result?.reason === 'too-long'
@@ -2322,10 +2348,20 @@ function MusicLibrary({
           );
         }
       }
-      setMediumReload((n) => n + 1);
-      showToast(changed.length > 0 ? 'Saved on the medium.' : 'Nothing to save.');
+
+      if (skipped.length > 0) {
+        showToast(
+          `${writable.length > 0 ? 'Saved on the medium. ' : ''}Not written to a medium: ${skipped.join(', ')}. Import the track to edit those.`,
+          writable.length > 0
+        );
+      } else if (writable.length > 0) {
+        showToast('Saved on the medium.');
+      } else {
+        showToast('Nothing to save.');
+      }
+      if (writable.length > 0) setMediumReload((n) => n + 1);
     },
-    [detailsTrack, usbSource?.mount, showToast]
+    [tracks, detailsTrack, usbSource?.mount, showToast]
   );
 
   const handleMediumPrepare = useCallback(() => {
