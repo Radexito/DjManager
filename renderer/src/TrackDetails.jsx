@@ -236,8 +236,35 @@ export default function TrackDetails({
           comments: form.comments,
         };
         const initial = initialFormRef.current ?? {};
+        // The form and the payload do not spell every field the same way:
+        // genres arrive as JSON while the form holds a comma list, and an empty
+        // year is `null` in the payload and `''` in the form. Compare what the
+        // field means, not the characters.
+        const normalize = (key, value) => {
+          if (key === 'genres') {
+            if (Array.isArray(value)) return [...value].sort().join('|');
+            const raw = String(value ?? '').trim();
+            if (!raw) return '';
+            try {
+              const list = JSON.parse(raw);
+              return Array.isArray(list) ? [...list].sort().join('|') : raw;
+            } catch {
+              return raw
+                .split(',')
+                .map((entry) => entry.trim())
+                .filter(Boolean)
+                .sort()
+                .join('|');
+            }
+          }
+          if (key === 'year') {
+            const n = value === '' || value == null ? null : Number(value);
+            return n == null || Number.isNaN(n) ? '' : String(n);
+          }
+          return value == null ? '' : String(value).trim();
+        };
         const changed = Object.keys(data).filter(
-          (key) => String(data[key] ?? '') !== String(initial[key] ?? '')
+          (key) => normalize(key, data[key]) !== normalize(key, initial[key])
         );
         if (saveTrack) await saveTrack(track.id, data, changed);
         else await window.api.updateTrack(track.id, data);

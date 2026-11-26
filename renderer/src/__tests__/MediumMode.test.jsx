@@ -208,4 +208,32 @@ describe('MusicLibrary showing a medium', () => {
     expect(screen.getByText('📀 On this medium, applied on the next sync')).toBeInTheDocument();
     expect(screen.getByText('💾 Set')).toBeInTheDocument();
   });
+
+  it('writes a title edit to the medium and touches no library row', async () => {
+    window.api.updateUsbTrack.mockClear();
+    window.api.updateTrack.mockClear();
+    window.api.updateUsbTrack.mockResolvedValue({ ok: true, backup: 'export.pdb.bak' });
+
+    render(<Harness source={{ mount: '/media/STICK' }} />);
+    const row = (await screen.findByText('Opening')).closest('.row');
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByText(/Edit Details/));
+
+    const input = await screen.findByDisplayValue('Opening');
+    fireEvent.change(input, { target: { value: 'aaaaa' } });
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() =>
+      expect(window.api.updateUsbTrack).toHaveBeenCalledWith({
+        mount: '/media/STICK',
+        trackId: 1,
+        field: 'title',
+        value: 'aaaaa',
+      })
+    );
+    // Only the field the user touched is written; the rest of the form is not
+    // sent as an edit of fields a medium cannot hold.
+    expect(window.api.updateUsbTrack).toHaveBeenCalledTimes(1);
+    expect(window.api.updateTrack).not.toHaveBeenCalled();
+  });
 });

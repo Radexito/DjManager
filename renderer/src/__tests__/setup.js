@@ -50,6 +50,7 @@ window.api = {
   refreshUsbDevices: vi.fn().mockResolvedValue([]),
   getUsbWatchRoots: vi.fn().mockResolvedValue({ roots: [], enabled: true }),
   getUsbContents: vi.fn().mockResolvedValue(null),
+  updateUsbTrack: vi.fn().mockResolvedValue({ ok: true }),
   onUsbDevicesChanged: () => () => {},
   countTracks: vi.fn().mockResolvedValue(0),
   getTrackRank: vi.fn().mockResolvedValue(null),
