@@ -46,6 +46,11 @@ const noop = () => () => {};
 
 window.api = {
   getTracks: vi.fn().mockResolvedValue([]),
+  getUsbDevices: vi.fn().mockResolvedValue([]),
+  refreshUsbDevices: vi.fn().mockResolvedValue([]),
+  getUsbWatchRoots: vi.fn().mockResolvedValue({ roots: [], enabled: true }),
+  getUsbContents: vi.fn().mockResolvedValue(null),
+  onUsbDevicesChanged: () => () => {},
   countTracks: vi.fn().mockResolvedValue(0),
   getTrackRank: vi.fn().mockResolvedValue(null),
   getTrackIds: vi.fn().mockResolvedValue([]),

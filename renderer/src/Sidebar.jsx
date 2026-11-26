@@ -92,13 +92,17 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
   // replaced whenever a medium is plugged in or removed.
   useEffect(() => {
     let alive = true;
-    window.api
-      .getUsbDevices()
-      .then((list) => {
-        if (alive) setUsbDevices(Array.isArray(list) ? list : []);
-      })
-      .catch(() => {});
-    const unsub = window.api.onUsbDevicesChanged?.((list) =>
+    // A renderer without the channel (an older preload, or a test double) simply
+    // has no USB section; it must not take the sidebar down with it.
+    const requestDevices = window.api?.getUsbDevices;
+    if (typeof requestDevices === 'function') {
+      requestDevices()
+        .then((list) => {
+          if (alive) setUsbDevices(Array.isArray(list) ? list : []);
+        })
+        .catch(() => {});
+    }
+    const unsub = window.api?.onUsbDevicesChanged?.((list) =>
       setUsbDevices(Array.isArray(list) ? list : [])
     );
     return () => {
@@ -108,7 +112,9 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
   }, []);
 
   const loadUsbContents = useCallback(async (mount) => {
-    const contents = await window.api.getUsbContents(mount).catch(() => null);
+    const request = window.api?.getUsbContents;
+    if (typeof request !== 'function') return null;
+    const contents = await request(mount).catch(() => null);
     setUsbContents((current) => ({ ...current, [mount]: contents }));
     return contents;
   }, []);
@@ -122,7 +128,9 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
   const refreshUsbDevices = async () => {
     setUsbContents({});
     setUsbPlaylistsOpen({});
-    const list = await window.api.refreshUsbDevices().catch(() => null);
+    const refresh = window.api?.refreshUsbDevices;
+    if (typeof refresh !== 'function') return;
+    const list = await refresh().catch(() => null);
     if (Array.isArray(list)) setUsbDevices(list);
   };
 

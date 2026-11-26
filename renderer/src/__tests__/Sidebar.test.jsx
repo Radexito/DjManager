@@ -52,6 +52,47 @@ describe('Sidebar', () => {
     });
   });
 
+  it('lists a plugged-in medium and what it carries', async () => {
+    window.api.getUsbDevices.mockResolvedValueOnce([{ mount: '/media/STICK', name: 'STICK' }]);
+    window.api.getUsbContents.mockResolvedValueOnce({
+      root: '/media/STICK',
+      ours: true,
+      trackCount: 2,
+      playlistCount: 1,
+      tagCount: 1,
+      tracks: [],
+      playlists: [
+        {
+          id: 1,
+          name: 'Set',
+          trackCount: 2,
+          tracks: [
+            { id: 1, title: 'Opening', artist: 'Artist', album: 'Album' },
+            { id: 2, title: 'Closer', artist: 'Artist', album: 'Album' },
+          ],
+        },
+      ],
+      tags: [{ name: 'Genre', tags: ['Trap'] }],
+    });
+
+    renderSidebar({ ...defaultProps });
+
+    const device = await screen.findByText('STICK');
+    fireEvent.click(device);
+
+    await waitFor(() => {
+      expect(window.api.getUsbContents).toHaveBeenCalledWith('/media/STICK');
+      expect(screen.getByText('Library')).toBeInTheDocument();
+      expect(screen.getByText('Set')).toBeInTheDocument();
+      expect(screen.getByText('Genre')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('Set'));
+    await waitFor(() => {
+      expect(screen.getByText('Artist - Opening')).toBeInTheDocument();
+    });
+  });
+
   it('calls onMenuSelect when Music is clicked', () => {
     const onMenuSelect = vi.fn();
     renderSidebar({ ...defaultProps, onMenuSelect });
