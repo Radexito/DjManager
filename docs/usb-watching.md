@@ -63,3 +63,26 @@ is.
 The data comes from `PIONEER/rekordbox/export.pdb` and `exportExt.pdb` (`src/usb/pioneer/contents.js`),
 so a stick rekordbox prepared shows exactly the same way as one this application wrote. The manifest is
 only used to say whether the stick is ours. Nothing in the section writes to the medium.
+
+## Tags
+
+The tag tree comes from `exportExt.pdb`, table 3. Two things are worth knowing.
+
+Rows are keyed by id, and an export that ran more than once can leave the same row in the file several
+times: one measured medium carried 75 tag rows for 28 distinct tags and listed every category three
+times. The reader keeps the first row per id, so the tree is the size of the tag set rather than of the
+file. That is a read-side guard; the writing side still has to stop duplicating rows (see #62).
+
+Table 4 holds the "this tag belongs to this track" rows, `0, track id, tag id, 3`. They are read, but a
+row is only turned into a track when the id it names is a track of that same medium. On the measured
+stick, 18 of them named ids 10 to 16 while the medium carried ids 1 to 9, so nothing was shown: a tag
+whose assignments do not resolve is listed with its name only, and clicking it opens an empty list with
+an explanation instead of a list of the wrong tracks.
+
+## Search, play and the row menu
+
+The medium view carries the same search box as the music tab; it filters the rows already read from the
+medium, so every term has to appear in the title, the artist or the album. Double click plays a row: the
+player opens `file_path`, which for a medium is the absolute path on the mounted directory, not a library
+id. A row menu offers Play and Copy file path. The actions of the library row menu are deliberately not
+reused: they address tracks by this application's ids and would act on unrelated library rows.

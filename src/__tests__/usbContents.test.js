@@ -40,7 +40,7 @@ function track(id, title, artist) {
   };
 }
 
-function writeMedium(root, { tracks, playlists, tags = [] }) {
+function writeMedium(root, { tracks, playlists, tags = [], trackTags = [], duplicateTags = [] }) {
   writePdb(
     { usbRoot: root, tracks, playlists, artwork: [] },
     path.join(root, 'PIONEER', 'rekordbox', 'export.pdb')
@@ -48,7 +48,7 @@ function writeMedium(root, { tracks, playlists, tags = [] }) {
   if (tags.length > 0) {
     fs.writeFileSync(
       path.join(root, 'PIONEER', 'rekordbox', 'exportExt.pdb'),
-      buildExtPdbBuffer({ tags, masterTagId: 4242 })
+      buildExtPdbBuffer({ tags: [...tags, ...duplicateTags], trackTags, masterTagId: 4242 })
     );
   }
   const trackMap = new Map(tracks.map((row) => [row.id, row]));
@@ -114,10 +114,11 @@ describe('reading a medium', () => {
     const contents = readMedium(root);
 
     expect(contents.tagCount).toBe(3);
-    expect(contents.tags).toEqual([
-      { name: 'Genre', tags: ['Trap'] },
-      { name: 'Components', tags: ['Beat', 'Vocal'] },
-    ]);
+    expect(contents.tags.map((category) => [category.name, category.tags.map((tag) => tag.name)]))
+      .toEqual([
+        ['Genre', ['Trap']],
+        ['Components', ['Beat', 'Vocal']],
+      ]);
   });
 
   it('keeps a tag whose category is missing instead of dropping it', () => {
@@ -131,10 +132,63 @@ describe('reading a medium', () => {
       ],
     });
 
-    expect(readMedium(root).tags).toEqual([
-      { name: 'Genre', tags: [] },
-      { name: 'Uncategorised', tags: ['Loose'] },
+    expect(
+      readMedium(root).tags.map((category) => [
+        category.name,
+        category.tags.map((tag) => tag.name),
+      ])
+    ).toEqual([
+      ['Genre', []],
+      ['Uncategorised', ['Loose']],
     ]);
+  });
+
+
+  it('collapses a tag row that the export wrote more than once', () => {
+    const root = medium();
+    const genre = { id: 1, name: 'Genre', position: 0, isCategory: true };
+    const trap = { id: 3, name: 'Trap', categoryId: 1, position: 0 };
+    writeMedium(root, {
+      tracks: [track(1, 'Opening', 'Artist')],
+      playlists: [],
+      tags: [genre, trap],
+      // What a medium written by a second export pass looks like: the same rows
+      // again, same ids. The tree is the set of tags, not the file's row count.
+      duplicateTags: [genre, trap, genre, trap],
+    });
+
+    const contents = readMedium(root);
+
+    expect(contents.tags).toHaveLength(1);
+    expect(contents.tags[0].tags).toHaveLength(1);
+    expect(contents.tagCount).toBe(1);
+  });
+
+  it('names the tracks carrying a tag, and where their files are', () => {
+    const root = medium();
+    writeMedium(root, {
+      tracks: [track(1, 'Opening', 'Artist'), track(2, 'Closer', 'Artist')],
+      playlists: [],
+      tags: [
+        { id: 1, name: 'Genre', position: 0, isCategory: true },
+        { id: 3, name: 'Trap', categoryId: 1, position: 0 },
+      ],
+      trackTags: [
+        { trackId: 1, tagId: 3 },
+        { trackId: 2, tagId: 3 },
+      ],
+    });
+
+    const contents = readMedium(root);
+    const tag = contents.tags[0].tags[0];
+
+    expect(tag.name).toBe('Trap');
+    expect(tag.trackCount).toBe(2);
+    expect(tag.tracks.map((row) => row.title)).toEqual(['Opening', 'Closer']);
+    // The player opens a path, not an id, and a medium is a mounted directory.
+    expect(tag.tracks[0].file_path).toBe(
+      path.join(root, 'Contents', '1 - Opening.mp3')
+    );
   });
 
   it('answers null for a folder that carries no playlist database', () => {

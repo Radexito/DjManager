@@ -624,14 +624,56 @@ function Sidebar({
                             </div>
                           ))}
                           {contents.tags.map((category) => (
-                            <div
-                              className="menu-item"
-                              key={`${device.mount}:tag:${category.name}`}
-                              style={{ cursor: 'default' }}
-                              title={category.tags.join(', ') || 'No tags'}
-                            >
-                              <span className="menu-text">{category.name}</span>
-                              <span className="playlist-count">{category.tags.length}</span>
+                            <div key={`${device.mount}:tagcat:${category.name}`}>
+                              <div
+                                className="menu-item"
+                                style={{ cursor: 'default', opacity: 0.65 }}
+                                title={`${category.tags.length} tag(s)`}
+                              >
+                                <span className="menu-text">{category.name}</span>
+                                <span className="playlist-count">{category.tags.length}</span>
+                              </div>
+                              {category.tags.map((tag) => {
+                                const usable = tag.trackCount > 0;
+                                const unknown = (tag.unknownTrackCount ?? 0) > 0;
+                                const active =
+                                  usbSelection?.mount === device.mount &&
+                                  usbSelection?.tagId === tag.id;
+                                return (
+                                  <div
+                                    key={`${device.mount}:tag:${tag.id}`}
+                                    className={`menu-item ${active ? 'active' : ''}`}
+                                    style={{
+                                      cursor: usable ? 'pointer' : 'default',
+                                      paddingLeft: '1.6rem',
+                                      opacity: usable ? 1 : 0.55,
+                                    }}
+                                    title={
+                                      usable
+                                        ? `${tag.trackCount} track(s) on the medium carry this tag`
+                                        : unknown
+                                          ? `${tag.unknownTrackCount} assignment(s) name tracks that are not on this medium`
+                                          : 'No track on this medium carries this tag'
+                                    }
+                                    onClick={
+                                      usable
+                                        ? () =>
+                                            onUsbSelect({
+                                              mount: device.mount,
+                                              playlistId: null,
+                                              tagId: tag.id,
+                                              name: tag.name,
+                                            })
+                                        : undefined
+                                    }
+                                  >
+                                    <span className="menu-text">{tag.name}</span>
+                                    {usable && (
+                                      <span className="playlist-count">{tag.trackCount}</span>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           ))}
                         </>

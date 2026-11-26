@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { readTagTree } from './formats/extRead.js';
+import { readTagAssignments, readTagTree } from './formats/extRead.js';
 import { readLibrary } from './formats/pdbRead.js';
 import { loadManifest } from './manifest.js';
 
@@ -64,6 +64,9 @@ export function readMedium(
     duration: track.duration,
     rating: track.rating,
     year: track.year,
+    // The player opens what the row points at, and a medium is just files on a
+    // mounted directory, so the path has to be the absolute one on this machine.
+    file_path: toAbsolute(root, track.filePath),
   });
 
   const tracksById = new Map(library.tracks.map((track) => [track.id, track]));
@@ -84,7 +87,35 @@ export function readMedium(
   let tags = [];
   const extPath = toAbsolute(root, EXT_PDB_REL);
   try {
-    if (exists(extPath)) tags = readTagTree(readFile(extPath));
+    if (exists(extPath)) {
+      const extBuffer = readFile(extPath);
+      const tree = readTagTree(extBuffer);
+      const assignments = readTagAssignments(extBuffer);
+      // A tag is only useful in the view if it can name the tracks carrying it,
+      // so the assignment rows are folded in here rather than looked up later.
+      tags = tree.map((category) => ({
+        name: category.name,
+        tags: category.tags.map((tag) => {
+          // An assignment can name a track that is not in this medium's own
+          // library: the two numbering schemes are not the same, and an export
+          // can write ids from the machine that made it. Those assignments are
+          // counted, never shown as tracks, because naming the wrong track would
+          // be worse than naming none.
+          const referenced = assignments.get(tag.id) ?? [];
+          const tracks = referenced
+            .map((id) => tracksById.get(id))
+            .filter(Boolean)
+            .map(nameOf);
+          return {
+            id: tag.id,
+            name: tag.name,
+            trackCount: tracks.length,
+            tracks,
+            unknownTrackCount: referenced.length - tracks.length,
+          };
+        }),
+      }));
+    }
   } catch {
     tags = [];
   }

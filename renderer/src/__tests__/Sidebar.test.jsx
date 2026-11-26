@@ -72,7 +72,15 @@ describe('Sidebar', () => {
           ],
         },
       ],
-      tags: [{ name: 'Genre', tags: ['Trap'] }],
+      tags: [
+        {
+          name: 'Genre',
+          tags: [
+            { id: 3, name: 'Trap', trackCount: 2, tracks: [], unknownTrackCount: 0 },
+            { id: 4, name: 'Boom bap', trackCount: 0, tracks: [], unknownTrackCount: 1 },
+          ],
+        },
+      ],
     });
     const onUsbSelect = vi.fn();
 
@@ -96,6 +104,20 @@ describe('Sidebar', () => {
       playlistId: null,
       name: 'Library',
     });
+
+    // A tag opens the tracks carrying it, but only when the medium can name them.
+    fireEvent.click(screen.getByText('Trap'));
+    expect(onUsbSelect).toHaveBeenCalledWith({
+      mount: '/media/STICK',
+      playlistId: null,
+      tagId: 3,
+      name: 'Trap',
+    });
+
+    // An assignment pointing at a track this medium does not carry stays a
+    // label: clicking it would open a list of the wrong tracks.
+    fireEvent.click(screen.getByText('Boom bap'));
+    expect(onUsbSelect).toHaveBeenCalledTimes(3);
 
     // The tree is structure only: track names belong to the main view.
     expect(screen.queryByText('Artist - Opening')).not.toBeInTheDocument();
