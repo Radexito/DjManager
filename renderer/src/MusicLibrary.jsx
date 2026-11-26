@@ -2298,28 +2298,20 @@ function MusicLibrary({
    * the file under a key the deck does not read.
    */
   const handleMediumSaveTrack = useCallback(
-    async (trackId, data) => {
-      const row = tracks.find((entry) => entry.id === trackId) ?? detailsTrack;
+    async (trackId, data, touched = Object.keys(data ?? {})) => {
       const mount = detailsTrack?.__medium?.mount ?? usbSource?.mount;
-      const changed = [];
-      if ((data.title ?? '') !== (row?.title ?? '')) changed.push(['title', data.title]);
-      if ((data.comments ?? '') !== (row?.comment ?? row?.comments ?? '')) {
-        changed.push(['comment', data.comments]);
-      }
-      const unsupported = [
-        'artist',
-        'album',
-        'year',
-        'genres',
-        'label',
-        'rating',
-        'user_tags',
-      ].filter((key) => String(data[key] ?? '') !== String(row?.[key] ?? ''));
+      // Only what the user actually edited matters: the panel always sends the
+      // whole form, and a medium row does not carry every one of those fields.
+      const writable = new Set(['title', 'comments']);
+      const unsupported = touched.filter((key) => !writable.has(key));
       if (unsupported.length > 0) {
         throw new Error(
           `On a medium only title and comment are written in place. ${unsupported.join(', ')}: import the track first.`
         );
       }
+      const changed = [];
+      if (touched.includes('title')) changed.push(['title', data.title]);
+      if (touched.includes('comments')) changed.push(['comment', data.comments]);
       for (const [field, value] of changed) {
         const result = await window.api.updateUsbTrack({ mount, trackId, field, value });
         if (!result?.ok) {
@@ -2333,7 +2325,7 @@ function MusicLibrary({
       setMediumReload((n) => n + 1);
       showToast(changed.length > 0 ? 'Saved on the medium.' : 'Nothing to save.');
     },
-    [tracks, detailsTrack, usbSource?.mount, showToast]
+    [detailsTrack, usbSource?.mount, showToast]
   );
 
   const handleMediumPrepare = useCallback(() => {

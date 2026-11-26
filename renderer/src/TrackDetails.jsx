@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import './TrackDetails.css';
 import AutoTaggerModal from './AutoTaggerModal.jsx';
 import { usePlayer } from './PlayerContext.jsx';
@@ -118,9 +118,14 @@ export default function TrackDetails({
   const [moveTargetId, setMoveTargetId] = useState('');
   const [locationBusy, setLocationBusy] = useState(false);
   const [locationError, setLocationError] = useState(null);
+  // What the panel was opened with, so a save can say which fields the user
+  // actually touched instead of sending every field every time.
+  const initialFormRef = useRef(null);
 
   useEffect(() => {
-    setForm(isBulk ? EMPTY_BULK_FORM : trackToForm(track));
+    const next = isBulk ? EMPTY_BULK_FORM : trackToForm(track);
+    initialFormRef.current = next;
+    setForm(next);
     setArtworkPath(track?.artwork_path ?? null);
     setDirty(false);
     setError(null);
@@ -230,7 +235,11 @@ export default function TrackDetails({
           user_tags: form.user_tags,
           comments: form.comments,
         };
-        if (saveTrack) await saveTrack(track.id, data);
+        const initial = initialFormRef.current ?? {};
+        const changed = Object.keys(data).filter(
+          (key) => String(data[key] ?? '') !== String(initial[key] ?? '')
+        );
+        if (saveTrack) await saveTrack(track.id, data, changed);
         else await window.api.updateTrack(track.id, data);
         onSave({ ...track, ...data });
         setDirty(false);
