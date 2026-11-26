@@ -159,6 +159,26 @@ export function createPioneerExportRunner(deps) {
   } = deps;
 
   /**
+   * The tag assignments of these tracks, addressed the way the medium addresses
+   * its own tracks: by the number the PDB writer gave each of them, not by the
+   * id it has in this application's library. Getting this wrong is silent: the
+   * file still parses, it just names tracks that are not on the medium.
+   * @param {Array<object>} exportTracks tracks in the order they are written
+   * @returns {Array<{trackId: number, tagId: number}>} rows for exportExt.pdb
+   */
+  function tagAssignmentRows(exportTracks) {
+    if (exportTracks.length === 0) return [];
+    const positionOf = new Map(exportTracks.map((track, index) => [track.id, index + 1]));
+    const assignments = getTagAssignmentsForTracks(exportTracks.map((track) => track.id)) ?? [];
+    return assignments
+      .map((row) => ({
+        trackId: positionOf.get(row.track_id ?? row.trackId),
+        tagId: Number(row.tag_id ?? row.tagId),
+      }))
+      .filter((row) => row.trackId != null && Number.isFinite(row.tagId) && row.tagId > 0);
+  }
+
+  /**
    * Snapshot the work an export of these playlists represents.
    * @param {object} [options]
    * @returns {{options: object, playlists: object[], tracks: object[], cues: Map<number, object[]>}}
@@ -555,10 +575,14 @@ export function createPioneerExportRunner(deps) {
       (cover) => writtenCovers.has(cover.relPath) || unchangedCovers.has(cover.sourcePath)
     );
 
+    // The PDB writer numbers tracks by their position in this array, from 1. Any
+    // row that points at a track has to point with that number, not with the
+    // library id, or the medium describes tracks it does not have.
+    const exportTracks = [...mergedTracks.values()];
     runPdbExporter(
       {
         usbRoot,
-        tracks: [...mergedTracks.values()],
+        tracks: exportTracks,
         playlists: [...mergedPlaylists.values()],
         artwork: publishableCovers,
       },
@@ -586,6 +610,7 @@ export function createPioneerExportRunner(deps) {
             position: Number(tag.sequenceNo ?? 0),
             isCategory: Number(tag.attribute) === 1,
           })),
+          trackTags: tagAssignmentRows(exportTracks),
           masterTagId: getMyTagMasterId() ?? 0,
         })
       );

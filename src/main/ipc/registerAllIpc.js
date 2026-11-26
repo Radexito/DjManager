@@ -399,6 +399,7 @@ export function registerAllIpc({
   registerUsbWatchIpc({
     ipcMain,
     usbWatch: services.usbWatchService,
+    allowBase: (dir) => allowExplorerBase(runtime, dir),
   });
 
   registerFolderPlaylistIpc({

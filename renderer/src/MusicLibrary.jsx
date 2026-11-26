@@ -43,6 +43,66 @@ import {
   renderCell,
 } from './trackTable.jsx';
 
+/**
+ * The rows a medium answers with, for whatever part of it the sidebar opened.
+ * @param {object|null} contents what readMedium returned
+ * @param {object|null} source `{ mount, playlistId, tagId }` from the sidebar
+ * @returns {Array<object>} rows in the shape the table draws
+ */
+function mediumRowsOf(contents, source) {
+  if (!contents) return [];
+  if (source?.playlistId != null) {
+    return contents.playlists.find((entry) => entry.id === source.playlistId)?.tracks ?? [];
+  }
+  if (source?.tagId != null) {
+    const tag = contents.tags
+      .flatMap((category) => category.tags)
+      .find((e) => e.id === source.tagId);
+    return tag?.tracks ?? [];
+  }
+  return contents.tracks ?? [];
+}
+
+/**
+ * Apply the query the user typed, and the sort they asked for, to rows that are
+ * already in memory. The library asks the database for both; a medium has no
+ * database, but it does have the same box and the same sortable header, so the
+ * two behaviours have to match rather than merely resemble each other.
+ * @param {Array<object>} rows rows from the medium
+ * @param {string} query the same query string the music tab takes
+ * @param {{key: string, asc: boolean}} sortBy sort state of the header
+ * @returns {Array<object>} filtered and sorted rows
+ */
+function mediumVisible(rows, query, sortBy) {
+  const { filters, remaining } = parseQuery(query ?? '');
+  const words = [remaining, ...filters.filter((f) => f.field === '_text').map((f) => f.value)]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  const filtered =
+    words.length === 0
+      ? rows
+      : rows.filter((row) => {
+          const haystack =
+            `${row.title ?? ''} ${row.artist ?? ''} ${row.album ?? ''} ${row.genres ?? ''}`.toLowerCase();
+          return words.every((word) => haystack.includes(word));
+        });
+  if (!sortBy || sortBy.key === 'index') return filtered;
+  const key = sortBy.key === 'key_camelot' ? 'key' : sortBy.key;
+  const direction = sortBy.asc ? 1 : -1;
+  return [...filtered].sort((a, b) => {
+    const left = a[key];
+    const right = b[key];
+    if (left == null && right == null) return 0;
+    if (left == null) return 1;
+    if (right == null) return -1;
+    if (typeof left === 'number' && typeof right === 'number') return (left - right) * direction;
+    return String(left).localeCompare(String(right), undefined, { numeric: true }) * direction;
+  });
+}
+
 /** Tracks requested per page, both for the initial load and for lazy appends. */
 const PAGE_SIZE = 50;
 
@@ -908,6 +968,10 @@ function TrackTableBody({
  * @param {() => void} onImportUsbCues Opens the USB cue import dialog.
  * @param {(artist: string, fromCredit?: boolean) => void} onArtistSearch Runs an
  *   artist search from a click on a track credit.
+ * @param {object|null} usbSource When set, the table shows a medium instead of the
+ *   library: `{ mount, playlistId, tagId }`. Everything else stays the same, which
+ *   is the point: the search box, the sortable header, the rows and the player are
+ *   the ones the other tabs use.
  */
 function MusicLibrary({
   selectedPlaylist,
@@ -917,8 +981,12 @@ function MusicLibrary({
   locateTrack,
   onImportUsbCues,
   onArtistSearch,
+  usbSource = null,
 }) {
   const isPlaylistView = selectedPlaylist !== 'music';
+  const isMediumView = Boolean(usbSource);
+  const isMediumViewRef = useRef(isMediumView);
+  isMediumViewRef.current = isMediumView;
   const {
     play,
     stop,
@@ -1110,6 +1178,8 @@ function MusicLibrary({
 
   const loadPage = useCallback(
     async ({ at, mode, limit = PAGE_SIZE }) => {
+      // A medium has no database to page through: its rows are already here.
+      if (isMediumViewRef.current) return;
       if (mode === 'append' && !hasMoreRef.current) return;
       const lazy = mode === 'append' || mode === 'prepend';
       const req = lazy ? ++lazyReqRef.current[mode] : null;
@@ -1185,9 +1255,10 @@ function MusicLibrary({
     const base = hideUnavailable
       ? tracks.filter((t) => !(t.is_linked && unavailableLinkedIds.has(t.id)))
       : tracks;
-    sortedTracksRef.current = base;
-    return base;
-  }, [tracks, hideUnavailable, unavailableLinkedIds]);
+    const rows = isMediumView ? mediumVisible(base, search, sortBy) : base;
+    sortedTracksRef.current = rows;
+    return rows;
+  }, [tracks, hideUnavailable, unavailableLinkedIds, isMediumView, search, sortBy]);
 
   const suppressSortReloadRef = useRef(false);
   const prevSortRef = useRef(sortBy);
@@ -1196,7 +1267,40 @@ function MusicLibrary({
   const sortFollowHandledRef = useRef(null);
   const sortFollowCommittedRef = useRef(null);
 
+  // The medium is read once per selection and handed to the same table the
+  // library uses. Nothing pages, because everything is already here.
   useEffect(() => {
+    if (!isMediumView) return undefined;
+    let alive = true;
+    const request = window.api?.getUsbContents;
+    if (typeof request !== 'function') {
+      setTracks([]);
+      setTotalRows(0);
+      setHasMore(false);
+      return undefined;
+    }
+    request(usbSource.mount)
+      .then((contents) => {
+        if (!alive) return;
+        const rows = mediumRowsOf(contents, usbSource);
+        setTracks(rows);
+        setTotalRows(rows.length);
+        setHasMore(false);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setTracks([]);
+        setTotalRows(0);
+        setHasMore(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [isMediumView, usbSource?.mount, usbSource?.playlistId, usbSource?.tagId]);
+
+  useEffect(() => {
+    // A medium sorts in memory, so this effect has nothing to reload.
+    if (isMediumView) return undefined;
     if (suppressSortReloadRef.current) {
       suppressSortReloadRef.current = false;
       prevSortRef.current = sortBy;
@@ -1332,6 +1436,10 @@ function MusicLibrary({
   }, [sortFollow, tracks, isPlaylistView]);
 
   useEffect(() => {
+    // The medium filters in memory (see sortedTracks), so the library query and
+    // its count must not run over rows that are not in the library.
+    if (isMediumView) return undefined;
+
     preReloadIdsRef.current = new Set(sortedTracksRef.current.map((t) => t.id));
 
     const viewChanged =
@@ -1602,6 +1710,13 @@ function MusicLibrary({
       setQueuePreparing(true);
       const token = resetTokenRef.current;
       try {
+        // A medium is its own queue: the rows on screen are everything it has,
+        // and asking the library database for "the full view" would answer with
+        // tracks that are not there.
+        if (isMediumViewRef.current) {
+          play(track, sortedTracksRef.current, visibleIndex, null, null);
+          return;
+        }
         const full = await fetchFullViewTracks();
         if (token !== resetTokenRef.current) return;
         const playlistId =
@@ -1882,6 +1997,10 @@ function MusicLibrary({
   const handleContextMenu = useCallback(
     async (e, track, index) => {
       e.preventDefault();
+      if (isMediumViewRef.current) {
+        setContextMenu({ x: e.clientX, y: e.clientY, track, targetIds: [track.id] });
+        return;
+      }
       if (!selectedIds.has(track.id)) {
         setSelectedIds(new Set([track.id]));
         lastSelectedIndexRef.current = index;
@@ -2384,8 +2503,8 @@ function MusicLibrary({
             tracks={tracks}
             sortedTracks={sortedTracks}
             windowStart={windowStartRef.current}
-            totalRows={totalRows}
-            hasMore={hasMore}
+            totalRows={isMediumView ? sortedTracks.length : totalRows}
+            hasMore={isMediumView ? false : hasMore}
             gridTemplate={gridTemplate}
             minScrollWidth={minScrollWidth}
             dndScrollRef={dndScrollRef}
@@ -2414,7 +2533,33 @@ function MusicLibrary({
         </div>
         {}
 
-        {contextMenu && (
+        {contextMenu && isMediumView && (
+          <div
+            className="context-menu"
+            style={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y, zIndex: 1000 }}
+            ref={menuRef}
+          >
+            <div
+              className="context-menu-item"
+              onClick={() => handleDoubleClick(contextMenu.track, 0)}
+            >
+              Play
+            </div>
+            <div
+              className="context-menu-item"
+              onClick={() => {
+                navigator.clipboard?.writeText(contextMenu.track.file_path ?? '');
+                setContextMenu(null);
+              }}
+            >
+              Copy file path
+            </div>
+            <div className="context-menu-item context-menu-item--disabled">
+              Library actions stay off a medium
+            </div>
+          </div>
+        )}
+        {contextMenu && !isMediumView && (
           <SubItemCtx.Provider value={subItemCtxValue}>
             <>
               {contextMenu.overlayMode && (

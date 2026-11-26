@@ -79,10 +79,21 @@ stick, 18 of them named ids 10 to 16 while the medium carried ids 1 to 9, so not
 whose assignments do not resolve is listed with its name only, and clicking it opens an empty list with
 an explanation instead of a list of the wrong tracks.
 
-## Search, play and the row menu
+## The medium is a source of the library view
 
-The medium view carries the same search box as the music tab; it filters the rows already read from the
-medium, so every term has to appear in the title, the artist or the album. Double click plays a row: the
-player opens `file_path`, which for a medium is the absolute path on the mounted directory, not a library
-id. A row menu offers Play and Copy file path. The actions of the library row menu are deliberately not
-reused: they address tracks by this application's ids and would act on unrelated library rows.
+There is no separate view. `MusicLibrary.jsx` takes a `usbSource` (`{ mount, playlistId, tagId }`) and,
+when it is set, reads the medium instead of the library database: the search box, the sortable header,
+the rows, the row heights, the selection and the player are the ones the music and playlist tabs use,
+because it is the same component. Rows come from `readMedium`, the query is applied in memory by
+`mediumVisible` with the same parser the table uses for the database, and sorting happens on the same
+sort state the header writes, so a click on a column header sorts a medium the way it sorts the library.
+
+Playing needs one thing outside the renderer: the media server only serves files under a base it knows.
+Opening a medium puts its mount point on that list (`allowExplorerBase`), which is what turns
+`http://127.0.0.1:<port>/D%3A/Contents/<file>` from a 404 the audio element reports as
+"no supported source" into the file itself.
+
+The row menu for a medium offers Play and Copy file path and says so, because the library actions address
+tracks by this application's ids: re-analysing or adding to a playlist from a medium's row would act on an
+unrelated library track.
+

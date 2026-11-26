@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { readLibrary } from '../usb/pioneer/formats/pdbRead.js';
+import { readLibrary, readPdb } from '../usb/pioneer/formats/pdbRead.js';
 import { getAnlzFolder } from '../usb/pioneer/formats/anlz.js';
 import { writePdb } from '../usb/pioneer/formats/pdb.js';
 import { writeSettingFiles } from '../usb/pioneer/formats/settings.js';
@@ -498,6 +498,36 @@ describe('export runner', () => {
     const third = await runAgain();
     expect(calls()).toBe(4);
     expect(third.summary).toMatchObject({ coverCount: 1, coverWrittenCount: 1 });
+  });
+
+  it('points tag assignments at the numbers the medium uses, not the library ids', async () => {
+    const root = stick();
+    const libraryTracks = [
+      { ...tracks[0], id: 10 },
+      { ...tracks[1], id: 16 },
+    ];
+    const { runner } = buildRunner({
+      getPlaylistTracks: () => libraryTracks,
+      getMyTags: () => [{ id: 5, name: 'Peak Time', parentId: 0, sequenceNo: 0, attribute: 0 }],
+      getTagAssignmentsForTracks: () => [
+        { track_id: 10, tag_id: 5 },
+        { track_id: 16, tag_id: 5 },
+      ],
+    });
+
+    await runOn(root, runner, runner.plan({ playlistIds: [7] }));
+
+    const ext = readPdb(fs.readFileSync(path.join(root, 'PIONEER', 'rekordbox', 'exportExt.pdb')));
+    const rows = (ext.tables.get(4) ?? []).map((row) => [
+      row.readUInt32LE(4),
+      row.readUInt32LE(8),
+    ]);
+    // The PDB writer numbered the tracks 1 and 2; the library called them 10 and
+    // 16. A row naming 10 or 16 would describe tracks that are not on the medium.
+    expect(rows).toEqual([
+      [1, 5],
+      [2, 5],
+    ]);
   });
 
   it('writes no device library unless it is turned on and has a key', async () => {

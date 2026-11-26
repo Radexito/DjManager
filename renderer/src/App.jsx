@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
 import Sidebar from './Sidebar.jsx';
 import MusicLibrary from './MusicLibrary.jsx';
-import UsbMediumView from './UsbMediumView.jsx';
 import { buildArtistQuery } from './searchParser.js';
 import DownloadView from './DownloadView.jsx';
 import TidalDownloadView from './TidalDownloadView.jsx';
@@ -229,17 +228,14 @@ function App() {
                 active={selectedPlaylistId === 'help'}
                 onClose={() => setSelectedPlaylistId('music')}
               />
-              {usbSelection && (
-                <UsbMediumView selection={usbSelection} onClose={() => setUsbSelection(null)} />
-              )}
-              {!usbSelection &&
-                selectedPlaylistId !== 'download' &&
+              {selectedPlaylistId !== 'download' &&
                 selectedPlaylistId !== 'tidal' &&
                 selectedPlaylistId !== 'cloud-search' &&
                 selectedPlaylistId !== 'explorer' &&
                 selectedPlaylistId !== 'help' && (
                   <MusicLibrary
-                    selectedPlaylist={selectedPlaylistId}
+                    selectedPlaylist={usbSelection ? 'music' : selectedPlaylistId}
+                    usbSource={usbSelection}
                     search={search}
                     onSearchChange={setSearch}
                     openDetailsRequest={openDetailsRequest}
