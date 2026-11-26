@@ -195,6 +195,7 @@ contextBridge.exposeInMainWorld('api', {
   refreshUsbDevices: () => ipcRenderer.invoke('refresh-usb-devices'),
   getUsbWatchRoots: () => ipcRenderer.invoke('get-usb-watch-roots'),
   getUsbContents: (root) => ipcRenderer.invoke('get-usb-contents', root),
+  updateUsbTrack: (params) => ipcRenderer.invoke('update-usb-track', params),
   onUsbDevicesChanged: (cb) => {
     const handler = (_, devices) => cb(devices);
     ipcRenderer.on('usb-devices-changed', handler);

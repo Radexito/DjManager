@@ -96,6 +96,7 @@ export default function TrackDetails({
   track,
   tracks,
   onSave,
+  saveTrack,
   onCancel,
   onPrev,
   onNext,
@@ -229,7 +230,8 @@ export default function TrackDetails({
           user_tags: form.user_tags,
           comments: form.comments,
         };
-        await window.api.updateTrack(track.id, data);
+        if (saveTrack) await saveTrack(track.id, data);
+        else await window.api.updateTrack(track.id, data);
         onSave({ ...track, ...data });
         setDirty(false);
       }
@@ -238,7 +240,7 @@ export default function TrackDetails({
     } finally {
       setSaving(false);
     }
-  }, [form, track, tracks, isBulk, onSave]);
+  }, [form, track, tracks, isBulk, onSave, saveTrack]);
 
   const handleKeyDown = useCallback(
     (e) => {

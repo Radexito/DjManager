@@ -140,6 +140,7 @@ export default defineConfig({
             'src/__tests__/syncPreview.test.js',
             'src/__tests__/syncTrash.test.js',
             'src/__tests__/selectiveSyncService.test.js',
+            'src/__tests__/mediumEdit.test.js',
           ],
           setupFiles: ['./src/__tests__/phraseSetup.js'],
         },

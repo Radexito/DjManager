@@ -1046,6 +1046,8 @@ function MusicLibrary({
 
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [contextMenu, setContextMenu] = useState(null);
+  // Bumped when something writes to the medium, so the table reads it again.
+  const [mediumReload, setMediumReload] = useState(0);
   const menuRef = useRef(null);
   const [menuShift, setMenuShift] = useState({ x: 0, y: 0 });
   const [toast, setToast] = useState(null);
@@ -1321,6 +1323,7 @@ function MusicLibrary({
     usbSource?.playlistId,
     usbSource?.tagId,
     usbSource?.categoryName,
+    mediumReload,
   ]);
 
   useEffect(() => {
@@ -2277,24 +2280,74 @@ function MusicLibrary({
     }
   }, [contextMenu, showToast]);
 
-  const handleMediumEditDetails = useCallback(async () => {
+  const handleMediumEditDetails = useCallback(() => {
     const row = contextMenu?.track;
     if (!row) return;
-    const track = await libraryTrackForMediumRow(row);
     setContextMenu(null);
-    if (!track) return;
     setDetailsBulkTracks(null);
-    setDetailsTrack(track);
+    setDetailsTrack({ ...row, __medium: { mount: usbSource?.mount, trackId: row.id } });
     setDetailsPinned(false);
-  }, [contextMenu, libraryTrackForMediumRow]);
+  }, [contextMenu, usbSource?.mount]);
 
-  const handleMediumPrepare = useCallback(async () => {
+  /**
+   * Saving from the details panel on a medium row.
+   *
+   * The medium is written in place for the fields a row owns (title, comment).
+   * Artist, album and the rest live in shared tables or in this application's
+   * database, so they are refused here and named, instead of being written into
+   * the file under a key the deck does not read.
+   */
+  const handleMediumSaveTrack = useCallback(
+    async (trackId, data) => {
+      const row = tracks.find((entry) => entry.id === trackId) ?? detailsTrack;
+      const mount = detailsTrack?.__medium?.mount ?? usbSource?.mount;
+      const changed = [];
+      if ((data.title ?? '') !== (row?.title ?? '')) changed.push(['title', data.title]);
+      if ((data.comments ?? '') !== (row?.comment ?? row?.comments ?? '')) {
+        changed.push(['comment', data.comments]);
+      }
+      const unsupported = [
+        'artist',
+        'album',
+        'year',
+        'genres',
+        'label',
+        'rating',
+        'user_tags',
+      ].filter((key) => String(data[key] ?? '') !== String(row?.[key] ?? ''));
+      if (unsupported.length > 0) {
+        throw new Error(
+          `On a medium only title and comment are written in place. ${unsupported.join(', ')}: import the track first.`
+        );
+      }
+      for (const [field, value] of changed) {
+        const result = await window.api.updateUsbTrack({ mount, trackId, field, value });
+        if (!result?.ok) {
+          throw new Error(
+            result?.reason === 'too-long'
+              ? 'That text is longer than the space the medium has for it.'
+              : result?.reason || 'The medium refused the write.'
+          );
+        }
+      }
+      setMediumReload((n) => n + 1);
+      showToast(changed.length > 0 ? 'Saved on the medium.' : 'Nothing to save.');
+    },
+    [tracks, detailsTrack, usbSource?.mount, showToast]
+  );
+
+  const handleMediumPrepare = useCallback(() => {
     const row = contextMenu?.track;
-    if (!row) return;
-    const track = await libraryTrackForMediumRow(row);
     setContextMenu(null);
-    if (track) setBeatGridEditorTrack(track);
-  }, [contextMenu, libraryTrackForMediumRow]);
+    if (!row) return;
+    // The beat grid lives in the medium's own ANLZ file, and writing that back
+    // is a separate job from editing a text field. Say so instead of importing
+    // the track behind the user's back.
+    showToast(
+      'Beat grid editing on a medium is not wired yet: import the track to prepare it here.',
+      false
+    );
+  }, [contextMenu, showToast]);
 
   const handleMediumReanalyze = useCallback(async () => {
     const row = contextMenu?.track;
@@ -3454,6 +3507,7 @@ function MusicLibrary({
             <TrackDetails
               track={detailsTrack}
               onSave={handleDetailsSave}
+              saveTrack={detailsTrack?.__medium ? handleMediumSaveTrack : undefined}
               onCancel={handleDetailsClose}
               onPrev={handleDetailsPrev}
               onNext={handleDetailsNext}
