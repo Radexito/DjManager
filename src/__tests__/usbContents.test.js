@@ -114,11 +114,12 @@ describe('reading a medium', () => {
     const contents = readMedium(root);
 
     expect(contents.tagCount).toBe(3);
-    expect(contents.tags.map((category) => [category.name, category.tags.map((tag) => tag.name)]))
-      .toEqual([
-        ['Genre', ['Trap']],
-        ['Components', ['Beat', 'Vocal']],
-      ]);
+    expect(
+      contents.tags.map((category) => [category.name, category.tags.map((tag) => tag.name)])
+    ).toEqual([
+      ['Genre', ['Trap']],
+      ['Components', ['Beat', 'Vocal']],
+    ]);
   });
 
   it('keeps a tag whose category is missing instead of dropping it', () => {
@@ -133,16 +134,12 @@ describe('reading a medium', () => {
     });
 
     expect(
-      readMedium(root).tags.map((category) => [
-        category.name,
-        category.tags.map((tag) => tag.name),
-      ])
+      readMedium(root).tags.map((category) => [category.name, category.tags.map((tag) => tag.name)])
     ).toEqual([
       ['Genre', []],
       ['Uncategorised', ['Loose']],
     ]);
   });
-
 
   it('collapses a tag row that the export wrote more than once', () => {
     const root = medium();
@@ -186,9 +183,7 @@ describe('reading a medium', () => {
     expect(tag.trackCount).toBe(2);
     expect(tag.tracks.map((row) => row.title)).toEqual(['Opening', 'Closer']);
     // The player opens a path, not an id, and a medium is a mounted directory.
-    expect(tag.tracks[0].file_path).toBe(
-      path.join(root, 'Contents', '1 - Opening.mp3')
-    );
+    expect(tag.tracks[0].file_path).toBe(path.join(root, 'Contents', '1 - Opening.mp3'));
   });
 
   it('answers null for a folder that carries no playlist database', () => {
