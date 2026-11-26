@@ -56,6 +56,9 @@ function SettingsModal({ onClose }) {
   const [folderPlaylists, setFolderPlaylists] = useState([]);
   const [folderRefresh, setFolderRefresh] = useState(null);
   const [autoWriteLibrary, setAutoWriteLibrary] = useState(false);
+  const [usbWatchEnabled, setUsbWatchEnabled] = useState(true);
+  const [usbWatchRoots, setUsbWatchRoots] = useState('');
+  const [usbWatchDefaultRoots, setUsbWatchDefaultRoots] = useState('');
   const [autoWriteLinked, setAutoWriteLinked] = useState(false);
   const [overwriteTags, setOverwriteTags] = useState(false);
   const [autoCueOnImport, setAutoCueOnImport] = useState(false);
@@ -138,6 +141,14 @@ function SettingsModal({ onClose }) {
       .getSetting('cloud_preview_playback_mode', 'overlay')
       .then((v) => setCloudPreviewPlaybackMode(v || 'overlay'));
     window.api.getSetting('waveform_color_mode', 'rgb').then((v) => setWaveformColorMode(v));
+    window.api
+      .getSetting('usb_watch_enabled', '1')
+      .then((v) => setUsbWatchEnabled(String(v) !== '0'));
+    window.api.getSetting('usb_watch_roots', '').then((v) => setUsbWatchRoots(v ?? ''));
+    window.api
+      .getUsbWatchRoots()
+      .then((state) => setUsbWatchDefaultRoots((state?.roots ?? []).join(', ')))
+      .catch(() => setUsbWatchDefaultRoots(''));
     window.api
       .getSetting('metadata_autowrite_library', 'false')
       .then((v) => setAutoWriteLibrary(v === 'true'));
@@ -304,6 +315,16 @@ function SettingsModal({ onClose }) {
   const handleAutoWriteLibraryToggle = (checked) => {
     setAutoWriteLibrary(checked);
     window.api.setSetting('metadata_autowrite_library', String(checked));
+  };
+
+  const handleUsbWatchEnabledToggle = (checked) => {
+    setUsbWatchEnabled(checked);
+    window.api.setSetting('usb_watch_enabled', checked ? '1' : '0');
+  };
+
+  /** Saved on blur: a partial path typed into the field is not a setting yet. */
+  const handleUsbWatchRootsCommit = () => {
+    window.api.setSetting('usb_watch_roots', usbWatchRoots.trim());
   };
 
   const handleAutoWriteLinkedToggle = (checked) => {
@@ -846,6 +867,48 @@ function SettingsModal({ onClose }) {
                 )}
 
                 {}
+                <div className="settings-group-title" style={{ marginTop: '1rem' }}>
+                  USB devices
+                </div>
+                <p className="settings-group-desc">
+                  A stick that is plugged in shows up in the sidebar as its own entry, with the
+                  library and the playlists it carries. DjManager notices a medium while it runs by
+                  looking at the folders removable media mount under; a stick that mounts somewhere
+                  else can be added below.
+                </p>
+
+                <div className="settings-row">
+                  <label htmlFor="usb-watch-enabled">Watch for USB media</label>
+                  <div className="settings-toggle-row">
+                    <input
+                      id="usb-watch-enabled"
+                      type="checkbox"
+                      checked={usbWatchEnabled}
+                      onChange={(e) => handleUsbWatchEnabledToggle(e.target.checked)}
+                    />
+                    <span className="settings-toggle-desc">
+                      Checks the mount points below and reports a medium when it appears or is
+                      removed. On by default.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="settings-row">
+                  <label htmlFor="usb-watch-roots">Folders to watch</label>
+                  <input
+                    id="usb-watch-roots"
+                    type="text"
+                    value={usbWatchRoots}
+                    placeholder={usbWatchDefaultRoots || '/run/media, /media, /mnt'}
+                    onChange={(e) => setUsbWatchRoots(e.target.value)}
+                    onBlur={handleUsbWatchRootsCommit}
+                  />
+                  <div className="settings-action-desc">
+                    Comma separated. Empty means the platform defaults
+                    {usbWatchDefaultRoots ? `: ${usbWatchDefaultRoots}` : '.'}
+                  </div>
+                </div>
+
                 <div className="settings-group-title" style={{ marginTop: '1rem' }}>
                   Folder-tracked playlists
                 </div>

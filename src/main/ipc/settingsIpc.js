@@ -28,6 +28,7 @@ export function registerSettingsIpc({
   getSetting,
   setSetting,
   restartLibraryWatcher,
+  restartUsbWatch = () => {},
   scanWatchFolders,
   getWatchFolders,
   watchFoldersEnabled,
@@ -47,6 +48,7 @@ export function registerSettingsIpc({
   register('set-setting', (_, key, value) => {
     setSetting(key, value);
     if (key === 'watch_folders' || key === 'watch_enabled') restartLibraryWatcher();
+    if (key === 'usb_watch_enabled' || key === 'usb_watch_roots') restartUsbWatch();
     send('settings-updated', { key, value });
   });
 

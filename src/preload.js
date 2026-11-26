@@ -191,6 +191,14 @@ contextBridge.exposeInMainWorld('api', {
   removeFolderPlaylistTracks: (opts) => ipcRenderer.invoke('remove-folder-playlist-tracks', opts),
   stopFolderPlaylist: (playlistId) => ipcRenderer.invoke('stop-folder-playlist', playlistId),
   setFolderPlaylistRecursive: (opts) => ipcRenderer.invoke('set-folder-playlist-recursive', opts),
+  getUsbDevices: () => ipcRenderer.invoke('get-usb-devices'),
+  refreshUsbDevices: () => ipcRenderer.invoke('refresh-usb-devices'),
+  getUsbWatchRoots: () => ipcRenderer.invoke('get-usb-watch-roots'),
+  onUsbDevicesChanged: (cb) => {
+    const handler = (_, devices) => cb(devices);
+    ipcRenderer.on('usb-devices-changed', handler);
+    return () => ipcRenderer.removeListener('usb-devices-changed', handler);
+  },
   onFolderPlaylistUpdated: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('folder-playlist-updated', handler);
