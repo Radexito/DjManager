@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import './TrackDetails.css';
 import AutoTaggerModal from './AutoTaggerModal.jsx';
 import { usePlayer } from './PlayerContext.jsx';
@@ -96,6 +96,7 @@ export default function TrackDetails({
   track,
   tracks,
   onSave,
+  saveTrack,
   onCancel,
   onPrev,
   onNext,
@@ -117,9 +118,14 @@ export default function TrackDetails({
   const [moveTargetId, setMoveTargetId] = useState('');
   const [locationBusy, setLocationBusy] = useState(false);
   const [locationError, setLocationError] = useState(null);
+  // What the panel was opened with, so a save can say which fields the user
+  // actually touched instead of sending every field every time.
+  const initialFormRef = useRef(null);
 
   useEffect(() => {
-    setForm(isBulk ? EMPTY_BULK_FORM : trackToForm(track));
+    const next = isBulk ? EMPTY_BULK_FORM : trackToForm(track);
+    initialFormRef.current = next;
+    setForm(next);
     setArtworkPath(track?.artwork_path ?? null);
     setDirty(false);
     setError(null);
@@ -229,7 +235,39 @@ export default function TrackDetails({
           user_tags: form.user_tags,
           comments: form.comments,
         };
-        await window.api.updateTrack(track.id, data);
+        const initial = initialFormRef.current ?? {};
+        // The form and the payload do not spell every field the same way:
+        // genres arrive as JSON while the form holds a comma list, and an empty
+        // year is `null` in the payload and `''` in the form. Compare what the
+        // field means, not the characters.
+        const normalize = (key, value) => {
+          if (key === 'genres') {
+            if (Array.isArray(value)) return [...value].sort().join('|');
+            const raw = String(value ?? '').trim();
+            if (!raw) return '';
+            try {
+              const list = JSON.parse(raw);
+              return Array.isArray(list) ? [...list].sort().join('|') : raw;
+            } catch {
+              return raw
+                .split(',')
+                .map((entry) => entry.trim())
+                .filter(Boolean)
+                .sort()
+                .join('|');
+            }
+          }
+          if (key === 'year') {
+            const n = value === '' || value == null ? null : Number(value);
+            return n == null || Number.isNaN(n) ? '' : String(n);
+          }
+          return value == null ? '' : String(value).trim();
+        };
+        const changed = Object.keys(data).filter(
+          (key) => normalize(key, data[key]) !== normalize(key, initial[key])
+        );
+        if (saveTrack) await saveTrack(track.id, data, changed);
+        else await window.api.updateTrack(track.id, data);
         onSave({ ...track, ...data });
         setDirty(false);
       }
@@ -238,7 +276,7 @@ export default function TrackDetails({
     } finally {
       setSaving(false);
     }
-  }, [form, track, tracks, isBulk, onSave]);
+  }, [form, track, tracks, isBulk, onSave, saveTrack]);
 
   const handleKeyDown = useCallback(
     (e) => {

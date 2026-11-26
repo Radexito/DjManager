@@ -27,6 +27,7 @@ import {
 } from '../../audio/importManager.js';
 import { createLibraryWatcher, listAudioFiles } from '../../library/libraryWatcher.js';
 import { createLibraryWatcherService } from '../libraryWatcherService.js';
+import { createUsbWatchService } from '../usbWatchService.js';
 import { isInsideFolder, planFolderSync } from '../../library/folderPlaylistSync.js';
 import { getDefaultLibraryId, listLibraries } from '../../db/libraryRepository.js';
 import { generateEditorWaveform, generateWaveformOverview } from '../../audio/waveformGenerator.js';
@@ -92,6 +93,12 @@ export function createAppServices({ app, runtime, send, relaunchApp }) {
     error: (...args) => console.error(...args),
   });
 
+  // Notices a medium being mounted or removed, so the sidebar can follow it.
+  const usbWatchService = createUsbWatchService({
+    getSetting,
+    send: (channel, data) => send(channel, data),
+  });
+
   const ytPreview = createYtPreviewRegistry({
     createStream: createPreviewAudioStream,
     previewDir: path.join(app.getPath('temp'), 'djman-preview'),
@@ -149,6 +156,7 @@ export function createAppServices({ app, runtime, send, relaunchApp }) {
   return {
     pioneerExport,
     watcherService,
+    usbWatchService,
     ytPreview,
     mediaServerService,
     graphicsCrashService,

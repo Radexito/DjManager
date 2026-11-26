@@ -28,12 +28,97 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { usePlayer } from './PlayerContext.jsx';
 import { artworkUrl } from './artworkUrl.js';
-import { parseQuery, buildArtistQuery, splitArtists } from './searchParser.js';
+import { parseQuery, buildArtistQuery } from './searchParser.js';
 import TrackDetails from './TrackDetails.jsx';
 import RatingStars from './RatingStars.jsx';
 import BeatGridEditor from './BeatGridEditor.jsx';
 import SearchBar from './SearchBar.jsx';
 import './MusicLibrary.css';
+import {
+  ALL_COLUMNS,
+  ALL_COLUMN_KEYS,
+  COL_BY_KEY,
+  RIGHT_ALIGNED_COLUMNS,
+  cellClass,
+  renderCell,
+} from './trackTable.jsx';
+
+/**
+ * The rows a medium answers with, for whatever part of it the sidebar opened.
+ * @param {object|null} contents what readMedium returned
+ * @param {object|null} source `{ mount, playlistId, tagId }` from the sidebar
+ * @returns {Array<object>} rows in the shape the table draws
+ */
+function mediumRowsOf(contents, source) {
+  if (!contents) return [];
+  if (source?.playlistId != null) {
+    return contents.playlists.find((entry) => entry.id === source.playlistId)?.tracks ?? [];
+  }
+  if (source?.tagId != null) {
+    const tag = contents.tags
+      .flatMap((category) => category.tags)
+      .find((e) => e.id === source.tagId);
+    return tag?.tracks ?? [];
+  }
+  // A category is the union of its tags, so opening "Genre" lands on every
+  // tagged track instead of being a dead header. A track carrying two tags of
+  // the same category appears once.
+  if (source?.categoryName) {
+    const category = contents.tags.find((entry) => entry.name === source.categoryName);
+    if (!category) return [];
+    const seen = new Set();
+    const rows = [];
+    for (const tag of category.tags) {
+      for (const row of tag.tracks ?? []) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        rows.push(row);
+      }
+    }
+    return rows;
+  }
+  return contents.tracks ?? [];
+}
+
+/**
+ * Apply the query the user typed, and the sort they asked for, to rows that are
+ * already in memory. The library asks the database for both; a medium has no
+ * database, but it does have the same box and the same sortable header, so the
+ * two behaviours have to match rather than merely resemble each other.
+ * @param {Array<object>} rows rows from the medium
+ * @param {string} query the same query string the music tab takes
+ * @param {{key: string, asc: boolean}} sortBy sort state of the header
+ * @returns {Array<object>} filtered and sorted rows
+ */
+function mediumVisible(rows, query, sortBy) {
+  const { filters, remaining } = parseQuery(query ?? '');
+  const words = [remaining, ...filters.filter((f) => f.field === '_text').map((f) => f.value)]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  const filtered =
+    words.length === 0
+      ? rows
+      : rows.filter((row) => {
+          const haystack =
+            `${row.title ?? ''} ${row.artist ?? ''} ${row.album ?? ''} ${row.genres ?? ''}`.toLowerCase();
+          return words.every((word) => haystack.includes(word));
+        });
+  if (!sortBy || sortBy.key === 'index') return filtered;
+  const key = sortBy.key === 'key_camelot' ? 'key' : sortBy.key;
+  const direction = sortBy.asc ? 1 : -1;
+  return [...filtered].sort((a, b) => {
+    const left = a[key];
+    const right = b[key];
+    if (left == null && right == null) return 0;
+    if (left == null) return 1;
+    if (right == null) return -1;
+    if (typeof left === 'number' && typeof right === 'number') return (left - right) * direction;
+    return String(left).localeCompare(String(right), undefined, { numeric: true }) * direction;
+  });
+}
 
 /** Tracks requested per page, both for the initial load and for lazy appends. */
 const PAGE_SIZE = 50;
@@ -57,14 +142,6 @@ const ROW_STYLE = { height: ROW_HEIGHT };
  * prefetched, so scrolling rarely waits for the database.
  */
 const PRELOAD_TRIGGER = 3;
-const RIGHT_ALIGNED_COLUMNS = new Set([
-  'bpm',
-  'key_camelot',
-  'loudness',
-  'year',
-  'duration',
-  'bitrate',
-]);
 const EMPTY_SET = new Set();
 
 const SIZE_UNITS = ['MB', 'GB', 'TB'];
@@ -84,27 +161,6 @@ function formatBytes(bytes) {
 const LS_COL_KEY = 'djman_column_visibility';
 /** localStorage key for the user's column order. */
 const LS_ORDER_KEY = 'djman_column_order';
-
-const ALL_COLUMNS = [
-  { key: 'index', label: '#', width: '40px' },
-  { key: 'title', label: 'Title', width: 'minmax(120px, 2fr)' },
-  { key: 'artist', label: 'Artist', width: 'minmax(90px, 1.5fr)' },
-  { key: 'rating', label: 'Rating', width: '88px' },
-  { key: 'bpm', label: 'BPM', width: '62px' },
-  { key: 'key_camelot', label: 'Key', width: '52px' },
-  { key: 'loudness', label: 'Loudness (LUFS)', width: '115px' },
-  { key: 'cue', label: '◆', width: '28px' },
-  { key: 'album', label: 'Album', width: 'minmax(80px, 1fr)' },
-  { key: 'year', label: 'Year', width: '50px' },
-  { key: 'label', label: 'Label', width: '100px' },
-  { key: 'genres', label: 'Genres', width: '120px' },
-  { key: 'user_tags', label: 'Tags', width: '120px' },
-  { key: 'bitrate', label: 'Bitrate', width: '92px' },
-  { key: 'duration', label: 'Duration', width: '65px' },
-];
-
-const ALL_COLUMN_KEYS = ALL_COLUMNS.map((c) => c.key);
-const COL_BY_KEY = Object.fromEntries(ALL_COLUMNS.map((c) => [c.key, c]));
 
 const DEFAULT_COL_VIS = {
   index: true,
@@ -156,124 +212,6 @@ function loadColOrder() {
   } catch {
     return ALL_COLUMN_KEYS;
   }
-}
-
-/** Format a duration in seconds as m:ss, or an em dash when unknown. */
-function fmtDuration(secs) {
-  if (secs == null) return '—';
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
-
-/**
- * Render the contents of one track table cell.
- *
- * Artist cells become clickable (or split into several links) for multi-artist
- * tracks, the rating and cue cells render widgets, everything else is plain text.
- *
- * @param {object} t Track row from the database.
- * @param {string} colKey Column to render.
- * @param {(artist: string) => void} [onArtistClick] Enables the artist links.
- * @returns {React.ReactNode} Cell content.
- */
-function renderCell(t, colKey, onArtistClick) {
-  const bpmValue = t.bpm_override ?? t.bpm;
-  switch (colKey) {
-    case 'title':
-      return t.title;
-    case 'artist': {
-      const name = t.artist || 'Unknown';
-      if (!t.artist || !onArtistClick) return name;
-      const names = splitArtists(t.artist);
-      if (names.length < 2) {
-        return (
-          <span
-            className="cell-artist--clickable"
-            title={`Search: ARTIST is ${name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onArtistClick(name);
-            }}
-          >
-            {name}
-          </span>
-        );
-      }
-      return names.map((one, i) => (
-        <Fragment key={one}>
-          {i > 0 ? ', ' : null}
-          <span
-            className="cell-artist--clickable"
-            title={`Search: ARTIST contains ${one}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onArtistClick(one, true);
-            }}
-          >
-            {one}
-          </span>
-        </Fragment>
-      ));
-    }
-    case 'bpm': {
-      const display = bpmValue ?? '...';
-      const hasGridShift = (t.beatgrid_offset ?? 0) !== 0;
-      if (!hasGridShift) return display;
-      return (
-        <span title={`Grid shifted ${t.beatgrid_offset > 0 ? '+' : ''}${t.beatgrid_offset} ms`}>
-          {display}
-          <span className="bpm-grid-shift-dot" />
-        </span>
-      );
-    }
-    case 'key_camelot':
-      return t.key_camelot ?? '...';
-    case 'loudness':
-      return t.loudness != null ? t.loudness : '...';
-    case 'album':
-      return t.album || '—';
-    case 'year':
-      return t.year ?? '—';
-    case 'label':
-      return t.label || '—';
-    case 'genres': {
-      try {
-        return JSON.parse(t.genres ?? '[]').join(', ') || '—';
-      } catch {
-        return '—';
-      }
-    }
-    case 'cue':
-      return null;
-    case 'rating':
-      return null;
-    case 'user_tags':
-      return t.user_tags || '—';
-    case 'duration':
-      return fmtDuration(t.duration);
-    case 'bitrate':
-      return t.bitrate != null ? `${Math.round(t.bitrate / 1000)} kbps` : '—';
-    default:
-      return t[colKey] ?? '—';
-  }
-}
-
-/**
- * CSS classes for a cell: numeric alignment, plus markers for a BPM override and
- * for a non-zero beat grid offset.
- *
- * @param {string} colKey Column key.
- * @param {object} t Track row.
- * @returns {string} Space separated class list.
- */
-function cellClass(colKey, t) {
-  const numeric = ['bpm', 'key_camelot', 'loudness', 'year', 'duration', 'bitrate'].includes(
-    colKey
-  );
-  const over = colKey === 'bpm' && t.bpm_override != null;
-  const gridShifted = colKey === 'bpm' && (t.beatgrid_offset ?? 0) !== 0;
-  return `cell ${colKey}${numeric ? ' numeric' : ''}${over ? ' bpm--overridden' : ''}${gridShifted ? ' bpm--grid-shifted' : ''}`;
 }
 
 const SubItemCtx = createContext(null);
@@ -1047,6 +985,12 @@ function TrackTableBody({
  * @param {() => void} onImportUsbCues Opens the USB cue import dialog.
  * @param {(artist: string, fromCredit?: boolean) => void} onArtistSearch Runs an
  *   artist search from a click on a track credit.
+ * @param {object|null} usbSource When set, the table shows a medium instead of the
+ *   library: `{ mount, playlistId, tagId, categoryName, mediumPlaylists }`.
+ *   Everything else stays the same, which is the point: the search box, the
+ *   sortable header, the rows and the player are the ones the other tabs use.
+ *   `mediumPlaylists` travels with the selection so the row menu can offer the
+ *   medium's own playlists as destinations next to the library's.
  */
 function MusicLibrary({
   selectedPlaylist,
@@ -1056,8 +1000,12 @@ function MusicLibrary({
   locateTrack,
   onImportUsbCues,
   onArtistSearch,
+  usbSource = null,
 }) {
   const isPlaylistView = selectedPlaylist !== 'music';
+  const isMediumView = Boolean(usbSource);
+  const isMediumViewRef = useRef(isMediumView);
+  isMediumViewRef.current = isMediumView;
   const {
     play,
     stop,
@@ -1098,6 +1046,8 @@ function MusicLibrary({
 
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [contextMenu, setContextMenu] = useState(null);
+  // Bumped when something writes to the medium, so the table reads it again.
+  const [mediumReload, setMediumReload] = useState(0);
   const menuRef = useRef(null);
   const [menuShift, setMenuShift] = useState({ x: 0, y: 0 });
   const [toast, setToast] = useState(null);
@@ -1249,6 +1199,8 @@ function MusicLibrary({
 
   const loadPage = useCallback(
     async ({ at, mode, limit = PAGE_SIZE }) => {
+      // A medium has no database to page through: its rows are already here.
+      if (isMediumViewRef.current) return;
       if (mode === 'append' && !hasMoreRef.current) return;
       const lazy = mode === 'append' || mode === 'prepend';
       const req = lazy ? ++lazyReqRef.current[mode] : null;
@@ -1324,9 +1276,10 @@ function MusicLibrary({
     const base = hideUnavailable
       ? tracks.filter((t) => !(t.is_linked && unavailableLinkedIds.has(t.id)))
       : tracks;
-    sortedTracksRef.current = base;
-    return base;
-  }, [tracks, hideUnavailable, unavailableLinkedIds]);
+    const rows = isMediumView ? mediumVisible(base, search, sortBy) : base;
+    sortedTracksRef.current = rows;
+    return rows;
+  }, [tracks, hideUnavailable, unavailableLinkedIds, isMediumView, search, sortBy]);
 
   const suppressSortReloadRef = useRef(false);
   const prevSortRef = useRef(sortBy);
@@ -1335,7 +1288,47 @@ function MusicLibrary({
   const sortFollowHandledRef = useRef(null);
   const sortFollowCommittedRef = useRef(null);
 
+  // The medium is read once per selection and handed to the same table the
+  // library uses. Nothing pages, because everything is already here.
   useEffect(() => {
+    if (!isMediumView) return undefined;
+    let alive = true;
+    const request = window.api?.getUsbContents;
+    if (typeof request !== 'function') {
+      setTracks([]);
+      setTotalRows(0);
+      setHasMore(false);
+      return undefined;
+    }
+    request(usbSource.mount)
+      .then((contents) => {
+        if (!alive) return;
+        const rows = mediumRowsOf(contents, usbSource);
+        setTracks(rows);
+        setTotalRows(rows.length);
+        setHasMore(false);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setTracks([]);
+        setTotalRows(0);
+        setHasMore(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [
+    isMediumView,
+    usbSource?.mount,
+    usbSource?.playlistId,
+    usbSource?.tagId,
+    usbSource?.categoryName,
+    mediumReload,
+  ]);
+
+  useEffect(() => {
+    // A medium sorts in memory, so this effect has nothing to reload.
+    if (isMediumView) return undefined;
     if (suppressSortReloadRef.current) {
       suppressSortReloadRef.current = false;
       prevSortRef.current = sortBy;
@@ -1471,6 +1464,10 @@ function MusicLibrary({
   }, [sortFollow, tracks, isPlaylistView]);
 
   useEffect(() => {
+    // The medium filters in memory (see sortedTracks), so the library query and
+    // its count must not run over rows that are not in the library.
+    if (isMediumView) return undefined;
+
     preReloadIdsRef.current = new Set(sortedTracksRef.current.map((t) => t.id));
 
     const viewChanged =
@@ -1741,6 +1738,13 @@ function MusicLibrary({
       setQueuePreparing(true);
       const token = resetTokenRef.current;
       try {
+        // A medium is its own queue: the rows on screen are everything it has,
+        // and asking the library database for "the full view" would answer with
+        // tracks that are not there.
+        if (isMediumViewRef.current) {
+          play(track, sortedTracksRef.current, visibleIndex, null, null);
+          return;
+        }
         const full = await fetchFullViewTracks();
         if (token !== resetTokenRef.current) return;
         const playlistId =
@@ -2021,6 +2025,51 @@ function MusicLibrary({
   const handleContextMenu = useCallback(
     async (e, track, index) => {
       e.preventDefault();
+      if (isMediumViewRef.current) {
+        // A medium row is shown by the same table and answered by the same menu
+        // as the music tab, so the menu is built exactly as the library one is.
+        // The one difference: the row addresses a file on the stick, so the
+        // library counterpart is resolved here. When the file was never
+        // imported the id-based actions import it on first use.
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const MENU_W = 240;
+        const overlayMode = vw < 500 || vh < 420;
+        const x = Math.min(e.clientX, vw - MENU_W - 8);
+        const y = Math.min(e.clientY, vh - 16);
+        const flipLeft = x > vw / 2;
+        const flipUp = e.clientY > vh * 0.5;
+        const submenuMaxH = Math.max(120, vh - y - 8);
+
+        const libraryTrack = await window.api
+          .getTracksByPaths([track.file_path])
+          .then((found) => found?.[0] ?? null)
+          .catch(() => null);
+        try {
+          setPlaylistSubmenu((await window.api.getPlaylists()) ?? []);
+        } catch {
+          setPlaylistSubmenu([]);
+        }
+        try {
+          setLibrarySubmenu(await window.api.listLibrariesWithFreeSpace());
+        } catch {
+          setLibrarySubmenu([]);
+        }
+
+        setContextMenu({
+          x,
+          y,
+          track,
+          medium: true,
+          targetIds: libraryTrack ? [libraryTrack.id] : [],
+          targetTracks: libraryTrack ? [libraryTrack] : [],
+          overlayMode,
+          flipLeft,
+          flipUp,
+          submenuMaxH,
+        });
+        return;
+      }
       if (!selectedIds.has(track.id)) {
         setSelectedIds(new Set([track.id]));
         lastSelectedIndexRef.current = index;
@@ -2161,15 +2210,259 @@ function MusicLibrary({
     offsetRef.current = Math.max(0, offsetRef.current - targetIds.length);
   }, [contextMenu, selectedPlaylist, currentTrack, stop]);
 
-  const handleAddToPlaylist = useCallback(async (playlistId, targetIds) => {
+  const libraryTrackForMediumRow = useCallback(
+    async (row, { importMissing = true } = {}) => {
+      if (!row?.file_path) return null;
+      try {
+        const found = (await window.api.getTracksByPaths([row.file_path])) ?? [];
+        if (found[0]) return found[0];
+        if (!importMissing) return null;
+        await window.api.importAudioFiles([row.file_path], null, null);
+        const after = (await window.api.getTracksByPaths([row.file_path])) ?? [];
+        return after[0] ?? null;
+      } catch (err) {
+        showToast(`Import failed: ${err.message}`, false);
+        return null;
+      }
+    },
+    [showToast]
+  );
+
+  const handleAddToPlaylist = useCallback(
+    async (playlistId, targetIds, { name, medium = false } = {}) => {
+      const row = contextMenu?.medium ? contextMenu.track : null;
+      setContextMenu(null);
+      let ids = targetIds ?? [];
+      // A medium row carries no library id until its file is imported, and a
+      // playlist lives in the library, so the link is made on first use.
+      if (ids.length === 0 && row) {
+        const track = await libraryTrackForMediumRow(row);
+        if (!track) return;
+        ids = [track.id];
+      }
+      if (ids.length === 0) return;
+      try {
+        await window.api.addTracksToPlaylist(playlistId, ids);
+        if (name) {
+          showToast(
+            medium
+              ? `Added to "${name}". The medium gets it on the next sync.`
+              : `Added to "${name}".`
+          );
+        }
+      } catch (err) {
+        console.error('addTracksToPlaylist failed:', err);
+        if (name) showToast(`Could not add to "${name}": ${err.message}`, false);
+      }
+    },
+    [contextMenu, libraryTrackForMediumRow, showToast]
+  );
+
+  // A medium row points at a file on the stick, and every library action needs
+  // the row this application keeps for that file. Resolve it once and import on
+  // demand, so the menu offers the same actions as the music tab instead of a
+  // second, smaller set that stops at "play".
+
+  const handleMediumImport = useCallback(async () => {
+    const row = contextMenu?.track;
     setContextMenu(null);
-    if (!targetIds?.length) return;
+    if (!row) return;
     try {
-      await window.api.addTracksToPlaylist(playlistId, targetIds);
+      const existing = (await window.api.getTracksByPaths([row.file_path])) ?? [];
+      if (existing[0]) {
+        showToast('That file is already in the library.');
+        return;
+      }
+      await window.api.importAudioFiles([row.file_path], null, null);
+      showToast('Imported to the library.');
     } catch (err) {
-      console.error('addTracksToPlaylist failed:', err);
+      showToast(`Import failed: ${err.message}`, false);
     }
-  }, []);
+  }, [contextMenu, showToast]);
+
+  const handleMediumEditDetails = useCallback(() => {
+    const row = contextMenu?.track;
+    if (!row) return;
+    setContextMenu(null);
+    setDetailsBulkTracks(null);
+    setDetailsTrack({ ...row, __medium: { mount: usbSource?.mount, trackId: row.id } });
+    setDetailsPinned(false);
+  }, [contextMenu, usbSource?.mount]);
+
+  /**
+   * Saving from the details panel on a medium row.
+   *
+   * The medium is written in place for the fields a row owns (title, comment).
+   * Artist, album and the rest live in shared tables or in this application's
+   * database, so they are refused here and named, instead of being written into
+   * the file under a key the deck does not read.
+   */
+  const handleMediumSaveTrack = useCallback(
+    async (trackId, data, touched = Object.keys(data ?? {})) => {
+      const mount = detailsTrack?.__medium?.mount ?? usbSource?.mount;
+      const row = tracks.find((entry) => entry.id === trackId) ?? detailsTrack;
+      // A medium row spells some fields differently than the form: an unknown
+      // year is 0 there and empty here, and genres are absent until the row has
+      // them. Compare what the field means, then write only what the medium can
+      // actually hold; the rest is reported instead of blocking the edit.
+      const normal = (key, value) => {
+        if (key === 'year') {
+          const n = Number(value);
+          return Number.isFinite(n) && n > 0 ? String(n) : '';
+        }
+        if (key === 'genres') {
+          if (Array.isArray(value)) return [...value].sort().join('|');
+          const raw = String(value ?? '').trim();
+          if (!raw) return '';
+          try {
+            const list = JSON.parse(raw);
+            return Array.isArray(list) ? [...list].sort().join('|') : raw;
+          } catch {
+            return raw
+              .split(',')
+              .map((entry) => entry.trim())
+              .filter(Boolean)
+              .sort()
+              .join('|');
+          }
+        }
+        return value == null ? '' : String(value).trim();
+      };
+      const edited = touched.filter((key) => normal(key, data[key]) !== normal(key, row?.[key]));
+      const writable = edited.filter((key) => key === 'title' || key === 'comments');
+      const skipped = edited.filter((key) => key !== 'title' && key !== 'comments');
+
+      for (const key of writable) {
+        const field = key === 'comments' ? 'comment' : key;
+        const result = await window.api.updateUsbTrack({
+          mount,
+          trackId,
+          field,
+          value: data[key],
+        });
+        if (!result?.ok) {
+          throw new Error(
+            result?.reason === 'too-long'
+              ? 'That text is longer than the space the medium has for it.'
+              : result?.reason || 'The medium refused the write.'
+          );
+        }
+      }
+
+      if (skipped.length > 0) {
+        showToast(
+          `${writable.length > 0 ? 'Saved on the medium. ' : ''}Not written to a medium: ${skipped.join(', ')}. Import the track to edit those.`,
+          writable.length > 0
+        );
+      } else if (writable.length > 0) {
+        showToast('Saved on the medium.');
+      } else {
+        showToast('Nothing to save.');
+      }
+      if (writable.length > 0) setMediumReload((n) => n + 1);
+    },
+    [tracks, detailsTrack, usbSource?.mount, showToast]
+  );
+
+  const handleMediumPrepare = useCallback(() => {
+    const row = contextMenu?.track;
+    setContextMenu(null);
+    if (!row) return;
+    // The beat grid lives in the medium's own ANLZ file, and writing that back
+    // is a separate job from editing a text field. Say so instead of importing
+    // the track behind the user's back.
+    showToast(
+      'Beat grid editing on a medium is not wired yet: import the track to prepare it here.',
+      false
+    );
+  }, [contextMenu, showToast]);
+
+  const handleMediumReanalyze = useCallback(async () => {
+    const row = contextMenu?.track;
+    if (!row) return;
+    const track = await libraryTrackForMediumRow(row);
+    setContextMenu(null);
+    if (!track) return;
+    await window.api.reanalyzeTrack(track.id);
+    showToast('Analysis restarted on the imported copy.');
+  }, [contextMenu, libraryTrackForMediumRow, showToast]);
+
+  const handleMediumNormalize = useCallback(async () => {
+    const row = contextMenu?.track;
+    if (!row) return;
+    const track = await libraryTrackForMediumRow(row);
+    setContextMenu(null);
+    if (!track) return;
+    const { normalized, skipped } = await window.api.normalizeTracksAudio({
+      trackIds: [track.id],
+    });
+    if (normalized === 0) {
+      showToast(
+        skipped > 0
+          ? 'No analyzed track — analyze it first to get loudness data.'
+          : 'Nothing to normalize.',
+        false
+      );
+    } else {
+      showToast('Gain applied to the imported copy.');
+    }
+  }, [contextMenu, libraryTrackForMediumRow, showToast]);
+
+  const handleMediumResetNormalization = useCallback(async () => {
+    const row = contextMenu?.track;
+    if (!row) return;
+    const track = await libraryTrackForMediumRow(row);
+    setContextMenu(null);
+    if (!track) return;
+    await window.api.resetNormalization({ trackIds: [track.id] });
+    showToast('Gain reset on the imported copy.');
+  }, [contextMenu, libraryTrackForMediumRow, showToast]);
+
+  const handleMediumBpmAdjust = useCallback(
+    async (factor) => {
+      const row = contextMenu?.track;
+      if (!row) return;
+      const track = await libraryTrackForMediumRow(row);
+      setContextMenu(null);
+      if (!track) return;
+      const updated = await window.api.adjustBpm({ trackIds: [track.id], factor });
+      if (!Array.isArray(updated)) {
+        showToast('BPM change failed.', false);
+        return;
+      }
+      showToast(factor === 2 ? 'BPM doubled.' : 'BPM halved.');
+    },
+    [contextMenu, libraryTrackForMediumRow, showToast]
+  );
+
+  const handleMediumWriteTags = useCallback(async () => {
+    const row = contextMenu?.track;
+    if (!row) return;
+    const track = await libraryTrackForMediumRow(row);
+    setContextMenu(null);
+    if (!track) return;
+    const result = await window.api.writeBpmKeyTags({ trackIds: [track.id] });
+    showToast(
+      `BPM & Key tags — written: ${result.written}, skipped: ${result.skipped}`,
+      result.written > 0
+    );
+  }, [contextMenu, libraryTrackForMediumRow, showToast]);
+
+  const handleMediumRemove = useCallback(async () => {
+    const row = contextMenu?.track;
+    if (!row) return;
+    const track = await libraryTrackForMediumRow(row, { importMissing: false });
+    setContextMenu(null);
+    if (!track) {
+      showToast('That file is not in the library.', false);
+      return;
+    }
+    const confirmed = window.confirm(
+      'Remove this track from your library? Imported tracks also have their audio file deleted from disk. This cannot be undone.'
+    );
+    if (!confirmed) return;
+    await window.api.removeTracks([track.id]);
+  }, [contextMenu, libraryTrackForMediumRow, showToast]);
 
   const handleMoveToLibrary = useCallback(
     async (targetLibraryId, targetIds) => {
@@ -2518,13 +2811,29 @@ function MusicLibrary({
             </div>
           )}
 
+          {isMediumView && sortedTracks.length === 0 && (
+            <div className="playlist-empty-state">
+              {usbSource?.tagId != null || usbSource?.categoryName ? (
+                <>
+                  No track on this medium carries this tag.
+                  <br />
+                  The tags come from the medium&apos;s own tag tree; the rows that attach them to
+                  tracks are missing or name tracks that are not on the stick. Re-exporting this
+                  medium from the library writes them.
+                </>
+              ) : (
+                <>This medium carries no tracks to show.</>
+              )}
+            </div>
+          )}
+
           <TrackTableBody
             isPlaylistView={isPlaylistView}
             tracks={tracks}
             sortedTracks={sortedTracks}
             windowStart={windowStartRef.current}
-            totalRows={totalRows}
-            hasMore={hasMore}
+            totalRows={isMediumView ? sortedTracks.length : totalRows}
+            hasMore={isMediumView ? false : hasMore}
             gridTemplate={gridTemplate}
             minScrollWidth={minScrollWidth}
             dndScrollRef={dndScrollRef}
@@ -2605,7 +2914,29 @@ function MusicLibrary({
                   </>
                 ) : (
                   <>
-                    {}
+                    {contextMenu.medium && (
+                      <div
+                        className="context-menu-item"
+                        onClick={() => {
+                          const row = contextMenu.track;
+                          setContextMenu(null);
+                          handleDoubleClick(row, 0);
+                        }}
+                      >
+                        ▶ Play
+                      </div>
+                    )}
+                    {contextMenu.medium &&
+                      (contextMenu.targetTracks?.length ? (
+                        <div className="context-menu-item context-menu-item--disabled">
+                          ✓ In the library
+                        </div>
+                      ) : (
+                        <div className="context-menu-item" onClick={handleMediumImport}>
+                          ⬇ Import to library
+                        </div>
+                      ))}
+                    {contextMenu.medium && <div className="context-menu-separator" />}
                     {playlistSubmenu !== null &&
                       (playlistSubmenu.length === 0 ? (
                         <>
@@ -2699,7 +3030,9 @@ function MusicLibrary({
                               className={`context-menu-item${pl.is_member ? ' context-menu-item--checked' : ''}`}
                               onClick={() =>
                                 !pl.is_member &&
-                                handleAddToPlaylist(pl.id, contextMenu?.targetIds ?? [])
+                                handleAddToPlaylist(pl.id, contextMenu?.targetIds ?? [], {
+                                  name: pl.name,
+                                })
                               }
                             >
                               {pl.color && (
@@ -2709,6 +3042,28 @@ function MusicLibrary({
                               {pl.name}
                             </div>
                           ))}
+                          {contextMenu.medium && (usbSource?.mediumPlaylists ?? []).length > 0 && (
+                            <>
+                              <div className="context-menu-separator" />
+                              <div className="context-menu-item context-menu-item--header">
+                                📀 On this medium, applied on the next sync
+                              </div>
+                              {usbSource.mediumPlaylists.map((pl) => (
+                                <div
+                                  key={`medium-dest-${pl.id}`}
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleAddToPlaylist(pl.id, contextMenu?.targetIds ?? [], {
+                                      name: pl.name,
+                                      medium: true,
+                                    })
+                                  }
+                                >
+                                  💾 {pl.name}
+                                </div>
+                              ))}
+                            </>
+                          )}
                         </SubItem>
                       ))}
 
@@ -2984,6 +3339,10 @@ function MusicLibrary({
                     <div
                       className="context-menu-item"
                       onClick={() => {
+                        if (contextMenu.medium) {
+                          handleMediumEditDetails();
+                          return;
+                        }
                         const targetTracks = contextMenu?.targetTracks ?? [];
                         setContextMenu(null);
                         if (targetTracks.length === 1) {
@@ -3002,10 +3361,14 @@ function MusicLibrary({
                     </div>
 
                     {}
-                    {contextMenu?.targetTracks?.length === 1 && (
+                    {(contextMenu?.targetTracks?.length === 1 || Boolean(contextMenu?.medium)) && (
                       <div
                         className="context-menu-item"
                         onClick={() => {
+                          if (contextMenu.medium) {
+                            handleMediumPrepare();
+                            return;
+                          }
                           const track =
                             tracks.find((tr) => tr.id === contextMenu.targetTracks[0]?.id) ??
                             contextMenu.targetTracks[0];
@@ -3019,22 +3382,45 @@ function MusicLibrary({
 
                     {}
                     <SubItem id="analysis" label={`🔬 Analysis${selectionLabel}`}>
-                      <div className="context-menu-item" onClick={handleReanalyze}>
+                      <div
+                        className="context-menu-item"
+                        onClick={contextMenu.medium ? handleMediumReanalyze : handleReanalyze}
+                      >
                         🔄 Re-analyze
                       </div>
                       <div className="context-menu-separator" />
-                      <div className="context-menu-item" onClick={handleNormalizeTracks}>
+                      <div
+                        className="context-menu-item"
+                        onClick={contextMenu.medium ? handleMediumNormalize : handleNormalizeTracks}
+                      >
                         🔊 Normalize
                       </div>
-                      <div className="context-menu-item" onClick={handleResetNormalization}>
+                      <div
+                        className="context-menu-item"
+                        onClick={
+                          contextMenu.medium
+                            ? handleMediumResetNormalization
+                            : handleResetNormalization
+                        }
+                      >
                         ↩ Reset normalization
                       </div>
                       <div className="context-menu-separator" />
                       <SubItem id="bpm" label="🥁 Beat Grid">
-                        <div className="context-menu-item" onClick={() => handleBpmAdjust(2)}>
+                        <div
+                          className="context-menu-item"
+                          onClick={() =>
+                            contextMenu.medium ? handleMediumBpmAdjust(2) : handleBpmAdjust(2)
+                          }
+                        >
                           ✕2 Double BPM
                         </div>
-                        <div className="context-menu-item" onClick={() => handleBpmAdjust(0.5)}>
+                        <div
+                          className="context-menu-item"
+                          onClick={() =>
+                            contextMenu.medium ? handleMediumBpmAdjust(0.5) : handleBpmAdjust(0.5)
+                          }
+                        >
                           ÷2 Halve BPM
                         </div>
                         <div className="context-menu-separator" />
@@ -3085,8 +3471,22 @@ function MusicLibrary({
                     </div>
 
                     {}
-                    <div className="context-menu-item" onClick={handleWriteBpmKeyTags}>
+                    <div
+                      className="context-menu-item"
+                      onClick={contextMenu.medium ? handleMediumWriteTags : handleWriteBpmKeyTags}
+                    >
                       🏷️ Save BPM &amp; Key to file{selectionLabel}
+                    </div>
+
+                    <div
+                      className="context-menu-item"
+                      onClick={() => {
+                        const path = contextMenu?.track?.file_path ?? '';
+                        if (path) navigator.clipboard?.writeText(path);
+                        setContextMenu(null);
+                      }}
+                    >
+                      📋 Copy file path
                     </div>
 
                     {}
@@ -3100,7 +3500,7 @@ function MusicLibrary({
                         </div>
                         <div
                           className="context-menu-item context-menu-item--danger"
-                          onClick={handleRemove}
+                          onClick={contextMenu.medium ? handleMediumRemove : handleRemove}
                         >
                           🗑️ Remove from library{selectionLabel}
                         </div>
@@ -3108,7 +3508,7 @@ function MusicLibrary({
                     ) : (
                       <div
                         className="context-menu-item context-menu-item--danger"
-                        onClick={handleRemove}
+                        onClick={contextMenu.medium ? handleMediumRemove : handleRemove}
                       >
                         🗑️ Remove from library{selectionLabel}
                       </div>
@@ -3135,6 +3535,7 @@ function MusicLibrary({
             <TrackDetails
               track={detailsTrack}
               onSave={handleDetailsSave}
+              saveTrack={detailsTrack?.__medium ? handleMediumSaveTrack : undefined}
               onCancel={handleDetailsClose}
               onPrev={handleDetailsPrev}
               onNext={handleDetailsNext}

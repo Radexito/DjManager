@@ -140,6 +140,7 @@ import { registerLinkIpc } from './linkIpc.js';
 import { registerMetadataIpc } from './metadataIpc.js';
 import { registerNormalizeIpc } from './normalizeIpc.js';
 import { registerPlaylistIpc } from './playlistIpc.js';
+import { registerUsbWatchIpc } from './usbWatchIpc.js';
 import { registerSettingsIpc } from './settingsIpc.js';
 import { registerTidalIpc } from './tidalIpc.js';
 import { registerTrackEditIpc } from './trackEditIpc.js';
@@ -395,6 +396,12 @@ export function registerAllIpc({
     parentPid: process.pid,
   });
 
+  registerUsbWatchIpc({
+    ipcMain,
+    usbWatch: services.usbWatchService,
+    allowBase: (dir) => allowExplorerBase(runtime, dir),
+  });
+
   registerFolderPlaylistIpc({
     ipcMain,
     send,
@@ -406,6 +413,7 @@ export function registerAllIpc({
     syncFolderPlaylist: (id) => services.watcherService.syncFolderPlaylist(id),
     refreshFolderPlaylists: () => services.watcherService.refreshFolderPlaylists(),
     restartLibraryWatcher: () => services.watcherService.restart(),
+    restartUsbWatch: () => services.usbWatchService.restart(),
   });
 
   registerNormalizeIpc({

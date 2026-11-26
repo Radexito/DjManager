@@ -34,10 +34,19 @@ const PRESET_COLORS = [
  * @param {(playlistId: string) => void} onExportPlaylistAll Exports a whole playlist
  *   to a USB drive.
  */
-function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
+function Sidebar({
+  selectedMenuItemId,
+  onMenuSelect,
+  onExportPlaylistAll,
+  usbSelection = null,
+  onUsbSelect = () => {},
+}) {
   const { sidebarProgress: ytDlpSidebarProgress } = useDownload();
   const { sidebarProgress: tidalSidebarProgress } = useTidalDownload();
   const [playlists, setPlaylists] = useState([]);
+  const [usbDevices, setUsbDevices] = useState([]);
+  const [usbOpen, setUsbOpen] = useState({});
+  const [usbContents, setUsbContents] = useState({});
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
   const [normalizeProgress, setNormalizeProgress] = useState(null);
   const [analysisProgress, setAnalysisProgress] = useState(null);
@@ -83,6 +92,67 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
       unsubFolder?.();
     };
   }, [loadPlaylists]);
+
+  // The sidebar follows the sticks: the list arrives from the main process and is
+  // replaced whenever a medium is plugged in or removed.
+  useEffect(() => {
+    let alive = true;
+    // A renderer without the channel (an older preload, or a test double) simply
+    // has no USB section; it must not take the sidebar down with it.
+    const requestDevices = window.api?.getUsbDevices;
+    if (typeof requestDevices === 'function') {
+      requestDevices()
+        .then((list) => {
+          if (alive) setUsbDevices(Array.isArray(list) ? list : []);
+        })
+        .catch(() => {});
+    }
+    const unsub = window.api?.onUsbDevicesChanged?.((list) =>
+      setUsbDevices(Array.isArray(list) ? list : [])
+    );
+    return () => {
+      alive = false;
+      if (typeof unsub === 'function') unsub();
+    };
+  }, []);
+
+  const loadUsbContents = useCallback(async (mount) => {
+    const request = window.api?.getUsbContents;
+    if (typeof request !== 'function') return null;
+    const contents = await request(mount).catch(() => null);
+    setUsbContents((current) => ({ ...current, [mount]: contents }));
+    return contents;
+  }, []);
+
+  const toggleUsbDevice = async (mount) => {
+    const opening = !usbOpen[mount];
+    setUsbOpen((current) => ({ ...current, [mount]: opening }));
+    if (opening && usbContents[mount] === undefined) await loadUsbContents(mount);
+  };
+
+  const refreshUsbDevices = async () => {
+    setUsbContents({});
+    const refresh = window.api?.refreshUsbDevices;
+    if (typeof refresh !== 'function') return;
+    const list = await refresh().catch(() => null);
+    if (Array.isArray(list)) setUsbDevices(list);
+  };
+
+  /** True when this row is what the main area is showing right now. */
+  const isSelectedUsb = (mount, playlistId = null) =>
+    Boolean(usbSelection) &&
+    usbSelection.mount === mount &&
+    (usbSelection.playlistId ?? null) === (playlistId ?? null) &&
+    usbSelection.tagId == null &&
+    !usbSelection.categoryName;
+
+  const isSelectedTag = (mount, tagId) =>
+    Boolean(usbSelection) && usbSelection.mount === mount && usbSelection.tagId === tagId;
+
+  const isSelectedCategory = (mount, categoryName) =>
+    Boolean(usbSelection) &&
+    usbSelection.mount === mount &&
+    usbSelection.categoryName === categoryName;
 
   const runFolderRefresh = useCallback(
     async (result) => {
@@ -487,6 +557,177 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
             )}
           </div>
         ))}
+
+        {usbDevices.length > 0 && (
+          <div className="menu-section" style={{ marginTop: '0.75rem' }}>
+            <div className="playlists-header">
+              <span className="section-title" style={{ padding: 0 }}>
+                USB
+              </span>
+              <button
+                className="new-playlist-btn"
+                title="Look for media again"
+                onClick={refreshUsbDevices}
+              >
+                ⟳
+              </button>
+            </div>
+            {usbDevices.map((device) => {
+              const contents = usbContents[device.mount];
+              const open = Boolean(usbOpen[device.mount]);
+              // The row menu in the main area offers these as destinations, so
+              // the catalogue travels with every selection instead of being
+              // fetched again there.
+              const mediumPlaylists = (contents?.playlists ?? []).map((playlist) => ({
+                id: playlist.id,
+                name: playlist.name,
+                trackCount: playlist.trackCount,
+              }));
+              return (
+                <div key={device.mount}>
+                  <div
+                    className={`menu-item ${open ? 'active' : ''}`}
+                    onClick={() => toggleUsbDevice(device.mount)}
+                    title={device.mount}
+                  >
+                    <span className="menu-icon">{open ? '▾' : '▸'}</span>
+                    <span className="menu-text">{device.name}</span>
+                    <span className="playlist-count">{contents ? contents.trackCount : ''}</span>
+                  </div>
+                  {open && (
+                    <div style={{ paddingLeft: '0.9rem' }}>
+                      {contents === undefined && (
+                        <div className="menu-item" style={{ cursor: 'default' }}>
+                          <span className="menu-text">Reading the medium…</span>
+                        </div>
+                      )}
+                      {contents === null && (
+                        <div className="menu-item" style={{ cursor: 'default' }}>
+                          <span className="menu-text">No playlist database on this medium</span>
+                        </div>
+                      )}
+                      {contents && (
+                        <>
+                          <div
+                            className={`menu-item ${isSelectedUsb(device.mount) ? 'active' : ''}`}
+                            title="Every track the medium carries"
+                            onClick={() =>
+                              onUsbSelect({
+                                mount: device.mount,
+                                playlistId: null,
+                                name: 'Library',
+                                mediumPlaylists,
+                              })
+                            }
+                          >
+                            <span className="menu-text">Library</span>
+                            <span className="playlist-count">{contents.trackCount}</span>
+                          </div>
+                          {contents.playlists.map((playlist) => (
+                            <div
+                              key={`${device.mount}:${playlist.id}`}
+                              className={`menu-item ${
+                                isSelectedUsb(device.mount, playlist.id) ? 'active' : ''
+                              }`}
+                              title={`${playlist.trackCount} track(s) on the medium`}
+                              onClick={() =>
+                                onUsbSelect({
+                                  mount: device.mount,
+                                  playlistId: playlist.id,
+                                  name: playlist.name,
+                                  mediumPlaylists,
+                                })
+                              }
+                            >
+                              <span className="menu-text">{playlist.name}</span>
+                              <span className="playlist-count">{playlist.trackCount}</span>
+                            </div>
+                          ))}
+                          {contents.tags.map((category) => {
+                            const categoryTracks = category.tags.reduce(
+                              (sum, tag) => sum + (tag.trackCount ?? 0),
+                              0
+                            );
+                            const canOpen = category.tags.length > 0;
+                            return (
+                              <div key={`${device.mount}:tagcat:${category.name}`}>
+                                <div
+                                  className={`menu-item ${
+                                    isSelectedCategory(device.mount, category.name) ? 'active' : ''
+                                  }`}
+                                  style={{
+                                    cursor: canOpen ? 'pointer' : 'default',
+                                    fontWeight: 600,
+                                  }}
+                                  title={
+                                    canOpen
+                                      ? `${category.tags.length} tag(s), ${categoryTracks} track(s)`
+                                      : `No tags in ${category.name}`
+                                  }
+                                  onClick={
+                                    canOpen
+                                      ? () =>
+                                          onUsbSelect({
+                                            mount: device.mount,
+                                            playlistId: null,
+                                            categoryName: category.name,
+                                            name: category.name,
+                                            mediumPlaylists,
+                                          })
+                                      : undefined
+                                  }
+                                >
+                                  <span className="menu-text">{category.name}</span>
+                                  <span className="playlist-count">{categoryTracks}</span>
+                                </div>
+                                {category.tags.map((tag) => {
+                                  const usable = tag.trackCount > 0;
+                                  const unknown = (tag.unknownTrackCount ?? 0) > 0;
+                                  return (
+                                    <div
+                                      key={`${device.mount}:tag:${tag.id}`}
+                                      className={`menu-item ${
+                                        isSelectedTag(device.mount, tag.id) ? 'active' : ''
+                                      }`}
+                                      style={{
+                                        cursor: 'pointer',
+                                        paddingLeft: '1.6rem',
+                                        opacity: usable ? 1 : 0.6,
+                                      }}
+                                      title={
+                                        usable
+                                          ? `${tag.trackCount} track(s) on the medium carry this tag`
+                                          : unknown
+                                            ? `${tag.unknownTrackCount} assignment(s) name tracks that are not on this medium`
+                                            : 'No track on this medium carries this tag'
+                                      }
+                                      onClick={() =>
+                                        onUsbSelect({
+                                          mount: device.mount,
+                                          playlistId: null,
+                                          tagId: tag.id,
+                                          name: tag.name,
+                                          mediumPlaylists,
+                                        })
+                                      }
+                                    >
+                                      <span className="menu-text">{tag.name}</span>
+                                      <span className="playlist-count">{tag.trackCount ?? 0}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="fixed-bottom-section">

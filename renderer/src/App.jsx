@@ -27,6 +27,8 @@ import './App.css';
  */
 function App() {
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('music');
+  // What the USB section is showing: { mount, playlistId, name } or null.
+  const [usbSelection, setUsbSelection] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [exportState, setExportState] = useState(null);
   const [depsProgress, setDepsProgress] = useState(null);
@@ -73,6 +75,7 @@ function App() {
 
   const handleMenuSelect = (id) => {
     if (id === selectedPlaylistId) setSearch('');
+    setUsbSelection(null);
     setSelectedPlaylistId(id);
   };
 
@@ -195,6 +198,8 @@ function App() {
               <Sidebar
                 selectedMenuItemId={selectedPlaylistId}
                 onMenuSelect={handleMenuSelect}
+                usbSelection={usbSelection}
+                onUsbSelect={setUsbSelection}
                 activePlaylistId={selectedPlaylistId}
                 onExportPlaylistAll={(id) => setExportState({ playlistId: id })}
               />
@@ -229,7 +234,8 @@ function App() {
                 selectedPlaylistId !== 'explorer' &&
                 selectedPlaylistId !== 'help' && (
                   <MusicLibrary
-                    selectedPlaylist={selectedPlaylistId}
+                    selectedPlaylist={usbSelection ? 'music' : selectedPlaylistId}
+                    usbSource={usbSelection}
                     search={search}
                     onSearchChange={setSearch}
                     openDetailsRequest={openDetailsRequest}
