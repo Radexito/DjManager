@@ -96,4 +96,3 @@ Opening a medium puts its mount point on that list (`allowExplorerBase`), which 
 The row menu for a medium offers Play and Copy file path and says so, because the library actions address
 tracks by this application's ids: re-analysing or adding to a playlist from a medium's row would act on an
 unrelated library track.
-

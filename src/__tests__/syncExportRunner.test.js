@@ -518,10 +518,7 @@ describe('export runner', () => {
     await runOn(root, runner, runner.plan({ playlistIds: [7] }));
 
     const ext = readPdb(fs.readFileSync(path.join(root, 'PIONEER', 'rekordbox', 'exportExt.pdb')));
-    const rows = (ext.tables.get(4) ?? []).map((row) => [
-      row.readUInt32LE(4),
-      row.readUInt32LE(8),
-    ]);
+    const rows = (ext.tables.get(4) ?? []).map((row) => [row.readUInt32LE(4), row.readUInt32LE(8)]);
     // The PDB writer numbered the tracks 1 and 2; the library called them 10 and
     // 16. A row naming 10 or 16 would describe tracks that are not on the medium.
     expect(rows).toEqual([
