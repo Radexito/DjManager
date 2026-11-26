@@ -39,3 +39,17 @@ change is pushed as `usb-devices-changed` with the same list. The list is
 The watcher polls one directory read per root every four seconds and compares
 only the mount points, not the contents, so an export running in the background
 does not look like a device change. Changing either setting restarts it.
+
+## What the sidebar shows
+
+A detected medium appears as its own collapsible entry below the playlists. Expanding it reads the
+medium, not our records of it:
+
+- **Library** with the number of tracks the database carries.
+- **Playlists** with their track counts; expanding one lists the tracks it holds, artist and title as
+  the player sees them.
+- **The tag tree** with the number of tags per category; the category line names them on hover.
+
+The data comes from `PIONEER/rekordbox/export.pdb` and `exportExt.pdb` (`src/usb/pioneer/contents.js`),
+so a stick rekordbox prepared shows exactly the same way as one this application wrote. The manifest is
+only used to say whether the stick is ours. Nothing in the section writes to the medium.

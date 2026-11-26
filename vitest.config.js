@@ -83,6 +83,7 @@ export default defineConfig({
             'src/__tests__/artworkFiles.test.js',
             'src/__tests__/usbRegistry.test.js',
             'src/__tests__/usbWatch.test.js',
+            'src/__tests__/usbContents.test.js',
             'src/__tests__/pioneerManager.test.js',
             'src/__tests__/deviceFormats.test.js',
             'src/__tests__/drives.test.js',

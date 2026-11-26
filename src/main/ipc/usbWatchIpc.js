@@ -1,3 +1,4 @@
+import { readMedium } from '../../usb/pioneer/contents.js';
 import { handle } from './response.js';
 
 /**
@@ -31,4 +32,11 @@ export function registerUsbWatchIpc({ ipcMain, usbWatch }) {
     roots: usbWatch.roots(),
     enabled: usbWatch.isEnabled(),
   }));
+
+  // What the medium carries, read from the medium: the library database and the
+  // tag tree, so a stick rekordbox prepared shows the same way as ours.
+  register('get-usb-contents', (_, root) => {
+    if (typeof root !== 'string' || root.trim() === '') return null;
+    return readMedium(root);
+  });
 }

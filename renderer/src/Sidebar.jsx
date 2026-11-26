@@ -38,6 +38,10 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
   const { sidebarProgress: ytDlpSidebarProgress } = useDownload();
   const { sidebarProgress: tidalSidebarProgress } = useTidalDownload();
   const [playlists, setPlaylists] = useState([]);
+  const [usbDevices, setUsbDevices] = useState([]);
+  const [usbOpen, setUsbOpen] = useState({});
+  const [usbContents, setUsbContents] = useState({});
+  const [usbPlaylistsOpen, setUsbPlaylistsOpen] = useState({});
   const [importProgress, setImportProgress] = useState({ total: 0, completed: 0 });
   const [normalizeProgress, setNormalizeProgress] = useState(null);
   const [analysisProgress, setAnalysisProgress] = useState(null);
@@ -83,6 +87,47 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
       unsubFolder?.();
     };
   }, [loadPlaylists]);
+
+  // The sidebar follows the sticks: the list arrives from the main process and is
+  // replaced whenever a medium is plugged in or removed.
+  useEffect(() => {
+    let alive = true;
+    window.api
+      .getUsbDevices()
+      .then((list) => {
+        if (alive) setUsbDevices(Array.isArray(list) ? list : []);
+      })
+      .catch(() => {});
+    const unsub = window.api.onUsbDevicesChanged?.((list) =>
+      setUsbDevices(Array.isArray(list) ? list : [])
+    );
+    return () => {
+      alive = false;
+      if (typeof unsub === 'function') unsub();
+    };
+  }, []);
+
+  const loadUsbContents = useCallback(async (mount) => {
+    const contents = await window.api.getUsbContents(mount).catch(() => null);
+    setUsbContents((current) => ({ ...current, [mount]: contents }));
+    return contents;
+  }, []);
+
+  const toggleUsbDevice = async (mount) => {
+    const opening = !usbOpen[mount];
+    setUsbOpen((current) => ({ ...current, [mount]: opening }));
+    if (opening && usbContents[mount] === undefined) await loadUsbContents(mount);
+  };
+
+  const refreshUsbDevices = async () => {
+    setUsbContents({});
+    setUsbPlaylistsOpen({});
+    const list = await window.api.refreshUsbDevices().catch(() => null);
+    if (Array.isArray(list)) setUsbDevices(list);
+  };
+
+  const toggleUsbPlaylist = (key) =>
+    setUsbPlaylistsOpen((current) => ({ ...current, [key]: !current[key] }));
 
   const runFolderRefresh = useCallback(
     async (result) => {
@@ -488,6 +533,117 @@ function Sidebar({ selectedMenuItemId, onMenuSelect, onExportPlaylistAll }) {
           </div>
         ))}
       </div>
+
+      {usbDevices.length > 0 && (
+        <div className="menu-section" style={{ marginTop: '0.75rem' }}>
+          <div className="playlists-header">
+            <span className="section-title" style={{ padding: 0 }}>
+              USB
+            </span>
+            <button
+              className="new-playlist-btn"
+              title="Look for media again"
+              onClick={refreshUsbDevices}
+            >
+              ⟳
+            </button>
+          </div>
+          {usbDevices.map((device) => {
+            const contents = usbContents[device.mount];
+            const open = Boolean(usbOpen[device.mount]);
+            return (
+              <div key={device.mount}>
+                <div
+                  className={`menu-item ${open ? 'active' : ''}`}
+                  onClick={() => toggleUsbDevice(device.mount)}
+                  title={device.mount}
+                >
+                  <span className="menu-icon">{open ? '▾' : '▸'}</span>
+                  <span className="menu-text">{device.name}</span>
+                  <span className="playlist-count">{contents ? contents.trackCount : ''}</span>
+                </div>
+                {open && (
+                  <div style={{ paddingLeft: '0.9rem' }}>
+                    {contents === undefined && (
+                      <div className="menu-item" style={{ cursor: 'default' }}>
+                        <span className="menu-text">Reading the medium…</span>
+                      </div>
+                    )}
+                    {contents === null && (
+                      <div className="menu-item" style={{ cursor: 'default' }}>
+                        <span className="menu-text">No playlist database on this medium</span>
+                      </div>
+                    )}
+                    {contents && (
+                      <>
+                        <div
+                          className="menu-item"
+                          style={{ cursor: 'default' }}
+                          title="Every track the medium carries"
+                        >
+                          <span className="menu-text">Library</span>
+                          <span className="playlist-count">{contents.trackCount}</span>
+                        </div>
+                        {contents.playlists.map((playlist) => {
+                          const key = `${device.mount}:${playlist.id}`;
+                          const playlistOpen = Boolean(usbPlaylistsOpen[key]);
+                          return (
+                            <div key={key}>
+                              <div
+                                className="menu-item"
+                                onClick={() => toggleUsbPlaylist(key)}
+                                title={`${playlist.trackCount} track(s) on the medium`}
+                              >
+                                <span className="menu-icon">{playlistOpen ? '▾' : '▸'}</span>
+                                <span className="menu-text">{playlist.name}</span>
+                                <span className="playlist-count">{playlist.trackCount}</span>
+                              </div>
+                              {playlistOpen && (
+                                <div style={{ paddingLeft: '0.9rem' }}>
+                                  {playlist.tracks.length === 0 && (
+                                    <div className="menu-item" style={{ cursor: 'default' }}>
+                                      <span className="menu-text">Empty</span>
+                                    </div>
+                                  )}
+                                  {playlist.tracks.map((track) => (
+                                    <div
+                                      key={`${key}:${track.id}`}
+                                      className="menu-item"
+                                      style={{ cursor: 'default' }}
+                                      title={track.title}
+                                    >
+                                      <span className="menu-text">
+                                        {track.artist
+                                          ? `${track.artist} - ${track.title}`
+                                          : track.title}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {contents.tags.map((category) => (
+                          <div
+                            className="menu-item"
+                            key={`${device.mount}:tag:${category.name}`}
+                            style={{ cursor: 'default' }}
+                            title={category.tags.join(', ') || 'No tags'}
+                          >
+                            <span className="menu-text">{category.name}</span>
+                            <span className="playlist-count">{category.tags.length}</span>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <div className="fixed-bottom-section">
         {folderNotice && (
