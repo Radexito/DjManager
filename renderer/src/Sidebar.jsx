@@ -678,9 +678,7 @@ function Sidebar({
                                   }
                                 >
                                   <span className="menu-text">{category.name}</span>
-                                  <span className="playlist-count">
-                                    {categoryTracks || category.tags.length}
-                                  </span>
+                                  <span className="playlist-count">{categoryTracks}</span>
                                 </div>
                                 {category.tags.map((tag) => {
                                   const usable = tag.trackCount > 0;
@@ -714,9 +712,7 @@ function Sidebar({
                                       }
                                     >
                                       <span className="menu-text">{tag.name}</span>
-                                      {usable && (
-                                        <span className="playlist-count">{tag.trackCount}</span>
-                                      )}
+                                      <span className="playlist-count">{tag.trackCount ?? 0}</span>
                                     </div>
                                   );
                                 })}

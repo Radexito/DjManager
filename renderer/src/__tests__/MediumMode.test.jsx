@@ -182,11 +182,13 @@ describe('MusicLibrary showing a medium', () => {
     const row = (await screen.findByText('Opening')).closest('.row');
     fireEvent.contextMenu(row);
 
-    expect(screen.getByText('▶ Play')).toBeInTheDocument();
+    // The menu is built after the library lookup answers, so it appears async.
+    expect(await screen.findByText('▶ Play')).toBeInTheDocument();
     // The file is not in the library yet, so the first action is the import.
-    await waitFor(() => expect(screen.getByText('⬇ Import to library')).toBeInTheDocument());
-    expect(screen.getByText('✏️ Edit Details…')).toBeInTheDocument();
+    expect(await screen.findByText('⬇ Import to library')).toBeInTheDocument();
+    expect(screen.getByText(/✏️ Edit Details/)).toBeInTheDocument();
     expect(screen.getByText('🎛 Prepare Track…')).toBeInTheDocument();
+    expect(screen.getByText('🔬 Analysis')).toBeInTheDocument();
     expect(screen.getByText('🔄 Re-analyze')).toBeInTheDocument();
     expect(screen.getByText('📋 Copy file path')).toBeInTheDocument();
   });
@@ -202,7 +204,7 @@ describe('MusicLibrary showing a medium', () => {
     const row = (await screen.findByText('Opening')).closest('.row');
     fireEvent.contextMenu(row);
 
-    await waitFor(() => expect(screen.getByText('🎵 Local set')).toBeInTheDocument());
+    expect(await screen.findByText('Local set')).toBeInTheDocument();
     expect(screen.getByText('📀 On this medium, applied on the next sync')).toBeInTheDocument();
     expect(screen.getByText('💾 Set')).toBeInTheDocument();
   });

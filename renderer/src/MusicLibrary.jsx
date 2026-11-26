@@ -2023,38 +2023,48 @@ function MusicLibrary({
     async (e, track, index) => {
       e.preventDefault();
       if (isMediumViewRef.current) {
-        setContextMenu({
-          x: e.clientX,
-          y: e.clientY,
-          track,
-          targetIds: [track.id],
-          medium: true,
-          library: undefined,
-        });
-        // A medium row addresses a file on the stick, not a row in this library.
-        // Resolve that link once, when the menu opens: if the file is already
-        // imported the library actions run on the real row, otherwise they
-        // import it first instead of guessing an id.
+        // A medium row is shown by the same table and answered by the same menu
+        // as the music tab, so the menu is built exactly as the library one is.
+        // The one difference: the row addresses a file on the stick, so the
+        // library counterpart is resolved here. When the file was never
+        // imported the id-based actions import it on first use.
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const MENU_W = 240;
+        const overlayMode = vw < 500 || vh < 420;
+        const x = Math.min(e.clientX, vw - MENU_W - 8);
+        const y = Math.min(e.clientY, vh - 16);
+        const flipLeft = x > vw / 2;
+        const flipUp = e.clientY > vh * 0.5;
+        const submenuMaxH = Math.max(120, vh - y - 8);
+
+        const libraryTrack = await window.api
+          .getTracksByPaths([track.file_path])
+          .then((found) => found?.[0] ?? null)
+          .catch(() => null);
         try {
-          const found = (await window.api.getTracksByPaths([track.file_path])) ?? [];
-          setContextMenu((current) =>
-            current && current.track?.file_path === track.file_path
-              ? { ...current, library: found[0] ?? null }
-              : current
-          );
-        } catch {
-          setContextMenu((current) =>
-            current && current.track?.file_path === track.file_path
-              ? { ...current, library: null }
-              : current
-          );
-        }
-        try {
-          const playlists = (await window.api.getPlaylists()) ?? [];
-          setPlaylistSubmenu(playlists);
+          setPlaylistSubmenu((await window.api.getPlaylists()) ?? []);
         } catch {
           setPlaylistSubmenu([]);
         }
+        try {
+          setLibrarySubmenu(await window.api.listLibrariesWithFreeSpace());
+        } catch {
+          setLibrarySubmenu([]);
+        }
+
+        setContextMenu({
+          x,
+          y,
+          track,
+          medium: true,
+          targetIds: libraryTrack ? [libraryTrack.id] : [],
+          targetTracks: libraryTrack ? [libraryTrack] : [],
+          overlayMode,
+          flipLeft,
+          flipUp,
+          submenuMaxH,
+        });
         return;
       }
       if (!selectedIds.has(track.id)) {
@@ -2197,20 +2207,6 @@ function MusicLibrary({
     offsetRef.current = Math.max(0, offsetRef.current - targetIds.length);
   }, [contextMenu, selectedPlaylist, currentTrack, stop]);
 
-  const handleAddToPlaylist = useCallback(async (playlistId, targetIds) => {
-    setContextMenu(null);
-    if (!targetIds?.length) return;
-    try {
-      await window.api.addTracksToPlaylist(playlistId, targetIds);
-    } catch (err) {
-      console.error('addTracksToPlaylist failed:', err);
-    }
-  }, []);
-
-  // A medium row points at a file on the stick, and every library action needs
-  // the row this application keeps for that file. Resolve it once and import on
-  // demand, so the menu offers the same actions as the music tab instead of a
-  // second, smaller set that stops at "play".
   const libraryTrackForMediumRow = useCallback(
     async (row, { importMissing = true } = {}) => {
       if (!row?.file_path) return null;
@@ -2228,6 +2224,41 @@ function MusicLibrary({
     },
     [showToast]
   );
+
+  const handleAddToPlaylist = useCallback(
+    async (playlistId, targetIds, { name, medium = false } = {}) => {
+      const row = contextMenu?.medium ? contextMenu.track : null;
+      setContextMenu(null);
+      let ids = targetIds ?? [];
+      // A medium row carries no library id until its file is imported, and a
+      // playlist lives in the library, so the link is made on first use.
+      if (ids.length === 0 && row) {
+        const track = await libraryTrackForMediumRow(row);
+        if (!track) return;
+        ids = [track.id];
+      }
+      if (ids.length === 0) return;
+      try {
+        await window.api.addTracksToPlaylist(playlistId, ids);
+        if (name) {
+          showToast(
+            medium
+              ? `Added to "${name}". The medium gets it on the next sync.`
+              : `Added to "${name}".`
+          );
+        }
+      } catch (err) {
+        console.error('addTracksToPlaylist failed:', err);
+        if (name) showToast(`Could not add to "${name}": ${err.message}`, false);
+      }
+    },
+    [contextMenu, libraryTrackForMediumRow, showToast]
+  );
+
+  // A medium row points at a file on the stick, and every library action needs
+  // the row this application keeps for that file. Resolve it once and import on
+  // demand, so the menu offers the same actions as the music tab instead of a
+  // second, smaller set that stops at "play".
 
   const handleMediumImport = useCallback(async () => {
     const row = contextMenu?.track;
@@ -2335,27 +2366,6 @@ function MusicLibrary({
       result.written > 0
     );
   }, [contextMenu, libraryTrackForMediumRow, showToast]);
-
-  const handleMediumAddToPlaylist = useCallback(
-    async (destination) => {
-      const row = contextMenu?.track;
-      if (!row) return;
-      const track = await libraryTrackForMediumRow(row);
-      setContextMenu(null);
-      if (!track) return;
-      try {
-        await window.api.addTracksToPlaylist(destination.id, [track.id]);
-        showToast(
-          destination.medium
-            ? `Added to "${destination.name}". The medium gets it on the next sync.`
-            : `Added to "${destination.name}".`
-        );
-      } catch (err) {
-        showToast(`Could not add to "${destination.name}": ${err.message}`, false);
-      }
-    },
-    [contextMenu, libraryTrackForMediumRow, showToast]
-  );
 
   const handleMediumRemove = useCallback(async () => {
     const row = contextMenu?.track;
@@ -2771,115 +2781,7 @@ function MusicLibrary({
         </div>
         {}
 
-        {contextMenu && isMediumView && (
-          <div
-            className="context-menu"
-            style={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y, zIndex: 1000 }}
-            ref={menuRef}
-          >
-            <div
-              className="context-menu-item"
-              onClick={() => handleDoubleClick(contextMenu.track, 0)}
-            >
-              ▶ Play
-            </div>
-            <div className="context-menu-separator" />
-            {contextMenu.library === undefined ? (
-              <div className="context-menu-item context-menu-item--disabled">
-                Checking the library…
-              </div>
-            ) : contextMenu.library ? (
-              <div className="context-menu-item context-menu-item--disabled">✓ In the library</div>
-            ) : (
-              <div className="context-menu-item" onClick={handleMediumImport}>
-                ⬇ Import to library
-              </div>
-            )}
-            <div className="context-menu-item" onClick={handleMediumEditDetails}>
-              ✏️ Edit Details…
-            </div>
-            <div className="context-menu-item" onClick={handleMediumPrepare}>
-              🎛 Prepare Track…
-            </div>
-            <div className="context-menu-item" onClick={handleMediumReanalyze}>
-              🔄 Re-analyze
-            </div>
-            <div className="context-menu-item" onClick={handleMediumNormalize}>
-              🔊 Normalize
-            </div>
-            <div className="context-menu-item" onClick={handleMediumResetNormalization}>
-              ↩ Reset normalization
-            </div>
-            <div className="context-menu-item" onClick={() => handleMediumBpmAdjust(2)}>
-              ✕2 Double BPM
-            </div>
-            <div className="context-menu-item" onClick={() => handleMediumBpmAdjust(0.5)}>
-              ÷2 Halve BPM
-            </div>
-            <div className="context-menu-item" onClick={handleMediumWriteTags}>
-              🏷️ Save BPM &amp; Key to file
-            </div>
-            <div className="context-menu-separator" />
-            <div className="context-menu-item context-menu-item--header">➕ Add to playlist</div>
-            {(playlistSubmenu ?? []).map((playlist) => (
-              <div
-                key={`medium-lib-${playlist.id}`}
-                className="context-menu-item"
-                onClick={() =>
-                  handleMediumAddToPlaylist({
-                    id: playlist.id,
-                    name: playlist.name,
-                    medium: false,
-                  })
-                }
-              >
-                🎵 {playlist.name}
-              </div>
-            ))}
-            {(usbSource?.mediumPlaylists ?? []).length > 0 && (
-              <>
-                <div className="context-menu-separator" />
-                <div className="context-menu-item context-menu-item--header">
-                  📀 On this medium, applied on the next sync
-                </div>
-                {usbSource.mediumPlaylists.map((playlist) => (
-                  <div
-                    key={`medium-usb-${playlist.id}`}
-                    className="context-menu-item"
-                    onClick={() =>
-                      handleMediumAddToPlaylist({
-                        id: playlist.id,
-                        name: playlist.name,
-                        medium: true,
-                      })
-                    }
-                  >
-                    💾 {playlist.name}
-                  </div>
-                ))}
-              </>
-            )}
-            <div className="context-menu-separator" />
-            <div
-              className="context-menu-item"
-              onClick={() => {
-                navigator.clipboard?.writeText(contextMenu.track.file_path ?? '');
-                setContextMenu(null);
-              }}
-            >
-              📋 Copy file path
-            </div>
-            {contextMenu.library && (
-              <div
-                className="context-menu-item context-menu-item--danger"
-                onClick={handleMediumRemove}
-              >
-                🗑️ Remove from library
-              </div>
-            )}
-          </div>
-        )}
-        {contextMenu && !isMediumView && (
+        {contextMenu && (
           <SubItemCtx.Provider value={subItemCtxValue}>
             <>
               {contextMenu.overlayMode && (
@@ -2931,7 +2833,29 @@ function MusicLibrary({
                   </>
                 ) : (
                   <>
-                    {}
+                    {contextMenu.medium && (
+                      <div
+                        className="context-menu-item"
+                        onClick={() => {
+                          const row = contextMenu.track;
+                          setContextMenu(null);
+                          handleDoubleClick(row, 0);
+                        }}
+                      >
+                        ▶ Play
+                      </div>
+                    )}
+                    {contextMenu.medium &&
+                      (contextMenu.targetTracks?.length ? (
+                        <div className="context-menu-item context-menu-item--disabled">
+                          ✓ In the library
+                        </div>
+                      ) : (
+                        <div className="context-menu-item" onClick={handleMediumImport}>
+                          ⬇ Import to library
+                        </div>
+                      ))}
+                    {contextMenu.medium && <div className="context-menu-separator" />}
                     {playlistSubmenu !== null &&
                       (playlistSubmenu.length === 0 ? (
                         <>
@@ -3025,7 +2949,9 @@ function MusicLibrary({
                               className={`context-menu-item${pl.is_member ? ' context-menu-item--checked' : ''}`}
                               onClick={() =>
                                 !pl.is_member &&
-                                handleAddToPlaylist(pl.id, contextMenu?.targetIds ?? [])
+                                handleAddToPlaylist(pl.id, contextMenu?.targetIds ?? [], {
+                                  name: pl.name,
+                                })
                               }
                             >
                               {pl.color && (
@@ -3035,6 +2961,28 @@ function MusicLibrary({
                               {pl.name}
                             </div>
                           ))}
+                          {contextMenu.medium && (usbSource?.mediumPlaylists ?? []).length > 0 && (
+                            <>
+                              <div className="context-menu-separator" />
+                              <div className="context-menu-item context-menu-item--header">
+                                📀 On this medium, applied on the next sync
+                              </div>
+                              {usbSource.mediumPlaylists.map((pl) => (
+                                <div
+                                  key={`medium-dest-${pl.id}`}
+                                  className="context-menu-item"
+                                  onClick={() =>
+                                    handleAddToPlaylist(pl.id, contextMenu?.targetIds ?? [], {
+                                      name: pl.name,
+                                      medium: true,
+                                    })
+                                  }
+                                >
+                                  💾 {pl.name}
+                                </div>
+                              ))}
+                            </>
+                          )}
                         </SubItem>
                       ))}
 
@@ -3310,6 +3258,10 @@ function MusicLibrary({
                     <div
                       className="context-menu-item"
                       onClick={() => {
+                        if (contextMenu.medium) {
+                          handleMediumEditDetails();
+                          return;
+                        }
                         const targetTracks = contextMenu?.targetTracks ?? [];
                         setContextMenu(null);
                         if (targetTracks.length === 1) {
@@ -3328,10 +3280,14 @@ function MusicLibrary({
                     </div>
 
                     {}
-                    {contextMenu?.targetTracks?.length === 1 && (
+                    {(contextMenu?.targetTracks?.length === 1 || Boolean(contextMenu?.medium)) && (
                       <div
                         className="context-menu-item"
                         onClick={() => {
+                          if (contextMenu.medium) {
+                            handleMediumPrepare();
+                            return;
+                          }
                           const track =
                             tracks.find((tr) => tr.id === contextMenu.targetTracks[0]?.id) ??
                             contextMenu.targetTracks[0];
@@ -3345,22 +3301,45 @@ function MusicLibrary({
 
                     {}
                     <SubItem id="analysis" label={`🔬 Analysis${selectionLabel}`}>
-                      <div className="context-menu-item" onClick={handleReanalyze}>
+                      <div
+                        className="context-menu-item"
+                        onClick={contextMenu.medium ? handleMediumReanalyze : handleReanalyze}
+                      >
                         🔄 Re-analyze
                       </div>
                       <div className="context-menu-separator" />
-                      <div className="context-menu-item" onClick={handleNormalizeTracks}>
+                      <div
+                        className="context-menu-item"
+                        onClick={contextMenu.medium ? handleMediumNormalize : handleNormalizeTracks}
+                      >
                         🔊 Normalize
                       </div>
-                      <div className="context-menu-item" onClick={handleResetNormalization}>
+                      <div
+                        className="context-menu-item"
+                        onClick={
+                          contextMenu.medium
+                            ? handleMediumResetNormalization
+                            : handleResetNormalization
+                        }
+                      >
                         ↩ Reset normalization
                       </div>
                       <div className="context-menu-separator" />
                       <SubItem id="bpm" label="🥁 Beat Grid">
-                        <div className="context-menu-item" onClick={() => handleBpmAdjust(2)}>
+                        <div
+                          className="context-menu-item"
+                          onClick={() =>
+                            contextMenu.medium ? handleMediumBpmAdjust(2) : handleBpmAdjust(2)
+                          }
+                        >
                           ✕2 Double BPM
                         </div>
-                        <div className="context-menu-item" onClick={() => handleBpmAdjust(0.5)}>
+                        <div
+                          className="context-menu-item"
+                          onClick={() =>
+                            contextMenu.medium ? handleMediumBpmAdjust(0.5) : handleBpmAdjust(0.5)
+                          }
+                        >
                           ÷2 Halve BPM
                         </div>
                         <div className="context-menu-separator" />
@@ -3411,8 +3390,22 @@ function MusicLibrary({
                     </div>
 
                     {}
-                    <div className="context-menu-item" onClick={handleWriteBpmKeyTags}>
+                    <div
+                      className="context-menu-item"
+                      onClick={contextMenu.medium ? handleMediumWriteTags : handleWriteBpmKeyTags}
+                    >
                       🏷️ Save BPM &amp; Key to file{selectionLabel}
+                    </div>
+
+                    <div
+                      className="context-menu-item"
+                      onClick={() => {
+                        const path = contextMenu?.track?.file_path ?? '';
+                        if (path) navigator.clipboard?.writeText(path);
+                        setContextMenu(null);
+                      }}
+                    >
+                      📋 Copy file path
                     </div>
 
                     {}
@@ -3426,7 +3419,7 @@ function MusicLibrary({
                         </div>
                         <div
                           className="context-menu-item context-menu-item--danger"
-                          onClick={handleRemove}
+                          onClick={contextMenu.medium ? handleMediumRemove : handleRemove}
                         >
                           🗑️ Remove from library{selectionLabel}
                         </div>
@@ -3434,7 +3427,7 @@ function MusicLibrary({
                     ) : (
                       <div
                         className="context-menu-item context-menu-item--danger"
-                        onClick={handleRemove}
+                        onClick={contextMenu.medium ? handleMediumRemove : handleRemove}
                       >
                         🗑️ Remove from library{selectionLabel}
                       </div>
