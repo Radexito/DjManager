@@ -142,7 +142,17 @@ function Sidebar({
   const isSelectedUsb = (mount, playlistId = null) =>
     Boolean(usbSelection) &&
     usbSelection.mount === mount &&
-    (usbSelection.playlistId ?? null) === (playlistId ?? null);
+    (usbSelection.playlistId ?? null) === (playlistId ?? null) &&
+    usbSelection.tagId == null &&
+    !usbSelection.categoryName;
+
+  const isSelectedTag = (mount, tagId) =>
+    Boolean(usbSelection) && usbSelection.mount === mount && usbSelection.tagId === tagId;
+
+  const isSelectedCategory = (mount, categoryName) =>
+    Boolean(usbSelection) &&
+    usbSelection.mount === mount &&
+    usbSelection.categoryName === categoryName;
 
   const runFolderRefresh = useCallback(
     async (result) => {
@@ -565,6 +575,14 @@ function Sidebar({
             {usbDevices.map((device) => {
               const contents = usbContents[device.mount];
               const open = Boolean(usbOpen[device.mount]);
+              // The row menu in the main area offers these as destinations, so
+              // the catalogue travels with every selection instead of being
+              // fetched again there.
+              const mediumPlaylists = (contents?.playlists ?? []).map((playlist) => ({
+                id: playlist.id,
+                name: playlist.name,
+                trackCount: playlist.trackCount,
+              }));
               return (
                 <div key={device.mount}>
                   <div
@@ -598,6 +616,7 @@ function Sidebar({
                                 mount: device.mount,
                                 playlistId: null,
                                 name: 'Library',
+                                mediumPlaylists,
                               })
                             }
                           >
@@ -616,6 +635,7 @@ function Sidebar({
                                   mount: device.mount,
                                   playlistId: playlist.id,
                                   name: playlist.name,
+                                  mediumPlaylists,
                                 })
                               }
                             >
@@ -623,59 +643,86 @@ function Sidebar({
                               <span className="playlist-count">{playlist.trackCount}</span>
                             </div>
                           ))}
-                          {contents.tags.map((category) => (
-                            <div key={`${device.mount}:tagcat:${category.name}`}>
-                              <div
-                                className="menu-item"
-                                style={{ cursor: 'default', opacity: 0.65 }}
-                                title={`${category.tags.length} tag(s)`}
-                              >
-                                <span className="menu-text">{category.name}</span>
-                                <span className="playlist-count">{category.tags.length}</span>
+                          {contents.tags.map((category) => {
+                            const categoryTracks = category.tags.reduce(
+                              (sum, tag) => sum + (tag.trackCount ?? 0),
+                              0
+                            );
+                            const canOpen = category.tags.length > 0;
+                            return (
+                              <div key={`${device.mount}:tagcat:${category.name}`}>
+                                <div
+                                  className={`menu-item ${
+                                    isSelectedCategory(device.mount, category.name) ? 'active' : ''
+                                  }`}
+                                  style={{
+                                    cursor: canOpen ? 'pointer' : 'default',
+                                    fontWeight: 600,
+                                  }}
+                                  title={
+                                    canOpen
+                                      ? `${category.tags.length} tag(s), ${categoryTracks} track(s)`
+                                      : `No tags in ${category.name}`
+                                  }
+                                  onClick={
+                                    canOpen
+                                      ? () =>
+                                          onUsbSelect({
+                                            mount: device.mount,
+                                            playlistId: null,
+                                            categoryName: category.name,
+                                            name: category.name,
+                                            mediumPlaylists,
+                                          })
+                                      : undefined
+                                  }
+                                >
+                                  <span className="menu-text">{category.name}</span>
+                                  <span className="playlist-count">
+                                    {categoryTracks || category.tags.length}
+                                  </span>
+                                </div>
+                                {category.tags.map((tag) => {
+                                  const usable = tag.trackCount > 0;
+                                  const unknown = (tag.unknownTrackCount ?? 0) > 0;
+                                  return (
+                                    <div
+                                      key={`${device.mount}:tag:${tag.id}`}
+                                      className={`menu-item ${
+                                        isSelectedTag(device.mount, tag.id) ? 'active' : ''
+                                      }`}
+                                      style={{
+                                        cursor: 'pointer',
+                                        paddingLeft: '1.6rem',
+                                        opacity: usable ? 1 : 0.6,
+                                      }}
+                                      title={
+                                        usable
+                                          ? `${tag.trackCount} track(s) on the medium carry this tag`
+                                          : unknown
+                                            ? `${tag.unknownTrackCount} assignment(s) name tracks that are not on this medium`
+                                            : 'No track on this medium carries this tag'
+                                      }
+                                      onClick={() =>
+                                        onUsbSelect({
+                                          mount: device.mount,
+                                          playlistId: null,
+                                          tagId: tag.id,
+                                          name: tag.name,
+                                          mediumPlaylists,
+                                        })
+                                      }
+                                    >
+                                      <span className="menu-text">{tag.name}</span>
+                                      {usable && (
+                                        <span className="playlist-count">{tag.trackCount}</span>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
-                              {category.tags.map((tag) => {
-                                const usable = tag.trackCount > 0;
-                                const unknown = (tag.unknownTrackCount ?? 0) > 0;
-                                const active =
-                                  usbSelection?.mount === device.mount &&
-                                  usbSelection?.tagId === tag.id;
-                                return (
-                                  <div
-                                    key={`${device.mount}:tag:${tag.id}`}
-                                    className={`menu-item ${active ? 'active' : ''}`}
-                                    style={{
-                                      cursor: usable ? 'pointer' : 'default',
-                                      paddingLeft: '1.6rem',
-                                      opacity: usable ? 1 : 0.55,
-                                    }}
-                                    title={
-                                      usable
-                                        ? `${tag.trackCount} track(s) on the medium carry this tag`
-                                        : unknown
-                                          ? `${tag.unknownTrackCount} assignment(s) name tracks that are not on this medium`
-                                          : 'No track on this medium carries this tag'
-                                    }
-                                    onClick={
-                                      usable
-                                        ? () =>
-                                            onUsbSelect({
-                                              mount: device.mount,
-                                              playlistId: null,
-                                              tagId: tag.id,
-                                              name: tag.name,
-                                            })
-                                        : undefined
-                                    }
-                                  >
-                                    <span className="menu-text">{tag.name}</span>
-                                    {usable && (
-                                      <span className="playlist-count">{tag.trackCount}</span>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          ))}
+                            );
+                          })}
                         </>
                       )}
                     </div>

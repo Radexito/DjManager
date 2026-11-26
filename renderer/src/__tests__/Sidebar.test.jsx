@@ -95,29 +95,55 @@ describe('Sidebar', () => {
       expect(screen.getByText('Genre')).toBeInTheDocument();
     });
 
+    const mediumPlaylists = [{ id: 1, name: 'Set', trackCount: 2 }];
+
     fireEvent.click(screen.getByText('Set'));
-    expect(onUsbSelect).toHaveBeenCalledWith({ mount: '/media/STICK', playlistId: 1, name: 'Set' });
+    expect(onUsbSelect).toHaveBeenCalledWith({
+      mount: '/media/STICK',
+      playlistId: 1,
+      name: 'Set',
+      mediumPlaylists,
+    });
 
     fireEvent.click(screen.getByText('Library'));
     expect(onUsbSelect).toHaveBeenCalledWith({
       mount: '/media/STICK',
       playlistId: null,
       name: 'Library',
+      mediumPlaylists,
     });
 
-    // A tag opens the tracks carrying it, but only when the medium can name them.
+    // A tag opens the tracks carrying it.
     fireEvent.click(screen.getByText('Trap'));
     expect(onUsbSelect).toHaveBeenCalledWith({
       mount: '/media/STICK',
       playlistId: null,
       tagId: 3,
       name: 'Trap',
+      mediumPlaylists,
     });
 
-    // An assignment pointing at a track this medium does not carry stays a
-    // label: clicking it would open a list of the wrong tracks.
+    // A tag whose assignments name tracks this medium does not carry still
+    // opens, so the view can explain the gap instead of the click dying.
     fireEvent.click(screen.getByText('Boom bap'));
-    expect(onUsbSelect).toHaveBeenCalledTimes(3);
+    expect(onUsbSelect).toHaveBeenCalledWith({
+      mount: '/media/STICK',
+      playlistId: null,
+      tagId: 4,
+      name: 'Boom bap',
+      mediumPlaylists,
+    });
+
+    // The category header opens every track tagged under it.
+    fireEvent.click(screen.getByText('Genre'));
+    expect(onUsbSelect).toHaveBeenCalledWith({
+      mount: '/media/STICK',
+      playlistId: null,
+      categoryName: 'Genre',
+      name: 'Genre',
+      mediumPlaylists,
+    });
+    expect(onUsbSelect).toHaveBeenCalledTimes(5);
 
     // The tree is structure only: track names belong to the main view.
     expect(screen.queryByText('Artist - Opening')).not.toBeInTheDocument();

@@ -168,14 +168,42 @@ describe('MusicLibrary showing a medium', () => {
     expect(screen.queryByText('Closer')).not.toBeInTheDocument();
   });
 
-  it('offers only what a medium can do in the row menu', async () => {
+  it('opens every track tagged under a category', async () => {
+    render(<Harness source={{ mount: '/media/STICK', categoryName: 'Genre' }} />);
+
+    await waitFor(() => expect(screen.getByText('Opening')).toBeInTheDocument());
+    // Only the track carrying the category's tag, not the whole medium.
+    expect(screen.queryByText('Closer')).not.toBeInTheDocument();
+  });
+
+  it('offers the library actions a medium row can reach', async () => {
     render(<Harness source={{ mount: '/media/STICK' }} />);
 
     const row = (await screen.findByText('Opening')).closest('.row');
     fireEvent.contextMenu(row);
 
-    expect(screen.getByText('Play')).toBeInTheDocument();
-    expect(screen.getByText('Copy file path')).toBeInTheDocument();
-    expect(screen.queryByText(/Re-analyze|Reanalyze/)).not.toBeInTheDocument();
+    expect(screen.getByText('▶ Play')).toBeInTheDocument();
+    // The file is not in the library yet, so the first action is the import.
+    await waitFor(() => expect(screen.getByText('⬇ Import to library')).toBeInTheDocument());
+    expect(screen.getByText('✏️ Edit Details…')).toBeInTheDocument();
+    expect(screen.getByText('🎛 Prepare Track…')).toBeInTheDocument();
+    expect(screen.getByText('🔄 Re-analyze')).toBeInTheDocument();
+    expect(screen.getByText('📋 Copy file path')).toBeInTheDocument();
+  });
+
+  it('offers both playlist destinations when a medium is open', async () => {
+    window.api.getPlaylists.mockResolvedValue([{ id: 5, name: 'Local set' }]);
+    render(
+      <Harness
+        source={{ mount: '/media/STICK', mediumPlaylists: [{ id: 7, name: 'Set', trackCount: 1 }] }}
+      />
+    );
+
+    const row = (await screen.findByText('Opening')).closest('.row');
+    fireEvent.contextMenu(row);
+
+    await waitFor(() => expect(screen.getByText('🎵 Local set')).toBeInTheDocument());
+    expect(screen.getByText('📀 On this medium, applied on the next sync')).toBeInTheDocument();
+    expect(screen.getByText('💾 Set')).toBeInTheDocument();
   });
 });
